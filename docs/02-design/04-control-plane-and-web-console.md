@@ -1,11 +1,11 @@
 # 架构与活体契约治理 (`code-traefik`) 管理面服务、微前端控制台与回归断言设计
 
 - **文档编号**：`04-control-plane-and-web-console.md`
-- **文档版本**：v1.11.1
-- **更新日期**：2026-11-14
+- **文档版本**：v1.12.0
+- **更新日期**：2026-11-15
 - **归属阶段**：阶段二：系统架构与数据模型设计 (`02-design`)
-- **状态**：M1~M23 已交付；M24~M26 已完成设计待实施 (Approved for M24~M26)
-- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.20.0)、[`01-system-architecture.md`](./01-system-architecture.md) (v1.8.1)、[`02-data-plane-and-cros-rpc-engine.md`](./02-data-plane-and-cros-rpc-engine.md)、[`03-architecture-elements-and-topology.md`](./03-architecture-elements-and-topology.md) (v1.9.0)、[`07-console-ia-restructuring-and-workflow-workbench-adr.md`](../05-adr/07-console-ia-restructuring-and-workflow-workbench-adr.md) (ADR-07)、[`08-recording-drawer-and-process-tree-selection-adr.md`](../05-adr/08-recording-drawer-and-process-tree-selection-adr.md) (ADR-08)、[`09-arch-process-ssot-and-ebpf-premount-standby-adr.md`](../05-adr/09-arch-process-ssot-and-ebpf-premount-standby-adr.md) (ADR-09 v1.1.0)、[`10-enhanced-proto-schema-file-management-adr.md`](../05-adr/10-enhanced-proto-schema-file-management-adr.md) (ADR-10 v1.1.0)、[`11-single-process-bidirectional-capture-and-recording-ux-adr.md`](../05-adr/11-single-process-bidirectional-capture-and-recording-ux-adr.md) (ADR-11 v1.0.0)、[`12-packet-causality-call-tree-and-sequence-ux-adr.md`](../05-adr/12-packet-causality-call-tree-and-sequence-ux-adr.md) (ADR-12 v1.0.0)、[`15-scalable-topology-focus-and-layout-persistence-adr.md`](../05-adr/15-scalable-topology-focus-and-layout-persistence-adr.md) (ADR-15 v1.3.0)、[`16-multi-implementation-service-contract-adr.md`](../05-adr/16-multi-implementation-service-contract-adr.md) (ADR-16 v2.0.0)、[`17-topology-single-layer-drilldown-and-layout-ux-adr.md`](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md) (ADR-17 v1.1.0)、[`18-proto-full-lifecycle-and-git-mr-governance-adr.md`](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (ADR-18 v1.3.0)
+- **状态**：M1~M26 已交付；同步 ADR-19 (`M27`) 四工作台拆解定稿
+- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.21.0)、[`01-system-architecture.md`](./01-system-architecture.md) (v1.8.1)、[`02-data-plane-and-cros-rpc-engine.md`](./02-data-plane-and-cros-rpc-engine.md)、[`03-architecture-elements-and-topology.md`](./03-architecture-elements-and-topology.md) (v1.9.0)、[`07-console-ia-restructuring-and-workflow-workbench-adr.md`](../05-adr/07-console-ia-restructuring-and-workflow-workbench-adr.md) (ADR-07)、[`08-recording-drawer-and-process-tree-selection-adr.md`](../05-adr/08-recording-drawer-and-process-tree-selection-adr.md) (ADR-08)、[`09-arch-process-ssot-and-ebpf-premount-standby-adr.md`](../05-adr/09-arch-process-ssot-and-ebpf-premount-standby-adr.md) (ADR-09 v1.1.0)、[`10-enhanced-proto-schema-file-management-adr.md`](../05-adr/10-enhanced-proto-schema-file-management-adr.md) (ADR-10 v1.1.0)、[`11-single-process-bidirectional-capture-and-recording-ux-adr.md`](../05-adr/11-single-process-bidirectional-capture-and-recording-ux-adr.md) (ADR-11 v1.0.0)、[`12-packet-causality-call-tree-and-sequence-ux-adr.md`](../05-adr/12-packet-causality-call-tree-and-sequence-ux-adr.md) (ADR-12 v1.0.0)、[`15-scalable-topology-focus-and-layout-persistence-adr.md`](../05-adr/15-scalable-topology-focus-and-layout-persistence-adr.md) (ADR-15 v1.3.0)、[`16-multi-implementation-service-contract-adr.md`](../05-adr/16-multi-implementation-service-contract-adr.md) (ADR-16 v2.0.0)、[`17-topology-single-layer-drilldown-and-layout-ux-adr.md`](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md) (ADR-17 v1.1.0)、[`18-proto-full-lifecycle-and-git-mr-governance-adr.md`](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (ADR-18 v1.3.0)、[`19-proto-contract-ia-unbundling-and-four-workbenches-adr.md`](../05-adr/19-proto-contract-ia-unbundling-and-four-workbenches-adr.md) (ADR-19 v1.0.0)
 
 ### 修订记录
 
@@ -16,6 +16,7 @@
 | `v1.9.1` | `2026-11-13` | Architecture Team | 依据 [`ADR-17` (`v1.1.0`)](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md) 架构检视意见加固 §4.2 与 §4.9：1. §4.2 补齐 `UnregisteredInterfaceNode.tsx` 与状态宿主 `ArchTopologyTabPane.tsx`；2. §4.9 明确节点悬浮动作条（`arch-node-action-bar`）与 `Enter` 快捷键同步切换单层下钻、跨层搜索 `fitView` 后置等待 ELK 排版完成、五类节点四向双向 `<Handle>` 挂载以及非 `right->left` 走线丢弃 ELK `bendPoints` 切换 `SmoothStep` |
 | `v1.10.0` | `2026-11-13` | Architecture Team | 依据 [`ADR-18` (`v1.1.0`)](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (`M22~M25`) 全面补齐 Proto 全生命周期治理与 Git/MR 门禁设计 |
 | `v1.11.0` | `2026-11-13` | Architecture Team | 依据 [`ADR-18` (`v1.2.0`)](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (`M22~M26`) 全面检视修订：1. §1.6 拆分 `GitRepo (1:N) GitProtoBundle` 支持 Monorepo、新增 `:repoId` Webhook、`COALESCE(bundle_id,0)` 防 Fast-Forward 误丢、Bot 评论 `remote_comment_id` 原位更新与 `BASE_LIB` 传递闭包扩散通知；2. §1.8 升级 `SSEBroker(userID)` 定向推送，明确跨机 LAN `code-notifier` `NotifyPayload` 强制非空 `markdown_content` 与真实邮箱解析，支持 `outbound_trusted_cidrs` 与 `settings.go` 脱敏/审计占位；3. §4.1/§4.2 补齐双模 `WorkspaceUtilityHeader`（门户嵌入态+独立外壳 `NotificationBell`），§4.10 修正前端 JS 为基于 M21 基线 `<= 150KB gzip`（`<= 500KB` 原文）增量预算并补全 `GitRepoDTO.bundles`、`MRCheckRunDTO` 与 `email_status` TS 契约 |
+| `v1.12.0` | `2026-11-15` | Architecture Team | 依据 [`ADR-19` (`v1.0.0`)](../05-adr/19-proto-contract-ia-unbundling-and-four-workbenches-adr.md) (`M27`) 拆解重构 Proto 控制台信息架构：1. §4.1 将全局侧边栏从 4 组 10 项演进为 **5 组 13 项**，独立设立 `Proto 契约治理` 一级分组（`接口参考文档` `/proto-docs`、`源码与 Git 仓` `/proto-sources`、`MR 门禁与规范` `/proto-governance`、`描述集与依赖` `/schemas`），并固化 `SchemasRouteWrapper` 无损深链重定向（含 `#L<n>`）；2. §4.2/§4.10 拆分为四个职责正交页面组件（`ProtoDocsWorkbenchPage`、`ProtoSourcesWorkbenchPage`、`ProtoGovernanceWorkbenchPage`、`ProtoSchemaWorkbenchPage`），抽离嵌入式 `LintRuleAndVocabPanel` 至主工作区并清理高频查文档场景下的顶部资产统计条冗余 |
 
 ---
 
@@ -382,28 +383,35 @@ type FieldDiff struct {
 
 ## 4. 微前端控制台架构与组件设计 (`frontend/src/`)
 
-### 4.1 模块联邦导出契约、四组十项菜单与路由矩阵 (`ADR-07`, `ADR-14`, `ADR-18`)
+### 4.1 模块联邦导出契约、五组十三项菜单与路由矩阵 (`ADR-07`, `ADR-14`, `ADR-18`, `ADR-19`)
 
-前端通过 `vite.config.ts` 固定 `base: '/traefik/'`，向外暴露 `./App` 与 `./menu`（`traefikMenuConfig`）。依据 [`ADR-14`](../05-adr/14-governance-dashboard-golden-suite-and-ci-gate-adr.md) 菜单演进至 **4 组 10 项（`全局概览 ➔ 契约核验与回归 ➔ 架构与契约 ➔ 环境与治理`）** 并在 [`ADR-18`](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) 中严格保持**不新增一级菜单项**（所有 Proto 文档/源码/MR 门禁收口于 `/schemas` 五视窗，站内持久化通知挂载在页面右上角全局铃铛气泡与详情抽屉），`StandaloneShell` 直接消费 `traefikMenuConfig` 保持单一真实源：
+前端通过 `vite.config.ts` 固定 `base: '/traefik/'`，向外暴露 `./App` 与 `./menu`（`traefikMenuConfig`）。依据 [`ADR-14`](../05-adr/14-governance-dashboard-golden-suite-and-ci-gate-adr.md) 演进为 4 组 10 项后，进一步依据 [`ADR-19`](../05-adr/19-proto-contract-ia-unbundling-and-four-workbenches-adr.md) (`M27`) 将重载的 `Proto 契约` 拆解为独立 **`Proto 契约治理`** 一级分组，全局菜单形成 **5 组 13 项（`全局概览 ➔ 架构数字孪生 ➔ Proto 契约治理 ➔ 契约核验与回归 ➔ 环境与治理`）**，站内持久化通知挂载在页面右上角全局铃铛气泡与详情抽屉（`WorkspaceUtilityHeader` + `StandaloneShell`），`StandaloneShell` 直接消费 `traefikMenuConfig` 保持单一真实源：
 
 | 菜单分组 | 菜单名称 | 子路由路径 (`MODULE_BASE_PATH = '/traefik'`) | 页面组件 | 可见角色 | URL Search Params 状态同步项 |
 | :--- | :--- | :--- | :--- | :---: | :--- |
 | **全局概览** *(默认首页)* | **治理大盘** | `/dashboard` | `DashboardWorkbenchPage` | 全体登录用户 | `subsystem_id`（含三维健康分 + **`F-24` 静态规范合标率独立卡片**） |
+| **架构数字孪生** | **架构拓扑** | `/topology` | `TopologyWorkbenchPage` | 全体登录用户 | `view` (`LOGICAL` \| `PHYSICAL`), `env_agent_id`, `session_id`, `focus` / `topo_focus`, `topo_ego`, `topo_ego_hops`, `topo_subsystems`, `topo_my`, `topo_status`, `topo_hide_isolated`, `topo_hub_fold`, `topo_contract_mode` (`AGG` \| `EXPAND`), `topo_realization` (`1` \| `0`), `topo_layout_id`（支持高清 `PNG/SVG` 导出） |
+| **架构数字孪生** | **架构元素** | `/architecture` | `ArchitectureWorkbenchPage` | 全体登录用户 | `tree` (`logical` \| `physical`), `subsystem_id`, `group_id`, `module_id`, `proc_group_id`, `arch_process_id` |
+| **Proto 契约治理** | **接口参考文档** | `/proto-docs` | `ProtoDocsWorkbenchPage` | 全体登录用户 | `docs_view` (`reference` \| `catalog-ops`), `service_name`, `schema_id`, `claimed_status`, `search`, `page`, `page_size` |
+| **Proto 契约治理** | **源码与 Git 仓** | `/proto-sources` | `ProtoSourcesWorkbenchPage` | 全体登录用户 | `file_id`, `schema_id`, `source_id`, `repo_id`, `search`, `#L<n>` 行号锚点 |
+| **Proto 契约治理** | **MR 门禁与规范** | `/proto-governance` | `ProtoGovernanceWorkbenchPage` | 全体登录用户 | `gov_tab` (`mr-gates` \| `rules` \| `vocab` \| `report`), `runId`, `mr_page`, `mr_page_size`, `repo` |
+| **Proto 契约治理** | **描述集与依赖** | `/schemas` | `ProtoSchemaWorkbenchPage` | 全体登录用户 | `tab` (`assets` \| `graph`), `schema_id`, `category`, `latest_only`, `active_only`, `search`, `sort_by`, `sort_dir`, `page`, `page_size` |
 | **契约核验与回归** | **契约采集** | `/record` | `RecordingWorkbenchPage` | 全体登录用户 | `scope` (`SHARED` \| `PRIVATE`), `status`, `search`, `auto_start` (`1`), `agent_id`, `page`, `page_size` |
 | **契约核验与回归** | **事务分析** | `/debug` | `TrafficDebugWorkbenchPage` | 全体登录用户 | `session_id`, `view` (`tree` \| `flat`, 默认 `tree`), `live` (`1`), `direction`, `exchange_type`, `service_name`, `operation`, `sno`, `trace_id`, `entity_key`, `has_error` (`true`), `is_replayable`, `keyword`, `seq_root_id`, `page`, `page_size` |
 | **契约核验与回归** | **防劣化回归** | `/replay` | `ReplayWorkbenchPage` | 全体登录用户 | `session_id`, `auto_create` (`1`), `target_process_id`, `status`, `page`, `page_size` |
 | **契约核验与回归** | **黄金用例库** | `/golden-suites` | `GoldenSuitesWorkbenchPage` | 全体登录用户 | `arch_process_id`, `suite_id`, `search`, `page`, `page_size` |
-| **架构与契约** *(静态基线)* | **架构拓扑** | `/topology` | `TopologyWorkbenchPage` | 全体登录用户 | `view` (`LOGICAL` \| `PHYSICAL`), `env_agent_id`, `session_id`, `focus` / `topo_focus`, `topo_ego`, `topo_ego_hops`, `topo_subsystems`, `topo_my`, `topo_status`, `topo_hide_isolated`, `topo_hub_fold`, `topo_contract_mode` (`AGG` \| `EXPAND`), `topo_realization` (`1` \| `0`), `topo_layout_id`（支持高清 `PNG/SVG` 导出） |
-| **架构与契约** | **架构元素** | `/architecture` | `ArchitectureWorkbenchPage` | 全体登录用户 | `tree` (`logical` \| `physical`), `subsystem_id`, `group_id`, `module_id`, `proc_group_id`, `arch_process_id` |
-| **架构与契约** | **Proto 契约** | `/schemas` | `ProtoSchemaWorkbenchPage` | 全体登录用户 | `tab` (`docs` \| `sources` \| `mr-gates` \| `assets` \| `graph`；无损兼容旧值 `catalog` $\rightarrow$ `docs`), `schema_id`, `service_name`, `file_id`, `line`, `repo_id`, `run_id`, `category`, `latest_only`, `active_only`, `claimed_status`, `search`, `sort_by`, `sort_dir`, `page`, `page_size` |
 | **环境与治理** *(沉底低频)* | **Agent 与进程** | `/agents` | `AgentManagementPage` | 全体登录用户 | `scope` (`SHARED` \| `PRIVATE`), `agent_id`, `process_id`, `open_mount` (`1`), `lease_state`, `status`, `page`, `page_size` |
 | **环境与治理** | **模块参数配置** | `/admin/settings` | `AdminSettingsPage` | `traefik_admin` (`adminOnly`) | -（含 CI Token、LLM 建议、`outbound_trusted_cidrs` 信任白名单与跨机 `code-notifier`/SMTP 参数脱敏配置） |
 
-* **历史深链与默认落地页平滑重定向契约（100% 无损保留 Query 参数）**：
+* **历史深链与默认落地页平滑重定向契约（100% 无损保留 Query 参数与 `#hash`）**：
   - `/`、`/traefik`、`/traefik/` $\rightarrow$ `replace` 重定向至 `/dashboard`；`/sessions` $\rightarrow$ `replace` 重定向至 `/record`；
   - `/traffic?...` $\rightarrow$ `replace` 重定向至 `/debug?...`（完整继承 `session_id`、`trace_id`、`sno` 等检索参数）；
   - `/architecture?tab=topology|verify&...` $\rightarrow$ `replace` 重定向至 `/topology?...`；`/architecture?tab=physical&...` $\rightarrow$ `replace` 重定向至 `/topology?view=PHYSICAL&...`；
-  - `/schemas?tab=catalog&...` $\rightarrow$ 由 `ProtoSchemaWorkbenchPage` 自动平滑映射定位至 `?tab=docs&...`（参考文档中心，保留原 `service_name` / `schema_id` 深链定位）。
+  - `/schemas?tab=docs&...` $\rightarrow$ `SchemasRouteWrapper` 重定向至 `/proto-docs?docs_view=reference&...`；
+  - `/schemas?tab=catalog&...` $\rightarrow$ `SchemasRouteWrapper` 重定向至 `/proto-docs?docs_view=catalog-ops&...`（保留 `claimed_status`、`service_name`、`schema_id` 等参数）；
+  - `/schemas?tab=sources&...` $\rightarrow$ `SchemasRouteWrapper` 重定向至 `/proto-sources?...`（完整保留 `file_id`、`schema_id` 及 `#L<n>` Hash 行号锚点）；
+  - `/schemas?tab=mr-gates&...` $\rightarrow$ `SchemasRouteWrapper` 重定向至 `/proto-governance?gov_tab=mr-gates&...`（保留 `runId`、`mr_page` 等通知深链参数）；
+  - `/schemas?tab=lint-rules|lint-vocab|lint-report&...` $\rightarrow$ `SchemasRouteWrapper` 重定向至 `/proto-governance?gov_tab=rules|vocab|report&...`。
 
 > **通用分页硬约束**：所有分页列表统一复用 `@code/common` 的 `Pagination` 与 `usePaginationState`（同步至 `useSearchParams`），每页条数选项固定为 **`15 / 25 / 50 / 100`（默认 `25`）**，控件布局严格为 `[首页] [上一页] [5页连续数字滑动窗口] [下一页] [末页] [条/页下拉框]`。
 
@@ -491,21 +499,25 @@ src/
 │   │   ├── ModuleContractDetailPane.tsx    # 业务模块 PROVIDE(自动切实现契约+impl_key)/DEPEND(分发/具体实现)双表 & CONTRACT_LIB「定义的接口」页签(契约登记/实现矩阵/分发调用方)
 │   │   ├── ArchProcessTreePanel.tsx        # [物理进程 ?tree=physical]: 标准进程组 (ArchProcessGroup) ➔ 标准业务进程 (ArchProcess) 树与搜索/CRUD
 │   │   └── ArchProcessDetailPane.tsx       # 标准架构进程详情: 默认端口(含0纯客户端)/启动特征、组装承载的 FM 模块、汇总服务契约与宿主机挂载就绪血缘
-│   ├── ProtoSchemaWorkbenchPage/           # 6. [架构与契约] Proto 全生命周期五视窗工作台 (/schemas - ADR-06/10/18)
-│   │   ├── SchemaPoolSummaryBar.tsx        # 顶部全局生效池健康摘要栏: 生效制品数(含BASE_LIB)/服务数/方法数/架构认领率与孤儿快捷过滤
-│   │   ├── LivingProtoDocsPane.tsx         # [视窗一 ?tab=docs, F-18] 活体接口参考文档中心（兼容 ?tab=catalog）: 左树包/服务分组导航 + 右侧文档视图、Markdown 导出
-│   │   ├── ServiceReferenceDocView.tsx     # 服务级文档详情: 所属架构(定义方+全量实现方)、RPC 方法折叠卡片、@deprecated/@owner/@error_code、Enum 字典、黄金/缺省 JSON、file.proto#L42 跳链
-│   │   ├── GitSourcesWorkbenchPane.tsx     # [视窗二 ?tab=sources, F-21/F-28/F-29] Git 契约仓绑定（AES 凭据脱敏表单、一键同步、一致性对账）、文件树与规则/词库配置抽屉
+│   ├── ProtoSchemaWorkbenchPage/           # 6. [Proto 契约治理] 四大独立工作台套件 (/proto-docs, /proto-sources, /proto-governance, /schemas - ADR-06/10/18/19)
+│   │   ├── ProtoDocsWorkbenchPage.tsx      # [独立工作台 /proto-docs] 轻量专注接口文档与契约认领目录（无 SchemaPoolSummaryBar、双胶囊切换 reference/catalog-ops）
+│   │   ├── ProtoSourcesWorkbenchPage.tsx   # [独立工作台 /proto-sources] 源码与 Git 仓专注工作台（无 SchemaPoolSummaryBar、直接承载 GitSourcesWorkbenchPane）
+│   │   ├── ProtoGovernanceWorkbenchPage.tsx # [独立工作台 /proto-governance] MR 门禁流水 / 静态规则 / 领域词库 / AST 重复簇 4 页签主工作台（URL ?gov_tab=...）
+│   │   ├── ProtoSchemaWorkbenchPage.tsx    # [独立工作台 /schemas] 描述集资产与跨包依赖工作台（保留 SchemaPoolSummaryBar + assets/graph 双页签 + 快捷导流）
+│   │   ├── SchemaPoolSummaryBar.tsx        # /schemas 专属顶部全局生效池健康摘要栏: 生效制品数(含BASE_LIB)/服务数/方法数/架构认领率与 .proto/.pb 入口
+│   │   ├── LivingProtoDocsPane.tsx         # [F-18] 活体接口参考文档中心: 左树包/服务分组导航 + 右侧文档视图、Markdown 导出
+│   │   ├── ServiceReferenceDocView.tsx     # 服务级文档详情: 所属架构(定义方+全量实现方)、RPC 方法折叠卡片、@deprecated/@owner/@error_code、Enum 字典、黄金/缺省 JSON、file.proto#L42 跳链（指向 /proto-sources）
+│   │   ├── GitSourcesWorkbenchPane.tsx     # [F-21/F-28/F-29] Git 契约仓绑定（AES 凭据脱敏表单、一键同步、一致性对账）、文件树与只读源码浏览
 │   │   ├── ProtoReadOnlyCodeViewer.tsx     # 轻量级自研只读语法着色器（行号锚点 #L42 高亮、100% --color-* Token，无 Monaco 体积膨胀）
 │   │   ├── ProtoCommitDiffView.tsx         # 基于 --color-* Token 的双栏/行内只读 Git 提交历史对比视图
-│   │   ├── LintRuleAndVocabDrawer.tsx      # [F-30] 可配置静态检查规则矩阵 + 标准词根词典 (`traefik_vocabulary_terms`) CRUD 抽屉
-│   │   ├── MRGateWorkbenchPane.tsx         # [视窗三 ?tab=mr-gates, F-29/F-31] Git MR 四合一门禁台账、变更文件虚拟树摘要、违规行号明细、Breaking 影响面与管理员 Override 审批弹窗
-│   │   ├── SchemaAssetLedgerTable.tsx      # [视窗四 ?tab=assets] 制品资产全景宽表: 默认按制品名聚合、source_type 来源徽章、在线源码 compile、批量激活与行内[⬆️新版本]
+│   │   ├── LintRuleAndVocabDrawer.tsx      # [F-30] 导出嵌入式 LintRuleAndVocabPanel（供 /proto-governance 主区平铺）与兼容抽屉壳 LintRuleAndVocabDrawer
+│   │   ├── MRGateWorkbenchPane.tsx         # [F-29/F-31] Git MR 四合一门禁台账、变更文件虚拟树摘要、违规行号明细、Breaking 影响面与管理员 Override 审批弹窗
+│   │   ├── SchemaAssetLedgerTable.tsx      # [/schemas ?tab=assets] 制品资产全景宽表: 默认按制品名聚合、source_type 来源徽章、在线源码 compile、批量激活与行内[⬆️新版本]
 │   │   ├── SchemaAssetInspectDrawer.tsx    # 制品详情与历史抽屉(680px Drawer): 自有 .proto/外部 import/Git Commit 溯源、服务认领明细与同名全版本时间线回滚/停用/清理
-│   │   ├── ProtoDependenciesGraphPane.tsx  # [视窗五 ?tab=graph, F-32] 基于 @xyflow/react + elkjs 复用的跨 Schema import 依赖图与 PNG/SVG 导出
+│   │   ├── ProtoDependenciesGraphPane.tsx  # [/schemas ?tab=graph, F-32] 基于 @xyflow/react + elkjs 复用的跨 Schema import 依赖图与 PNG/SVG 导出
 │   │   ├── SchemaUploadModal.tsx           # .pb 上传 & 在线纯 Go protocompile 源码包提交双模弹窗
 │   │   ├── SchemaConflictModal.tsx         # 409 冲突与反向依赖阻断受控弹窗（结构化呈现方法冲突表 conflicts 或受影响下游制品表 broken_dependents）
-│   │   ├── OperationMappingTable.tsx       # （下沉嵌入或供断言配置复用）服务与 RPC 方法表
+│   │   ├── OperationMappingTable.tsx       # （挂载于 /proto-docs catalog-ops 胶囊或供断言复用）服务与 RPC 方法认领目录表
 │   │   ├── ServiceSummaryRow.tsx           # 外层服务行组件: 服务全名、来源 .pb 制品、源 Proto、认领模块、RPC 计数
 │   │   ├── OperationDocDrawer.tsx          # 方法级参数字典树与回归 Diff 忽略路径配置抽屉
 │   │   ├── MessageSchemaInspectorTree.tsx  # 消息体参数定义字典树组件 (多层递归展开、Tag、类型高亮、注释透视)
@@ -1204,15 +1216,14 @@ export interface ServiceContractDTO {
 3. **`EdgeDetailDrawer` 可读化升级**：
    - 通过 `nodeMap.get(edge.source)` 与 `nodeMap.get(edge.target)` 解析业务节点元数据，在抽屉头部渲染 **`[类型中文徽章] 节点中文名称 (Code)` ➔ `[类型中文徽章] 节点中文名称 (Code)`**，彻底隐藏原始 `mod_101` / `ext_ctx_sub_2` 内部 ID；并提供 `[🎯 进入源域]` / `[🎯 进入目标域]` 快捷穿透导航。
 
-### 4.10 Proto 契约五视窗、活体参考文档、只读 Git 源码与强类型 DTO 设计 (`ADR-18` / M22~M26)
+### 4.10 Proto 契约四大专注工作台、活体参考文档、只读 Git 源码与强类型 DTO 设计 (`ADR-18` / `ADR-19` / M22~M27)
 
-1. **五视窗平滑布局与零编辑铁律（`/schemas`）与双模 `NotificationBell` 挂载策略**：
-   - 顶部保留 `SchemaPoolSummaryBar` 全局契约池概览（含适配门户嵌入模式 `EmbeddedRoutes` 无 sub-app 顶栏现状的共享 **`WorkspaceUtilityHeader` `NotificationBell` 工具栏槽位**，`StandaloneShell` 独立模式下同步挂载于平台顶栏右侧），主体切换为 **5 枚扁平 Tab**（严格遵循 `useSearchParams` 同步 `tab` 参数，兼容旧 `?tab=catalog` 自动切入 `docs`）：
-     1. **📖 接口文档 (`?tab=docs`, `F-18`)**：左侧按 `Package / Subsystem` 分组的轻量虚拟搜索树（支持关键词检索服务名、方法名、注释与错误码），右侧展示服务端完整文档（服务定位徽章、多实现契约「定义方 + 全部实现方 (`impl_key / ArchProcess`)」、方法卡片列表、`@deprecated` 红色警告横幅、`@owner` 负责徽章、结构化错误码表、Req/Rsp 嵌套字段注释与 `DiffIgnorePaths` 开关、Enum 值全量词典、优先命中 `F-25` 黄金样本 / 缺省构造 JSON 示例、以及 `[📋 导出 Markdown]` 按钮）；点击任何符号行号链接（如 `order.proto#L42`）通过 URL 跳转 `?tab=sources&file_id=...&line=42`；
-     2. **🗂️ Git 源码库 (`?tab=sources`, `F-21` / `F-28` / `F-29` / `F-30`)**：左栏展示绑定的 `GitRepo` / `GitProtoBundle` (`1:N` Monorepo 多包) 与目录树（右上角对管理员开放 `[⚙️ 规则与词库配置]`、`[⚙️ Git 仓与 Bundle 管理]`、`[🔄 立即同步]`、`[⚖️ 一致性对账]`），主区**仅提供全只读代码浏览 (`ProtoReadOnlyCodeViewer`)、只读双栏历史提交对比 (`ProtoCommitDiffView`) 与当文件最近静态合规报告 (`CheckViolation`) 侧栏**——**严禁任何 Web 编辑器、保存草稿按钮或编辑锁 UI**；对大仓大文件按行分页或切片虚拟渲染；
-     3. **🚦 MR 门禁 (`?tab=mr-gates`, `F-29` / `F-31`)**：遵循标准 **`15 / 25 / 50 / 100`（默认 `25`）** 分页契约呈现全部 `MRCheckRun` 记录，四枚徽章列清晰区分「编译 (`protocompile`) / 规范 (`Lint`) / 重复结构 (`AST Dup`) / 破坏性 (`F-26 Breaking`)」，点击进入宽屏详情抽屉查看变更文件补丁摘要（含 `DELETED`）、违规明细跳链、`AffectedDependents`（含 `BASE_LIB` 传递扩散）下游受影响模块列表与管理员 `[🛡️ 批准豁免 (Approve with Override)]`（仅 `compile_passed=true` 且非编译失败记录可用，弹窗强制填写豁免理由并提示生成 P1 高危审计）；
-     4. **📦 描述集台账 (`?tab=assets`)**：保留原制品多版本历史、依赖状态与激活回滚闭环，新增 `source_type` 来源徽章（`UPLOAD_PB` / `ONLINE_COMPILE` / `GIT_SYNC` / `GIT_MR_AUTO`）、`source_bundle_id`/Git Commit SHA 短链接与 `[⚡ 在线源码编译]` 入口；
-     5. **🕸️ 依赖关系图 (`?tab=graph`, `F-32`)**：直接复用既有 `@xyflow/react` + `elkjs` 轻量化底座（按 `PROTO_SCHEMA` / `BASE_LIB` 节点与 `import` 有向边渲染，**完全复用现成图库与 `--color-*` Token，零重复引入第三方图形库**），支持按 `BASE_LIB`/`BUSINESS`/`GATEWAY` 着色、点击节点跳转 `?tab=assets&schema_id=X` 及程序化矢量 `PNG/SVG` 导出。
+1. **四大正交工作台拆解与零编辑铁律（取代原 `/schemas` 重型五合一页面）**：
+   - 在双模 `WorkspaceUtilityHeader`（门户嵌入态）与 `StandaloneShell`（独立壳）继续统一托管全局 `NotificationBell` 的基础上，将原 `/schemas` 彻底拆解为职责纯粹的四座工作台：
+     1. **📖 接口参考文档 (`ProtoDocsWorkbenchPage` at `/proto-docs`, `F-18`)**：**移除 `SchemaPoolSummaryBar` 与管理员上传/编辑入口**，仅保留紧凑头部 + `.code-tab-pills` 双胶囊切换（`全注释参考文档` `reference` / `契约认领与方法目录` `catalog-ops`，URL 同步 `docs_view`）；左侧按 `Package / Subsystem` 分组的轻量虚拟搜索树，右侧展示服务端完整文档与 Markdown 导出；点击任何符号行号链接（如 `order.proto#L42`）在当前页拉起 `ProtoReadOnlyCodeViewer` 抽屉高亮定位或跳链 `/proto-sources?file_id=...#L42`；
+     2. **🗂️ 源码与 Git 仓 (`ProtoSourcesWorkbenchPage` at `/proto-sources`, `F-21` / `F-28` / `F-29`)**：**移除 `SchemaPoolSummaryBar`**，直接全屏承载 `GitSourcesWorkbenchPane`：左栏展示 `GitRepo` / `GitProtoBundle` (`1:N` Monorepo 多包) 与目录树，主区**仅提供全只读代码浏览 (`ProtoReadOnlyCodeViewer`)、只读双栏历史提交对比 (`ProtoCommitDiffView`) 与单文件最近静态合规报告 (`CheckViolation`) 侧栏**——**严禁任何 Web 编辑器、保存草稿按钮或编辑锁 UI**；
+     3. **🚦 MR 门禁与规范 (`ProtoGovernanceWorkbenchPage` at `/proto-governance`, `F-29` / `F-30` / `F-31`)**：**移除 `SchemaPoolSummaryBar`**，采用 **4 枚 URL 同步一级主标签（`gov_tab=mr-gates | rules | vocab | report`）**，将原本藏于 960px 抽屉的「静态检查规则」「领域标准词库」「体检报告与 AST 重复簇」通过复用组件 `LintRuleAndVocabPanel` 解放至主工作区平铺操作，与 `MRGateWorkbenchPane`（`15/25/50/100` 标准分页、变更补丁摘要、`Override` 审批弹窗及违规代码行号抽屉定位）正交协同；
+     4. **📦 描述集与依赖 (`ProtoSchemaWorkbenchPage` at `/schemas`, `F-03.5` / `F-26` / `F-32`)**：专职底层描述集治理，**保留 `SchemaPoolSummaryBar` 全局生效池摘要栏**（含 `[在线源码直编 (.proto)]` 与 `[上传描述集 (.pb)]` 按钮），主体简化为 **2 枚平级页签**：**描述集资产台账 (`?tab=assets`)** 与 **跨包依赖关系图 (`?tab=graph`)**，并在标签栏右侧放置前往 `/proto-docs` 与 `/proto-governance` 的轻量导流入口。
 2. **轻量化 `<= 150KB gzip`（`<= 500KB` raw）增量构建红线与主题双模契约**：
    - 以 M21 交付基线（`__federation_expose_App` ~2.83MB / `elk.bundled` ~1.47MB）为准，严禁引入 `@monaco-editor/react` 或 `monaco-editor`（避免数 MB Web Worker 与静态包膨胀）；`M22~M26` 新增 JS 产物体积总增量严格控制在 **`<= 150KB gzip`（`<= 500KB` 未压缩）**，`ProtoReadOnlyCodeViewer` 与 `ProtoCommitDiffView` 必须采用**纯 React + 轻量线性分词高亮器**实现（`< 25KB` Gzip 前），关键字/类型/注释/行号高亮/增删 Diff 背景严格消费 `theme.css` `--color-*` 语义 Token，彻底禁止 `#fff`/`#000` 硬编码。
 3. **前后端交互强类型 TypeScript DTO 契约（`frontend/src/types/`，严禁使用 `any`）**：

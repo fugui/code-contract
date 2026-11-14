@@ -38,9 +38,9 @@ const SourceWorkbenchDeepLink: React.FC<{ fileId?: number; line: number }> = ({
   const hash = line > 0 ? `#L${line}` : '';
   return (
     <Link
-      to={resolvePortalAwarePath(`/schemas?tab=sources&file_id=${fileId}${hash}`)}
+      to={resolvePortalAwarePath(`/proto-sources?tab=sources&file_id=${fileId}${hash}`)}
       className="pdoc-source-link pdoc-source-link--workbench"
-      title="在源码工作台打开并定位行号"
+      title="在源码与 Git 仓工作台打开并定位行号"
     >
       <ExternalLink size={12} />
       工作台源码

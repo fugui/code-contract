@@ -2,7 +2,8 @@ import { describe, it, expect, vi } from 'vitest';
 import { renderToString } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { LivingProtoDocsPane } from '../LivingProtoDocsPane';
-import { ProtoSchemaWorkbenchPage } from '../ProtoSchemaWorkbenchPage';
+import { ProtoDocsWorkbenchPage } from '../ProtoDocsWorkbenchPage';
+import { SchemasRouteWrapper } from '../../../App';
 import type { ProtoDocTreeResponse, ProtoServiceDocDetailDTO } from '../../../types';
 
 vi.mock('../../../api/schema', () => ({
@@ -240,10 +241,10 @@ const mockDetail: ProtoServiceDocDetailDTO = {
   },
 };
 
-describe('M23-P3 LivingProtoDocsPane (/schemas?tab=docs)', () => {
+describe('M23-P3 / M27 LivingProtoDocsPane & ProtoDocsWorkbenchPage (/proto-docs)', () => {
   it('testLivingDocsPane_SearchNav_ContractLineage_AndJumpToSourceLine', () => {
     const html = renderToString(
-      <MemoryRouter initialEntries={['/schemas?tab=docs&service_name=demo.billing.v1.BillingService']}>
+      <MemoryRouter initialEntries={['/proto-docs?service_name=demo.billing.v1.BillingService']}>
         <LivingProtoDocsPane
           initialTree={mockTree}
           initialDetail={mockDetail}
@@ -269,17 +270,34 @@ describe('M23-P3 LivingProtoDocsPane (/schemas?tab=docs)', () => {
     expect(html).toContain('导出 Markdown');
   });
 
-  it('remaps legacy ?tab=catalog seamlessly to 5-tab IA docs view without broken links', () => {
-    const html = renderToString(
-      <MemoryRouter initialEntries={['/schemas?tab=catalog&service_name=demo.billing.v1.BillingService']}>
-        <ProtoSchemaWorkbenchPage />
+  it('mounts ProtoDocsWorkbenchPage without asset summary bloat and redirects legacy ?tab=catalog seamlessly', () => {
+    const docsPageHtml = renderToString(
+      <MemoryRouter initialEntries={['/proto-docs?service_name=demo.billing.v1.BillingService']}>
+        <ProtoDocsWorkbenchPage initialTree={mockTree} initialDetail={mockDetail} />
       </MemoryRouter>
     );
 
-    expect(html).toContain('接口参考文档');
-    expect(html).toContain('只读源码');
-    expect(html).toContain('Git MR 门禁');
-    expect(html).toContain('描述集资产台账');
-    expect(html).toContain('跨包依赖关系图');
+    expect(docsPageHtml).toContain('全注释参考文档');
+    expect(docsPageHtml).toContain('契约认领与方法目录');
+    expect(docsPageHtml).toContain('BillingService');
+    expect(docsPageHtml).not.toContain('上传描述集 (.pb)');
+    expect(docsPageHtml).not.toContain('描述集资产台账');
+
+    const catalogPageHtml = renderToString(
+      <MemoryRouter initialEntries={['/proto-docs?docs_view=catalog-ops&claimed_status=UNCLAIMED']}>
+        <ProtoDocsWorkbenchPage initialCatalogGroups={[]} initialCatalogTotal={0} />
+      </MemoryRouter>
+    );
+    expect(catalogPageHtml).toContain('契约认领与方法目录');
+    expect(catalogPageHtml).not.toContain('上传描述集 (.pb)');
+
+    const redirectHtml = renderToString(
+      <MemoryRouter initialEntries={['/schemas?tab=catalog&service_name=demo.billing.v1.BillingService']}>
+        <SchemasRouteWrapper />
+      </MemoryRouter>
+    );
+    expect(redirectHtml).toContain(
+      'data-target="/proto-docs?service_name=demo.billing.v1.BillingService&amp;docs_view=catalog-ops"'
+    );
   });
 });

@@ -11,7 +11,7 @@ export const DEFAULT_ENTRY_PATH = `${MODULE_BASE_PATH}/dashboard`;
 export const DEFAULT_STANDALONE_PATH = '/dashboard';
 
 // 标准侧边栏菜单契约（由 CodeBench 宿主在运行时通过 remoteEntry.js -> ./menu 动态拉取）
-// 按照 ADR-14 升维为「全局概览 ➔ 契约核验与回归 ➔ 架构与契约 ➔ 环境与治理」4 组 10 项金字塔 (F-15, F-25)
+// 按照 ADR-14 与 ADR-19 演进为「全局概览 ➔ 架构数字孪生 ➔ Proto 契约治理 ➔ 契约核验与回归 ➔ 环境与治理」5 组 13 项结构 (F-15, F-25)
 export const traefikMenuConfig: TraefikMenuConfig = {
   moduleKey: MODULE_KEY,
   moduleName: MODULE_TITLE,
@@ -24,6 +24,46 @@ export const traefikMenuConfig: TraefikMenuConfig = {
           path: '/dashboard',
           label: '治理大盘',
           icon: 'M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z',
+        },
+      ],
+    },
+    {
+      title: '架构数字孪生',
+      items: [
+        {
+          path: '/topology',
+          label: '架构拓扑',
+          icon: 'M13 10V3L4 14h7v7l9-11h-7z',
+        },
+        {
+          path: '/architecture',
+          label: '架构元素',
+          icon: 'M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10',
+        },
+      ],
+    },
+    {
+      title: 'Proto 契约治理',
+      items: [
+        {
+          path: '/proto-docs',
+          label: '接口参考文档',
+          icon: 'M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253',
+        },
+        {
+          path: '/proto-sources',
+          label: '源码与 Git 仓',
+          icon: 'M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4',
+        },
+        {
+          path: '/proto-governance',
+          label: 'MR 门禁与规范',
+          icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z',
+        },
+        {
+          path: '/schemas',
+          label: '描述集与依赖',
+          icon: 'M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4',
         },
       ],
     },
@@ -49,26 +89,6 @@ export const traefikMenuConfig: TraefikMenuConfig = {
           path: '/golden-suites',
           label: '黄金用例库',
           icon: 'M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z',
-        },
-      ],
-    },
-    {
-      title: '架构与契约',
-      items: [
-        {
-          path: '/topology',
-          label: '架构拓扑',
-          icon: 'M13 10V3L4 14h7v7l9-11h-7z',
-        },
-        {
-          path: '/architecture',
-          label: '架构元素',
-          icon: 'M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10',
-        },
-        {
-          path: '/schemas',
-          label: 'Proto 契约',
-          icon: 'M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4',
         },
       ],
     },

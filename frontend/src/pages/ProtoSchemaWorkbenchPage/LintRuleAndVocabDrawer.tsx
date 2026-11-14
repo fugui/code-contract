@@ -11,8 +11,12 @@ import type {
 
 export type LintDrawerSubTab = 'rules' | 'vocab' | 'report';
 
-interface LintRuleAndVocabDrawerProps {
-  open: boolean;
+export interface LintRuleAndVocabPanelProps {
+  open?: boolean;
+  embedded?: boolean;
+  hideInternalTabs?: boolean;
+  activeSubTab?: LintDrawerSubTab;
+  onSubTabChange?: (tab: LintDrawerSubTab) => void;
   isAdmin: boolean;
   initialSubTab?: LintDrawerSubTab;
   initialRules?: CheckRuleDTO[];
@@ -21,8 +25,12 @@ interface LintRuleAndVocabDrawerProps {
   initialVocabTotal?: number;
   initialReport?: CheckReportDTO | null;
   targetSchemaId?: number;
-  onClose: () => void;
   onJumpToSource?: (protoFile: string, line: number) => void;
+}
+
+export interface LintRuleAndVocabDrawerProps extends LintRuleAndVocabPanelProps {
+  open: boolean;
+  onClose: () => void;
 }
 
 const SEVERITY_BADGE: Record<string, string> = {
@@ -37,8 +45,12 @@ const REPORT_STATUS_BADGE: Record<string, string> = {
   FAILED: 'code-badge code-badge-danger',
 };
 
-const LintRuleAndVocabDrawer: React.FC<LintRuleAndVocabDrawerProps> = ({
-  open,
+export const LintRuleAndVocabPanel: React.FC<LintRuleAndVocabPanelProps> = ({
+  open = true,
+  embedded = false,
+  hideInternalTabs = false,
+  activeSubTab,
+  onSubTabChange,
   isAdmin,
   initialSubTab = 'rules',
   initialRules,
@@ -47,11 +59,30 @@ const LintRuleAndVocabDrawer: React.FC<LintRuleAndVocabDrawerProps> = ({
   initialVocabTotal,
   initialReport,
   targetSchemaId,
-  onClose,
   onJumpToSource,
 }) => {
-  const [subTab, setSubTab] = useState<LintDrawerSubTab>(initialSubTab);
+  const [internalSubTab, setInternalSubTab] = useState<LintDrawerSubTab>(activeSubTab ?? initialSubTab);
+  const subTab = activeSubTab ?? internalSubTab;
   const { page, pageSize, setPage, setPageSize } = usePaginationState({ defaultPageSize: 25 });
+
+  useEffect(() => {
+    if (activeSubTab !== undefined) {
+      setInternalSubTab(activeSubTab);
+    } else {
+      setInternalSubTab(initialSubTab);
+    }
+  }, [activeSubTab, initialSubTab]);
+
+  const handleSelectSubTab = (tab: LintDrawerSubTab) => {
+    if (tab !== 'report') {
+      setPage(1);
+    }
+    if (onSubTabChange) {
+      onSubTabChange(tab);
+    } else {
+      setInternalSubTab(tab);
+    }
+  };
 
   // 规则状态
   const [rules, setRules] = useState<CheckRuleDTO[]>(initialRules ?? []);
@@ -302,13 +333,11 @@ const LintRuleAndVocabDrawer: React.FC<LintRuleAndVocabDrawerProps> = ({
   };
 
   return (
-    <Drawer
-      open={open}
-      onClose={onClose}
-      title="Protobuf 静态检查规则、标准词库与 AST 防重扫描"
-      width={960}
+    <div
+      className={embedded ? 'plint-drawer plint-drawer--embedded' : 'plint-drawer'}
+      data-testid="lint-rule-vocab-panel"
     >
-      <div className="plint-drawer">
+      {!hideInternalTabs ? (
         <div className="plint-tabs">
           <div className="plint-tabs__nav" role="tablist" aria-label="静态检查控制视图">
             <button
@@ -316,10 +345,7 @@ const LintRuleAndVocabDrawer: React.FC<LintRuleAndVocabDrawerProps> = ({
               role="tab"
               aria-selected={subTab === 'rules'}
               className={`plint-tab ${subTab === 'rules' ? 'plint-tab--active' : ''}`}
-              onClick={() => {
-                setPage(1);
-                setSubTab('rules');
-              }}
+              onClick={() => handleSelectSubTab('rules')}
             >
               <ShieldAlert size={14} /> 规则矩阵 ({rulesTotal})
             </button>
@@ -328,10 +354,7 @@ const LintRuleAndVocabDrawer: React.FC<LintRuleAndVocabDrawerProps> = ({
               role="tab"
               aria-selected={subTab === 'vocab'}
               className={`plint-tab ${subTab === 'vocab' ? 'plint-tab--active' : ''}`}
-              onClick={() => {
-                setPage(1);
-                setSubTab('vocab');
-              }}
+              onClick={() => handleSelectSubTab('vocab')}
             >
               <BookCheck size={14} /> 标准词汇词根库 ({vocabTotal})
             </button>
@@ -340,16 +363,21 @@ const LintRuleAndVocabDrawer: React.FC<LintRuleAndVocabDrawerProps> = ({
               role="tab"
               aria-selected={subTab === 'report'}
               className={`plint-tab ${subTab === 'report' ? 'plint-tab--active' : ''}`}
-              onClick={() => setSubTab('report')}
+              onClick={() => handleSelectSubTab('report')}
             >
               <FileSearch size={14} /> 体检报告与 AST 重复簇
             </button>
           </div>
           {!isAdmin && <span className="plint-hint">当前为只读/可发起扫描权限（修改规则与词库需管理员）</span>}
         </div>
+      ) : !isAdmin ? (
+        <div className="plint-tabs plint-tabs--hint-only">
+          <span className="plint-hint">当前为只读/可发起扫描权限（修改规则与词库需管理员）</span>
+        </div>
+      ) : null}
 
-        {errorMsg && <div className="plint-banner plint-banner--error">{errorMsg}</div>}
-        {bannerMsg && <div className="plint-banner">{bannerMsg}</div>}
+      {errorMsg && <div className="plint-banner plint-banner--error">{errorMsg}</div>}
+      {bannerMsg && <div className="plint-banner">{bannerMsg}</div>}
 
         {subTab === 'rules' && (
           <>
@@ -912,6 +940,22 @@ const LintRuleAndVocabDrawer: React.FC<LintRuleAndVocabDrawerProps> = ({
           </>
         )}
       </div>
+  );
+};
+
+export const LintRuleAndVocabDrawer: React.FC<LintRuleAndVocabDrawerProps> = ({
+  open,
+  onClose,
+  ...panelProps
+}) => {
+  return (
+    <Drawer
+      open={open}
+      onClose={onClose}
+      title="Protobuf 静态检查规则、标准词库与 AST 防重扫描"
+      width={960}
+    >
+      <LintRuleAndVocabPanel open={open} {...panelProps} />
     </Drawer>
   );
 };

@@ -474,15 +474,15 @@ export const DashboardWorkbenchPage: React.FC<DashboardWorkbenchPageProps> = ({
   };
 
   const handleNavigateSchemas = () => {
-    navigate(resolvePath('/schemas?tab=catalog&claimed_status=UNCLAIMED'));
+    navigate(resolvePath('/proto-docs?docs_view=catalog-ops&claimed_status=UNCLAIMED'));
   };
 
   const handleNavigateMrGates = () => {
-    navigate(resolvePath('/schemas?tab=mr-gates'));
+    navigate(resolvePath('/proto-governance?gov_tab=mr-gates'));
   };
 
   const handleNavigateProtoSources = () => {
-    navigate(resolvePath('/schemas?tab=sources'));
+    navigate(resolvePath('/proto-sources'));
   };
 
   return (

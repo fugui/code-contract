@@ -27,8 +27,8 @@ docs/
 │   └── 06-agent-observability-and-self-healing-design.md # 【运维可观测与自愈篇】Agent 探针特权感知、体检诊断与全链路闭环自愈设计
 ├── 03-api/          # 接口与数据契约：RESTful / SSE API 签名、主从信道契约、RBAC 权限与审计规范
 │   └── 01-http-api-contract.md                    # 【API 契约】控制面 REST/SSE 字典（含活体文档、只读源码、Git/MR 门禁与通知）、CI 门禁契约、主从 HTTP/WS 契约与 RBAC 守卫
-├── 04-tasks/        # TDD 实施规划与验收：Milestone 1~26 依赖拓扑、任务作战卡与自动化验收标准 (AC)
-│   ├── 01-roadmap.md                              # 【工程路线图】模板清理策略、M1~M26 DAG 拓扑、F/SC 覆盖矩阵与安全质量门禁
+├── 04-tasks/        # TDD 实施规划与验收：Milestone 1~27 依赖拓扑、任务作战卡与自动化验收标准 (AC)
+│   ├── 01-roadmap.md                              # 【工程路线图】模板清理策略、M1~M27 DAG 拓扑、F/SC 覆盖矩阵与安全质量门禁
 │   ├── 02-m1-crosrpc-and-domain-models.md         # 【M1 作战卡】协议栈 (pkg/crosrpc)、信封协议与 13 张表/分区管理器
 │   ├── 03-m2-arch-proto-and-agent-control.md      # 【M2 作战卡】三级架构元素、.pb 动态编解码与公私域 Agent 排他租约管控
 │   ├── 04-m3-agent-dataplane-ebpf-and-replay.md   # 【M3 作战卡】数据面 Agent 信道、cilium/ebpf 采集与零 .pb 二进制自愈重放
@@ -54,7 +54,8 @@ docs/
 │   ├── 24-m23-living-proto-docs-and-readonly-sources.md              # 【M23 作战卡 | ✅ 已交付】全注释活体参考文档中心 (F-18) 与轻量无锁只读源码视图 (增量 <=150KB gzip)
 │   ├── 25-m24-static-lint-vocabulary-and-duplicate-ast.md            # 【M24 作战卡 | ✅ 已交付】安全底座 (TRAEFIK_CRYPTO_KEY / SafeDialer 信任白名单)、设置脱敏、规范引擎、原生词库 Seed/CRUD、3s LLM 与 Jaccard>=0.85 三护栏重复检测
 │   ├── 26-m25-git-sync-and-monorepo-bundles.md                       # 【M25 作战卡 | ✅ 已交付】Git 无状态同步、GitRepo 1:N GitProtoBundle 多包对账、Tier-2 DB Resolver 与只读历史 Diff
-│   └── 27-m26-mr-gates-notifications-and-compliance-dashboard.md     # 【M26 作战卡 | ✅ 已交付】MR 四合一门禁 (FF 去重/原位评论/Override P1)、SSE 按 userID 定向、持久化通知 (LAN code-notifier/SMTP) 与 F-24 合标卡片
+│   ├── 27-m26-mr-gates-notifications-and-compliance-dashboard.md     # 【M26 作战卡 | ✅ 已交付】MR 四合一门禁 (FF 去重/原位评论/Override P1)、SSE 按 userID 定向、持久化通知 (LAN code-notifier/SMTP) 与 F-24 合标卡片
+│   └── 28-m27-proto-ia-unbundling-and-four-workbenches.md            # 【M27 作战卡 | ✅ 已交付】Proto 契约控制台 IA 拆解：5 组 13 项菜单、四工作台正交拆分与无损深链兼容 (ADR-19)
 ├── 05-adr/          # 架构决策记录 (ADR)：重大技术选型与权衡记录 (Architecture Decision Records)
 │   ├── 01-microfrontend-and-table-prefix-isolation.md                  # ADR-01：微前端集成、共享库表前缀隔离与 TDD 测试策略
 │   ├── 02-ebpf-hook-and-dual-subsystem-adr.md                          # ADR-02：eBPF 入站旁路钩子、Cookie 原目的还原与无 Schema 数据面解耦
@@ -73,7 +74,8 @@ docs/
 │   ├── 15-scalable-topology-focus-and-layout-persistence-adr.md       # ADR-15：大规模架构拓扑渐进式下钻聚焦、多维降噪与双层混合布局持久化架构决策
 │   ├── 16-multi-implementation-service-contract-adr.md               # ADR-16：多实现服务契约（接口库定义 + 多进程实现 + 调度中心分发）建模与表达架构决策
 │   ├── 17-topology-single-layer-drilldown-and-layout-ux-adr.md       # ADR-17：架构拓扑单层平铺逐级下钻、ELK 正交布局校准与全链路易用性升级设计
-│   └── 18-proto-full-lifecycle-and-git-mr-governance-adr.md            # ADR-18：废弃未落地的 code-proto 与 protohub 后，Proto 全生命周期与 Git/MR 协同治理架构决策
+│   ├── 18-proto-full-lifecycle-and-git-mr-governance-adr.md            # ADR-18：废弃未落地的 code-proto 与 protohub 后，Proto 全生命周期与 Git/MR 协同治理架构决策
+│   └── 19-proto-contract-ia-unbundling-and-four-workbenches-adr.md     # ADR-19：Proto 契约控制台信息架构拆解与四工作台正交拆分架构决策 (5 组 13 项菜单 + 无损深链重定向)
 ├── 06-ops/          # 交付与验证：双模联调、物理隔离数据库测试与生产环境单二进制部署手册
 │   └── 01-verification-and-deployment-guide.md    # 联调验证、自动化回归测试与生产部署操作指南
 └── 07-references/   # 外部参考与上位契约基准：协议包规范、字节字典与领域标准文档

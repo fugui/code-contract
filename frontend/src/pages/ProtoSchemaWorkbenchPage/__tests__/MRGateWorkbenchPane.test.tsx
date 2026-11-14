@@ -3,7 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { MRGateWorkbenchPane, canOverrideMRRun } from '../MRGateWorkbenchPane';
-import { ProtoSchemaWorkbenchPage } from '../ProtoSchemaWorkbenchPage';
+import { ProtoGovernanceWorkbenchPage } from '../ProtoGovernanceWorkbenchPage';
+import { SchemasRouteWrapper } from '../../../App';
 import type { MRCheckRunDTO, MRCheckRunDetailDTO } from '../../../types';
 
 vi.mock('@code/common', async () => {
@@ -129,16 +130,57 @@ const breakingCompiledRun: MRCheckRunDetailDTO = {
   ],
 };
 
-describe('MRGateWorkbenchPane & /schemas?tab=mr-gates Test Suite', () => {
-  it('TC-MRGATE-01: 访问 /schemas?tab=mr-gates 时渲染四合一门禁控制台而非占位符', () => {
+describe('MRGateWorkbenchPane & /proto-governance Test Suite', () => {
+  it('TC-MRGATE-01: 访问 /proto-governance 渲染 4 个独立治理页签与内联静态规范面板，并无损兼容 /schemas?tab=mr-gates', () => {
     const html = renderToStaticMarkup(
-      <MemoryRouter initialEntries={['/schemas?tab=mr-gates']}>
-        <ProtoSchemaWorkbenchPage />
+      <MemoryRouter initialEntries={['/proto-governance?gov_tab=mr-gates']}>
+        <ProtoGovernanceWorkbenchPage
+          initialRuns={[compileFailedRun, breakingCompiledRun]}
+          initialTotal={2}
+        />
       </MemoryRouter>
     );
 
+    expect(html).toContain('Git MR 门禁流水');
+    expect(html).toContain('静态检查规则');
+    expect(html).toContain('领域标准词库');
+    expect(html).toContain('体检报告与 AST 重复簇');
     expect(html).toContain('Git MR / PR 四合一契约门禁雷达');
     expect(html).not.toContain('proto-mr-gates-placeholder');
+    expect(html).not.toContain('上传描述集 (.pb)');
+
+    const rulesHtml = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/proto-governance?gov_tab=rules']}>
+        <ProtoGovernanceWorkbenchPage initialRules={[]} initialRulesTotal={0} />
+      </MemoryRouter>
+    );
+    expect(rulesHtml).toContain('data-testid="lint-rule-vocab-panel"');
+    expect(rulesHtml).toContain('plint-drawer--embedded');
+
+    const vocabHtml = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/proto-governance?gov_tab=vocab']}>
+        <ProtoGovernanceWorkbenchPage initialVocab={[]} initialVocabTotal={0} />
+      </MemoryRouter>
+    );
+    expect(vocabHtml).toContain('plint-drawer--embedded');
+    expect(vocabHtml).toContain('领域标准词库');
+
+    const reportHtml = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/proto-governance?gov_tab=report']}>
+        <ProtoGovernanceWorkbenchPage initialReport={null} />
+      </MemoryRouter>
+    );
+    expect(reportHtml).toContain('plint-drawer--embedded');
+    expect(reportHtml).toContain('体检报告与 AST 重复簇');
+
+    const redirectHtml = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/schemas?tab=mr-gates&runId=102']}>
+        <SchemasRouteWrapper />
+      </MemoryRouter>
+    );
+    expect(redirectHtml).toContain(
+      'data-target="/proto-governance?runId=102&amp;gov_tab=mr-gates"'
+    );
   });
 
   it('TC-MRGATE-02: 编译失败流水硬禁 Override，破坏性变更（编译通过）允许 Admin 豁免并展示波及模块明细', () => {

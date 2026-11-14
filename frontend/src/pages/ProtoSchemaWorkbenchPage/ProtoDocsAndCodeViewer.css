@@ -1706,3 +1706,101 @@
   margin: 2px 0;
   padding-left: 18px;
 }
+
+/* M27 / ADR-19: Proto 四工作台解耦与语义化表面布局样式 */
+.code-proto-schema-workbench,
+.pdoc-page-shell,
+.psrc-page-shell,
+.pgov-page-shell {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.pdoc-page-header,
+.pgov-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-primary);
+}
+
+.pdoc-page-header__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.pdoc-page-header__title {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.pdoc-page-header__desc {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--color-text-secondary);
+}
+
+.pgov-workbench-body {
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-primary);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.plint-drawer--embedded {
+  padding: 0;
+}
+
+.plint-tabs--hint-only {
+  justify-content: flex-end;
+  padding-bottom: 8px;
+}
+
+.pschema-quicklinks {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pschema-delete-modal__body {
+  padding: 8px 0;
+  color: var(--color-text-primary);
+}
+
+.pschema-delete-modal__title {
+  font-size: 14px;
+  margin: 0 0 8px;
+}
+
+.pschema-delete-modal__hint {
+  font-size: 12px;
+  margin: 0;
+  color: var(--color-text-secondary);
+}
+
+.pschema-delete-modal__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.pschema-delete-modal__confirm-btn {
+  background: var(--color-danger);
+  color: var(--color-text-white);
+  border: none;
+}
