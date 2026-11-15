@@ -1172,9 +1172,15 @@
   transition: stroke 0.15s ease, stroke-width 0.15s ease, stroke-opacity 0.15s ease;
 }
 
+/* 悬停连线或聚光灯激活上下游流动点线时，统一淡化底层轨道并暂停脉冲，保证上层流动虚线清晰可见 */
 .code-arch-edge-group--hovered .code-arch-edge,
-.code-arch-edge-group:hover .code-arch-edge {
+.code-arch-edge-group:hover .code-arch-edge,
+.code-arch-edge-group--flow-active .code-arch-edge,
+.code-arch-edge.code-arch-edge--flow-active,
+.code-arch-edge.code-arch-edge--spotlight-upstream,
+.code-arch-edge.code-arch-edge--spotlight-downstream {
   stroke-opacity: 0.35;
+  animation: none;
 }
 
 .code-arch-edge__flow-stream {

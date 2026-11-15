@@ -35,6 +35,8 @@ export const RollupEdge: React.FC<EdgeProps<ArchCanvasEdge>> = ({
     | 'INTERNAL'
     | undefined;
   const isSpotlightExternal = spotlightRole === 'UPSTREAM' || spotlightRole === 'DOWNSTREAM';
+  // 悬停线段自身或聚光灯激活上下游关联边时，统一开启流动点线与底层轨道淡化
+  const isFlowActive = isHovered || isSpotlightExternal;
   const spotlightClass = spotlightRole
     ? `code-arch-edge--spotlight-${spotlightRole.toLowerCase()}`
     : '';
@@ -102,14 +104,42 @@ export const RollupEdge: React.FC<EdgeProps<ArchCanvasEdge>> = ({
     }
   };
 
+  const groupClassName = [
+    'code-arch-edge-group',
+    isHovered ? 'code-arch-edge-group--hovered' : '',
+    isFlowActive ? 'code-arch-edge-group--flow-active' : '',
+    spotlightClass,
+    isSpotlightDimmed ? 'code-arch-edge--spotlight-dimmed' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  const baseEdgeClassName = [
+    'code-arch-edge',
+    statusClass,
+    isHovered ? 'code-arch-edge--hovered' : '',
+    isFlowActive ? 'code-arch-edge--flow-active' : '',
+    spotlightClass,
+    isSpotlightDimmed ? 'code-arch-edge--spotlight-dimmed' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  const flowStreamClassName = [
+    'code-arch-edge__flow-stream',
+    isFlowActive ? 'code-arch-edge__flow-stream--active' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
   return (
     <>
       <defs>
         <marker
           id={safeMarkerId}
           viewBox="0 0 12 12"
-          markerWidth={isHovered ? 12 : 10}
-          markerHeight={isHovered ? 12 : 10}
+          markerWidth={isFlowActive ? 12 : 10}
+          markerHeight={isFlowActive ? 12 : 10}
           refX="9.5"
           refY="6"
           orient="auto"
@@ -126,9 +156,7 @@ export const RollupEdge: React.FC<EdgeProps<ArchCanvasEdge>> = ({
       </defs>
 
       <g
-        className={`code-arch-edge-group ${isHovered ? 'code-arch-edge-group--hovered' : ''} ${spotlightClass} ${
-          isSpotlightDimmed ? 'code-arch-edge--spotlight-dimmed' : ''
-        }`}
+        className={groupClassName}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
       >
@@ -136,21 +164,17 @@ export const RollupEdge: React.FC<EdgeProps<ArchCanvasEdge>> = ({
           id={id}
           path={edgePath}
           markerEnd={markerEndUrl}
-          className={`code-arch-edge ${statusClass} ${isHovered ? 'code-arch-edge--hovered' : ''} ${spotlightClass} ${
-            isSpotlightDimmed ? 'code-arch-edge--spotlight-dimmed' : ''
-          }`}
+          className={baseEdgeClassName}
           style={{
             stroke: strokeColor,
-            strokeWidth: isHovered || isSpotlightExternal ? strokeWidth + 0.6 : strokeWidth,
+            strokeWidth: isFlowActive ? strokeWidth + 0.6 : strokeWidth,
             strokeDasharray: isHubSummary ? '6 4' : strokeDasharray,
           }}
         />
         <path
           d={edgePath}
           fill="none"
-          className={`code-arch-edge__flow-stream ${
-            isHovered || isSpotlightExternal ? 'code-arch-edge__flow-stream--active' : ''
-          }`}
+          className={flowStreamClassName}
           style={{
             stroke: strokeColor,
             strokeWidth: strokeWidth + 0.8,

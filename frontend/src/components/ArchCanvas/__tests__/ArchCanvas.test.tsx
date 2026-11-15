@@ -1,8 +1,11 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { renderToString } from 'react-dom/server';
-import { ReactFlowProvider } from '@xyflow/react';
+import { ReactFlowProvider, Position, type EdgeProps } from '@xyflow/react';
 import { ModuleNode } from '../nodes/ModuleNode';
-import { resolveEdgeVisualStyle } from '../layout/layoutProcessor';
+import { RollupEdge } from '../edges/RollupEdge';
+import { resolveEdgeVisualStyle, type ArchCanvasEdge } from '../layout/layoutProcessor';
 import { detectCycles } from '../model/metrics';
 import { synthesizeOverlay } from '../model/overlay';
 import { ArchCanvasToolbar } from '../panels/ArchCanvasToolbar';
@@ -301,5 +304,69 @@ describe('AC-M20-04 ArchCanvas Multi-Implementation Service Contract Tests', () 
     expect(result.edgeCallCountMap.get('e_agg_sync')).toBe(42);
     expect(result.edgeSampleRecordMap.get('e_agg_sync')).toBe(7);
     expect(result.workingEdges).toHaveLength(1);
+  });
+
+  it('activates flow-active track dimming and enlarged marker consistently for UPSTREAM/DOWNSTREAM spotlight edges', () => {
+    const createEdgeProps = (spotlightRole?: 'UPSTREAM' | 'DOWNSTREAM' | 'INTERNAL'): EdgeProps<ArchCanvasEdge> => ({
+      id: `edge_${spotlightRole || 'idle'}`,
+      source: 'node_a',
+      target: 'node_b',
+      sourceX: 0,
+      sourceY: 0,
+      targetX: 200,
+      targetY: 0,
+      sourcePosition: Position.Right,
+      targetPosition: Position.Left,
+      data: {
+        id: `edge_${spotlightRole || 'idle'}`,
+        source: 'node_a',
+        target: 'node_b',
+        kind: 'CROSS_PROCESS',
+        services: [{ service_name: 'demo.trade.TradeService' }],
+        rawEdges: [],
+        spotlightRole,
+      },
+    });
+
+    const renderEdge = (spotlightRole?: 'UPSTREAM' | 'DOWNSTREAM' | 'INTERNAL') =>
+      renderToString(
+        <ReactFlowProvider>
+          <svg>
+            <RollupEdge {...createEdgeProps(spotlightRole)} />
+          </svg>
+        </ReactFlowProvider>
+      );
+
+    // 1. 节点悬停/选中聚光灯上下游边 (UPSTREAM / DOWNSTREAM) 与线段悬停保持一致的流动轨与放大箭头
+    for (const role of ['UPSTREAM', 'DOWNSTREAM'] as const) {
+      const html = renderEdge(role);
+      expect(html).toContain('code-arch-edge-group--flow-active');
+      expect(html).toContain('code-arch-edge--flow-active');
+      expect(html).toContain('code-arch-edge__flow-stream--active');
+      expect(html).toContain(`code-arch-edge--spotlight-${role.toLowerCase()}`);
+      expect(html).toContain('markerWidth="12"');
+      expect(html).toContain('markerHeight="12"');
+    }
+
+    // 2. 默认静默态及 INTERNAL 内部边不激活流动动画，箭头保持 10x10
+    for (const role of [undefined, 'INTERNAL'] as const) {
+      const html = renderEdge(role);
+      expect(html).not.toContain('code-arch-edge-group--flow-active');
+      expect(html).not.toContain('code-arch-edge--flow-active');
+      expect(html).not.toContain('code-arch-edge__flow-stream--active');
+      expect(html).toContain('markerWidth="10"');
+      expect(html).toContain('markerHeight="10"');
+    }
+
+    // 3. 验证 ArchCanvas.css 在悬停与聚光灯激活态下均压暗底层 BaseEdge (stroke-opacity: 0.35) 并暂停脉冲覆盖
+    const cssPath = path.resolve(__dirname, '../ArchCanvas.css');
+    const cssContent = fs.readFileSync(cssPath, 'utf-8');
+    expect(cssContent).toContain('.code-arch-edge-group--hovered .code-arch-edge');
+    expect(cssContent).toContain('.code-arch-edge-group--flow-active .code-arch-edge');
+    expect(cssContent).toContain('.code-arch-edge--flow-active');
+    expect(cssContent).toContain('.code-arch-edge.code-arch-edge--spotlight-upstream');
+    expect(cssContent).toContain('.code-arch-edge.code-arch-edge--spotlight-downstream');
+    expect(cssContent).toMatch(/\.code-arch-edge--flow-active[\s\S]*?stroke-opacity:\s*0\.35/);
+    expect(cssContent).toMatch(/\.code-arch-edge--flow-active[\s\S]*?animation:\s*none/);
   });
 });
