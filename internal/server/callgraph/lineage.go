@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"code-traefik/models"
+	"code-contract/models"
 )
 
 var noiseEntityFields = map[string]bool{

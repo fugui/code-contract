@@ -4,12 +4,13 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"strings"
 
-	"code-traefik/config"
-	"code-traefik/internal/server/decoder"
-	"code-traefik/internal/server/topology"
-	"code-traefik/models"
-	"code-traefik/pkg/version"
+	"code-contract/config"
+	"code-contract/internal/server/decoder"
+	"code-contract/internal/server/topology"
+	"code-contract/models"
+	"code-contract/pkg/version"
 
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
@@ -21,7 +22,7 @@ func main() {
 	flag.Parse()
 
 	log.Println("==========================================================")
-	log.Println(" 开始清除 Traefik 数据并根据 Demo 进程拓扑与 Proto 治理基线重构数据...")
+	log.Println(" 开始清除 Code-Contract 数据并根据 Demo 进程拓扑与 Proto 治理基线重构数据...")
 	log.Println("==========================================================")
 
 	// 1. 加载配置
@@ -62,42 +63,9 @@ func createFunctionalGroup(db *gorm.DB, fg *models.FunctionalGroup) error {
 }
 
 func seedDemoData(db *gorm.DB, demoPbPath string) error {
-	// 3. 清理所有 traefik_* 业务数据表 (保留平台公共 users/departments/sys_audit_logs 与 traefik_settings)
-	log.Println("[1/9] 清空历史 traefik_* 业务数据表...")
-	truncateSQL := `
-		TRUNCATE TABLE
-			traefik_notifications,
-			traefik_mr_check_runs,
-			traefik_check_violations,
-			traefik_check_reports,
-			traefik_vocabulary_terms,
-			traefik_check_rules,
-			traefik_proto_doc_symbols,
-			traefik_proto_file_versions,
-			traefik_proto_files,
-			traefik_git_proto_bundles,
-			traefik_git_repos,
-			traefik_golden_suite_items,
-			traefik_golden_suites,
-			traefik_topology_layouts,
-			traefik_traffic_records,
-			traefik_recording_sessions,
-			traefik_replay_items,
-			traefik_replay_tasks,
-			traefik_processes,
-			traefik_module_dependencies,
-			traefik_module_services,
-			traefik_service_contracts,
-			traefik_modules,
-			traefik_functional_groups,
-			traefik_subsystems,
-			traefik_arch_processes,
-			traefik_arch_process_groups,
-			traefik_proto_operations,
-			traefik_proto_schemas,
-			traefik_agents
-		RESTART IDENTITY CASCADE;
-	`
+	// 3. 清理所有 contract_* 业务数据表 (保留平台公共 users/departments/sys_audit_logs 与 contract_settings)
+	log.Println("[1/9] 清空历史 contract_* 业务数据表...")
+	truncateSQL := fmt.Sprintf("TRUNCATE TABLE %s RESTART IDENTITY CASCADE;", strings.Join(models.BusinessTableNames(), ", "))
 	if err := db.Exec(truncateSQL).Error; err != nil {
 		return fmt.Errorf("清空表失败: %w", err)
 	}
@@ -586,7 +554,7 @@ func seedDemoData(db *gorm.DB, demoPbPath string) error {
 		return fmt.Errorf("拓扑分层水位或无环不变式校验未通过: %w", err)
 	}
 
-	// 8. 为本地 Agent 挂载全部 6 个物理业务进程 (traefik_processes)
+	// 8. 为本地 Agent 挂载全部 6 个物理业务进程 (contract_processes)
 	procs := []models.Process{
 		{
 			AgentID:             agent.ID,

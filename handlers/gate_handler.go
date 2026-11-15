@@ -9,12 +9,12 @@ import (
 
 	commonAudit "code-common/backend/audit"
 	commonModels "code-common/backend/models"
-	"code-traefik/config"
-	"code-traefik/internal/server/diff"
-	"code-traefik/internal/server/hub"
-	"code-traefik/internal/server/topology"
-	"code-traefik/models"
-	"code-traefik/pkg/agentproto"
+	"code-contract/config"
+	"code-contract/internal/server/diff"
+	"code-contract/internal/server/hub"
+	"code-contract/internal/server/topology"
+	"code-contract/models"
+	"code-contract/pkg/agentproto"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -350,18 +350,18 @@ func renderMarkdownReport(
 	host string,
 ) string {
 	var sb strings.Builder
-	debugURL := fmt.Sprintf("http://%s/traefik/debug?replay_task_id=%d", host, task.ID)
+	debugURL := fmt.Sprintf("http://%s/contract/debug?replay_task_id=%d", host, task.ID)
 
 	switch gateStatus {
 	case "PASSED":
-		sb.WriteString("### 🛡️ Code-Traefik 契约门禁报告: ✅ 通过 (PASSED)\n")
+		sb.WriteString("### 🛡️ Code-Contract 契约门禁报告: ✅ 通过 (PASSED)\n")
 		sb.WriteString(fmt.Sprintf("- **被测标准进程**: `%s` (ID: %d) | **验证环境**: `%s` | **黄金套件**: `%s`\n", archProc.Code, archProc.ID, agent.Name, suite.Name))
 		sb.WriteString("- **架构一致性核验**: ✅ 0 Violation（实测出站依赖边全部合规报备）\n")
 		sb.WriteString(fmt.Sprintf("- **黄金契约回归**: ✅ 全部 %d 笔事务回归通过 (0 Breaking Diff)\n", task.TotalRequests))
-		sb.WriteString(fmt.Sprintf("> 🔗 [点击直达 Code-Traefik 事务分析台查看详情](%s)\n", debugURL))
+		sb.WriteString(fmt.Sprintf("> 🔗 [点击直达 Code-Contract 事务分析台查看详情](%s)\n", debugURL))
 
 	case "GATED_VIOLATION":
-		sb.WriteString("### 🛡️ Code-Traefik 契约门禁报告: ❌ 阻断 (GATED_VIOLATION)\n")
+		sb.WriteString("### 🛡️ Code-Contract 契约门禁报告: ❌ 阻断 (GATED_VIOLATION)\n")
 		sb.WriteString(fmt.Sprintf("- **被测标准进程**: `%s` (ID: %d) | **验证环境**: `%s` | **黄金套件**: `%s`\n", archProc.Code, archProc.ID, agent.Name, suite.Name))
 		sb.WriteString(fmt.Sprintf("- **架构一致性核验**: ❌ 检出 %d 处未报备违规出站调用（架构漂移阻断）\n", len(violations)))
 		sb.WriteString("  | 未声明下游服务 | 接口方法 | 目标地址 | 调用次数 | 匹配状态 | 阻断说明 |\n")
@@ -371,10 +371,10 @@ func renderMarkdownReport(
 				v.ServiceName, v.Operation, v.DstAddr, v.CallCount, v.MatchStatus, v.Reason))
 		}
 		sb.WriteString(fmt.Sprintf("- **黄金契约回归**: ⚠️ 因第一关架构漂移违规已被直接强阻断\n"))
-		sb.WriteString(fmt.Sprintf("> 🔗 [点击直达 Code-Traefik 事务分析台排查根因](%s)\n", debugURL))
+		sb.WriteString(fmt.Sprintf("> 🔗 [点击直达 Code-Contract 事务分析台排查根因](%s)\n", debugURL))
 
 	case "GATED_BREAKING_DIFF":
-		sb.WriteString("### 🛡️ Code-Traefik 契约门禁报告: ❌ 阻断 (GATED_BREAKING_DIFF)\n")
+		sb.WriteString("### 🛡️ Code-Contract 契约门禁报告: ❌ 阻断 (GATED_BREAKING_DIFF)\n")
 		sb.WriteString(fmt.Sprintf("- **被测标准进程**: `%s` (ID: %d) | **验证环境**: `%s` | **黄金套件**: `%s`\n", archProc.Code, archProc.ID, agent.Name, suite.Name))
 		sb.WriteString("- **架构一致性核验**: ✅ 0 Violation（实测出站依赖边全部合规）\n")
 		sb.WriteString(fmt.Sprintf("- **黄金契约回归**: ❌ %d / %d 笔事务发生破坏性变更\n", len(failedItems), task.TotalRequests))
@@ -391,7 +391,7 @@ func renderMarkdownReport(
 					item.ServiceName, item.Operation, item.BaselineStatus, item.ActualStatus))
 			}
 		}
-		sb.WriteString(fmt.Sprintf("> 🔗 [点击直达 Code-Traefik 事务分析台排查根因](%s)\n", debugURL))
+		sb.WriteString(fmt.Sprintf("> 🔗 [点击直达 Code-Contract 事务分析台排查根因](%s)\n", debugURL))
 	}
 
 	return sb.String()

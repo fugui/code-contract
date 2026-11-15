@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"code-traefik/internal/server/decoder"
+	"code-contract/internal/server/decoder"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/reflect/protoreflect"

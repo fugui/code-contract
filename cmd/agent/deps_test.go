@@ -10,7 +10,7 @@ import (
 // 断言 cmd/agent, pkg/crosrpc, pkg/agentproto, pkg/ebpf, pkg/replay 零 gorm、零 pgx、零 dynamicpb、零 internal/server 依赖
 func TestAgentDependencies_NoGormNoDynamicPBNoServer(t *testing.T) {
 	cmd := exec.Command("go", "list", "-deps", "./cmd/agent", "./pkg/crosrpc", "./pkg/agentproto", "./pkg/ebpf", "./pkg/replay")
-	cmd.Dir = "../.." // code-traefik root
+	cmd.Dir = "../.." // code-contract root
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("go list -deps failed: %v, out: %s", err, string(out))
@@ -21,8 +21,8 @@ func TestAgentDependencies_NoGormNoDynamicPBNoServer(t *testing.T) {
 		"pgx",
 		"dynamicpb",
 		"protoregistry",
-		"code-traefik/internal/server",
-		"code-traefik/models",
+		"code-contract/internal/server",
+		"code-contract/models",
 		"github.com/go-git/go-git",
 		"github.com/go-git/go-billy",
 		"github.com/bufbuild/protocompile",

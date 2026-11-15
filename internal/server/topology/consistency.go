@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"code-traefik/models"
-	"code-traefik/pkg/agentproto"
+	"code-contract/models"
+	"code-contract/pkg/agentproto"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )

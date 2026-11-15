@@ -9,7 +9,7 @@ all: build
 # 重新生成 Protobuf 代码与二进制描述集（保留源码注释与位置元数据供全生命周期文档解析）
 proto:
 	@echo "Compiling Protobuf definitions and descriptor set..."
-	cd .. && protoc --go_out=. --go_opt=module=code-traefik \
+	cd .. && protoc --go_out=. --go_opt=module=code-contract \
 		--descriptor_set_out=demo/demo.pb --include_imports --include_source_info \
 		demo/proto/common.proto \
 		demo/proto/order.proto \
@@ -27,7 +27,7 @@ build: proto
 	go build -o $(BIN_DIR)/sut-order ./cmd/sut-order
 	go build -o $(BIN_DIR)/client ./cmd/client
 	$(MAKE) -C .. agent
-	cp --remove-destination ../code-traefik-agent $(BIN_DIR)/code-traefik-agent
+	cp --remove-destination ../code-contract-agent $(BIN_DIR)/code-contract-agent
 	@echo "Build complete."
 
 # 运行单元测试与集成测试

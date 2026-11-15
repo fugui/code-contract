@@ -10,7 +10,7 @@
 package inventorypb
 
 import (
-	commonpb "code-traefik/demo/pkg/proto/commonpb"
+	commonpb "code-contract/demo/pkg/proto/commonpb"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -702,7 +702,7 @@ const file_demo_proto_inventory_proto_rawDesc = "" +
 	"\fGetItemStock\x12\x1f.demo.inventory.GetItemStockReq\x1a\x1f.demo.inventory.GetItemStockRsp\x12G\n" +
 	"\tLockStock\x12\x1c.demo.inventory.LockStockReq\x1a\x1c.demo.inventory.LockStockRsp\x12P\n" +
 	"\fConfirmStock\x12\x1f.demo.inventory.ConfirmStockReq\x1a\x1f.demo.inventory.ConfirmStockRsp\x12P\n" +
-	"\fReleaseStock\x12\x1f.demo.inventory.ReleaseStockReq\x1a\x1f.demo.inventory.ReleaseStockRspB)Z'code-traefik/demo/pkg/proto/inventorypbb\x06proto3"
+	"\fReleaseStock\x12\x1f.demo.inventory.ReleaseStockReq\x1a\x1f.demo.inventory.ReleaseStockRspB*Z(code-contract/demo/pkg/proto/inventorypbb\x06proto3"
 
 var (
 	file_demo_proto_inventory_proto_rawDescOnce sync.Once

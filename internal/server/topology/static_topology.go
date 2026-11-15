@@ -12,8 +12,8 @@ import (
 	"strconv"
 	"strings"
 
-	"code-traefik/models"
-	"code-traefik/pkg/agentproto"
+	"code-contract/models"
+	"code-contract/pkg/agentproto"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
@@ -634,8 +634,8 @@ func CreateModuleDependency(db *gorm.DB, in ModuleDependencyInput) (*models.Modu
 
 			// 检查是否已存在对该契约的具体实现依赖（语义重复拦截）
 			var conflictCount int64
-			if err := tx.Table("traefik_module_dependencies d").
-				Joins("JOIN traefik_module_services s ON s.id = d.service_id").
+			if err := tx.Table("contract_module_dependencies d").
+				Joins("JOIN contract_module_services s ON s.id = d.service_id").
 				Where("d.consumer_module_id = ? AND s.contract_id = ?", in.ConsumerModuleID, *in.ContractID).
 				Count(&conflictCount).Error; err != nil {
 				return err
@@ -1150,9 +1150,9 @@ func BuildStaticTopology(db *gorm.DB, view string, subsystemID *uint64) (*Static
 	}
 
 	var processes []models.Process
-	if err := db.Preload("ArchProcess").Joins("JOIN traefik_agents ON traefik_agents.id = traefik_processes.agent_id").
-		Where("traefik_agents.scope = ?", models.ScopeShared).
-		Order("traefik_processes.id ASC").Find(&processes).Error; err != nil {
+	if err := db.Preload("ArchProcess").Joins("JOIN contract_agents ON contract_agents.id = contract_processes.agent_id").
+		Where("contract_agents.scope = ?", models.ScopeShared).
+		Order("contract_processes.id ASC").Find(&processes).Error; err != nil {
 		return nil, err
 	}
 	for i := range processes {

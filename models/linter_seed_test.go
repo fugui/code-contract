@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"code-common/backend/testdb"
-	"code-traefik/config"
-	"code-traefik/models"
+	"code-contract/config"
+	"code-contract/models"
 
 	"gorm.io/datatypes"
 )
@@ -17,7 +17,7 @@ func TestModels_BuiltinRulesAndVocabSeedIdempotent(t *testing.T) {
 		t.Fatalf("首次 SetupWithDB 失败: %v", err)
 	}
 
-	// 验证四张表均符合 traefik_ 表前缀规范
+	// 验证四张表均符合 contract_ 表前缀规范
 	tables := []string{
 		(models.CheckRule{}).TableName(),
 		(models.VocabularyTerm{}).TableName(),

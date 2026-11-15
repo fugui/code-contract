@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"code-traefik/internal/server/topology"
-	"code-traefik/models"
+	"code-contract/internal/server/topology"
+	"code-contract/models"
 
 	"gorm.io/datatypes"
 	"gorm.io/driver/postgres"
@@ -78,35 +78,15 @@ func main() {
 	}
 
 	// 清理目标测试/开发库既有架构与流量数据
-	cleanupSQL := `
-TRUNCATE TABLE
-	traefik_notifications,
-	traefik_mr_check_runs,
-	traefik_check_violations,
-	traefik_check_reports,
-	traefik_proto_doc_symbols,
-	traefik_proto_file_versions,
-	traefik_proto_files,
-	traefik_git_proto_bundles,
-	traefik_git_repos,
-	traefik_golden_suite_items,
-	traefik_golden_suites,
-	traefik_topology_layouts,
-	traefik_module_dependencies,
-	traefik_module_services,
-	traefik_service_contracts,
-	traefik_modules,
-	traefik_functional_groups,
-	traefik_subsystems,
-	traefik_arch_processes,
-	traefik_arch_process_groups,
-	traefik_proto_operations,
-	traefik_proto_schemas,
-	traefik_traffic_records,
-	traefik_recording_sessions
-RESTART IDENTITY CASCADE;`
+	cleanupSQL := fmt.Sprintf("TRUNCATE TABLE %s RESTART IDENTITY CASCADE;", strings.Join(models.BusinessTableNames(), ", "))
 	if err := db.Exec(cleanupSQL).Error; err != nil {
 		log.Fatalf("清理既有数据失败: %v", err)
+	}
+	if err := models.EnsureBuiltinCheckRules(db); err != nil {
+		log.Fatalf("重建内置静态检查规则失败: %v", err)
+	}
+	if err := models.EnsureBuiltinVocabularyTerms(db); err != nil {
+		log.Fatalf("重建基础标准词库失败: %v", err)
 	}
 
 	var adminUser models.User

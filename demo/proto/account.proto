@@ -3,7 +3,7 @@ syntax = "proto3";
 // 账户资产领域服务契约 (BUSINESS: demo.account.AccountService)
 // @owner: asset-account-team
 package demo.account;
-option go_package = "code-traefik/demo/pkg/proto/accountpb";
+option go_package = "code-contract/demo/pkg/proto/accountpb";
 
 import "demo/proto/common.proto";
 

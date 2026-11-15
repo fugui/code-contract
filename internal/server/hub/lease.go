@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"code-traefik/models"
+	"code-contract/models"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )

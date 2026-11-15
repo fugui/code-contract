@@ -4,7 +4,7 @@ import { useModuleUser } from '../context/ModuleUserContext';
 
 /**
  * 解析模块内部跳转路径：
- * - 嵌入宿主门户（isEmbedded=true）时，宿主路由以 /<module_key> 为挂载前缀，需拼接 MODULE_BASE_PATH（如 /traefik/debug）；
+ * - 嵌入宿主门户（isEmbedded=true）时，宿主路由以 /<module_key> 为挂载前缀，需拼接 MODULE_BASE_PATH（如 /contract/debug）；
  * - 独立开发调试模式下直接使用模块内相对根路径（如 /debug）。
  */
 export function resolveModulePath(path: string, isEmbedded: boolean): string {

@@ -11,9 +11,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"code-traefik/pkg/agentproto"
-	"code-traefik/pkg/crosrpc"
-	"code-traefik/pkg/replay"
+	"code-contract/pkg/agentproto"
+	"code-contract/pkg/crosrpc"
+	"code-contract/pkg/replay"
 )
 
 // ProxyMode EgressProxy 运行模式

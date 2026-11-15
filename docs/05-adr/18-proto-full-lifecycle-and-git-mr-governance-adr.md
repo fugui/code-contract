@@ -1,6 +1,7 @@
 # ADR-18：废弃外部 Proto 系统，在 Code-Traefik 内构建 Git-Only Proto 全生命周期、接口参考文档与 MR 协同治理架构决策
 
 - **文档编号**：`18-proto-full-lifecycle-and-git-mr-governance-adr.md`
+- **演进提示**：主密钥环境变量 `TRAEFIK_CRYPTO_KEY` 与 MR 状态上下文 `code-traefik/proto-mr-gate` 已由 [`ADR-20`](./20-module-rebranding-code-traefik-to-code-contract-adr.md) 演进更新为 `CONTRACT_CRYPTO_KEY` 与 `code-contract/proto-mr-gate`。
 - **文档版本**：v1.3.0（依据「`code-proto` 与 `protohub` 均未开发完成且从未真正投入运行，不存在历史数据迁移需求」的明确事实收敛修订：彻底移除 `scripts/migrate_protohub_vocab` SQLite/JSON 迁移工具、`modernc.org/sqlite` 依赖与 `PROTOHUB_IMPORT` 枚举，保留零 SQLite 红线并将领域词汇表与静态检查规则全面收敛为 `code-traefik` 原生 `BUILTIN_SEED` 初始化 + Web CRUD + LLM 辅助审核；前置 v1.2.0 检视确立 `GitRepo (1) -> GitProtoBundle (N)`、`uk_traefik_mr_dedup`、`LayeredVirtualResolver`、`SafeDialer` `outbound_trusted_cidrs` 信任白名单放行内网 GitLab/LLM 与跨机 `code-notifier`、统一 `TRAEFIK_CRYPTO_KEY`、`Jaccard >= 0.85`、`SSEBroker(userID)`、`<= 150KB gzip` 增量红线及 M25/M26 拆分）
 - **日期**：2026-11-14
 - **状态**：✅ 已全部实施交付 (Delivered across M22~M26)

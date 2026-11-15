@@ -1,4 +1,4 @@
-# 架构与活体契约治理 (`code-traefik`) 架构元素建模与拓扑一致性验证设计
+# 架构与活体契约治理 (`code-contract`) 架构元素建模与拓扑一致性验证设计
 
 - **文档编号**：`03-architecture-elements-and-topology.md`
 - **文档版本**：v1.9.0
@@ -13,7 +13,7 @@
 | 版本 | 日期 | 修订说明 |
 | :--- | :--- | :--- |
 | v1.5.1 | 2026-11-09 | 依据 ADR-15 (v1.1.0) 增补 §6 大规模拓扑五段式渲染管线、作用域裁剪、有向 N-Hop 邻域、Hub 插头折叠与位置记忆双层持久化设计 |
-| v1.6.0 | 2026-11-11 | 依据 ADR-16 (v1.0.0 / M20) 同步多实现服务契约建模与拓扑验证设计：1. §1.1/§1.3 补充 `module_kind ∈ {BUSINESS, CONTRACT_LIB}` 与库模块/契约删除与改类型保护；2. §2 修订 `A-05` 为分模式唯一并新增 §2.2 多实现服务契约（`traefik_service_contracts`、`impl_key`、`A-09` 进程互斥双入口守卫、分发依赖 `DISPATCH` 与存量迁移）；3. §3 补充 `A-03` 对 `CONTRACT_LIB` 的豁免、分发依赖下游推导、`endpoint_snapshots` 端点字典快照及重放兼容校验；4. §4 增补 `«interface»` 库卡、`REALIZATION` 边图层、逻辑视图默认按接口聚合 (`topo_contract_mode=AGG\|EXPAND`)、物理视图库模块豁免与 DTO 增量；5. §5 升级 `ResolveDestinationModule` v2 按目的进程消歧定位，将一致性比对从七分类扩展为八分类（新增第八类 `IMPL_UNRESOLVED` 实现待定），并补充双视图叠加挂载规则 |
+| v1.6.0 | 2026-11-11 | 依据 ADR-16 (v1.0.0 / M20) 同步多实现服务契约建模与拓扑验证设计：1. §1.1/§1.3 补充 `module_kind ∈ {BUSINESS, CONTRACT_LIB}` 与库模块/契约删除与改类型保护；2. §2 修订 `A-05` 为分模式唯一并新增 §2.2 多实现服务契约（`contract_service_contracts`、`impl_key`、`A-09` 进程互斥双入口守卫、分发依赖 `DISPATCH` 与存量迁移）；3. §3 补充 `A-03` 对 `CONTRACT_LIB` 的豁免、分发依赖下游推导、`endpoint_snapshots` 端点字典快照及重放兼容校验；4. §4 增补 `«interface»` 库卡、`REALIZATION` 边图层、逻辑视图默认按接口聚合 (`topo_contract_mode=AGG\|EXPAND`)、物理视图库模块豁免与 DTO 增量；5. §5 升级 `ResolveDestinationModule` v2 按目的进程消歧定位，将一致性比对从七分类扩展为八分类（新增第八类 `IMPL_UNRESOLVED` 实现待定），并补充双视图叠加挂载规则 |
 | v1.7.0 | 2026-11-13 | 依据 [`ADR-17`](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md) (v1.0.0 / M21) 同步拓扑单层平铺逐级下钻与 ELK 正交布局校准设计：1. §4.2 更新前端实时边汇总与单层代表节点规则（内部直属子容器代表 $R_{\text{in}}(u)$ 与跨界外部传送门卡 $R_{\text{ext}}(u)$，聚焦根自身不渲染外层包裹框）；2. §6 重构作用域裁剪与布局规范——ELK 统一单层 `layered` 参数（`nodeNodeBetweenLayers=110`、`FIRST/LAST` 约束）、CSS `border-box` 与 ELK `1:1` 尺寸契约、四向智能锚点 `selectOptimalHandles` 与多边标签偏移、按 `(view, focus_scope)` 分桶隔离且仅显式拖拽/图钉才锁定的位置记忆策略，以及 `${focusScope}::${extId}` 零 DDL 持久化兼容约定 |
 | v1.7.1 | 2026-11-13 | 依据 [`ADR-17` (v1.1.0)](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md) 架构检视意见加固 §4.2 与 §6：1. `scopeAndFilter` 固定「全子树过滤在前、单层投影在后」；2. 外部传送门卡强制 `FIRST/LAST` 贴边并在 `detectCycles` 中豁免 `EXTERNAL_CONTEXT` 假阳性环路；3. `pruneIsolated` 受控于 `hideIsolated === true` 且保留 `internalEdgeCount > 0` 的容器；4. 五类节点组件（补齐 `UnregisteredInterfaceNode.tsx`）`overflow: hidden`、四向双向 `<Handle>` 绑定及非 `right->left` 走线丢弃 ELK `bendPoints` 切换 `SmoothStep`；5. `${focusScope}::${extId}` 在 `extractPersistablePositions` 与 `diffLayoutAgainstGraph` 中的白名单兼容及 `SavedFilterState` 字段对齐 |
 | v1.8.0 | 2026-11-13 | 依据 [`ADR-18` (v1.1.0)](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (`M22`) 增补：1. §2.3 可配置架构层级 (`layer_level`) 校验规则与模块间有向环路检测守卫；2. §4.4 `GraphNode.Meta` 补充有效层级元数据；3. §6.5 `/topology` 客户端 SVG / PNG 导出设计 (`F-32`) |
@@ -23,7 +23,7 @@
 
 ## 1. 三级逻辑架构元素模型与树形治理 (`internal/server/topology`)
 
-`code-traefik` 作为架构元素与运行映射的**唯一真实源（SSOT）**，采用「**子系统 (`Subsystem`) → 功能组多级树 (`FunctionalGroup`) → 功能模块 (`Module`)**」三级逻辑层次结构。
+`code-contract` 作为架构元素与运行映射的**唯一真实源（SSOT）**，采用「**子系统 (`Subsystem`) → 功能组多级树 (`FunctionalGroup`) → 功能模块 (`Module`)**」三级逻辑层次结构。
 
 ### 1.1 物化路径 (`Materialized Path`) 树编码模型
 
@@ -41,7 +41,7 @@ Subsystem [ID=1, Code="TRADE_SYS"]
   1. 首尾强制带斜杠 `/`，使得子树前缀查询 `WHERE subsystem_id = ? AND path LIKE '/10/12/%'` 绝对精确，彻底消除 `'/10/12'` 误匹配 `'/10/120/'` 的部分前缀越界缺陷；
   2. 修改功能组名称或业务编码 `code` 时无需重写子孙节点的 `path`；
   3. 功能模块冗余维护 `subsystem_id`（始终强制等于其挂载功能组的 `subsystem_id`），使流量列表按子系统筛选无需多层 `JOIN`；
-  4. **模块类型区分 (`module_kind ∈ {'BUSINESS', 'CONTRACT_LIB'}`，[`ADR-16`](../05-adr/16-multi-implementation-service-contract-adr.md))**：`traefik_modules` 通过 `module_kind`（默认 `'BUSINESS'`）区分「运行期业务模块 (`BUSINESS`)」与「编译期接口库模块 (`CONTRACT_LIB`)」。`CONTRACT_LIB` 模块留在三级逻辑树中维护所属子系统/功能组与负责人，作为多实现服务契约（`traefik_service_contracts`）的定义属主，**禁止绑定任何运行期 `ArchProcess`**（`CHECK (module_kind = 'BUSINESS' OR arch_process_id IS NULL)`），亦禁止直接创建运行期 `traefik_module_services` 或 `traefik_module_dependencies` 行（返回 `400 Bad Request`）。
+  4. **模块类型区分 (`module_kind ∈ {'BUSINESS', 'CONTRACT_LIB'}`，[`ADR-16`](../05-adr/16-multi-implementation-service-contract-adr.md))**：`contract_modules` 通过 `module_kind`（默认 `'BUSINESS'`）区分「运行期业务模块 (`BUSINESS`)」与「编译期接口库模块 (`CONTRACT_LIB`)」。`CONTRACT_LIB` 模块留在三级逻辑树中维护所属子系统/功能组与负责人，作为多实现服务契约（`contract_service_contracts`）的定义属主，**禁止绑定任何运行期 `ArchProcess`**（`CHECK (module_kind = 'BUSINESS' OR arch_process_id IS NULL)`），亦禁止直接创建运行期 `contract_module_services` 或 `contract_module_dependencies` 行（返回 `400 Bad Request`）。
 
 ### 1.2 功能组移动防成环校验与级联更新算法 (`MoveFunctionalGroup`)
 
@@ -113,7 +113,7 @@ func MoveFunctionalGroup(tx *gorm.DB, groupID uint64, newParentID *uint64) error
 
 	// 利用数据库原生字符串替换与层级加算，单条 SQL 批量完成子树重算，杜绝逐行 Save 脏数据
 	return tx.Exec(`
-		UPDATE traefik_functional_groups 
+		UPDATE contract_functional_groups 
 		SET path = ? || SUBSTRING(path FROM ?),
 		    level = level + ?
 		WHERE subsystem_id = ? AND path LIKE ?`,
@@ -126,20 +126,20 @@ func MoveFunctionalGroup(tx *gorm.DB, groupID uint64, newParentID *uint64) error
 
 - 删除子系统：若存在关联功能组或功能模块，拒绝删除并返回 `409`；
 - 删除功能组：若存在子功能组（`parent_id = id`）或挂载的功能模块（`group_id = id`），拒绝删除并返回 `409`；
-- 删除功能模块：若业务模块（`BUSINESS`）已声明被其他模块引用的 `PROVIDE` 服务契约或当前仍装载于某个架构标准进程（`arch_process_id IS NOT NULL`），或接口库模块（`CONTRACT_LIB`）名下已登记有多实现服务契约（`traefik_service_contracts.definer_module_id = id`），拒绝删除并返回 `409`；
-- 修改功能模块类型（`module_kind`）：若接口库模块（`CONTRACT_LIB`）名下已有被登记的多实现服务契约（`traefik_service_contracts`），禁止改回 `BUSINESS`（返回 `409`）；若业务模块（`BUSINESS`）已绑定 `ArchProcess` 或已声明 `PROVIDE`/`DEPEND` 行，禁止改为 `CONTRACT_LIB`（返回 `409`）；
-- 删除多实现服务契约（`traefik_service_contracts`）：若该契约仍被任何实现模块引用（`traefik_module_services.contract_id = id`）或仍被任何消费模块声明为分发依赖（`traefik_module_dependencies.contract_id = id`），通过外键 `ON DELETE RESTRICT` 与应用层门禁拒绝删除并返回 `409`（附带关联的实现模块与分发调用方列表）；
+- 删除功能模块：若业务模块（`BUSINESS`）已声明被其他模块引用的 `PROVIDE` 服务契约或当前仍装载于某个架构标准进程（`arch_process_id IS NOT NULL`），或接口库模块（`CONTRACT_LIB`）名下已登记有多实现服务契约（`contract_service_contracts.definer_module_id = id`），拒绝删除并返回 `409`；
+- 修改功能模块类型（`module_kind`）：若接口库模块（`CONTRACT_LIB`）名下已有被登记的多实现服务契约（`contract_service_contracts`），禁止改回 `BUSINESS`（返回 `409`）；若业务模块（`BUSINESS`）已绑定 `ArchProcess` 或已声明 `PROVIDE`/`DEPEND` 行，禁止改为 `CONTRACT_LIB`（返回 `409`）；
+- 删除多实现服务契约（`contract_service_contracts`）：若该契约仍被任何实现模块引用（`contract_module_services.contract_id = id`）或仍被任何消费模块声明为分发依赖（`contract_module_dependencies.contract_id = id`），通过外键 `ON DELETE RESTRICT` 与应用层门禁拒绝删除并返回 `409`（附带关联的实现模块与分发调用方列表）；
 - 删除物理进程组 (`ArchProcessGroup`)：若组下仍存在标准架构进程（`ArchProcess`），拒绝删除并返回 `409`；
-- 删除标准架构进程 (`ArchProcess`)：若当前已被任何宿主机 Agent 挂载实例化（`traefik_processes` 中存在引用）或被历史重放任务 `ReplayTask` 引用，拒绝删除并返回 `409`（附带已挂载环境 Agent 名称列表）。
+- 删除标准架构进程 (`ArchProcess`)：若当前已被任何宿主机 Agent 挂载实例化（`contract_processes` 中存在引用）或被历史重放任务 `ReplayTask` 引用，拒绝删除并返回 `409`（附带已挂载环境 Agent 名称列表）。
 
 ---
 
 ## 2. 模块级服务供给与依赖契约 (Module Service Contracts)
 
-功能模块是接口契约声明的最小业务单元，遵循 [`ADR-05`](../05-adr/05-hierarchical-topology-canvas-redesign.md)、[`ADR-06`](../05-adr/06-proto-schema-repository-and-field-inspection-adr.md) 与 [`ADR-16`](../05-adr/16-multi-implementation-service-contract-adr.md) 服务级（Service-Level）治理粒度，通过 `traefik_service_contracts`（多实现契约定义）、`traefik_module_services`（服务供给 / 契约实现）与 `traefik_module_dependencies`（服务依赖 / 分发依赖）三张表协同维护契约：
-- **多实现契约定义（`traefik_service_contracts`，仅多实现契约需登记）**：由接口库模块（`module_kind = 'CONTRACT_LIB'`）定义会被多个进程模块共同实现的 CROS RPC 服务契约（`service_name`）；
-- **`PROVIDE`（供给服务 / 实现契约，`traefik_module_services`，仅 `BUSINESS` 模块可声明）**：本业务功能模块对外实现的 CROS RPC 服务（`contract_id IS NULL` 为默认独占供给 `EXCLUSIVE`；`contract_id IS NOT NULL` 为实现某多实现契约 `MULTI_IMPL` 并携带业务身份 `impl_key`）；
-- **`DEPEND`（依赖服务 / 分发依赖，`traefik_module_dependencies`，仅 `BUSINESS` 模块可声明）**：本业务功能模块运行期需要调用的下游内部具体服务实现（关联 `service_id`）、多实现契约分发调用（关联 `contract_id`，`DISPATCH`）或外部异构系统（`is_external = true`）。
+功能模块是接口契约声明的最小业务单元，遵循 [`ADR-05`](../05-adr/05-hierarchical-topology-canvas-redesign.md)、[`ADR-06`](../05-adr/06-proto-schema-repository-and-field-inspection-adr.md) 与 [`ADR-16`](../05-adr/16-multi-implementation-service-contract-adr.md) 服务级（Service-Level）治理粒度，通过 `contract_service_contracts`（多实现契约定义）、`contract_module_services`（服务供给 / 契约实现）与 `contract_module_dependencies`（服务依赖 / 分发依赖）三张表协同维护契约：
+- **多实现契约定义（`contract_service_contracts`，仅多实现契约需登记）**：由接口库模块（`module_kind = 'CONTRACT_LIB'`）定义会被多个进程模块共同实现的 CROS RPC 服务契约（`service_name`）；
+- **`PROVIDE`（供给服务 / 实现契约，`contract_module_services`，仅 `BUSINESS` 模块可声明）**：本业务功能模块对外实现的 CROS RPC 服务（`contract_id IS NULL` 为默认独占供给 `EXCLUSIVE`；`contract_id IS NOT NULL` 为实现某多实现契约 `MULTI_IMPL` 并携带业务身份 `impl_key`）；
+- **`DEPEND`（依赖服务 / 分发依赖，`contract_module_dependencies`，仅 `BUSINESS` 模块可声明）**：本业务功能模块运行期需要调用的下游内部具体服务实现（关联 `service_id`）、多实现契约分发调用（关联 `contract_id`，`DISPATCH`）或外部异构系统（`is_external = true`）。
 
 ### 2.1 `{package}.{serviceName}` 规范化命名契约 (A-07) 与分模式唯一性红线 (修订 A-05)
 
@@ -156,28 +156,28 @@ $$\text{ascServiceName} = \begin{cases} \text{package} + \text{"."} + \text{serv
   1. `package` 与 `serviceName` **统一遵循点分连接规范**（`.`，与 `internal/server/decoder/registry.go` 动态解码注册表完全一致；若未声明 `package` 则直接采用 `serviceName`）；
   2. 受限于 CROS RPC 协议头 `CHAR[64]`（含末尾 `\0` 终止符），`service_name` 与 `operation` 字节长度均强制校验为 **`1..63` 位可见 ASCII 字符**（正则：`^[A-Za-z0-9._]{1,63}$` 与 `^[A-Za-z0-9_]{1,63}$`）。
   3. **唯一性红线（由 [`ADR-16`](../05-adr/16-multi-implementation-service-contract-adr.md) v2.0 修订 A-05）**：
-     - **独占契约与自定义发布名实现全局唯一供给（`contract_id IS NULL OR is_custom_service_name = true`）**：对于独占服务，以及实现多实现契约但自定义了不同于契约原名的运行期发布服务名（如 `DH_SyncService`）的服务，其 `service_name` 在全库部分唯一索引 `uk_traefik_mod_svc_name_excl ON (service_name) WHERE contract_id IS NULL OR is_custom_service_name = true` 保护下保持全局唯一，且自定义发布名不得与任意 `ServiceContract.service_name` 冲突；
-     - **多实现契约按 `(contract_id, impl_key)` 与 `(contract_id, module_id)` 唯一（`MULTI_IMPL`，`contract_id IS NOT NULL`）**：契约本身在 `traefik_service_contracts` 中按 `.pb` 原始 `service_name` 全局唯一（`uk_traefik_svc_contract_name`）；其下各实现行通过部分唯一索引 `uk_traefik_mod_svc_contract_impl` 与 `uk_traefik_mod_svc_contract_mod` 保证同一契约下每个 `impl_key` 唯一且同一模块对同一契约至多实现一次；
-     - **消费依赖唯一性**：同一消费模块对同一内部具体服务实现唯一（`UNIQUE(consumer_module_id, service_id)`），对同一多实现分发契约唯一（`uk_traefik_dep_consumer_contract ON (consumer_module_id, contract_id) WHERE contract_id IS NOT NULL`），且同一消费方对同一契约不得同时声明分发依赖与具体实现依赖（`409 Conflict`）。
+     - **独占契约与自定义发布名实现全局唯一供给（`contract_id IS NULL OR is_custom_service_name = true`）**：对于独占服务，以及实现多实现契约但自定义了不同于契约原名的运行期发布服务名（如 `DH_SyncService`）的服务，其 `service_name` 在全库部分唯一索引 `uk_contract_mod_svc_name_excl ON (service_name) WHERE contract_id IS NULL OR is_custom_service_name = true` 保护下保持全局唯一，且自定义发布名不得与任意 `ServiceContract.service_name` 冲突；
+     - **多实现契约按 `(contract_id, impl_key)` 与 `(contract_id, module_id)` 唯一（`MULTI_IMPL`，`contract_id IS NOT NULL`）**：契约本身在 `contract_service_contracts` 中按 `.pb` 原始 `service_name` 全局唯一（`uk_contract_svc_contract_name`）；其下各实现行通过部分唯一索引 `uk_contract_mod_svc_contract_impl` 与 `uk_contract_mod_svc_contract_mod` 保证同一契约下每个 `impl_key` 唯一且同一模块对同一契约至多实现一次；
+     - **消费依赖唯一性**：同一消费模块对同一内部具体服务实现唯一（`UNIQUE(consumer_module_id, service_id)`），对同一多实现分发契约唯一（`uk_contract_dep_consumer_contract ON (consumer_module_id, contract_id) WHERE contract_id IS NOT NULL`），且同一消费方对同一契约不得同时声明分发依赖与具体实现依赖（`409 Conflict`）。
 
 ### 2.2 多实现服务契约、接口库建模与分发依赖 (`F-02.1`, [`ADR-16`](../05-adr/16-multi-implementation-service-contract-adr.md) v2.0)
 
 面向「接口库模块 `FM A` 定义 Protobuf 服务 `pkg.IfaceSvc` ➔ 多个业务模块 `FM B / C / D` 各自实现该服务（可**沿用契约原名**在不同进程中运行，也可**自行定义唯一运行期发布名**如 `DH_SyncService`） ➔ 独立调度中心模块 `X` 分发调用」的生产形态，系统建立三层解耦契约模型：
 
 1. **三方角色与表结构建模**：
-   - **接口库模块 (`traefik_modules.module_kind = 'CONTRACT_LIB'`)**：作为设计期契约的定义属主，自身不是运行期部署单元。数据库层施加 `CHECK (module_kind = 'BUSINESS' OR arch_process_id IS NULL)`；调用 `BindModuleProcess` 或为其新增 `PROVIDE`/`DEPEND` 均返回 `400 Bad Request`；
-   - **多实现服务契约表 (`traefik_service_contracts`，第 19 张核心业务表)**：
-     - `service_name varchar(128) NOT NULL`（`uk_traefik_svc_contract_name`，对应 `.pb` 契约原名，格式校验同 A-07）；
-     - `definer_module_id bigint NOT NULL`（FK `traefik_modules(id) ON DELETE RESTRICT`，应用层强制校验目标模块 `module_kind == 'CONTRACT_LIB'`，否则返回 `400`）；
+   - **接口库模块 (`contract_modules.module_kind = 'CONTRACT_LIB'`)**：作为设计期契约的定义属主，自身不是运行期部署单元。数据库层施加 `CHECK (module_kind = 'BUSINESS' OR arch_process_id IS NULL)`；调用 `BindModuleProcess` 或为其新增 `PROVIDE`/`DEPEND` 均返回 `400 Bad Request`；
+   - **多实现服务契约表 (`contract_service_contracts`，第 19 张核心业务表)**：
+     - `service_name varchar(128) NOT NULL`（`uk_contract_svc_contract_name`，对应 `.pb` 契约原名，格式校验同 A-07）；
+     - `definer_module_id bigint NOT NULL`（FK `contract_modules(id) ON DELETE RESTRICT`，应用层强制校验目标模块 `module_kind == 'CONTRACT_LIB'`，否则返回 `400`）；
      - `provide_mode varchar(16) NOT NULL DEFAULT 'MULTI_IMPL'`（`CHECK (provide_mode IN ('MULTI_IMPL'))`）；
      - `impl_key_label varchar(64) NOT NULL DEFAULT ''`（实现身份的业务标签说明，如「业务类型」、「渠道编码」）。
-   - **服务实现表增量 (`traefik_module_services`)**：
-     - 新增 `contract_id bigint NULL`（FK `traefik_service_contracts(id) ON DELETE RESTRICT`，`NULL` 表示独占契约 `EXCLUSIVE`）、`impl_key varchar(64) NOT NULL DEFAULT ''`（多实现必填，格式 `^[A-Za-z0-9._-]{1,64}$`）与 `is_custom_service_name boolean NOT NULL DEFAULT false`（标记是否自定义了不同于 `contract.service_name` 的运行期发布名）；
+   - **服务实现表增量 (`contract_module_services`)**：
+     - 新增 `contract_id bigint NULL`（FK `contract_service_contracts(id) ON DELETE RESTRICT`，`NULL` 表示独占契约 `EXCLUSIVE`）、`impl_key varchar(64) NOT NULL DEFAULT ''`（多实现必填，格式 `^[A-Za-z0-9._-]{1,64}$`）与 `is_custom_service_name boolean NOT NULL DEFAULT false`（标记是否自定义了不同于 `contract.service_name` 的运行期发布名）；
      - `service_name` 表示运行期线上实际发布的 `ascServiceName`（默认等于 `contract.service_name`，用户可自由修改为 `DH_SyncService` 等任意合法唯一名）；
      - 施加 `CHECK ((contract_id IS NULL AND impl_key = '') OR (contract_id IS NOT NULL AND impl_key <> ''))` 与 `CHECK (contract_id IS NOT NULL OR is_custom_service_name = false)`。
 2. **跨表串行化不变量、解码别名与存量平滑迁移**：
    - 所有涉及 `service_name` 的契约创建与 `PROVIDE` 声明写事务，首行统一获取 `SELECT pg_advisory_xact_lock(hashtext(service_name))`：
-     - ① 创建多实现契约时，若 `traefik_module_services` 中已存在同名独占行或同名自定义发布名实现，拒绝并返回 `409 Conflict`；
+     - ① 创建多实现契约时，若 `contract_module_services` 中已存在同名独占行或同名自定义发布名实现，拒绝并返回 `409 Conflict`；
      - ② 创建实现时（传入 `contract_id`）：若未指定自定义 `service_name` 则默认等于 `contract.service_name`（`is_custom_service_name = false`）；若传入不同于 `contract.service_name` 的自定义发布名（`is_custom_service_name = true`），则校验其全系统全局唯一且不与任何 `ServiceContract.service_name` 冲突；
      - ③ **单份 `.pb` 解码别名映射 (`decoder.Registry`)**：内存编译池维护 `ServiceAliases`（自定义发布名 ➔ `.pb` 契约名）与独立 `ServiceIgnores`，实现单份 LIB `.pb` 透明解码所有自定义运行期发布名；
      - ④ **存量独占转多实现 / 挂接到既有契约**：提供「转换为多实现契约」（`POST /api/arch/service-contracts/convert`）与「将存量独占服务挂接到既有契约」（`POST /api/arch/service-contracts/:id/attach`，保留其原 `service_name` 如 `DH_SyncService` 与 `service_id`）。
@@ -185,14 +185,14 @@ $$\text{ascServiceName} = \begin{cases} \text{package} + \text{"."} + \text{serv
    - 仅针对**同一契约下沿用契约原名（`is_custom_service_name = false`）**的同名共享实现模块，强制要求两两分属不同的 `ArchProcess`（从而使运行期「目的进程 ➔ 唯一实现模块」成为确定性映射）；
    - **自定义唯一发布名实现（`is_custom_service_name = true`）豁免 A-09**，允许部署在同一标准架构进程内；
    - 在**新增/编辑实现**与**绑定模块到标准进程**两个写入口执行 `AssertContractImplProcessDisjoint`，违反返回 `409 Conflict`。
-4. **分发依赖 (`DISPATCH`) 建模 (`traefik_module_dependencies`)**：
-   - 新增可空外键 `contract_id bigint NULL`（FK `traefik_service_contracts(id) ON DELETE RESTRICT`），语义为「调度方运行期可调用该多实现契约下的任意已登记实现」，新增或下线实现模块时无需修改调度方 `X` 的依赖声明；
+4. **分发依赖 (`DISPATCH`) 建模 (`contract_module_dependencies`)**：
+   - 新增可空外键 `contract_id bigint NULL`（FK `contract_service_contracts(id) ON DELETE RESTRICT`），语义为「调度方运行期可调用该多实现契约下的任意已登记实现」，新增或下线实现模块时无需修改调度方 `X` 的依赖声明；
    - 施加三选一排他约束：`CHECK (num_nonnulls(service_id, contract_id) + (is_external::int) = 1)`（内部具体实现 `service_id`、多实现契约分发 `contract_id`、外部系统 `is_external` 严格三选一）；
    - 同一消费方对同一契约同时声明分发依赖（`contract_id`）与具体实现依赖（指向该契约下某 `service_id`）时返回 `409 Conflict`（语义重复）。
 
 ### 2.3 可配置分层架构约束 (`layer_level`) 与循环依赖守卫 (`ADR-18` / M22)
 
-为防止底层基础设施模块反向调用上层编排/网关模块造成架构腐化，同时**100% 兼容不配置分层的存量模块**，在 `traefik_subsystems` 与 `traefik_modules` 中引入可选整型字段 `layer_level ∈ [0, 99]`（更新 DTO 与服务端入参均使用 **`*int`** 可选指针，避免未传字段误将既有非零层级覆盖为 `0`）：
+为防止底层基础设施模块反向调用上层编排/网关模块造成架构腐化，同时**100% 兼容不配置分层的存量模块**，在 `contract_subsystems` 与 `contract_modules` 中引入可选整型字段 `layer_level ∈ [0, 99]`（更新 DTO 与服务端入参均使用 **`*int`** 可选指针，避免未传字段误将既有非零层级覆盖为 `0`）：
 
 1. **有效层级计算规则 (`EffectiveLayerLevel`)**：
    - `0` 表示「未分层 / 不限制」（存量默认全为 `0`）；`> 0` 时数值越小代表越底层基础（示例：`10` 基础设施/底座、`20` 核心域服务、`30` 聚合编排、`40` 接入网关）；
@@ -202,7 +202,7 @@ $$\text{ascServiceName} = \begin{cases} \text{package} + \text{"."} + \text{serv
    - **契约实现关系 (`REALIZATION`，`CONTRACT_LIB` ➔ 实现该 `ServiceContract` 的 `Module`，DIP 约束边界)**：对于依赖倒置（DIP）场景，建议接口库与基础域协同放在下层（或将不需要强分层约束的共享接口库 `layer_level` 保留为 `0` 即自动豁免）。在新增/修改多实现 `ModuleService` 时，若 `EffectiveLayer(implModule) > 0 && EffectiveLayer(definerContractLib) > 0`，强制校验 **`EffectiveLayer(implModule) >= EffectiveLayer(definerContractLib)`**（防底层模块越权实现上层业务接口库），违例返回 `409 Conflict` (`ERR_REALIZATION_LAYER_INVERSION`)；**同时**当 `ModuleService` 绑定 `ContractID` 时，必须在同事务内**反向校核所有既有通过 `DISPATCH` (`contract_id`) 消费该契约的消费方模块**：若 `EffectiveLayer(consumer) > 0 && EffectiveLayer(implModule) > 0` 且 `EffectiveLayer(consumer) < EffectiveLayer(implModule)`，立即阻断并返 `409 Conflict` (`ERR_LAYER_VIOLATION`)，防止后接入的高层实现击穿已登记的底层分发消费方分层约束；
    - **存量修改双向回溯保护**：管理员通过 `PUT /api/arch/subsystems/:id` 或 `PUT /api/arch/modules/:id` 调整 `layer_level` 时，在同一数据库事务内扫描受影响模块作为调用方/提供方/实现方的全部存量边；若变更导致已有依赖或契约实现层级倒挂，拒绝更新并返回 `409 Conflict` 附带冲突边列表。
 3. **模块级循环依赖检测 (`AssertNoCyclicDependency`)**：
-   - 在 `CreateModuleDependency` 创建内部依赖时（含 `service_id` 指向单个 `providerModuleID`，以及 `contract_id` 展开指向 `CONTRACT_LIB` 及其全部当前实现模块集合），从目标节点集出发沿既有 `traefik_module_dependencies` 出边执行有界 BFS/DFS 可达性搜索；
+   - 在 `CreateModuleDependency` 创建内部依赖时（含 `service_id` 指向单个 `providerModuleID`，以及 `contract_id` 展开指向 `CONTRACT_LIB` 及其全部当前实现模块集合），从目标节点集出发沿既有 `contract_module_dependencies` 出边执行有界 BFS/DFS 可达性搜索；
    - 若可达回 `consumerModuleID`，判定形成模块依赖闭环，立即阻断创建并返回 `409 Conflict` (`ERR_CYCLIC_DEPENDENCY`) 及完整环路路径（如 `MOD_A -> MOD_B -> MOD_A`）。外部未登记依赖 (`is_external=true`) 天然不构成内部回环。
 
 ---
@@ -212,12 +212,12 @@ $$\text{ascServiceName} = \begin{cases} \text{package} + \text{"."} + \text{serv
 ### 3.1 全局物理进程蓝图 (`ArchProcessGroup -> ArchProcess`) 与多环境 `1:1` 挂载模型 (`1 台 Agent = 1 套独立环境`)
 
 依据 [`ADR-09`](../05-adr/09-arch-process-ssot-and-ebpf-premount-standby-adr.md)，系统将**「标准业务进程蓝图（全局架构 SSOT）」**与**「环境宿主机进程挂载实例（Agent 运行态）」**彻底解耦为两层正交模型：
-- 所有逻辑架构元素（`Subsystem`、`FunctionalGroup`、`Module`、`ModuleService`、`ModuleDependency`）与**物理进程蓝图（`ArchProcessGroup`、`ArchProcess` 及 `ArchProcess <-> Module` 组装关系）**均为全团队共享的**公共唯一真实源（SSOT）**，统一在 `/architecture`（`[逻辑架构 | 物理进程]`）中由 `traefik_admin` 维护，零 Agent 机器耦合；
-- **1 台 `Agent` 代表 1 套独立的运行环境**（包含多套团队公共测试环境如 `SHARED Agent_SIT`、`SHARED Agent_UAT`，以及每位开发者个人的 `PRIVATE Agent_Dev`）。任意一套环境 `Agent` 均从已定义的 `ArchProcess` 树中 **`1:1` 勾选挂载进程**（`traefik_processes`），并按需施加上下文局部的本地覆盖配置：
+- 所有逻辑架构元素（`Subsystem`、`FunctionalGroup`、`Module`、`ModuleService`、`ModuleDependency`）与**物理进程蓝图（`ArchProcessGroup`、`ArchProcess` 及 `ArchProcess <-> Module` 组装关系）**均为全团队共享的**公共唯一真实源（SSOT）**，统一在 `/architecture`（`[逻辑架构 | 物理进程]`）中由 `contract_admin` 维护，零 Agent 机器耦合；
+- **1 台 `Agent` 代表 1 套独立的运行环境**（包含多套团队公共测试环境如 `SHARED Agent_SIT`、`SHARED Agent_UAT`，以及每位开发者个人的 `PRIVATE Agent_Dev`）。任意一套环境 `Agent` 均从已定义的 `ArchProcess` 树中 **`1:1` 勾选挂载进程**（`contract_processes`），并按需施加上下文局部的本地覆盖配置：
 
 ```mermaid
 flowchart TB
-    subgraph PublicSSOT["全局架构 SSOT (/architecture: 逻辑架构 + 物理进程蓝图, traefik_admin 维护)"]
+    subgraph PublicSSOT["全局架构 SSOT (/architecture: 逻辑架构 + 物理进程蓝图, contract_admin 维护)"]
         PGrp1["ArchProcessGroup: 核心交易组 (CORE_TRADE)"]
         AP1["ArchProcess: sut-order (default_port=9001, default_cmd='./sut-order')"]
         AP2["ArchProcess: backend-stock (default_port=9002, default_cmd='./backend-stock')"]
@@ -255,7 +255,7 @@ flowchart TB
 
 核心领域不变量：
 1. **单环境（单机）严格 `1:1` 单实例约束 (`UNIQUE(agent_id, arch_process_id)`)**：
-   - 同一标准架构进程在单套环境（单个 `Agent`）上至多部署 1 个实例，数据库层以 `uk_traefik_proc_agent_arch` 强制保证不重复挂载；
+   - 同一标准架构进程在单套环境（单个 `Agent`）上至多部署 1 个实例，数据库层以 `uk_contract_proc_agent_arch` 强制保证不重复挂载；
    - **禁止自造野生进程与篡改模块组装**：Agent 挂载界面不提供自由新建进程名或自由增删 `FM` 模块入口；缺失的标准进程必须回到 `/architecture?tree=physical` 定义。
 2. **有效运行参数继承、匹配语法契约与蓝图端口演进自动固化 (A-02)**：
    - 挂载实例的有效属性遵循**「本地覆盖优先 ➔ 架构蓝图默认兜底」**确定性公式：
@@ -264,14 +264,14 @@ flowchart TB
      $$\text{EffectiveIP} = \text{AdvertiseIP} \neq \text{""} \ ? \ \text{AdvertiseIP} : \text{HostIP(Agent.Endpoint)}$$
      $$\text{EffectiveExtraDownstreams} = \text{Dedupe}(\text{ArchProcess.DefaultExtraDownstreams} \cup \text{Process.ExtraDownstreams})$$
    - **`cmd_pattern` 匹配语法与防 ReDoS 校验**：长度强制 `<= 256` 字符；默认按**精确子串包含**（`strings.Contains(cmdline, pattern)`）匹配 `/proc/<pid>/cmdline`（`\0` 替换为空格后）；若以显式前缀 `re:` 开头，则按 **Go `regexp` (RE2 线性时间引擎)** 编译匹配，主控在保存 `ArchProcess` 或 `Process` 覆盖参数时强制预执行 `regexp.Compile` 语法校验（非法正则返回 `400 Bad Request`）；
-   - **同机非零端口互斥与蓝图变更自动固化**：同一 `agent_id` 下所有非零有效端口（`effective_listen_port > 0`）通过部分唯一索引 `uk_traefik_proc_agent_port` 严格互斥（同时允许并存多个 `0` 端口纯客户端进程）。当管理员在 `/architecture` 修改 `ArchProcess.DefaultListenPort`（由 $P_{\text{old}} \to P_{\text{new}}$）时，主控在单事务内自动检测各已挂载该蓝图的 Agent：若某挂载实例未设置覆盖端口（`override_listen_port IS NULL`）且 $P_{\text{new}} > 0$ 与该 Agent 同机其他已挂载进程的有效端口冲突，**自动将该冲突实例的 `override_listen_port` 固化为原有效端口 $P_{\text{old}}$**（并在响应 `auto_pinned_overrides` 中返回提示），既绝对不破坏个人/特定环境既有挂载，又保证全局蓝图自由演进。
+   - **同机非零端口互斥与蓝图变更自动固化**：同一 `agent_id` 下所有非零有效端口（`effective_listen_port > 0`）通过部分唯一索引 `uk_contract_proc_agent_port` 严格互斥（同时允许并存多个 `0` 端口纯客户端进程）。当管理员在 `/architecture` 修改 `ArchProcess.DefaultListenPort`（由 $P_{\text{old}} \to P_{\text{new}}$）时，主控在单事务内自动检测各已挂载该蓝图的 Agent：若某挂载实例未设置覆盖端口（`override_listen_port IS NULL`）且 $P_{\text{new}} > 0$ 与该 Agent 同机其他已挂载进程的有效端口冲突，**自动将该冲突实例的 `override_listen_port` 固化为原有效端口 $P_{\text{old}}$**（并在响应 `auto_pinned_overrides` 中返回提示），既绝对不破坏个人/特定环境既有挂载，又保证全局蓝图自由演进。
 3. **模块单归属、接口库 `CONTRACT_LIB` 豁免与多环境公私双域并存 (A-03 & A-09)**：
    - **架构层（A-03 对 `CONTRACT_LIB` 的豁免与 A-09 进程互斥）**：
-     - **业务模块 (`module_kind = 'BUSINESS'`)**：1 个 `ArchProcess` 可组装承载 $N \ge 0$ 个 `BUSINESS` 模块（记录于 `traefik_modules.arch_process_id`），每个 `BUSINESS` 模块全局至多归属 **1 个** `ArchProcess`（尝试将已分配给进程 A 的模块重复绑给进程 B 时返回 `409 Conflict`）；且同一多实现契约的各个实现模块严禁绑定至同一 `ArchProcess`（遵循 `A-09`，见 §2.2）；
+     - **业务模块 (`module_kind = 'BUSINESS'`)**：1 个 `ArchProcess` 可组装承载 $N \ge 0$ 个 `BUSINESS` 模块（记录于 `contract_modules.arch_process_id`），每个 `BUSINESS` 模块全局至多归属 **1 个** `ArchProcess`（尝试将已分配给进程 A 的模块重复绑给进程 B 时返回 `409 Conflict`）；且同一多实现契约的各个实现模块严禁绑定至同一 `ArchProcess`（遵循 `A-09`，见 §2.2）；
      - **接口库模块 (`module_kind = 'CONTRACT_LIB'`) 豁免 `A-03` 物理进程归属**：`CONTRACT_LIB` 是被编译链接进多处的纯契约定义载体，不是运行期部署单元。数据库层以 `CHECK (module_kind = 'BUSINESS' OR arch_process_id IS NULL)` 强制保证其 `arch_process_id` 恒为 `NULL`（尝试绑定进程返回 `400 Bad Request`），且在物理部署视图中不渲染（亦不归入「未部署」容器）；
    - **公共测试环境域 (`SHARED` Agent)**：`1 台 SHARED Agent = 1 套独立公共测试环境`（如 `SIT`、`UAT`、`准生产回归`），**支持多台不同的 `SHARED` Agent 各自 `1:1` 挂载同一个 `ArchProcess`**，互不排斥；
    - **个人私有域 (`PRIVATE` Agent)**：每位开发者本人的 `PRIVATE` Agent 作为独立隔离沙箱，同样自由 `1:1` 勾选挂载任意 `ArchProcess`，并可通过 `Agent.FallbackAgentID` 可选绑定某台 `SHARED` 公共环境 Agent 作为本地未启动下游的跨机连接兜底。
-4. **动态 PID 非权威与统一七态预挂就绪快照**：操作系统 `PID` 随业务重启动态变化，不作为静态权威配置，由 Agent 在 `ARMED` 预挂待命及活跃录制期通过 `(EffectiveListenPort, EffectiveCmdPattern)` 实时扫描 `/proc` 获取，并将统一七态就绪诊断（`READY` / `NEED_RECONNECT` / `WAITING_PROC` / `MONITORING` / `DISARMED` / `OFFLINE` / `CAP_DENIED` 或 `ERROR`）回写至 `traefik_processes` 快照列。
+4. **动态 PID 非权威与统一七态预挂就绪快照**：操作系统 `PID` 随业务重启动态变化，不作为静态权威配置，由 Agent 在 `ARMED` 预挂待命及活跃录制期通过 `(EffectiveListenPort, EffectiveCmdPattern)` 实时扫描 `/proc` 获取，并将统一七态就绪诊断（`READY` / `NEED_RECONNECT` / `WAITING_PROC` / `MONITORING` / `DISARMED` / `OFFLINE` / `CAP_DENIED` 或 `ERROR`）回写至 `contract_processes` 快照列。
 
 ### 3.2 多环境混合下游 `IP:Port` 自动推导算法 (`CompileProcessDownstreams` — 同机优先 + 绑定基线环境兜底) 与端点字典快照 (`endpoint_snapshots`)
 
@@ -291,7 +291,7 @@ flowchart TB
 3. **架构默认补充端点 + 本地覆盖补充端点 + 离线重放历史端点**：
    - 合并 `ArchProcess_Src.DefaultExtraDownstreams` 与 `P.ExtraDownstreams`；若为离线重放（`CompileReplayDownstreams`），额外并入源录制批次观测到的全部 `EGRESS` 原始 `dst_addr`（`IP:Port`）；最终按 `IP:Port` 稳定排序去重输出。
 4. **录制时刻端点字典快照固化 (`RecordingSession.endpoint_snapshots`，[`ADR-16`](../05-adr/16-multi-implementation-service-contract-adr.md) §3.6)**：
-   - 在创建录制批次、编译下游时，将上述第 1、2 步中**能唯一确定 `ArchProcess`** 的「网络端点 `IP:Port`（含同机 `127.0.0.1` 别名）➔ `ArchProcessID`」一次性固化至 `traefik_recording_sessions.endpoint_snapshots`（`jsonb NOT NULL DEFAULT '[]'`，匿名 `extra_downstreams` 不入字典），供 §5.1 多实现契约目的模块定位使用，确保事后环境挂载变更不会导致历史批次归属漂移：
+   - 在创建录制批次、编译下游时，将上述第 1、2 步中**能唯一确定 `ArchProcess`** 的「网络端点 `IP:Port`（含同机 `127.0.0.1` 别名）➔ `ArchProcessID`」一次性固化至 `contract_recording_sessions.endpoint_snapshots`（`jsonb NOT NULL DEFAULT '[]'`，匿名 `extra_downstreams` 不入字典），供 §5.1 多实现契约目的模块定位使用，确保事后环境挂载变更不会导致历史批次归属漂移：
 
 ```go
 // EndpointSnapshotItem 录制时刻「网络端点 ➔ 标准架构进程」字典项 (固化于 RecordingSession.EndpointSnapshots)
@@ -304,7 +304,7 @@ type EndpointSnapshotItem struct {
 
 ### 3.3 基于录制快照解耦的跨 Agent 同构进程重放兼容性校验 (`ValidateReplayProcessCompatibility`)
 
-为确保某台环境 Agent 日后卸载 `Process` 挂载实例（`DELETE /api/processes/:id`）后，历史录制批次依然可以随时跨环境重放，录制批次创建时在 `RecordingSession.ProcessSnapshots` 中固化参与进程的蓝图快照 `ProcessSnapshotItem{ProcessID, ArchProcessID, Code, Name, ModuleIDs, ListenPort}`。兼容性校验优先读取批次快照，彻底解除对源 `traefik_processes` 存活状态的硬依赖；对于多实现契约的入站记录（[`ADR-16`](../05-adr/16-multi-implementation-service-contract-adr.md) §7.1），所需模块取**源进程快照中实现该契约的模块**（$\text{impls}(\text{contract}) \cap \text{sourceSnap.ModuleIDs}$），而非全局单一 `provideMap[svc]`：
+为确保某台环境 Agent 日后卸载 `Process` 挂载实例（`DELETE /api/processes/:id`）后，历史录制批次依然可以随时跨环境重放，录制批次创建时在 `RecordingSession.ProcessSnapshots` 中固化参与进程的蓝图快照 `ProcessSnapshotItem{ProcessID, ArchProcessID, Code, Name, ModuleIDs, ListenPort}`。兼容性校验优先读取批次快照，彻底解除对源 `contract_processes` 存活状态的硬依赖；对于多实现契约的入站记录（[`ADR-16`](../05-adr/16-multi-implementation-service-contract-adr.md) §7.1），所需模块取**源进程快照中实现该契约的模块**（$\text{impls}(\text{contract}) \cap \text{sourceSnap.ModuleIDs}$），而非全局单一 `provideMap[svc]`：
 
 ```go
 package topology
@@ -423,7 +423,7 @@ func ValidateReplayProcessCompatibility(
  │    └── ExternalSystem_B (如 UnionPay)
  └── UnregisteredInterface (动态虚拟节点: 仅在一致性叠加层检出调用未登记接口时由前端按需注入)
 ```
-> **外键对齐说明**：`traefik_modules.group_id` 为 `NOT NULL` 外键，合法模块均挂载于某级 `FunctionalGroup` 下；前端 `hierarchy.ts` 对异常缺失父功能组的数据保留回退挂载至 `sub_<SubsystemID>` 的防御性兜底。
+> **外键对齐说明**：`contract_modules.group_id` 为 `NOT NULL` 外键，合法模块均挂载于某级 `FunctionalGroup` 下；前端 `hierarchy.ts` 对异常缺失父功能组的数据保留回退挂载至 `sub_<SubsystemID>` 的防御性兜底。
 
 * **逻辑视图多实现契约表达规则 (`F-04.4`)**：
   1. **接口库卡片 (`CONTRACT_LIB`)**：作为 `MODULE` 节点（`meta.module_kind = "CONTRACT_LIB"`），渲染为虚线边框 + `«interface»` 角标卡片，卡片内显示定义的契约数与已登记实现总数；
@@ -441,8 +441,8 @@ func ValidateReplayProcessCompatibility(
 
 ```text
 (画布根视口 Viewport)
- ├── ProcessGroup (depth=0 / L0: 架构进程组容器，源自 traefik_arch_process_groups)
- │    └── Process (depth=1 / L1: 标准业务进程容器，源自 traefik_arch_processes，标识进程名与监听端点)
+ ├── ProcessGroup (depth=0 / L0: 架构进程组容器，源自 contract_arch_process_groups)
+ │    └── Process (depth=1 / L1: 标准业务进程容器，源自 contract_arch_processes，标识进程名与监听端点)
  │         └── Module [BUSINESS] (depth=2 / L2: 该标准架构进程组装承载的业务模块实例，多实现时展示「实现 pkg.IfaceSvc [b]」)
  ├── UndeployedContainer (depth=0 / L0: 尚未分配至任何标准架构进程的孤立 BUSINESS 模块容器 arch_process_id IS NULL；不含 CONTRACT_LIB)
  │    └── Module [BUSINESS] (depth=1: 未分配进程业务模块叶子卡片)
@@ -571,7 +571,7 @@ type TopologyGraphDTO struct {
 
 ### 5.1 目的模块穿透定位 (`ResolveDestinationModule` v2 — 独占直查 + 多实现按目的进程消歧)
 
-依据分模式供给契约（修订后 `A-05` 与 `A-09`，[`ADR-16`](../05-adr/16-multi-implementation-service-contract-adr.md) §4），目的模块定位统一由 `ContractResolver.ResolveDestinationModule` 执行，同时回填 `traefik_traffic_records.dst_module_id` 与 `dst_contract_id`（后台离线批量对账 `OfflineBatchAttribution` 一并计算）：
+依据分模式供给契约（修订后 `A-05` 与 `A-09`，[`ADR-16`](../05-adr/16-multi-implementation-service-contract-adr.md) §4），目的模块定位统一由 `ContractResolver.ResolveDestinationModule` 执行，同时回填 `contract_traffic_records.dst_module_id` 与 `dst_contract_id`（后台离线批量对账 `OfflineBatchAttribution` 一并计算）：
 
 ```mermaid
 flowchart TD
@@ -587,8 +587,8 @@ flowchart TD
 ```
 
 * **分模式定位与消歧铁律**：
-  1. **独占契约 (`EXCLUSIVE`，未在 `traefik_service_contracts` 登记)**：无论 `INGRESS` 或 `EGRESS`，直接以 `ascServiceName` 查 `provideMap[serviceName]`——命中则唯一定位 `DstModule`（`dst_contract_id = nil`）；未命中则归属至虚拟异常节点 `VIRTUAL_UNREGISTERED_INTERFACE`（「未登记接口」）；
-  2. **多实现契约 (`MULTI_IMPL`，已在 `traefik_service_contracts` 登记)**：按**目的物理进程**消歧：
+  1. **独占契约 (`EXCLUSIVE`，未在 `contract_service_contracts` 登记)**：无论 `INGRESS` 或 `EGRESS`，直接以 `ascServiceName` 查 `provideMap[serviceName]`——命中则唯一定位 `DstModule`（`dst_contract_id = nil`）；未命中则归属至虚拟异常节点 `VIRTUAL_UNREGISTERED_INTERFACE`（「未登记接口」）；
+  2. **多实现契约 (`MULTI_IMPL`，已在 `contract_service_contracts` 登记)**：按**目的物理进程**消歧：
      - **`INGRESS` 入站报文**：直接取接收进程 `rec.process` 对应的标准架构进程 $P$，求该契约实现模块集合与 $P$ 承载模块集合的交集 $\text{impls}(\text{contract}) \cap M(P)$；
      - **`EGRESS` 出站报文**：以实测 `rec.dst_addr`（`IP:Port`）查找录制批次固化的端点字典 `session.endpoint_snapshots`（见 §3.2）解析出目的标准架构进程 $Q$，再求交集 $\text{impls}(\text{contract}) \cap M(Q)$；
      - **唯一性保障 (`A-09`)**：因同一多实现契约的各实现模块两两分属不同 `ArchProcess`，上述交集元素个数至多为 `1`；若命中唯一实现模块，则确定 `DstModule`、回填 `dst_module_id`、`dst_contract_id` 与对应 `impl_key`；
@@ -693,7 +693,7 @@ type ConsistencyReportDTO struct {
 
 1. **静态边归并、动态违规边合成与 `UNATTRIBUTED` / `IMPL_UNRESOLVED` 双视图归属**：
    - **静态已声明边归并**：`VERIFIED / OUTBOUND_VERIFIED / UNCOVERED / NOT_MONITORED / NOT_OBSERVABLE` 按公共架构元素键 `(src_module_id, dst_module_id, service_name)` 精确绑定至静态叶子边（在逻辑视图默认 `topo_contract_mode=AGG` 按接口聚合模式下，同一 `contract_id` 的各实现边收敛绑定至 `X ➔ A` 契约虚拟边）；
-   - **`VIOLATION` 动态叶子边合成**：因静态 `traefik_module_dependencies` 表中不存在未声明越权调用，叠加引擎自动将 `status == 'VIOLATION'` 的结果动态合成为临时告警叶子边并并入 `rollup` 输入边集触发 ELK 增量重排；若 `dst_module_id == nil` 且 `contract_id == nil`，自动注入虚拟节点 `VIRTUAL_UNREGISTERED_INTERFACE`（「未登记接口」）作为连线终点；
+   - **`VIOLATION` 动态叶子边合成**：因静态 `contract_module_dependencies` 表中不存在未声明越权调用，叠加引擎自动将 `status == 'VIOLATION'` 的结果动态合成为临时告警叶子边并并入 `rollup` 输入边集触发 ELK 增量重排；若 `dst_module_id == nil` 且 `contract_id == nil`，自动注入虚拟节点 `VIRTUAL_UNREGISTERED_INTERFACE`（「未登记接口」）作为连线终点；
    - **`UNATTRIBUTED`（来源待定）跨视图归属降级**：因 `src_module_id == nil`，在物理视图 (`PHYSICAL`) 下直接挂载于源进程 `proc_<src_process_id>`（若为 `PRIVATE` 私有进程则映射至 `candidate_module_ids` 所属的公共物理容器）；在逻辑视图 (`LOGICAL`) 下取 `candidate_module_ids` 在逻辑层级树中的**最近公共祖先（LCA，如同一功能组或子系统）**作为源节点参与上卷，若候选模块跨多个顶层子系统无单一容器祖先，则收敛至画布顶部一致性摘要栏的「待定归属 (`N`)」独立徽章抽屉展示；
    - **`IMPL_UNRESOLVED`（目的实现待定）双视图挂载规则（[`ADR-16`](../05-adr/16-multi-implementation-service-contract-adr.md) §5）**：
      - **逻辑视图 (`LOGICAL`)**：挂载于调用方模块指向定义该契约的 `CONTRACT_LIB` 库模块的契约虚拟边 `X ➔ A` 上（在默认 `AGG` 聚合模式下直接合入 `X ➔ A` 虚拟边；在 `EXPAND` 按实现展开模式下，该虚拟边 `X ➔ A` 仅在存在 `IMPL_UNRESOLVED` 时按需出现以承载该告警）；
@@ -709,7 +709,7 @@ type ConsistencyReportDTO struct {
 
 ## 6. 单层平铺逐级下钻、ELK 正交布局校准与作用域持久化引擎 (`F-04.1`~`F-04.4`, [`ADR-15`](../05-adr/15-scalable-topology-focus-and-layout-persistence-adr.md)、[`ADR-16`](../05-adr/16-multi-implementation-service-contract-adr.md) & [`ADR-17`](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md))
 
-在 25 个子系统 × 10 个功能组 × 10 个功能模块（约 **2,775 个节点 + 5,000~10,000 条底层边**）的生产规模下，前端拓扑引擎采用「全量下发、前端五段式纯函数裁剪 + 单层平铺按需下钻」策略，彻底消除多级复合框中框嵌套导致的 ELK 间距挤压与视觉毛线团；后端由 `traefik_topology_layouts`（第 18 张表，连同 `traefik_service_contracts` 共 19 张核心业务表）零 DDL 变更地承载团队基准与个人书签双层持久化。
+在 25 个子系统 × 10 个功能组 × 10 个功能模块（约 **2,775 个节点 + 5,000~10,000 条底层边**）的生产规模下，前端拓扑引擎采用「全量下发、前端五段式纯函数裁剪 + 单层平铺按需下钻」策略，彻底消除多级复合框中框嵌套导致的 ELK 间距挤压与视觉毛线团；后端由 `contract_topology_layouts`（第 18 张表，连同 `contract_service_contracts` 共 19 张核心业务表）零 DDL 变更地承载团队基准与个人书签双层持久化。
 
 > [!IMPORTANT]
 > 本节参数、单层下钻契约、1:1 `border-box` 尺寸表、ELK 间距参数、四向智能锚点及位置记忆规则以 [`ADR-17`](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md) 为最新权威基准，配合 [`ADR-15` §6](../05-adr/15-scalable-topology-focus-and-layout-persistence-adr.md) 与 [`ADR-16` §6](../05-adr/16-multi-implementation-service-contract-adr.md) 协同落地。
@@ -818,9 +818,9 @@ export interface ScopedGraph {
 
 ### 6.4 位置层 + 视角层零 DDL 持久化兼容 (`layoutPersistence.ts`)
 
-1. **内部节点坐标天然对齐**：在树模型中每个内部子节点（`sub_x`、`grp_x`、`mod_x`、`pgrp_x`、`proc_x`）仅属于唯一父容器（`GLOBAL` 或 `parent_id`），其单层平铺下的 `(x, y)` 仍以原节点 ID 作为键持久化至 `traefik_topology_layouts.node_positions`，与团队基准（`SHARED`）完全同构，**无需改动后端表结构或 API 字段**。
+1. **内部节点坐标天然对齐**：在树模型中每个内部子节点（`sub_x`、`grp_x`、`mod_x`、`pgrp_x`、`proc_x`）仅属于唯一父容器（`GLOBAL` 或 `parent_id`），其单层平铺下的 `(x, y)` 仍以原节点 ID 作为键持久化至 `contract_topology_layouts.node_positions`，与团队基准（`SHARED`）完全同构，**无需改动后端表结构或 API 字段**。
 2. **作用域限定外部传送门卡键 (`scopedPositionKey`)**：若用户在某个下钻视图 `focusScope` 内拖拽固定了外部传送门卡 `extId`，写入个人书签/草稿时使用复合键 **`${focusScope}::${extId}`**（如 `sub_1::sub_2` 或 `grp_10::ext_sys_WeChatPay`，长度远低于后端校验上限 `128`）；`extractPersistablePositions` 放行已固定（`pinned: true`）的 `${focusScope}::${extId}` 键，保证外部卡在不同聚焦域中的左右排布位置各自独立、互不覆盖。
-3. **书签 `filter_state` 前后端 Schema 对齐与加载优先级**：前端 `SavedFilterState` 序列化严格对齐后端 `models.SavedFilterState` JSON 字段（`subsystem_ids`, `only_my_scope`, `status`, `ego_node_id`, `ego_hops`, `hide_isolated`, `hub_fold`）；按 `URL 书签 ≻ 当前 (view, focus_scope) 默认书签 ≻ 团队基准 ≻ ELK` 加载；`localStorage` 草稿键扩展为按 `focusScope` 隔离（`traefik:topo:draft:${userId}:${view}:${focusScope}`），基准版本不一致时安全丢弃并提示。
+3. **书签 `filter_state` 前后端 Schema 对齐与加载优先级**：前端 `SavedFilterState` 序列化严格对齐后端 `models.SavedFilterState` JSON 字段（`subsystem_ids`, `only_my_scope`, `status`, `ego_node_id`, `ego_hops`, `hide_isolated`, `hub_fold`）；按 `URL 书签 ≻ 当前 (view, focus_scope) 默认书签 ≻ 团队基准 ≻ ELK` 加载；`localStorage` 草稿键扩展为按 `focusScope` 隔离（`contract:topo:draft:${userId}:${view}:${focusScope}`），基准版本不一致时安全丢弃并提示。
 
 ### 6.5 客户端架构拓扑高清导出架构 (`F-32`, [`ADR-18`](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) / M22)
 
@@ -828,4 +828,4 @@ export interface ScopedGraph {
 
 1. **程序化纯矢量重建导出（零 `<foreignObject>` HTML 节点裁切与污染风险）**：鉴于 ReactFlow 画布节点本体为 HTML `DOM` 元素，直接克隆 DOM `.react-flow__viewport` 转 SVG 会触发 `<foreignObject>` 跨浏览器光栅化失败或缺失节点框体；改为在客户端 `exportTopology.ts` 直接消费当前可见子图布局产物（`flowNodes` 的 `position / width / height / label / status / kind` 与 `flowEdges` 的 `bendPoints` / 锚点坐标 / 标签 / 一致性状态），计算完整视口包围盒与内边距（`padding = 32px`），**程序化生成纯正交矢量 `<svg>` 元素树（`<rect>` / `<path>` / `<text>` / `<marker>`）**，支持高可编辑性与零失真缩放；
 2. **CSS Semantic Token 静态内联解析**：生成导出 SVG 前，通过 `getComputedStyle(document.documentElement)` 读取当前激活亮/暗色 `--color-*` 语义 Token 的计算色值并静态写入图形 `fill` / `stroke` / `color` 属性（确保导出文件脱离浏览器 CSS 上下文独立打开时与当前主题视觉 100% 一致，且无任何 HTML 字符串拼接或 `dangerouslySetInnerHTML`）；
-3. **高清离屏光栅化与 CSP 安全下载**：`SVG` 导出直接生成 UTF-8 `image/svg+xml` Blob；`PNG` 导出经同源 `SVG Data URL` 载入 `2x` 高分辨率离屏 `<canvas>` 光栅化生成 `image/png` Blob，通过 `URL.createObjectURL` 触发下载并立即 `revokeObjectURL` 释放内存（`cmd/server` CSP `img-src` 已允许 `data: blob:`）；文件命名遵循 `traefik-topology-{view}-{focus_scope}-{YYYYMMDD_HHmm}.svg|png`。
+3. **高清离屏光栅化与 CSP 安全下载**：`SVG` 导出直接生成 UTF-8 `image/svg+xml` Blob；`PNG` 导出经同源 `SVG Data URL` 载入 `2x` 高分辨率离屏 `<canvas>` 光栅化生成 `image/png` Blob，通过 `URL.createObjectURL` 触发下载并立即 `revokeObjectURL` 释放内存（`cmd/server` CSP `img-src` 已允许 `data: blob:`）；文件命名遵循 `contract-topology-{view}-{focus_scope}-{YYYYMMDD_HHmm}.svg|png`。

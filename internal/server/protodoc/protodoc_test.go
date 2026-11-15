@@ -9,10 +9,10 @@ import (
 	"testing"
 
 	"code-common/backend/testdb"
-	"code-traefik/internal/server/decoder"
-	"code-traefik/internal/server/protodoc"
-	"code-traefik/models"
-	"code-traefik/pkg/crosrpc"
+	"code-contract/internal/server/decoder"
+	"code-contract/internal/server/protodoc"
+	"code-contract/models"
+	"code-contract/pkg/crosrpc"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protodesc"
@@ -28,7 +28,7 @@ func setupIsolatedProtoDocDB(t *testing.T) *gorm.DB {
 	if os.Getenv("TEST_DB_DSN") == "" {
 		t.Skip("TEST_DB_DSN 未配置，跳过数据库隔离测试")
 	}
-	db := testdb.SetupIsolatedDB(t, "traefik_protodoc_test")
+	db := testdb.SetupIsolatedDB(t, "contract_protodoc_test")
 	if err := models.SetupWithDB(db); err != nil {
 		t.Fatalf("SetupWithDB 失败: %v", err)
 	}

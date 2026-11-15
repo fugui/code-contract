@@ -1,4 +1,4 @@
-# 架构与活体契约治理 (`code-traefik`) 管理面服务、微前端控制台与回归断言设计
+# 架构与活体契约治理 (`code-contract`) 管理面服务、微前端控制台与回归断言设计
 
 - **文档编号**：`04-control-plane-and-web-console.md`
 - **文档版本**：v1.12.0
@@ -103,7 +103,7 @@ flowchart LR
         BatchDB["微批聚合器 (200 行 或 200ms CreateInBatches)"]
     end
 
-    PG[("PostgreSQL traefik_traffic_records (raw_req_packet + raw_rsp_packet + payload_json)")]
+    PG[("PostgreSQL contract_traffic_records (raw_req_packet + raw_rsp_packet + payload_json)")]
     Browser["前端监控台 (/api/events SSE)"]
 
     Ag1 --> LeaseChk
@@ -116,17 +116,17 @@ flowchart LR
 
 1. **周期心跳、Single-Flight 自动预挂补齐 (`Auto-Rearm`)、离线熔断与悬空租约自愈**：
    - 后台协程按 `10s` 间隔并发探活所有已登记 Agent（`GET /agent/v1/handshake`，超时 `3s`），刷新 `status = 'ONLINE'`、`last_heartbeat_at`，核对 `ActiveLeaseType / ActiveRefID` 与规范化预挂载摘要 `ArmedDigest`；
-   - **Single-Flight 版本化预挂对账与指数退避**：当在线且空闲（`lease_type == ''`）的 Agent 返回的 `ArmedDigest` 与 `traefik_agents.expected_armed_digest` 不一致或 `BootID` 刷新时，`hub.Manager` 在单机互斥锁 `rearmMu[agentID]` 保护下携带最新 `mounts_revision` 调用 `PUT /agent/v1/monitors/arm` 补齐待命探针并回写统一七态 `probe_status`；若遇 `CAP_DENIED`/`ERROR` 等持久性错误自动进入 `10s -> 30s -> 60s -> 300s` 指数退避（配置变更或手动触发立即重置退避）；
+   - **Single-Flight 版本化预挂对账与指数退避**：当在线且空闲（`lease_type == ''`）的 Agent 返回的 `ArmedDigest` 与 `contract_agents.expected_armed_digest` 不一致或 `BootID` 刷新时，`hub.Manager` 在单机互斥锁 `rearmMu[agentID]` 保护下携带最新 `mounts_revision` 调用 `PUT /agent/v1/monitors/arm` 补齐待命探针并回写统一七态 `probe_status`；若遇 `CAP_DENIED`/`ERROR` 等持久性错误自动进入 `10s -> 30s -> 60s -> 300s` 指数退避（配置变更或手动触发立即重置退避）；
    - 连续 **3 个周期（30s）** 探活失败则将数据库状态切换为 `OFFLINE`、将该 Agent 名下挂载进程 `probe_status` 同步置为 `'OFFLINE'`，**自动释放残留排他租约**并将关联录制批次或重放任务置为异常终止，防止共享测试环境 Agent 发生死锁挂死。
 2. **Track A 快轨（前端 SSE 实时预览推送）**：
-   - 为每个已认证订阅者分配容量为 `128` 的缓冲 Channel；推送前严格校验订阅者对目标 `session_id` 的访问权（`PRIVATE` 批次仅推送给 `owner_id` 本人及 `traefik_admin`）；
+   - 为每个已认证订阅者分配容量为 `128` 的缓冲 Channel；推送前严格校验订阅者对目标 `session_id` 的访问权（`PRIVATE` 批次仅推送给 `owner_id` 本人及 `contract_admin`）；
    - Channel 瞬时满载时仅跳过实时预览通知，绝不反向阻塞 WebSocket 读取协程与 Track B 落盘管道，确保端到端呈现延迟 `<= 1s`。
 
 ### 1.2 预挂就绪零重启录制编排与无损+结构化双模落盘流水线 (`recorder.Orchestrator`)
 
 1. **多进程排他租约获取、有序采集闸门与停录不断连**：
    - 校验发起人对所选 `target_process_ids` 所属环境 Agent 的访问权（普通用户可组合本人 `PRIVATE` Agent 与当前空闲的任意 `SHARED` 环境 Agent），固化 `process_snapshots` 进程蓝图快照（解耦日后卸载挂载实例）与 `endpoint_snapshots` 下游端点映射快照（`[{endpoint, arch_process_id, source}]`，供多实现服务契约 `EGRESS` 流量历史幂等定位目的实现模块，[`ADR-16`](../05-adr/16-multi-implementation-service-contract-adr.md)），按 `agent_id` 升序调用 `AcquireAgentLeases` 原子加锁（冲突立即返回 `409 Conflict` 及持锁人信息）；
-   - 并发调用各 Agent `PUT /agent/v1/monitors/sync` 下发 `[]ProcessMonitorSpec`：Agent 实时复检 `/proc/<pid>/fd` 后按序先注入 `activeSessionID` 并开启 `EgressProxy` `CAPTURING` 分帧（目标 PID 默认全出站透明代理，即使仅挂载单个进程且 `Downstreams` 为空亦可自动录齐 `INGRESS + EGRESS`，[`ADR-11`](../05-adr/11-single-process-bidirectional-capture-and-recording-ux-adr.md)）、再预热存量已建立入站 FD 至 `ing_conn_map` 并动态挂载入站读写钩子（已 `ARMED` 进程 **0ms 零重启开录**，`DISARMED` 进程兜底临时挂载），将最新诊断写入 `traefik_recording_sessions.process_diagnostics`；WebSocket 读取协程将真实采集 `agt.ID` 透传至 `ExchangeAssembler.Feed(agt.ID, env, payload)`（禁止硬编码 `agent_id = 1`）；
+   - 并发调用各 Agent `PUT /agent/v1/monitors/sync` 下发 `[]ProcessMonitorSpec`：Agent 实时复检 `/proc/<pid>/fd` 后按序先注入 `activeSessionID` 并开启 `EgressProxy` `CAPTURING` 分帧（目标 PID 默认全出站透明代理，即使仅挂载单个进程且 `Downstreams` 为空亦可自动录齐 `INGRESS + EGRESS`，[`ADR-11`](../05-adr/11-single-process-bidirectional-capture-and-recording-ux-adr.md)）、再预热存量已建立入站 FD 至 `ing_conn_map` 并动态挂载入站读写钩子（已 `ARMED` 进程 **0ms 零重启开录**，`DISARMED` 进程兜底临时挂载），将最新诊断写入 `contract_recording_sessions.process_diagnostics`；WebSocket 读取协程将真实采集 `agt.ID` 透传至 `ExchangeAssembler.Feed(agt.ID, env, payload)`（禁止硬编码 `agent_id = 1`）；
    - 录制正常结束或触发上限时，严格调用 **`POST /agent/v1/monitors/{sessionId}/stop`**（携带路径参数 `sessionId`）：Agent 先卸载入站读写钩子 -> `200ms` 在途应答排空 -> 将 `EgressProxy` 拨回 `PASSTHROUGH` 并清零 `activeSessionID`（**不断开业务 TCP 长连接**） -> 发送 `EVENT_SESSION_DRAINED` 并释放本地 `RECORDING` 租约，主控在统一收尾函数中原子释放全部 DB 租约。
 2. **双阈值自动停录守卫**：
    - 内存原子维护当前批次 `capturedFrames` 与启动定时器 `time.AfterFunc(MaxDuration)`（默认 `30 分钟` / `100,000 帧`）；任一阈值触发时自动向全部参与 Agent 发送 `/stop`、刷空配对窗口并释放租约，状态落盘为 **`COMPLETED_BY_LIMIT`**。
@@ -153,10 +153,10 @@ flowchart LR
    - 对目标进程所属 Agent 获取 `REPLAY` 排他租约（冲突立即返回 `409 Conflict`）。
 2. **重放生命周期状态机与既有代理连接零外泄 Mock 接管**：
    - **状态机流转**：`PENDING`（初始创建） -> `RUNNING`（目标进程已 `🟢 READY`，无需手动重启；Agent 将 `EgressProxy` 中该进程的既有长连接原子切入 `REPLAY_MOCK` 物理阻断真实下游写通道并按序注入请求切片） -> `COMPLETED / CANCELLED / FAILED`；
-   - **按 `RecordID` 因果子树组装 `ScopedEgressMocks` 与 `dst_tag` 多实现隔离（[`ADR-12`](../05-adr/12-packet-causality-call-tree-and-sequence-ux-adr.md) & [`ADR-16`](../05-adr/16-multi-implementation-service-contract-adr.md)）**：从 `traefik_traffic_records` 按 `req_captured_at_ns ASC, seq_no ASC, id ASC` 提取选定 `INGRESS` 记录组装 `IngressItems: []ReplayIngressItem{RecordID, RawReq}`，并调用 `callgraph.BuildReplayClosure`：优先按同进程同 `trace_id` 的 DOTR `FatherSpanID` 子孙闭包（无 `trace_id` 时回退 `[req_ns - 500μs, rsp_ns + 500μs]` 包含时间窗）为每条 `INGRESS` 切分专属 `ScopedEgressMocks[recordID]`，将未归属合格 `EGRESS` 放入 `GlobalFallbackMocks`（严格剔除 `is_truncated == true`、`REQ_ONLY` 与空应答帧），并根据每条 `EGRESS` 记录归因的 `dst_module_id` 填充目标实现进程编码 `DstTag`（Agent 侧 `ScopedMockMatcher` 按 `service:operation@dst_tag` 优先匹配，无标签回退 `service:operation`，严守零 DB 零 `.pb` 红线），纯二进制下发 Agent；
+   - **按 `RecordID` 因果子树组装 `ScopedEgressMocks` 与 `dst_tag` 多实现隔离（[`ADR-12`](../05-adr/12-packet-causality-call-tree-and-sequence-ux-adr.md) & [`ADR-16`](../05-adr/16-multi-implementation-service-contract-adr.md)）**：从 `contract_traffic_records` 按 `req_captured_at_ns ASC, seq_no ASC, id ASC` 提取选定 `INGRESS` 记录组装 `IngressItems: []ReplayIngressItem{RecordID, RawReq}`，并调用 `callgraph.BuildReplayClosure`：优先按同进程同 `trace_id` 的 DOTR `FatherSpanID` 子孙闭包（无 `trace_id` 时回退 `[req_ns - 500μs, rsp_ns + 500μs]` 包含时间窗）为每条 `INGRESS` 切分专属 `ScopedEgressMocks[recordID]`，将未归属合格 `EGRESS` 放入 `GlobalFallbackMocks`（严格剔除 `is_truncated == true`、`REQ_ONLY` 与空应答帧），并根据每条 `EGRESS` 记录归因的 `dst_module_id` 填充目标实现进程编码 `DstTag`（Agent 侧 `ScopedMockMatcher` 按 `service:operation@dst_tag` 优先匹配，无标签回退 `service:operation`，严守零 DB 零 `.pb` 红线），纯二进制下发 Agent；
    - **双轨可靠回收与独立明细持久化**：
      - 重放执行进度与结果通过 WebSocket `EVENT_REPLAY_ITEM_DONE` 实时推送，同时支持通过 `GET /agent/v1/replays/:taskId/result` 幂等拉取；
-     - 每条请求重放回收的实际原始应答帧（`actual_rsp_packet` bytea）及双层比对结果独立持久化至 **`traefik_replay_items`** 表，支持前端标准服务端分页查询与历史多次比对！
+     - 每条请求重放回收的实际原始应答帧（`actual_rsp_packet` bytea）及双层比对结果独立持久化至 **`contract_replay_items`** 表，支持前端标准服务端分页查询与历史多次比对！
 3. **多请求状态聚合优先级定律**：
    单条请求及整包重放任务的最终 `result_status` 严格遵循以下全序优先级取最高异常级别：
 
@@ -190,14 +190,14 @@ flowchart LR
 ### 1.6 Git 无状态客户端、Monorepo `1:N` Bundle 对账与 MR 四合一虚拟目录树门禁 (`internal/server/gitclient`, `F-21` / `F-29` / `F-31` / M25~M26)
 
 1. **凭据加密、SSRF 信任白名单与双模无状态读取适配器**：
-   - `GitRepo` 凭据（`PersonalAccessToken` / `BasicAuth` / `DeployKey`）与 `WebhookSecret` 经 `internal/server/security.AESGCM` 使用主密钥（**`TRAEFIK_CRYPTO_KEY`** `32B` 环境变量或 KMS 注入；生产环境禁止无密钥静默回退，测试期显式注入）加密存库；响应体与 `commonAudit` Diff 彻底隐藏密文与 `*_enc`/`*_sha256` 内部键，仅返回 `has_credentials` / `has_webhook_secret` / 脱敏 Hint；
-   - 出站 HTTP/Git/Webhook/LLM/Notifier 通信强制注入 `security.SafeDialer`：永久硬阻断云元数据（`169.254.0.0/16`、`fe80::/10`、`100.100.100.200/32`），默认拦截未授权回环/私网 RFC1918，同时显式读取 `traefik_settings.outbound_trusted_cidrs` 信任白名单（放行企业内网 GitLab、内网 LLM 网关及**同内网另一台主机部署的 `code-notifier`**），并在 Dial/Control 阶段对解析后的目标 IP 二次核验防范 DNS 重绑定；优先通过托管平台 **REST API** 拉取树与文件流，通用 Git URL (`GENERIC`) 回退使用 `go-git` `memfs` (`memory.NewStorage()` + `memfs.New()`, `Depth: 1`) **纯内存浅克隆**，宿主机零残留。
+   - `GitRepo` 凭据（`PersonalAccessToken` / `BasicAuth` / `DeployKey`）与 `WebhookSecret` 经 `internal/server/security.AESGCM` 使用主密钥（**`CONTRACT_CRYPTO_KEY`** `32B` 环境变量或 KMS 注入；生产环境禁止无密钥静默回退，测试期显式注入）加密存库；响应体与 `commonAudit` Diff 彻底隐藏密文与 `*_enc`/`*_sha256` 内部键，仅返回 `has_credentials` / `has_webhook_secret` / 脱敏 Hint；
+   - 出站 HTTP/Git/Webhook/LLM/Notifier 通信强制注入 `security.SafeDialer`：永久硬阻断云元数据（`169.254.0.0/16`、`fe80::/10`、`100.100.100.200/32`），默认拦截未授权回环/私网 RFC1918，同时显式读取 `contract_settings.outbound_trusted_cidrs` 信任白名单（放行企业内网 GitLab、内网 LLM 网关及**同内网另一台主机部署的 `code-notifier`**），并在 Dial/Control 阶段对解析后的目标 IP 二次核验防范 DNS 重绑定；优先通过托管平台 **REST API** 拉取树与文件流，通用 Git URL (`GENERIC`) 回退使用 `go-git` `memfs` (`memory.NewStorage()` + `memfs.New()`, `Depth: 1`) **纯内存浅克隆**，宿主机零残留。
 2. **`GitRepo (1) -> GitProtoBundle (N)` 全量只读同步与 SHA256 对账 (`SyncGitRepo` / `ReconcileRepoConsistency`)**：
    - 将仓库连接凭据与编译打包单元正式拆分，单个 Monorepo `GitRepo` 可下挂多条 `GitProtoBundle`（各自定义 `proto_root_dir`、`proto_include_dirs`、`target_schema_name` UNIQUE、`target_category`）；创建单仓 `GitRepo` 支持内联一键建默认 Bundle；
-   - 全量同步遍历远端默认分支下位于 Bundle `ProtoRootDir` 与 `ProtoIncludeDirs`（均经 `path.Clean` 防 `..` 穿越）内的全部 `.proto` 文件：对比各相对路径 SHA256 与 DB 现有 `traefik_proto_files`：新增或 SHA256 变更则写入新版本 `traefik_proto_file_versions`（记录 `CommitSHA`、`AuthorName`、`CommitMessage`、`CommittedAt`），远端已删除的路径标记 `is_deleted=true` 保留只读历史 Diff；随后触发 `protocompile` Compilation Bundle 编译写入新版 `ProtoSchema (source_type='GIT_SYNC', source_bundle_id=bundle.ID)` 并提取 `ProtoDocSymbol` 与静态检查报告，推送 SSE `git_sync.completed`；
-   - 一致性对账接口为纯只读校验，比对远端 SHA256 与 DB `traefik_proto_files` 输出 `{in_sync, remote_only_files, db_only_files, modified_files}`。
+   - 全量同步遍历远端默认分支下位于 Bundle `ProtoRootDir` 与 `ProtoIncludeDirs`（均经 `path.Clean` 防 `..` 穿越）内的全部 `.proto` 文件：对比各相对路径 SHA256 与 DB 现有 `contract_proto_files`：新增或 SHA256 变更则写入新版本 `contract_proto_file_versions`（记录 `CommitSHA`、`AuthorName`、`CommitMessage`、`CommittedAt`），远端已删除的路径标记 `is_deleted=true` 保留只读历史 Diff；随后触发 `protocompile` Compilation Bundle 编译写入新版 `ProtoSchema (source_type='GIT_SYNC', source_bundle_id=bundle.ID)` 并提取 `ProtoDocSymbol` 与静态检查报告，推送 SSE `git_sync.completed`；
+   - 一致性对账接口为纯只读校验，比对远端 SHA256 与 DB `contract_proto_files` 输出 `{in_sync, remote_only_files, db_only_files, modified_files}`。
 3. **MR Webhook 常量时间验签、Fast-Forward 幂等去重与原位评论更新 (`EvaluateMRCheckRun`, M26)**：
-   - 推荐 `POST /api/webhooks/git-mr/:repoId` 精准定位 `GitRepo`（保留按归一化 `ssh/https` URL 匹配兼容路径 `/api/webhooks/git-mr`），使用 `subtle.ConstantTimeCompare` / `hmac.Equal` 校验签名；通过唯一防重键 **`uk_traefik_mr_dedup` (`git_repo_id, COALESCE(bundle_id, 0), event_phase, head_commit_sha, target_head_sha`)** 入库 `MRCheckRun`，其中 `event_phase ∈ {'MR_GATE', 'MAIN_MERGE'}` 且纳入 `target_head_sha`，彻底避免 Fast-Forward / Rebase 合入主干时与 MR 相同 `head_commit_sha` 被误判为重复 webhook 而漏跑主干编译！
+   - 推荐 `POST /api/webhooks/git-mr/:repoId` 精准定位 `GitRepo`（保留按归一化 `ssh/https` URL 匹配兼容路径 `/api/webhooks/git-mr`），使用 `subtle.ConstantTimeCompare` / `hmac.Equal` 校验签名；通过唯一防重键 **`uk_contract_mr_dedup` (`git_repo_id, COALESCE(bundle_id, 0), event_phase, head_commit_sha, target_head_sha`)** 入库 `MRCheckRun`，其中 `event_phase ∈ {'MR_GATE', 'MAIN_MERGE'}` 且纳入 `target_head_sha`，彻底避免 Fast-Forward / Rebase 合入主干时与 MR 相同 `head_commit_sha` 被误判为重复 webhook 而漏跑主干编译！
    - **MR 虚拟目录树合成算法（根治「删除既有文件残留幽灵引用」缺陷）**：按命中的 `GitProtoBundle` 拉取 `TargetBranch` 基线树，写入 `ADDED / MODIFIED` 并强制移除 `DELETED / RENAMED(OldPath)`；
    - **四合一门禁流水线顺序执行**：① `protocompile` 虚拟树全量编译（`compile_passed`，跳过全部 `external_imports` Service 且仅自有 `.proto` 保留完整 `SourceCodeInfo`）；② `linter` 命名/注释/词库检测；③ 三护栏 AST 重复结构检测（统一 `Jaccard >= 0.85`）；④ 若 `TargetSchemaName` 在生效池存在基准版本，执行 `decoder.DetectBreakingChanges` + `FindAffectedDependents`（`breaking.go` 新增当 `ServiceName == ""` 时沿 `CompiledRegistry.Files` 反向 `import` 闭包穿透 `BASE_LIB` 受影响下游服务与模块责任人）；
    - **原位评论更新 (`remote_comment_id`)、`Approve with Override` 与 Merge 自动入池**：
@@ -207,13 +207,13 @@ flowchart LR
 
 ### 1.7 可配置静态规范检查、多段包名规则、原生词库与带护栏重复结构引擎 (`internal/server/linter`, `F-30` / M24)
 
-1. **可配置规则引擎与合理默认值 (`traefik_check_rules`)**：
+1. **可配置规则引擎与合理默认值 (`contract_check_rules`)**：
    - 按 `RuleType`（`NAMING | COMMENT | VOCABULARY | STRUCTURE | DUPLICATE`）逐文件扫描 AST 与 `SourceCodeInfo`；支持基于 `ExemptionRule` 剔除 `google/protobuf/*`、`third_party/*` 或指定 `BASE_LIB` 路径；
    - **多段包名兼容规则 (`PACKAGE_NAMING`)**：默认正则 `^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*(\.v[0-9]+((alpha|beta|rc)[0-9]*)?)?$` 完整兼容 `dophi.order.v1` 多段语义版本包名与单段包名（避免早期原型硬编码只支持单段包名的设计缺陷）；
    - **`COMMENT_REQUIRED` 默认 `WARNING`**：缺失 Service/RPC/Message/Enum 注释默认记录 `WARNING` 并在合规报告统计，**不直接阻断 MR**，管理员可在规则配置中显式切换级别或豁免旧目录。
 2. **复合词根切分、原生标准词典 (`BUILTIN_SEED`) 与 3s 熔断可选 LLM 建议器**：
-   - 将字段名（如 `cust_ord_amnt` / `tradeTsMs`）拆分为规范小写词元切片 `[cust, ord, amnt]`；首先查原生 `traefik_vocabulary_terms` 标准词 `term` 与 `aliases` 映射表（启动时由 `BUILTIN_SEED` 幂等预置高频通用词根并支持 Web CRUD 维护，若命中 `amnt -> amt`，立即生成精确规范化替换建议）；
-   - 未命中的生僻缩写词元先查询本地进程内 TTL 缓存（避免同仓跨文件重复调用）；若系统设置启用了 `llm_enabled=true` 且配置有效，通过受 `SafeDialer` 保护的 HTTP 客户端发起 **3 秒硬超时**（`context.WithTimeout(ctx, 3*time.Second)`）异步或有限并发批请求获取英文词根释义建议，将结果写入本地缓存并可选写回 `traefik_vocabulary_terms(is_approved=false, source='LLM_SUGGESTED')` 供架构师审核；**超时、HTTP 错误或未配置 LLM 时 100% 静默降级为纯确定性报告（`LLMStatus=TIMEOUT_FALLBACK|ERROR_FALLBACK|SKIPPED`），绝不拖垮或失败静态检查任务**。
+   - 将字段名（如 `cust_ord_amnt` / `tradeTsMs`）拆分为规范小写词元切片 `[cust, ord, amnt]`；首先查原生 `contract_vocabulary_terms` 标准词 `term` 与 `aliases` 映射表（启动时由 `BUILTIN_SEED` 幂等预置高频通用词根并支持 Web CRUD 维护，若命中 `amnt -> amt`，立即生成精确规范化替换建议）；
+   - 未命中的生僻缩写词元先查询本地进程内 TTL 缓存（避免同仓跨文件重复调用）；若系统设置启用了 `llm_enabled=true` 且配置有效，通过受 `SafeDialer` 保护的 HTTP 客户端发起 **3 秒硬超时**（`context.WithTimeout(ctx, 3*time.Second)`）异步或有限并发批请求获取英文词根释义建议，将结果写入本地缓存并可选写回 `contract_vocabulary_terms(is_approved=false, source='LLM_SUGGESTED')` 供架构师审核；**超时、HTTP 错误或未配置 LLM 时 100% 静默降级为纯确定性报告（`LLMStatus=TIMEOUT_FALLBACK|ERROR_FALLBACK|SKIPPED`），绝不拖垮或失败静态检查任务**。
 3. **带三重护栏与倒排桶预筛选的跨文件 AST 重复结构体探测 (`DetectDuplicateMessages`)**：
    - **护栏 ① 短包装豁免**：统计有效非保留字段数，凡 **`effective_field_count < 3`** 的小型消息（如仅含 `{id, name}`、`PageReq`、`Empty`）直接跳过不参与重复比对；
    - **护栏 ② `BASE_LIB` 与配置路径豁免**：排除 `TargetCategory == 'BASE_LIB'` 及命中 `ExemptionRule` 的公共底座消息，鼓励正常引用公共结构而不误报；
@@ -224,12 +224,12 @@ flowchart LR
 
 ### 1.8 持久化站内通知中心、按用户定向 SSE 与跨机 `code-notifier` 邮件分发 (`internal/server/notify`, M26)
 
-1. **受众解析、站内持久化与 `SSEBroker(userID)` 定向推送**：MR Gate 失败/豁免、Git 同步失败、Merge 自动入池成功、破坏性影响警告事件触发时，引擎按 `MRAuthorEmail/Username`（解析对应 `users.id` 及邮箱）、`AffectedDependents` 所属模块/子系统 `OwnerID` 及兜底 `traefik_admin` 解析接收人集合（去重），批量持久化写入 `traefik_notifications`；同时将既有 `handlers/sse_handler.go` 的 `SSEBroker` 升级为绑定 `userID uint64` 的订阅管理，通过 **`BroadcastToUsers(recipientIDs, "notification.created", payload)`** 仅向目标收件人推送消息（彻底消除共享房间广播导致的跨用户未读提醒泄露）。
+1. **受众解析、站内持久化与 `SSEBroker(userID)` 定向推送**：MR Gate 失败/豁免、Git 同步失败、Merge 自动入池成功、破坏性影响警告事件触发时，引擎按 `MRAuthorEmail/Username`（解析对应 `users.id` 及邮箱）、`AffectedDependents` 所属模块/子系统 `OwnerID` 及兜底 `contract_admin` 解析接收人集合（去重），批量持久化写入 `contract_notifications`；同时将既有 `handlers/sse_handler.go` 的 `SSEBroker` 升级为绑定 `userID uint64` 的订阅管理，通过 **`BroadcastToUsers(recipientIDs, "notification.created", payload)`** 仅向目标收件人推送消息（彻底消除共享房间广播导致的跨用户未读提醒泄露）。
 2. **跨机部署的同内网 `code-notifier` 与可选 SMTP 异步外发（失败不阻断）**：
-   - **`code-notifier` 跨机内网部署契约**：团队 `code-notifier` 部署在网络上另一台独立主机上提供邮件投递服务；管理后台开启 `code_notifier_enabled=true` 并配置 `code_notifier_url`（将对应主机/CIDR 配置进 `traefik_settings.outbound_trusted_cidrs` 供 `SafeDialer` 放行）。控制面异步调用 `POST <code_notifier_url>/api/notify/email` 时，必须构造完整 `NotifyPayload`：
+   - **`code-notifier` 跨机内网部署契约**：团队 `code-notifier` 部署在网络上另一台独立主机上提供邮件投递服务；管理后台开启 `code_notifier_enabled=true` 并配置 `code_notifier_url`（将对应主机/CIDR 配置进 `contract_settings.outbound_trusted_cidrs` 供 `SafeDialer` 放行）。控制面异步调用 `POST <code_notifier_url>/api/notify/email` 时，必须构造完整 `NotifyPayload`：
      - 必填 `notification_id`、`subject`、`html_content` 与**非空 `markdown_content`**（校验 `len(strings.TrimSpace(md)) > 0`，匹配 `code-notifier` 接口必填校验，避免空串触发 `400 Bad Request`）；
-     - 将目标收件人（作者与受影响模块/子系统 Owner）从平台 `users` 表查询解析真实公司邮箱填入 `recipients: {to: [...], cc?: [...]}`，附带 `source_app: "code-traefik"`、`category` 与 `idempotency_key`；
-   - 若未配置 `code-notifier` 但配置了 SMTP 服务器则回落 SMTP 发送；外发成功/失败后回写 `traefik_notifications.email_status`（`SENT | FAILED | SKIPPED`）及错误信息。**远程 `code-notifier` 网络不可达或返回异常时绝不阻塞站内持久化与 Git MR 门禁主流程**。
+     - 将目标收件人（作者与受影响模块/子系统 Owner）从平台 `users` 表查询解析真实公司邮箱填入 `recipients: {to: [...], cc?: [...]}`，附带 `source_app: "code-contract"`、`category` 与 `idempotency_key`；
+   - 若未配置 `code-notifier` 但配置了 SMTP 服务器则回落 SMTP 发送；外发成功/失败后回写 `contract_notifications.email_status`（`SENT | FAILED | SKIPPED`）及错误信息。**远程 `code-notifier` 网络不可达或返回异常时绝不阻塞站内持久化与 Git MR 门禁主流程**。
 
 ### 1.9 治理大盘静态规范合标率独立指标卡片 (`internal/server/dashboard`, `F-24` / M26)
 
@@ -250,7 +250,7 @@ flowchart LR
    - **自有文件与外部依赖分离**：提取本文件携带的 `ProtoFiles`（`own_proto_files`），遍历 `file.GetDependency()` 计算不在自有集合内且非内置 `google/protobuf/*` Well-Known Types 的缺失路径记入 `ExternalImports`（`jsonb []string`）；
    - **去重 DAG 拓扑合并**：当存在外部 `import` 时，按 **「本描述集自有文件 $\succ$ 当前生效 `BASE_LIB` $\succ$ 其他生效描述集（当 `auto_activate=false` 仅草稿归档时，允许回退取未生效各 `BASE_LIB` 最新版本）$\succ$ Go 标准库内置 `google/protobuf/*` WKT」** 优先级按 `file.GetName()` 严格去重并按 `import` 拓扑序重排后执行 `protodesc.NewFiles`（若仍缺失依赖，返回 `400 Bad Request` 并精准列出 `missing_imports` 文件名）；
    - **自有服务提取与 `0` Service 基础库支持**：**仅遍历 `own_proto_files` 提取 `(service_name, operation)`**（若非 `BASE_LIB` 业务包因 `--include_imports` 重复打包了已生效 `BASE_LIB` 中的同名文件，自动跳过基础库已托管文件的 `Service` 提取），严格按点分规范 **`service_name = string(file.Package()) + "." + string(svc.Name())`**（无 `package` 时为 `string(svc.Name())`）生成映射；完全允许 `OperationCount == 0` 的纯消息体 `BASE_LIB` 入库与激活；
-   - **咨询锁递增版本与 `DiffIgnorePaths` 向前继承**：在 PostgreSQL 事务入口获取 `pg_advisory_xact_lock(hashtext('traefik_proto_schema_registry'))` 计算 `version = max(version) + 1`；若 `version > 1`，自动读取同名当前生效版本（无生效版本则取 `version - 1`）的非空 `ProtoOperation.DiffIgnorePaths`，按 `(service_name, operation)` 无损向前继承。
+   - **咨询锁递增版本与 `DiffIgnorePaths` 向前继承**：在 PostgreSQL 事务入口获取 `pg_advisory_xact_lock(hashtext('contract_proto_schema_registry'))` 计算 `version = max(version) + 1`；若 `version > 1`，自动读取同名当前生效版本（无生效版本则取 `version - 1`）的非空 `ProtoOperation.DiffIgnorePaths`，按 `(service_name, operation)` 无损向前继承。
 2. **`CompileTrialPool` 激活 / 批量激活 / 停用双向门禁 (`Activate` / `BatchActivate` / `Deactivate`)**：
    - 任何改变全局生效池的操作均在咨询锁事务内先推导出变更后的候选生效集合 $S_{\text{next}}$：
      - **单集激活 (`Activate`)**：$S_{\text{next}} = (S_{\text{active}} \setminus \{\text{同名旧版}\}) \cup \{s_{\text{target}}\}$；
@@ -299,7 +299,7 @@ flowchart LR
    当回归 Diff 引擎比对单次 RPC 应答时，最终生效的忽略路径集合由三级合并计算：
    $$\text{FinalIgnorePaths} = \text{ReplayTask.ExtraIgnorePaths} \cup \text{Operation.DiffIgnorePaths} \cup \text{ModuleService.DiffIgnorePaths}$$
    - **L1 任务级临时忽略 (`ReplayTask.ExtraIgnorePaths`)**：发起单次重放任务时用户临时附加的针对性忽略项；
-   - **L2 方法级精准忽略 (`ProtoOperation.DiffIgnorePaths`)**：在契约工作台字段树上可视化勾选、并持久化至 `traefik_proto_operations` 的方法级专属规则；
+   - **L2 方法级精准忽略 (`ProtoOperation.DiffIgnorePaths`)**：在契约工作台字段树上可视化勾选、并持久化至 `contract_proto_operations` 的方法级专属规则；
    - **L3 服务级全局默认 (`ModuleService.DiffIgnorePaths`)**：在架构中心供给服务上配置的服务级通用忽略规则（如公共网关头 `header.*`）。
 
 ### 2.5 纯 Go `protocompile` 编译底座与统一四级虚拟 `Resolver` (`F-21`, `ADR-18` / M22 & M25)
@@ -308,20 +308,20 @@ flowchart LR
 
 1. **输入安全规范与跨 Bundle 编译边界铁律**：
    - 接收虚拟目录树 `map[relPath][]byte` 与可选 `proto_include_dirs`（默认 `["."]`），对全部路径执行 `path.Clean` 并强制校验为**非空安全 POSIX 相对路径**，拒绝任何前导 `/`、`..` 上级路径穿越或包含 `\0` 的畸形路径；单次编译总源码体积强制受 `<= 16MB` 限制；
-   - **外部导入降噪与体积守卫**：`extractOperationsFromDescriptor` **跳过全部 `external_imports`**（不仅是 `BASE_LIB`），绝不将跨 Bundle 依赖的 `Service/Operation` 重复登记入当前制品包导致生效池冲突；构建输出 `FileDescriptorSet` 时，仅当前 Bundle 自有 `own_proto_files` 完整保留 `SourceCodeInfo`（供给文档中心 `traefik_proto_doc_symbols` 与行号锚点），被跨级解析引入的外部依赖 `FileDescriptorProto` **显式剥离 `SourceCodeInfo`**，确保存入 `ProtoSchema` 的二进制制品严格控制 `<= 16MB`。
+   - **外部导入降噪与体积守卫**：`extractOperationsFromDescriptor` **跳过全部 `external_imports`**（不仅是 `BASE_LIB`），绝不将跨 Bundle 依赖的 `Service/Operation` 重复登记入当前制品包导致生效池冲突；构建输出 `FileDescriptorSet` 时，仅当前 Bundle 自有 `own_proto_files` 完整保留 `SourceCodeInfo`（供给文档中心 `contract_proto_doc_symbols` 与行号锚点），被跨级解析引入的外部依赖 `FileDescriptorProto` **显式剥离 `SourceCodeInfo`**，确保存入 `ProtoSchema` 的二进制制品严格控制 `<= 16MB`。
 2. **统一四级优先级虚拟 `Resolver` (`LayeredVirtualResolver`)**：
-   通过 `decoder.ProtoSourceProvider` 抽象解耦 M22 与 M25（M22 先以已编译源缓存实现，M25 接入 DB `traefik_proto_files`）：
+   通过 `decoder.ProtoSourceProvider` 抽象解耦 M22 与 M25（M22 先以已编译源缓存实现，M25 接入 DB `contract_proto_files`）：
    1. **第一优先级（当次编译虚拟目录树）**：按 `proto_include_dirs` 组合候选相对路径匹配本轮提交/同步/MR 合成树的 `.proto` 源文件；
-   2. **第二优先级（数据库内已同步且未软删的 `.proto` 源码）**：经 `ProtoSourceProvider` 检索 `traefik_proto_files`（`is_deleted = false`）主干最新源码，存在同名路径时 **`BASE_LIB` 仓库优先**；
+   2. **第二优先级（数据库内已同步且未软删的 `.proto` 源码）**：经 `ProtoSourceProvider` 检索 `contract_proto_files`（`is_deleted = false`）主干最新源码，存在同名路径时 **`BASE_LIB` 仓库优先**；
    3. **第三优先级（当前全局生效池 `CompiledRegistry.Files`）**：从生效池获取已反序列化 `FileDescriptorProto`（直接满足无源码存量 `.pb` 基础库依赖）；
    4. **第四优先级（标准 WKT 内置库）**：Go `protocompile.WithStandardImports()` 内置 `google/protobuf/*.proto`。
 3. **产物封装、`BASE_LIB` 影响面传播与既有防线无缝对接**：
    - 将编译返回的 `linker.Files` 封装为标准 `descriptorpb.FileDescriptorSet`，校验 `<= 16MB` 后直接复用 §2.1 的 **`UploadSchema` / `CompileTrialPool` / `F-26` AST 破坏性变更雷达** 与 `atomic.Pointer[CompiledRegistry]` 原子热切换流水线；任何编译失败行精确映射为结构化 `CompileDiagnosticDTO{File, Line, Column, Message}`；
-   - **升级 `decoder/breaking.go` (`FindAffectedDependents`) 穿透 `BASE_LIB`（0-Service）传播链**：当破坏性变更落在无 `Service` 的公共基础库 `.proto` 文件（`Violation.ServiceName == ""`）时，沿当前 `CompiledRegistry.Files` 的 `Dependency` 反向 `import` 闭包图传递检索直接与间接引用该基础文件的全部业务 `.proto` 所定义 `Service`，再映射至 `traefik_module_services`、下游 `DEPEND`/`DISPATCH` 消费模块及其负责人与所属 `ArchProcess`。
+   - **升级 `decoder/breaking.go` (`FindAffectedDependents`) 穿透 `BASE_LIB`（0-Service）传播链**：当破坏性变更落在无 `Service` 的公共基础库 `.proto` 文件（`Violation.ServiceName == ""`）时，沿当前 `CompiledRegistry.Files` 的 `Dependency` 反向 `import` 闭包图传递检索直接与间接引用该基础文件的全部业务 `.proto` 所定义 `Service`，再映射至 `contract_module_services`、下游 `DEPEND`/`DISPATCH` 消费模块及其负责人与所属 `ArchProcess`。
 
 ### 2.6 活体接口参考文档中心与 `SourceCodeInfo` 萃取引擎 (`internal/server/protodoc`, `F-18`, `ADR-18` / M23)
 
-依托 `protocompile`（`SourceInfoStandard`）或带有 `--include_source_info` 的 `.pb` 描述集，`protodoc` 在描述集编译或激活时同步增量萃取全注释驱动结构并持久化至 `traefik_proto_doc_symbols`：
+依托 `protocompile`（`SourceInfoStandard`）或带有 `--include_source_info` 的 `.pb` 描述集，`protodoc` 在描述集编译或激活时同步增量萃取全注释驱动结构并持久化至 `contract_proto_doc_symbols`：
 
 1. **`SourceCodeInfo` 行号跨度与结构化标签萃取 (`ExtractDocSymbols`)**：
    - 遍历 `FileDescriptorProto.SourceCodeInfo.Location`，按 `Path` 索引解析 `Service`、`Method`、`Message`、`Field`、`Enum` 与 `EnumValue` 的 `StartLine` / `EndLine`（1-based）、`LeadingComments`、`TrailingComments`；
@@ -331,8 +331,8 @@ flowchart LR
      - **`@error_code <code> <http_or_cros_code> <description>`**：逐行萃取为结构化错误码明细表 `error_codes_json`。
 2. **Enum 全量字典、架构多实现血缘、黄金真实样本与缺省 JSON 样例**：
    - **Enum 值字典**：提取全部枚举项名称、整数值、注释及行号；
-   - **黄金用例优先 + 缺省样本生成**：查询 `traefik_golden_suite_items` 中匹配 `(service_name, operation)` 的最新精选报文反序列化 JSON 作为「真实推荐调用样例」；若无黄金样本，基于 `protoreflect.MessageDescriptor` 递归构造类型安全的缺省 JSON Request/Response 模板（内置循环引用检测与 `max_depth <= 12` 护栏，64 位整数输出字符串示例）；
-   - **多实现契约血缘聚合（`ADR-16` 联动）**：查询 `traefik_service_contracts` 与 `traefik_module_services` 关联输出 `Service` 所属「定义契约库 (`CONTRACT_LIB`)」、「独占实现模块」或「全部多实现模块 (`impl_key + ArchProcess`)」，附带跳转 `/topology` / `/architecture` 锚点；
+   - **黄金用例优先 + 缺省样本生成**：查询 `contract_golden_suite_items` 中匹配 `(service_name, operation)` 的最新精选报文反序列化 JSON 作为「真实推荐调用样例」；若无黄金样本，基于 `protoreflect.MessageDescriptor` 递归构造类型安全的缺省 JSON Request/Response 模板（内置循环引用检测与 `max_depth <= 12` 护栏，64 位整数输出字符串示例）；
+   - **多实现契约血缘聚合（`ADR-16` 联动）**：查询 `contract_service_contracts` 与 `contract_module_services` 关联输出 `Service` 所属「定义契约库 (`CONTRACT_LIB`)」、「独占实现模块」或「全部多实现模块 (`impl_key + ArchProcess`)」，附带跳转 `/topology` / `/architecture` 锚点；
    - **Markdown 一键导出 (`ExportMarkdown`)**：生成包含服务摘要、方法入参/出参嵌套表格、枚举字典、错误码说明、血缘与示例 JSON 的自包含标准 Markdown 手册（所有 `.proto` 注释在入库/导出前强制纯净转义，Web 渲染严禁 `dangerouslySetInnerHTML`）。
 
 ---
@@ -385,9 +385,9 @@ type FieldDiff struct {
 
 ### 4.1 模块联邦导出契约、五组十三项菜单与路由矩阵 (`ADR-07`, `ADR-14`, `ADR-18`, `ADR-19`)
 
-前端通过 `vite.config.ts` 固定 `base: '/traefik/'`，向外暴露 `./App` 与 `./menu`（`traefikMenuConfig`）。依据 [`ADR-14`](../05-adr/14-governance-dashboard-golden-suite-and-ci-gate-adr.md) 演进为 4 组 10 项后，进一步依据 [`ADR-19`](../05-adr/19-proto-contract-ia-unbundling-and-four-workbenches-adr.md) (`M27`) 将重载的 `Proto 契约` 拆解为独立 **`Proto 契约治理`** 一级分组，全局菜单形成 **5 组 13 项（`全局概览 ➔ 架构数字孪生 ➔ Proto 契约治理 ➔ 契约核验与回归 ➔ 环境与治理`）**，站内持久化通知挂载在页面右上角全局铃铛气泡与详情抽屉（`WorkspaceUtilityHeader` + `StandaloneShell`），`StandaloneShell` 直接消费 `traefikMenuConfig` 保持单一真实源：
+前端通过 `vite.config.ts` 固定 `base: '/contract/'`，向外暴露 `./App` 与 `./menu`（`contractMenuConfig`）。依据 [`ADR-14`](../05-adr/14-governance-dashboard-golden-suite-and-ci-gate-adr.md) 演进为 4 组 10 项后，进一步依据 [`ADR-19`](../05-adr/19-proto-contract-ia-unbundling-and-four-workbenches-adr.md) (`M27`) 将重载的 `Proto 契约` 拆解为独立 **`Proto 契约治理`** 一级分组，全局菜单形成 **5 组 13 项（`全局概览 ➔ 架构数字孪生 ➔ Proto 契约治理 ➔ 契约核验与回归 ➔ 环境与治理`）**，站内持久化通知挂载在页面右上角全局铃铛气泡与详情抽屉（`WorkspaceUtilityHeader` + `StandaloneShell`），`StandaloneShell` 直接消费 `contractMenuConfig` 保持单一真实源：
 
-| 菜单分组 | 菜单名称 | 子路由路径 (`MODULE_BASE_PATH = '/traefik'`) | 页面组件 | 可见角色 | URL Search Params 状态同步项 |
+| 菜单分组 | 菜单名称 | 子路由路径 (`MODULE_BASE_PATH = '/contract'`) | 页面组件 | 可见角色 | URL Search Params 状态同步项 |
 | :--- | :--- | :--- | :--- | :---: | :--- |
 | **全局概览** *(默认首页)* | **治理大盘** | `/dashboard` | `DashboardWorkbenchPage` | 全体登录用户 | `subsystem_id`（含三维健康分 + **`F-24` 静态规范合标率独立卡片**） |
 | **架构数字孪生** | **架构拓扑** | `/topology` | `TopologyWorkbenchPage` | 全体登录用户 | `view` (`LOGICAL` \| `PHYSICAL`), `env_agent_id`, `session_id`, `focus` / `topo_focus`, `topo_ego`, `topo_ego_hops`, `topo_subsystems`, `topo_my`, `topo_status`, `topo_hide_isolated`, `topo_hub_fold`, `topo_contract_mode` (`AGG` \| `EXPAND`), `topo_realization` (`1` \| `0`), `topo_layout_id`（支持高清 `PNG/SVG` 导出） |
@@ -401,10 +401,10 @@ type FieldDiff struct {
 | **契约核验与回归** | **防劣化回归** | `/replay` | `ReplayWorkbenchPage` | 全体登录用户 | `session_id`, `auto_create` (`1`), `target_process_id`, `status`, `page`, `page_size` |
 | **契约核验与回归** | **黄金用例库** | `/golden-suites` | `GoldenSuitesWorkbenchPage` | 全体登录用户 | `arch_process_id`, `suite_id`, `search`, `page`, `page_size` |
 | **环境与治理** *(沉底低频)* | **Agent 与进程** | `/agents` | `AgentManagementPage` | 全体登录用户 | `scope` (`SHARED` \| `PRIVATE`), `agent_id`, `process_id`, `open_mount` (`1`), `lease_state`, `status`, `page`, `page_size` |
-| **环境与治理** | **模块参数配置** | `/admin/settings` | `AdminSettingsPage` | `traefik_admin` (`adminOnly`) | -（含 CI Token、LLM 建议、`outbound_trusted_cidrs` 信任白名单与跨机 `code-notifier`/SMTP 参数脱敏配置） |
+| **环境与治理** | **模块参数配置** | `/admin/settings` | `AdminSettingsPage` | `contract_admin` (`adminOnly`) | -（含 CI Token、LLM 建议、`outbound_trusted_cidrs` 信任白名单与跨机 `code-notifier`/SMTP 参数脱敏配置） |
 
 * **历史深链与默认落地页平滑重定向契约（100% 无损保留 Query 参数与 `#hash`）**：
-  - `/`、`/traefik`、`/traefik/` $\rightarrow$ `replace` 重定向至 `/dashboard`；`/sessions` $\rightarrow$ `replace` 重定向至 `/record`；
+  - `/`、`/contract`、`/contract/` $\rightarrow$ `replace` 重定向至 `/dashboard`；`/sessions` $\rightarrow$ `replace` 重定向至 `/record`；
   - `/traffic?...` $\rightarrow$ `replace` 重定向至 `/debug?...`（完整继承 `session_id`、`trace_id`、`sno` 等检索参数）；
   - `/architecture?tab=topology|verify&...` $\rightarrow$ `replace` 重定向至 `/topology?...`；`/architecture?tab=physical&...` $\rightarrow$ `replace` 重定向至 `/topology?view=PHYSICAL&...`；
   - `/schemas?tab=docs&...` $\rightarrow$ `SchemasRouteWrapper` 重定向至 `/proto-docs?docs_view=reference&...`；
@@ -801,7 +801,7 @@ export interface ArchProcessDTO {
 }
 
 export interface AgentProcessMountDTO {
-  id: number;                          // traefik_processes.id
+  id: number;                          // contract_processes.id
   agent_id: number;
   arch_process_id: number;             // UNIQUE(agent_id, arch_process_id) 单机严格 1:1
   arch_process?: ArchProcessDTO;
@@ -831,7 +831,7 @@ export interface AgentProcessMountDTO {
 ```
 
 #### (2) 「架构进程定义 ➔ Agent 常驻待命挂载 ➔ 智能预选秒级双录」三台同构树与双向深链动线 (`ADR-09` & `ADR-11`)
-- **`架构元素` (`/architecture?tree=physical`) 定义蓝图**：左栏顶部分段开关切换 `[逻辑架构 | 物理进程]`；在 `物理进程` 树中由 `traefik_admin` 统一维护 `ArchProcessGroup ➔ ArchProcess`、默认端口/启动特征及 `FM` 模块组装；点击任一组装模块可切回 `?tree=logical&module_id=M`，点击服务契约跳 `/schemas?active_only=true&search=<service_name>`，点击下方宿主机挂载血缘跳 `/agents?scope=<scope>&agent_id=<aid>&process_id=<pid>`；
+- **`架构元素` (`/architecture?tree=physical`) 定义蓝图**：左栏顶部分段开关切换 `[逻辑架构 | 物理进程]`；在 `物理进程` 树中由 `contract_admin` 统一维护 `ArchProcessGroup ➔ ArchProcess`、默认端口/启动特征及 `FM` 模块组装；点击任一组装模块可切回 `?tree=logical&module_id=M`，点击服务契约跳 `/schemas?active_only=true&search=<service_name>`，点击下方宿主机挂载血缘跳 `/agents?scope=<scope>&agent_id=<aid>&process_id=<pid>`；
 - **`Agent 与进程` (`/agents`) Day-1 环境级 `1:1` 挂载与常驻预挂待命**：
   - `GET /api/agents/:id` 与 `PUT /api/agents/:id/process-mounts` 强制预加载 `ArchProcess.Group` 与 `ArchProcess.Modules`，按 `effective_listen_port ASC, id ASC` 排序并调用 `FillFromArchProcess()` 填充完整继承属性（严禁忽略 DB 查询错误）；
   - 右栏副标题明确标注为 **「环境进程部署映射与常驻待命探针 (配置一次 · 零损耗待命)」**，展示七态探针就绪徽章、`[本地已覆盖]` 标记与按进程/组/整机 `暂停探针 / 恢复预挂`；
@@ -1066,7 +1066,7 @@ export interface BusinessSummaryProps {
 1. **模块表单「模块类型 (`module_kind`)」选择**：
    - 在新建/编辑功能模块弹窗中提供分段单选控件：
      - `业务功能模块 (BUSINESS)`（默认）：常规业务模块，可绑定所属标准架构进程（`arch_process_id`），可声明提供服务（`PROVIDE`）与消费依赖（`DEPEND`）；
-     - `接口契约库 (CONTRACT_LIB，仅定义 .pb 契约，不绑定特定进程)`：选中后自动隐藏并置空「所属标准架构进程」选择器（后端约束 `chk_traefik_modules_lib_no_proc` 强制 `arch_process_id IS NULL`）；左侧架构树中该模块渲染专属 `«interface»` 徽标。
+     - `接口契约库 (CONTRACT_LIB，仅定义 .pb 契约，不绑定特定进程)`：选中后自动隐藏并置空「所属标准架构进程」选择器（后端约束 `chk_contract_modules_lib_no_proc` 强制 `arch_process_id IS NULL`）；左侧架构树中该模块渲染专属 `«interface»` 徽标。
 2. **库模块详情「定义的接口」页签 (`ModuleContractDetailPane.tsx`)**：
    - 当左侧架构树选中 `module_kind === 'CONTRACT_LIB'` 的模块时，右侧详情面板不展示常规的「提供服务 / 消费依赖」双表，而是呈现专属的 **「定义的接口 (Service Contracts)」** 页签：
      - **契约登记与存量独占升级**：点击 `[+ 登记多实现服务契约]`，从全局生效 `.pb` 服务池中选择 `service_name`，填写实现标识语义说明 `impl_key_label`（如 `"业务类型 biz_type"`、`"渠道编码 channel"`）与备注；若某服务此前已按独占模式（`EXCLUSIVE`）登记在某业务模块名下，提供 `[⚡ 从独占服务升级为多实现契约]` 向导（调用 `POST /api/arch/service-contracts/convert`，单事务内创建契约、将原独占行原地转为首个实现并保留历史 `service_id` 关联，可选将既有消费依赖切换为 `DISPATCH`）；
@@ -1107,7 +1107,7 @@ export interface BusinessSummaryProps {
 #### 4.8.3 治理大盘 (`/dashboard`) 契约实现覆盖率指标 (`F-24` / [`ADR-16`](../05-adr/16-multi-implementation-service-contract-adr.md))
 
 在 `/dashboard` 治理全景大盘（`DashboardWorkbenchPage.tsx`）的契约认领与架构覆盖卡片中，新增**多实现契约实现覆盖率 (`contract_impl_coverage`)** 统计维度：
-- **契约认领判定**：已在 `traefik_service_contracts` 登记为多实现契约的 `service_name` 视为已被架构认领（不再计入孤儿 Proto 服务）；
+- **契约认领判定**：已在 `contract_service_contracts` 登记为多实现契约的 `service_name` 视为已被架构认领（不再计入孤儿 Proto 服务）；
 - **实现覆盖率展示**：展示 `已落地进程绑定的多实现契约数 / 多实现契约总数` 以及累计注册的 `实现分支总数 (impl_count)`；若存在已登记契约但尚无任何绑定进程的实现模块（`deployed_impl_count == 0`），提供一键深链跳转 `/architecture?tree=logical&module_id=<definer_module_id>` 引导架构师补齐实现模块登记。
 
 #### 4.8.4 多实现服务契约与拓扑扩展 TypeScript DTO 契约（零 `any`）
@@ -1201,7 +1201,7 @@ export interface ServiceContractDTO {
 | **① 视角与环境** | `[逻辑架构 \| 物理部署]` 分段切换；物理环境 `env_agent_id` 下拉；一致性录制批次 `session_id` 下拉 | 切换视角保留通用过滤项并重置 `focus` 至 `GLOBAL`；选择录制批次后下方滑入 `ArchSummaryBar` 八分类摘要条 |
 | **② 搜索与异常快筛** | `🔍 搜索节点` 候选下拉（`<= 20` 项分组）；`[全部 \| 仅异常 \| 仅违规]` 分段控件 | 搜索支持模糊匹配名称/编码：选中后若目标不在当前聚焦层，**自动切换 `focus` 至其直接父容器**，并在新作用域 ELK 布局完成（`!isLayouting` 且目标节点已出现在 `flowNodes`）后执行 `fitView({ nodes: [{ id }], maxZoom: 1.15, duration: 360 })` 及居中高亮脉冲 `2s`；状态快筛在未选中录制批次时禁用 |
 | **③ 筛选与图层 Popover** | `[⚙️ 筛选与图层 (N)]` 弹层按钮（显示激活条件计数徽章）+ 工具栏末端可单点关闭 Filter Chips | 弹层内部有序分组收纳：<br>• **契约视图（逻辑视图专属）**：契约调用 `[聚合到接口 AGG \| 展开到实现 EXPAND]` (`topo_contract_mode`)、`[☑ 显示实现关系边 REALIZATION]` (`topo_realization`)；<br>• **范围与降噪**：`[☑ 仅看我负责的]` (`topo_my`)、`[☑ 隐藏孤立节点]` (`topo_hide_isolated`)、`[☑ 高扇入 Hub 插头折叠]` (`topo_hub_fold`)、顶层容器多选 (`topo_subsystems`) 与 `1跳/2跳上下游邻域` 快捷控制 |
-| **④ 布局与视图** | `[✨ 自动整理]`、`[🎯 居中]`、`[📑 视图书签]`、（`traefik_admin`）`[🏛️ 发布基准]` | 点击 `[✨ 自动整理]` 清除临时非固定位移，保留所有显式 `📌` 固定节点后对当前单层重新执行 ELK 正交布局并执行 `fitView` |
+| **④ 布局与视图** | `[✨ 自动整理]`、`[🎯 居中]`、`[📑 视图书签]`、（`contract_admin`）`[🏛️ 发布基准]` | 点击 `[✨ 自动整理]` 清除临时非固定位移，保留所有显式 `📌` 固定节点后对当前单层重新执行 ELK 正交布局并执行 `fitView` |
 
 #### 4.9.3 `1:1 border-box` 极简节点卡片、四向智能锚点与可读边详情抽屉
 1. **五类节点卡片内信息密度治理（`1:1 border-box; overflow: hidden`，禁止内容撑破 ELK 尺寸）**：
@@ -1444,9 +1444,9 @@ export interface StaticComplianceDTO {
 
 ### 5.1 角色权限守卫与公私域防越权矩阵
 
-基于 `code-common/backend/auth` 的 `AuthMiddleware`（登录态校验）、`RequireAdmin("traefik_admin")` 以及资源层 `owner_id` 归属核验，严格划分以下权限边界：
+基于 `code-common/backend/auth` 的 `AuthMiddleware`（登录态校验）、`RequireAdmin("contract_admin")` 以及资源层 `owner_id` 归属核验，严格划分以下权限边界：
 
-| 业务资源与操作动作 | 免密访客 | 普通认证用户 (JWT) | 模块管理员 (`traefik_admin` / `super_admin`) |
+| 业务资源与操作动作 | 免密访客 | 普通认证用户 (JWT) | 模块管理员 (`contract_admin` / `super_admin`) |
 | :--- | :---: | :---: | :---: |
 | 健康检查 (`/api/health`) 与认证配置 (`/api/auth/*`) | 允许 | 允许 | 允许 |
 | 查看公共三级逻辑架构、**物理进程蓝图 (`ArchProcessGroup / ArchProcess`)**、**多实现服务契约 (`ServiceContract`)**、模块契约、静态拓扑与 `.pb` 映射 | `401` | **允许** | **允许** |
@@ -1455,7 +1455,7 @@ export interface StaticComplianceDTO {
 | **Git 仓库集成 CRUD、手动全量同步、规则矩阵 (`CheckRule`) 与词库 (`VocabularyTerm`) 配置、MR 门禁 `Override` 人工豁免** | `401` | `403` | **允许**（MR 门禁列表查验与触发 `rerun` 按配置允许开发者使用，涉及秘钥/豁免仅限管理员） |
 | **手动静态扫描 (`POST /api/check-reports/scan`)** 与 **个人持久化通知收件箱** (`/api/notifications*`) | `401` | **允许**（通知严格按 `recipient_user_id == currentUser.ID` 防横向越权隔离） | **允许** |
 | **Git 平台 Webhook 回调** (`POST /api/webhooks/git-mr/:repoId`) | 经 Webhook Secret (`X-Gitlab-Token` / `X-Hub-Signature-256` / `X-Gitea-Signature`) 常量时间验签放行（无有效签名为 `401/403`） | — | — |
-| **CI/CD 质量门禁** (`POST /api/gates/evaluate`) | `X-Traefik-CI-Token` 常量时间验证放行（无效返回 `401`） | `403` | **允许** |
+| **CI/CD 质量门禁** (`POST /api/gates/evaluate`) | `X-Contract-CI-Token` 常量时间验证放行（无效返回 `401`） | `403` | **允许** |
 | 查看公共 `SHARED` Agent、挂载进程就绪灯态并刷新就绪诊断；创建并全权管理**本人 `PRIVATE` Agent**（`1:1` 勾选挂载架构进程、本地覆盖、预挂/暂停探针） | `401` | **允许**（访问或开关他人 `PRIVATE` Agent 探针返 `403`；修改 `SHARED` Agent 挂载配置返 `403`） | **允许**（全团队 `SHARED` 与各用户 `PRIVATE` Agent 均可见；负责管理 `SHARED` Agent 挂载/探针及强制释放异常租约） |
 | 租用空闲的 `SHARED` Agent 或本人的 `PRIVATE` Agent **启动/停止录制** | `401` | **允许**（若目标 Agent 已被占用返 `409 Conflict`） | **允许**（同样遵守动态排他租约 `409` 互斥） |
 | 查看 `SHARED` 录制素材及**本人的 `PRIVATE` 录制素材**；将本人 `PRIVATE` 素材发布为 `SHARED` 或删除本人 `PRIVATE` 素材 | `401` | **允许**（访问或删除他人 `PRIVATE` 素材返 `403`；删除公共 `SHARED` 素材返 `403`） | **允许**（全团队 `SHARED` 与所有用户的 `PRIVATE` 录制素材均可见与审计；可治理并删除无引用的素材） |
@@ -1464,16 +1464,16 @@ export interface StaticComplianceDTO {
 
 ### 5.2 `commonAudit` 字段级 Diff 与操作事件审计埋点字典
 
-所有写操作控制器统一调用 `commonAudit.SetAuditContext(c, module, action, level, summary, targetType, targetID, targetName, beforeSnapshot, afterSnapshot)`，由 `commonAudit.Middleware("traefik")` 自动通过 `CalculateDiff` 生成字段级 `OldVal / NewVal` 写入平台共享 `audit_logs` 表：
+所有写操作控制器统一调用 `commonAudit.SetAuditContext(c, module, action, level, summary, targetType, targetID, targetName, beforeSnapshot, afterSnapshot)`，由 `commonAudit.Middleware("contract")` 自动通过 `CalculateDiff` 生成字段级 `OldVal / NewVal` 写入平台共享 `audit_logs` 表：
 
 | 审计子模块 (`module`) | 动作标识 (`action`) | 风险等级 | `before` / `after` 快照策略与必含上下文 |
 | :--- | :--- | :---: | :--- |
-| `traefik_arch` | `create` / `update` / `move` / `delete` / `convert_contract` | `P1` (删除/转换) / `P2` | 传入变更前后的 `Subsystem` / `FunctionalGroup` / `Module` / `ServiceContract` / `ModuleService` / `ModuleDependency` / `ArchProcessGroup` / `ArchProcess` 结构体快照 |
-| `traefik_agent` | `create` / `update` / `delete` / `sync_mounts` / `toggle_probe` / `force_unlock_lease` | `P1` | 传入 `Agent`（含 `scope`、`owner_id`、`endpoint`）或 `Process` 挂载实例（含 `arch_process_id`、`override_listen_port`、`override_cmd_pattern`、`probe_desired_state`）快照；管理员强制解锁记录原持锁人及原因 |
-| `traefik_schema` | `upload` / `compile` / `activate` / `delete` / `update_op_ignores` | `P1` | 记录描述集 `name`、`version`、`source_type`、`file_sha256`、`is_active` 切换前后版本对比及方法级 `diff_ignore_paths` 变更（剔除大体积 `descriptor_bytes` 二进制字段与编译源码内容） |
-| `traefik_git` | `create_repo` / `update_repo` / `delete_repo` / `upsert_bundle` / `manual_sync` | `P1` (删除/修改) / `P2` | 记录仓库 `name`、`provider`、`repo_url`、Bundle `target_schema_name`、`default_branch`；**严禁在审计前后快照中写入 `credentials_encrypted`、`webhook_secret_encrypted` 或明文密钥；`settings:update` 同理严禁将 `llm_api_key` / `smtp_password` / `code_notifier_token` 明文写入 `commonAudit` 字段级 Diff** |
-| `traefik_mr_gate` | `override_mr_gate` / `rerun_mr_gate` | **`P1`** (Override) / `P2` | 记录 `git_repo_id`、`mr_iid`、`head_commit_sha`、原状态与 `override_reason`；`Webhook` 自动执行显式调用 `commonAudit.Skip(c)` 避免非人工事件刷爆表 |
-| `traefik_linter` | `create_rule` / `update_rule` / `delete_rule` / `upsert_vocab` / `delete_vocab` / `run_scan` | `P2` | 记录静态规则编码/正则/启用态、词根增删改或手动扫描范围 |
-| `traefik_record` | `start_session` / `stop_session` / `publish_session` / `delete_session` | `P1` | 操作事件审计：记录操作人、`session_no`、`scope`（`SHARED`/`PRIVATE`）、加锁的 `agent_id` 与 `process_id` 列表、停止原因 |
-| `traefik_replay` | `execute_replay` / `cancel_replay` | `P2` | 操作事件审计：记录操作人、`task_no`、来源 `(session_id, source_process_id)`、目标 `(agent_id, target_process_id)` 与 `extra_ignore_paths` |
-| `traefik_system` | `retention_cleanup` | `P2` | 后台定时任务直接调用 `commonAudit.Push` 记录清理过期批次数量与释放流量行数 |
+| `contract_arch` | `create` / `update` / `move` / `delete` / `convert_contract` | `P1` (删除/转换) / `P2` | 传入变更前后的 `Subsystem` / `FunctionalGroup` / `Module` / `ServiceContract` / `ModuleService` / `ModuleDependency` / `ArchProcessGroup` / `ArchProcess` 结构体快照 |
+| `contract_agent` | `create` / `update` / `delete` / `sync_mounts` / `toggle_probe` / `force_unlock_lease` | `P1` | 传入 `Agent`（含 `scope`、`owner_id`、`endpoint`）或 `Process` 挂载实例（含 `arch_process_id`、`override_listen_port`、`override_cmd_pattern`、`probe_desired_state`）快照；管理员强制解锁记录原持锁人及原因 |
+| `contract_schema` | `upload` / `compile` / `activate` / `delete` / `update_op_ignores` | `P1` | 记录描述集 `name`、`version`、`source_type`、`file_sha256`、`is_active` 切换前后版本对比及方法级 `diff_ignore_paths` 变更（剔除大体积 `descriptor_bytes` 二进制字段与编译源码内容） |
+| `contract_git` | `create_repo` / `update_repo` / `delete_repo` / `upsert_bundle` / `manual_sync` | `P1` (删除/修改) / `P2` | 记录仓库 `name`、`provider`、`repo_url`、Bundle `target_schema_name`、`default_branch`；**严禁在审计前后快照中写入 `credentials_encrypted`、`webhook_secret_encrypted` 或明文密钥；`settings:update` 同理严禁将 `llm_api_key` / `smtp_password` / `code_notifier_token` 明文写入 `commonAudit` 字段级 Diff** |
+| `contract_mr_gate` | `override_mr_gate` / `rerun_mr_gate` | **`P1`** (Override) / `P2` | 记录 `git_repo_id`、`mr_iid`、`head_commit_sha`、原状态与 `override_reason`；`Webhook` 自动执行显式调用 `commonAudit.Skip(c)` 避免非人工事件刷爆表 |
+| `contract_linter` | `create_rule` / `update_rule` / `delete_rule` / `upsert_vocab` / `delete_vocab` / `run_scan` | `P2` | 记录静态规则编码/正则/启用态、词根增删改或手动扫描范围 |
+| `contract_record` | `start_session` / `stop_session` / `publish_session` / `delete_session` | `P1` | 操作事件审计：记录操作人、`session_no`、`scope`（`SHARED`/`PRIVATE`）、加锁的 `agent_id` 与 `process_id` 列表、停止原因 |
+| `contract_replay` | `execute_replay` / `cancel_replay` | `P2` | 操作事件审计：记录操作人、`task_no`、来源 `(session_id, source_process_id)`、目标 `(agent_id, target_process_id)` 与 `extra_ignore_paths` |
+| `contract_system` | `retention_cleanup` | `P2` | 后台定时任务直接调用 `commonAudit.Push` 记录清理过期批次数量与释放流量行数 |

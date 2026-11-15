@@ -1,7 +1,7 @@
-# code-traefik: 阶段一特性清单与需求边界 (SDD) 提示词指令
+# code-contract: 阶段一特性清单与需求边界 (SDD) 提示词指令
 
 ## 角色定位与工程原则
-你是一名资深 Go 全栈系统架构师与产品领域专家。我们将采用 **SDD (规范驱动开发) + TDD (测试驱动开发)** 的工程方法，在 CodeBench 微前端体系下开发 **code-traefik（业务流量监控与重放）** 业务子系统。
+你是一名资深 Go 全栈系统架构师与产品领域专家。我们将采用 **SDD (规范驱动开发) + TDD (测试驱动开发)** 的工程方法，在 CodeBench 微前端体系下开发 **code-contract（业务流量监控与重放）** 业务子系统。
 
 开发过程**严禁直接跳过设计堆砌业务代码**，必须严格遵循：
 **「阶段一：特性与边界明确 (`01-features`) -> 阶段二：架构与模型定稿 (`02-design`) -> 阶段三：契约冻结与 TDD 任务拆解 (`03-api` & `04-tasks`) -> 阶段四：TDD 测试先行与分阶段实施」**。
@@ -9,12 +9,12 @@
 ---
 
 ## 1. 模块基础元数据契约
-- **模块唯一标识 (`ModuleKey`)**：`traefik`（网关与前端路由前缀 `/traefik`）
-- **模块中文名称**：`业务流量监控与重放`（服务名 `Code-Traefik`）
-- **二进制**：同仓双入口 `cmd/server`（`code-traefik-server` 控制面）与 `cmd/agent`（`code-traefik-agent` 数据面）
+- **模块唯一标识 (`ModuleKey`)**：`contract`（网关与前端路由前缀 `/contract`）
+- **模块中文名称**：`业务流量监控与重放`（服务名 `Code-Contract`）
+- **二进制**：同仓双入口 `cmd/server`（`code-contract-server` 控制面）与 `cmd/agent`（`code-contract-agent` 数据面）
 - **端口分配**：主控 Go 后端 `:8091`，前端 Vite 独立调试端口 `5181`
-- **数据库隔离策略**：主控与 CodeBench 共享 PostgreSQL 实例（复用 `users`、`departments`、`audit_logs`），本模块业务表强制使用前缀 `traefik_`；Agent 不连接数据库
-- **RBAC 权限角色**：模块管理员角色为 `traefik_admin`（`super_admin` 拥有同等最高权限）
+- **数据库隔离策略**：主控与 CodeBench 共享 PostgreSQL 实例（复用 `users`、`departments`、`audit_logs`），本模块业务表强制使用前缀 `contract_`；Agent 不连接数据库
+- **RBAC 权限角色**：模块管理员角色为 `contract_admin`（`super_admin` 拥有同等最高权限）
 
 ---
 

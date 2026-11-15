@@ -13,17 +13,17 @@ import (
 	"time"
 
 	"code-common/backend/testdb"
-	"code-traefik/config"
-	"code-traefik/internal/server/hub"
-	"code-traefik/internal/server/security"
-	"code-traefik/models"
+	"code-contract/config"
+	"code-contract/internal/server/hub"
+	"code-contract/internal/server/security"
+	"code-contract/models"
 )
 
 func TestDispatcher_TargetedSSE_CodeNotifierPayloadAndFailureDegradation(t *testing.T) {
 	if os.Getenv("TEST_DB_DSN") == "" {
 		t.Skip("TEST_DB_DSN 未配置，跳过数据库隔离测试")
 	}
-	t.Setenv("TRAEFIK_CRYPTO_KEY", "m26-notify-test-crypto-key-32byt!")
+	t.Setenv("CONTRACT_CRYPTO_KEY", "m26-notify-test-crypto-key-32byt!")
 
 	db := testdb.SetupIsolatedDB(t, config.ServiceName)
 	if err := models.SetupWithDB(db); err != nil {
@@ -106,9 +106,9 @@ func TestDispatcher_TargetedSSE_CodeNotifierPayloadAndFailureDegradation(t *test
 		"outbound_trusted_cidrs":  "127.0.0.1/32",
 	}
 	for k, v := range settingsUpdates {
-		var s models.TraefikSetting
+		var s models.ModuleSetting
 		if err := db.Where("setting_key = ?", k).First(&s).Error; err != nil {
-			if err := db.Create(&models.TraefikSetting{SettingKey: k, SettingVal: v, UpdatedBy: "test"}).Error; err != nil {
+			if err := db.Create(&models.ModuleSetting{SettingKey: k, SettingVal: v, UpdatedBy: "test"}).Error; err != nil {
 				t.Fatalf("写入配置 %s 失败: %v", k, err)
 			}
 		} else {
@@ -163,7 +163,7 @@ func TestDispatcher_TargetedSSE_CodeNotifierPayloadAndFailureDegradation(t *test
 		// 符合预期：UserB 未收到任何跨用户广播
 	}
 
-	// 3. 验证 Mock code-notifier 收到的完整载荷 (markdown_content 非空、source_app="code-traefik"、idempotency_key 非空、真实邮箱解析)
+	// 3. 验证 Mock code-notifier 收到的完整载荷 (markdown_content 非空、source_app="code-contract"、idempotency_key 非空、真实邮箱解析)
 	mu.Lock()
 	if len(receivedPayloads) != 1 {
 		mu.Unlock()
@@ -176,8 +176,8 @@ func TestDispatcher_TargetedSSE_CodeNotifierPayloadAndFailureDegradation(t *test
 	if gotAuth != "Bearer ntf-secret-token-m26" {
 		t.Fatalf("Authorization 头不匹配: %q", gotAuth)
 	}
-	if gotPayload.SourceApp != "code-traefik" {
-		t.Fatalf("source_app 期望 code-traefik，实际 %q", gotPayload.SourceApp)
+	if gotPayload.SourceApp != "code-contract" {
+		t.Fatalf("source_app 期望 code-contract，实际 %q", gotPayload.SourceApp)
 	}
 	if strings.TrimSpace(gotPayload.MarkdownContent) == "" {
 		t.Fatalf("markdown_content 严禁为空")

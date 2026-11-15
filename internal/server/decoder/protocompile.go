@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 
-	"code-traefik/models"
+	"code-contract/models"
 
 	"github.com/bufbuild/protocompile"
 	"github.com/bufbuild/protocompile/protoutil"
@@ -65,14 +65,14 @@ func (e *CompileError) Unwrap() error {
 	return e.Err
 }
 
-// ProtoSourceEntry Tier 2 源码供给条目（M25 接入 traefik_proto_files 时按 BASE_LIB 优先）
+// ProtoSourceEntry Tier 2 源码供给条目（M25 接入 contract_proto_files 时按 BASE_LIB 优先）
 type ProtoSourceEntry struct {
 	Content  []byte
 	Category string // BASE_LIB | BUSINESS | GATEWAY
 }
 
 // ProtoSourceProvider 虚拟编译期跨包依赖源码供给接口
-// M22 由内存/缓存实现提供扩展点，M25 由 DB traefik_proto_files 快照实现注入
+// M22 由内存/缓存实现提供扩展点，M25 由 DB contract_proto_files 快照实现注入
 type ProtoSourceProvider interface {
 	ResolveProtoSource(ctx context.Context, cleanPath string) (*ProtoSourceEntry, error)
 }
@@ -141,12 +141,12 @@ func (p *InMemoryProtoSourceProvider) ResolveProtoSource(_ context.Context, clea
 	return nil, nil
 }
 
-// DBProtoSourceProvider M25 Tier 2 数据库 .proto 源码跨包解析器（查询 traefik_proto_files JOIN versions，忽略软删，BASE_LIB 优先）
+// DBProtoSourceProvider M25 Tier 2 数据库 .proto 源码跨包解析器（查询 contract_proto_files JOIN versions，忽略软删，BASE_LIB 优先）
 type DBProtoSourceProvider struct {
 	db *gorm.DB
 }
 
-// NewDBProtoSourceProvider 创建基于 PostgreSQL traefik_proto_files 的 Tier 2 源码提供者
+// NewDBProtoSourceProvider 创建基于 PostgreSQL contract_proto_files 的 Tier 2 源码提供者
 func NewDBProtoSourceProvider(db *gorm.DB) *DBProtoSourceProvider {
 	return &DBProtoSourceProvider{db: db}
 }
@@ -166,9 +166,9 @@ func (p *DBProtoSourceProvider) ResolveProtoSource(ctx context.Context, cleanPat
 	}
 	var row dbProtoSourceRow
 	tx := p.db.WithContext(ctx).
-		Table("traefik_proto_files AS f").
+		Table("contract_proto_files AS f").
 		Select("f.category AS category, v.content_text AS content_text").
-		Joins("JOIN traefik_proto_file_versions AS v ON v.id = f.latest_version_id").
+		Joins("JOIN contract_proto_file_versions AS v ON v.id = f.latest_version_id").
 		Where("f.is_deleted = false AND f.file_path = ?", cleaned).
 		Order("CASE WHEN f.category = 'BASE_LIB' THEN 0 ELSE 1 END, f.updated_at DESC, f.id DESC").
 		Limit(1).
@@ -333,7 +333,7 @@ func (r *virtualProtoResolver) FindFileByPath(importPath string) (protocompile.S
 		}
 	}
 
-	// Tier 2: ProtoSourceProvider (M22 缓存 / M25 traefik_proto_files, BASE_LIB 优先)
+	// Tier 2: ProtoSourceProvider (M22 缓存 / M25 contract_proto_files, BASE_LIB 优先)
 	if r.provider != nil {
 		entry, provErr := r.provider.ResolveProtoSource(r.ctx, cleaned)
 		if provErr != nil && !errors.Is(provErr, protoregistry.NotFound) {

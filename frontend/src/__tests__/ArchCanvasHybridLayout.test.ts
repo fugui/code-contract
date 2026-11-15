@@ -382,8 +382,8 @@ describe('M19-P4: ArchCanvasHybridLayout Suite', () => {
 
   // 9. testDraftStorage_UserIsolatedKey_ClearOnLogoutAndSave
   it('testDraftStorage_UserIsolatedKey_ClearOnLogoutAndSave', () => {
-    expect(getDraftStorageKey(42, 'LOGICAL')).toBe('traefik_topo_draft_v2_42_LOGICAL');
-    expect(getDraftStorageKey(99, 'PHYSICAL')).toBe('traefik_topo_draft_v2_99_PHYSICAL');
+    expect(getDraftStorageKey(42, 'LOGICAL')).toBe('contract_topo_draft_v2_42_LOGICAL');
+    expect(getDraftStorageKey(99, 'PHYSICAL')).toBe('contract_topo_draft_v2_99_PHYSICAL');
 
     saveTopologyDraft(42, 'LOGICAL', {
       view: 'LOGICAL',

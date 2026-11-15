@@ -16,9 +16,9 @@ import (
 	"time"
 
 	commonModels "code-common/backend/models"
-	"code-traefik/config"
-	"code-traefik/handlers"
-	"code-traefik/models"
+	"code-contract/config"
+	"code-contract/handlers"
+	"code-contract/models"
 
 	"gorm.io/gorm/clause"
 )
@@ -161,7 +161,7 @@ func (m *handlerMockGitLab) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func TestGitRepoAndBundles_AESEncryptionRedaction_AuditAndSync(t *testing.T) {
-	t.Setenv("TRAEFIK_CRYPTO_KEY", "test-traefik-crypto-key-m25-32bytes!")
+	t.Setenv("CONTRACT_CRYPTO_KEY", "test-contract-crypto-key-m25-32bytes!")
 	r, db := setupProtoDocRouterAndDB(t)
 
 	const secretToken = "glpat-secret-token-987654"
@@ -252,7 +252,7 @@ service OrderService {
 	if err := db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "setting_key"}},
 		DoUpdates: clause.AssignmentColumns([]string{"setting_val"}),
-	}).Create(&models.TraefikSetting{
+	}).Create(&models.ModuleSetting{
 		SettingKey:  "outbound_trusted_cidrs",
 		SettingVal:  "127.0.0.0/8",
 		Description: "test trusted git server loopback",
@@ -562,14 +562,14 @@ service OrderService {
 	var auditLogs []commonModels.SysAuditLog
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		_ = db.Where("action LIKE ?", "traefik_git:%").Find(&auditLogs).Error
+		_ = db.Where("action LIKE ?", "contract_git:%").Find(&auditLogs).Error
 		if len(auditLogs) >= 3 {
 			break
 		}
 		time.Sleep(30 * time.Millisecond)
 	}
 	if len(auditLogs) == 0 {
-		t.Fatalf("期望写入 traefik_git:* 审计日志，实际为 0 条")
+		t.Fatalf("期望写入 contract_git:* 审计日志，实际为 0 条")
 	}
 	auditRaw, _ := json.Marshal(auditLogs)
 	if strings.Contains(string(auditRaw), secretToken) || strings.Contains(string(auditRaw), webhookSecret) {

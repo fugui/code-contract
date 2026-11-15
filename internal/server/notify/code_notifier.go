@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"code-traefik/internal/server/security"
+	"code-contract/internal/server/security"
 )
 
 const (
@@ -50,7 +50,7 @@ type CodeNotifierConfig struct {
 }
 
 // SendViaCodeNotifier 调用跨机或同机 code-notifier POST /api/notify/email 统一投递邮件。
-// 强制保证 markdown_content 非空、source_app 固定为 "code-traefik"、经由 SafeDialer 拦截非法内网/云元数据请求。
+// 强制保证 markdown_content 非空、source_app 固定为 "code-contract"、经由 SafeDialer 拦截非法内网/云元数据请求。
 func SendViaCodeNotifier(ctx context.Context, cfg CodeNotifierConfig, payload NotifyPayload) error {
 	baseURL := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
 	if baseURL == "" {
@@ -59,7 +59,7 @@ func SendViaCodeNotifier(ctx context.Context, cfg CodeNotifierConfig, payload No
 
 	subject := strings.TrimSpace(payload.Subject)
 	if subject == "" {
-		subject = "[CodeTraefik] 契约治理通知"
+		subject = "[CodeContract] 契约治理通知"
 	}
 	payload.Subject = subject
 
@@ -76,9 +76,9 @@ func SendViaCodeNotifier(ctx context.Context, cfg CodeNotifierConfig, payload No
 	if strings.TrimSpace(payload.Format) == "" {
 		payload.Format = "markdown"
 	}
-	payload.SourceApp = "code-traefik"
+	payload.SourceApp = "code-contract"
 	if strings.TrimSpace(payload.IdempotencyKey) == "" {
-		payload.IdempotencyKey = fmt.Sprintf("code-traefik:%s:%d", payload.EventType, time.Now().UnixNano())
+		payload.IdempotencyKey = fmt.Sprintf("code-contract:%s:%d", payload.EventType, time.Now().UnixNano())
 	}
 
 	if len(payload.Recipients.To) == 0 && len(payload.Recipients.Cc) == 0 {

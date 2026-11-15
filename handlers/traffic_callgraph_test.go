@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"code-traefik/internal/server/callgraph"
-	"code-traefik/models"
+	"code-contract/internal/server/callgraph"
+	"code-contract/models"
 	"gorm.io/datatypes"
 )
 

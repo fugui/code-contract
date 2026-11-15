@@ -13,9 +13,9 @@ import (
 
 	commonAuth "code-common/backend/auth"
 	commonModels "code-common/backend/models"
-	"code-traefik/config"
-	"code-traefik/internal/server/hub"
-	"code-traefik/models"
+	"code-contract/config"
+	"code-contract/internal/server/hub"
+	"code-contract/models"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/datatypes"
@@ -864,11 +864,11 @@ func RearmAgentProbes(c *gin.Context) {
 func DownloadAgentBinary(c *gin.Context) {
 	// 候选搜索路径（支持本地开发、容器化部署及工作区编译输出）
 	candidates := []string{
-		os.Getenv("TRAEFIK_AGENT_BIN_PATH"),
-		"./code-traefik-agent",
-		"./bin/code-traefik-agent",
-		"../code-traefik-agent",
-		"/usr/local/bin/code-traefik-agent",
+		os.Getenv("CONTRACT_AGENT_BIN_PATH"),
+		"./code-contract-agent",
+		"./bin/code-contract-agent",
+		"../code-contract-agent",
+		"/usr/local/bin/code-contract-agent",
 	}
 
 	var foundPath string
@@ -884,12 +884,12 @@ func DownloadAgentBinary(c *gin.Context) {
 
 	if foundPath == "" {
 		c.JSON(http.StatusNotFound, gin.H{
-			"error": "服务端未找到可供下载的 code-traefik-agent 二进制可执行文件，请在服务端执行 make agent 进行构建",
+			"error": "服务端未找到可供下载的 code-contract-agent 二进制可执行文件，请在服务端执行 make agent 进行构建",
 		})
 		return
 	}
 
-	c.Header("Content-Disposition", "attachment; filename=\"code-traefik-agent\"")
+	c.Header("Content-Disposition", "attachment; filename=\"code-contract-agent\"")
 	c.Header("Content-Type", "application/octet-stream")
 	c.File(foundPath)
 }

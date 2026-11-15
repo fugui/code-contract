@@ -21,10 +21,10 @@ import (
 	commonAudit "code-common/backend/audit"
 	commonAuth "code-common/backend/auth"
 	commonModels "code-common/backend/models"
-	"code-traefik/internal/server/decoder"
-	"code-traefik/internal/server/gitclient"
-	"code-traefik/internal/server/linter"
-	"code-traefik/models"
+	"code-contract/internal/server/decoder"
+	"code-contract/internal/server/gitclient"
+	"code-contract/internal/server/linter"
+	"code-contract/models"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -425,7 +425,7 @@ func OverrideMRCheckRun(c *gin.Context) {
 	targetLabel := fmt.Sprintf("MR !%d (Run #%d)", updatedRun.MRIID, updatedRun.ID)
 	commonAudit.SetAuditContext(
 		c,
-		"traefik_mr_gate",
+		"contract_mr_gate",
 		"override_mr_gate",
 		commonModels.AuditLevelP1,
 		fmt.Sprintf("管理员 [%s] 强制豁免放行了 %s，原因：%s", operatorName, targetLabel, reason),
@@ -481,7 +481,7 @@ func RerunMRCheckRun(c *gin.Context) {
 	targetLabel := fmt.Sprintf("MR !%d (Run #%d)", updatedRun.MRIID, updatedRun.ID)
 	commonAudit.SetAuditContext(
 		c,
-		"traefik_mr_gate",
+		"contract_mr_gate",
 		"rerun_mr_gate",
 		commonModels.AuditLevelP2,
 		fmt.Sprintf("管理员 [%s] 触发重跑 %s (第 %d 次)", operatorName, targetLabel, updatedRun.AttemptCount),

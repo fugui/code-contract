@@ -10,10 +10,10 @@ import (
 
 	commonAuth "code-common/backend/auth"
 	commonModels "code-common/backend/models"
-	"code-traefik/internal/server/hub"
-	"code-traefik/internal/server/recorder"
-	"code-traefik/internal/server/topology"
-	"code-traefik/models"
+	"code-contract/internal/server/hub"
+	"code-contract/internal/server/recorder"
+	"code-contract/internal/server/topology"
+	"code-contract/models"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"

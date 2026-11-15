@@ -9,8 +9,8 @@ import (
 
 	commonAuth "code-common/backend/auth"
 	commonModels "code-common/backend/models"
-	"code-traefik/internal/server/topology"
-	"code-traefik/models"
+	"code-contract/internal/server/topology"
+	"code-contract/models"
 
 	"github.com/gin-gonic/gin"
 )

@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"code-traefik/models"
+	"code-contract/models"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -790,7 +790,7 @@ func resolveReverseImportServices(
 	return result
 }
 
-// FindAffectedDependents 联合查询 traefik_module_services, traefik_service_contracts 与 traefik_module_dependencies 提取下游受影响模块血缘
+// FindAffectedDependents 联合查询 contract_module_services, contract_service_contracts 与 contract_module_dependencies 提取下游受影响模块血缘
 // 当违例来自无 Service 的公共库 (Violation.ServiceName == "") 时，自动沿反向 import 闭包穿透定位下游关联服务与消费模块
 func FindAffectedDependents(db *gorm.DB, violations []BreakingRuleViolation, regFiles ...*protoregistry.Files) []AffectedDependent {
 	if db == nil || len(violations) == 0 {

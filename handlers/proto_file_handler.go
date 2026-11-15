@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"code-traefik/internal/server/protodoc"
-	"code-traefik/models"
+	"code-contract/internal/server/protodoc"
+	"code-contract/models"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -194,7 +194,7 @@ func resolveProtoFileRelations(db *gorm.DB, files []models.ProtoFile) (
 }
 
 // ListProtoFiles GET /api/proto-files
-// 优先返回持久化只读 Git 源文件列表（traefik_proto_files），对无 Git 绑定的存量 Schema 无缝保留 M23 只读源码浏览兼容性（严禁任何悲观锁字段）
+// 优先返回持久化只读 Git 源文件列表（contract_proto_files），对无 Git 绑定的存量 Schema 无缝保留 M23 只读源码浏览兼容性（严禁任何悲观锁字段）
 func ListProtoFiles(c *gin.Context) {
 	page, pageSize := parseStandardPagination(c)
 

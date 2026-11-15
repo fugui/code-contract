@@ -13,8 +13,8 @@ import (
 	"time"
 
 	commonModels "code-common/backend/models"
-	"code-traefik/internal/server/protodoc"
-	"code-traefik/models"
+	"code-contract/internal/server/protodoc"
+	"code-contract/models"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"

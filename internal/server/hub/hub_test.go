@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"code-traefik/config"
-	"code-traefik/internal/server/hub"
-	"code-traefik/models"
-	"code-traefik/pkg/agentproto"
+	"code-contract/config"
+	"code-contract/internal/server/hub"
+	"code-contract/models"
+	"code-contract/pkg/agentproto"
 
 	commonModels "code-common/backend/models"
 	"code-common/backend/testdb"
@@ -30,7 +30,7 @@ func setupTestDB(t *testing.T) *gorm.DB {
 	if dsn == "" {
 		t.Skip("TEST_DB_DSN 未配置，跳过 Hub 隔离数据库集成测试")
 	}
-	db := testdb.SetupIsolatedDB(t, "traefik_hub_test")
+	db := testdb.SetupIsolatedDB(t, "contract_hub_test")
 	if err := models.SetupWithDB(db); err != nil {
 		t.Fatalf("初始化数据库结构失败: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestAgentSSRFGuardAndClaimCode(t *testing.T) {
 	// 2. Mock Agent 握手探活、认领码与公私域权限
 	t.Run("MockAgentHandshakeAndClaimCodeRBAC", func(t *testing.T) {
 		db := setupTestDB(t)
-		admin := createTestUser(t, db, "hub_admin", "traefik_admin")
+		admin := createTestUser(t, db, "hub_admin", "contract_admin")
 		userA := createTestUser(t, db, "hub_user_a", "operator")
 		userB := createTestUser(t, db, "hub_user_b", "operator")
 

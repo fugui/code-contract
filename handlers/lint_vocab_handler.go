@@ -12,8 +12,8 @@ import (
 	commonAudit "code-common/backend/audit"
 	commonAuth "code-common/backend/auth"
 	commonModels "code-common/backend/models"
-	"code-traefik/internal/server/linter"
-	"code-traefik/models"
+	"code-contract/internal/server/linter"
+	"code-contract/models"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/datatypes"
@@ -201,7 +201,7 @@ func CreateCheckRule(c *gin.Context) {
 
 	commonAudit.SetAuditContext(
 		c,
-		"traefik_linter",
+		"contract_linter",
 		"create_rule",
 		commonModels.AuditLevelP1,
 		fmt.Sprintf("管理员 [%s] 新增静态检查规则 %s (%s)", opName, rule.RuleCode, rule.Severity),
@@ -324,7 +324,7 @@ func UpdateCheckRule(c *gin.Context) {
 
 	commonAudit.SetAuditContext(
 		c,
-		"traefik_linter",
+		"contract_linter",
 		"update_rule",
 		commonModels.AuditLevelP1,
 		fmt.Sprintf("管理员 [%s] 更新规则 %s (enabled=%v, severity=%s)", opName, rule.RuleCode, rule.IsEnabled, rule.Severity),
@@ -369,7 +369,7 @@ func DeleteCheckRule(c *gin.Context) {
 	_, opName := currentOperatorName(c)
 	commonAudit.SetAuditContext(
 		c,
-		"traefik_linter",
+		"contract_linter",
 		"delete_rule",
 		commonModels.AuditLevelP1,
 		fmt.Sprintf("管理员 [%s] 删除自定义规则 %s", opName, rule.RuleCode),
@@ -524,7 +524,7 @@ func CreateVocabularyTerm(c *gin.Context) {
 
 	commonAudit.SetAuditContext(
 		c,
-		"traefik_linter",
+		"contract_linter",
 		"upsert_vocab",
 		commonModels.AuditLevelP1,
 		fmt.Sprintf("管理员 [%s] 新增标准词根 %s (%s)", opName, item.Term, item.DescriptionZh),
@@ -610,7 +610,7 @@ func UpdateVocabularyTerm(c *gin.Context) {
 	_, opName := currentOperatorName(c)
 	commonAudit.SetAuditContext(
 		c,
-		"traefik_linter",
+		"contract_linter",
 		"upsert_vocab",
 		commonModels.AuditLevelP1,
 		fmt.Sprintf("管理员 [%s] 更新标准词根 %s (approved=%v)", opName, item.Term, item.IsApproved),
@@ -650,7 +650,7 @@ func DeleteVocabularyTerm(c *gin.Context) {
 	_, opName := currentOperatorName(c)
 	commonAudit.SetAuditContext(
 		c,
-		"traefik_linter",
+		"contract_linter",
 		"delete_vocab",
 		commonModels.AuditLevelP1,
 		fmt.Sprintf("管理员 [%s] 删除词根 %s", opName, item.Term),
@@ -748,7 +748,7 @@ func TriggerCheckReportScan(c *gin.Context) {
 
 	commonAudit.SetAuditContext(
 		c,
-		"traefik_linter",
+		"contract_linter",
 		"run_scan",
 		commonModels.AuditLevelP2,
 		fmt.Sprintf("[%s] 触发静态检查报告 #%d (status=%s, err=%d, warn=%d, dup=%d)", opName, report.ID, report.Status, report.ErrorCount, report.WarningCount, report.DuplicateGroupCount),

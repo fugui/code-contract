@@ -14,14 +14,14 @@ import (
 	"testing"
 	"time"
 
-	"code-traefik/pkg/agentproto"
+	"code-contract/pkg/agentproto"
 )
 
 // TestAgentZeroSchemaAndZeroDBDeps 静态架构断言: 数据面零 gorm、零 dynamicpb/protoregistry、零 os/exec
 func TestAgentZeroSchemaAndZeroDBDeps(t *testing.T) {
 	// 1. 执行 go list -deps 断言数据面依赖闭包
 	cmd := exec.Command("go", "list", "-deps", "./pkg/ebpf", "./pkg/replay", "./internal/agent/...")
-	cmd.Dir = "../../../" // code-traefik root
+	cmd.Dir = "../../../" // code-contract root
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("go list -deps failed: %v, output: %s", err, string(out))

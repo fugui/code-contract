@@ -7,12 +7,12 @@ import (
 	"testing"
 
 	"code-common/backend/testdb"
-	"code-traefik/config"
-	"code-traefik/internal/server/dashboard"
-	"code-traefik/internal/server/decoder"
-	"code-traefik/internal/server/protodoc"
-	"code-traefik/internal/server/topology"
-	"code-traefik/models"
+	"code-contract/config"
+	"code-contract/internal/server/dashboard"
+	"code-contract/internal/server/decoder"
+	"code-contract/internal/server/protodoc"
+	"code-contract/internal/server/topology"
+	"code-contract/models"
 )
 
 func TestSeedDemoData_CompleteGraphAndDecoderAliases(t *testing.T) {

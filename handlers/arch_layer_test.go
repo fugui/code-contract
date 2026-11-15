@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"testing"
 
-	"code-traefik/config"
+	"code-contract/config"
 )
 
 func TestArchLayerGuardAndCycleHTTP409(t *testing.T) {

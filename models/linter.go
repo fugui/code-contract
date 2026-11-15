@@ -4,6 +4,7 @@ import (
 	"errors"
 	"time"
 
+	"code-contract/config"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -106,7 +107,7 @@ type CheckRule struct {
 
 // TableName 指定带模块前缀的数据表名
 func (CheckRule) TableName() string {
-	return "traefik_check_rules"
+	return config.TablePrefix + "check_rules"
 }
 
 // VocabularyTerm #26 Protobuf 标准词汇/词根库表
@@ -127,7 +128,7 @@ type VocabularyTerm struct {
 
 // TableName 指定带模块前缀的数据表名
 func (VocabularyTerm) TableName() string {
-	return "traefik_vocabulary_terms"
+	return config.TablePrefix + "vocabulary_terms"
 }
 
 // CheckReport #27 Protobuf 静态检查报告汇总表
@@ -154,7 +155,7 @@ type CheckReport struct {
 
 // TableName 指定带模块前缀的数据表名
 func (CheckReport) TableName() string {
-	return "traefik_check_reports"
+	return config.TablePrefix + "check_reports"
 }
 
 // CheckViolation #28 Protobuf 检查报告明细项表
@@ -179,7 +180,7 @@ type CheckViolation struct {
 
 // TableName 指定带模块前缀的数据表名
 func (CheckViolation) TableName() string {
-	return "traefik_check_violations"
+	return config.TablePrefix + "check_violations"
 }
 
 // EnsureBuiltinCheckRules 幂等初始化内置静态检查规则（ON CONFLICT DO NOTHING，绝不覆盖管理员修改）
@@ -537,20 +538,20 @@ func ensureLinterConstraints(db *gorm.DB) error {
 	}
 	stmts := []string{
 		`DO $$ BEGIN
-			IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_traefik_vocab_source') THEN
-				ALTER TABLE traefik_vocabulary_terms ADD CONSTRAINT chk_traefik_vocab_source
+			IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_vocab_source') THEN
+				ALTER TABLE contract_vocabulary_terms ADD CONSTRAINT chk_contract_vocab_source
 					CHECK (source IN ('MANUAL', 'BUILTIN_SEED', 'LLM_SUGGESTED'));
 			END IF;
 		END $$;`,
 		`DO $$ BEGIN
-			IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_traefik_check_rule_severity') THEN
-				ALTER TABLE traefik_check_rules ADD CONSTRAINT chk_traefik_check_rule_severity
+			IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_check_rule_severity') THEN
+				ALTER TABLE contract_check_rules ADD CONSTRAINT chk_contract_check_rule_severity
 					CHECK (severity IN ('ERROR', 'WARNING', 'INFO'));
 			END IF;
 		END $$;`,
 		`DO $$ BEGIN
-			IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_traefik_check_report_status') THEN
-				ALTER TABLE traefik_check_reports ADD CONSTRAINT chk_traefik_check_report_status
+			IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_check_report_status') THEN
+				ALTER TABLE contract_check_reports ADD CONSTRAINT chk_contract_check_report_status
 					CHECK (status IN ('PASSED', 'WARN', 'FAILED'));
 			END IF;
 		END $$;`,
@@ -568,7 +569,7 @@ func ensureM24DefaultSettings(db *gorm.DB) error {
 	if db == nil {
 		return nil
 	}
-	defaults := []TraefikSetting{
+	defaults := []ModuleSetting{
 		{
 			SettingKey:  "outbound_trusted_cidrs",
 			SettingVal:  "",
@@ -637,7 +638,7 @@ func ensureM24DefaultSettings(db *gorm.DB) error {
 		},
 	}
 	for _, item := range defaults {
-		var existing TraefikSetting
+		var existing ModuleSetting
 		err := db.Where("setting_key = ?", item.SettingKey).First(&existing).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			if createErr := db.Create(&item).Error; createErr != nil {

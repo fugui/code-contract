@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"code-traefik/internal/server/hub"
-	"code-traefik/internal/server/security"
-	"code-traefik/models"
+	"code-contract/internal/server/hub"
+	"code-contract/internal/server/security"
+	"code-contract/models"
 
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
@@ -125,7 +125,7 @@ func (d *Dispatcher) DispatchSync(ctx context.Context, in DispatchInput) ([]mode
 		}
 	}
 
-	// 2. 为每位目标用户写入 traefik_notifications 站内收件箱并定向推送 SSE
+	// 2. 为每位目标用户写入 contract_notifications 站内收件箱并定向推送 SSE
 	created := make([]models.Notification, 0, len(uniqueUIDs))
 	for _, uid := range uniqueUIDs {
 		notif := models.Notification{
@@ -210,7 +210,7 @@ func (d *Dispatcher) DispatchSync(ctx context.Context, in DispatchInput) ([]mode
 			if len(created) > 0 {
 				firstNotifID = created[0].ID
 			}
-			idemKey = fmt.Sprintf("code-traefik:%s:%d:%s:%d", in.SourceType, in.SourceID, category, firstNotifID)
+			idemKey = fmt.Sprintf("code-contract:%s:%d:%s:%d", in.SourceType, in.SourceID, category, firstNotifID)
 		}
 		sendErr = SendViaCodeNotifier(ctx, notifierCfg, NotifyPayload{
 			Subject:         title,
@@ -220,7 +220,7 @@ func (d *Dispatcher) DispatchSync(ctx context.Context, in DispatchInput) ([]mode
 				To: toList,
 				Cc: ccList,
 			},
-			SourceApp:      "code-traefik",
+			SourceApp:      "code-contract",
 			EventType:      category,
 			Severity:       severity,
 			IdempotencyKey: idemKey,
@@ -313,7 +313,7 @@ func ResolveRecipientUserIDsForModules(db *gorm.DB, moduleIDs []uint64, authorUs
 		if err := db.Where("is_active = true").Order("id ASC").Limit(20).Find(&users).Error; err == nil {
 			for _, u := range users {
 				rolesRaw := string(u.Roles)
-				if u.IsSuperAdmin() || strings.Contains(rolesRaw, "traefik_admin") || strings.Contains(rolesRaw, "admin") {
+				if u.IsSuperAdmin() || strings.Contains(rolesRaw, "contract_admin") || strings.Contains(rolesRaw, "admin") {
 					addUID(u.ID)
 				}
 			}
@@ -323,7 +323,7 @@ func ResolveRecipientUserIDsForModules(db *gorm.DB, moduleIDs []uint64, authorUs
 }
 
 func loadNotifyChannelSettings(db *gorm.DB) (CodeNotifierConfig, SMTPConfig) {
-	var rows []models.TraefikSetting
+	var rows []models.ModuleSetting
 	if err := db.Where("setting_key IN ?", []string{
 		"code_notifier_enabled",
 		"code_notifier_url",

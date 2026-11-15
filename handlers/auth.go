@@ -13,8 +13,8 @@ import (
 	commonAudit "code-common/backend/audit"
 	commonAuth "code-common/backend/auth"
 	commonModels "code-common/backend/models"
-	"code-traefik/config"
-	"code-traefik/models"
+	"code-contract/config"
+	"code-contract/models"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"

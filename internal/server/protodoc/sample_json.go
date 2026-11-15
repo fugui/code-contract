@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"strings"
 
-	"code-traefik/models"
-	"code-traefik/pkg/crosrpc"
+	"code-contract/models"
+	"code-contract/pkg/crosrpc"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -211,9 +211,9 @@ func MatchGoldenSamples(
 	}
 
 	var rows []goldenSuiteItemRow
-	err := db.Table("traefik_golden_suite_items AS i").
+	err := db.Table("contract_golden_suite_items AS i").
 		Select("s.id AS suite_id, s.code AS suite_code, s.name AS suite_name, i.id AS item_id, i.order_no, i.name AS item_name, i.raw_req_packet, i.raw_rsp_packet").
-		Joins("JOIN traefik_golden_suites AS s ON s.id = i.suite_id").
+		Joins("JOIN contract_golden_suites AS s ON s.id = i.suite_id").
 		Where("s.status = ? AND i.service_name = ? AND i.operation = ?", models.GoldenSuiteStatusActive, serviceName, operation).
 		Order("s.id DESC, i.order_no ASC, i.id ASC").
 		Limit(5).

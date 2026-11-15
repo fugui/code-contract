@@ -14,14 +14,14 @@ import (
 	"time"
 
 	commonAudit "code-common/backend/audit"
-	"code-traefik/config"
-	"code-traefik/internal/server/callgraph"
-	"code-traefik/internal/server/decoder"
-	"code-traefik/internal/server/hub"
-	"code-traefik/internal/server/topology"
-	"code-traefik/models"
-	"code-traefik/pkg/agentproto"
-	"code-traefik/pkg/crosrpc"
+	"code-contract/config"
+	"code-contract/internal/server/callgraph"
+	"code-contract/internal/server/decoder"
+	"code-contract/internal/server/hub"
+	"code-contract/internal/server/topology"
+	"code-contract/models"
+	"code-contract/pkg/agentproto"
+	"code-contract/pkg/crosrpc"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
@@ -462,7 +462,7 @@ func (s *ReplayScheduler) executeReplayAsync(
 	}
 
 EVALUATE:
-	// 3. 执行每条请求的双层 Diff 断言并落盘 traefik_replay_items
+	// 3. 执行每条请求的双层 Diff 断言并落盘 contract_replay_items
 	var itemStatuses []string
 	var mockHitCount, mockMissCount int
 	if result != nil {

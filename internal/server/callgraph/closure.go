@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"code-traefik/models"
-	"code-traefik/pkg/agentproto"
+	"code-contract/models"
+	"code-contract/pkg/agentproto"
 	"gorm.io/gorm"
 )
 

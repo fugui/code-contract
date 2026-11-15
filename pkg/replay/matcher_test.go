@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"code-traefik/pkg/agentproto"
-	"code-traefik/pkg/crosrpc"
+	"code-contract/pkg/agentproto"
+	"code-contract/pkg/crosrpc"
 )
 
 // TestScopedMockMatcher_DstTagIsolation 验证多实现契约下同一接口在不同目的端点 (DstTag) 之间精确隔离绝不串用 (ADR-16, M20)
@@ -134,7 +134,7 @@ func TestScopedMockMatcher_DstTagFallbackToUntagged(t *testing.T) {
 // TestAgentBinaryZeroDBAndZeroPBDependency 验证数据面 Agent 及其依赖库零数据库、零 dynamicpb 物理防腐红线 (AC-M20-02)
 func TestAgentBinaryZeroDBAndZeroPBDependency(t *testing.T) {
 	cmd := exec.Command("go", "list", "-deps", "./cmd/agent", "./pkg/crosrpc", "./pkg/agentproto", "./pkg/ebpf", "./pkg/replay")
-	cmd.Dir = "../.." // code-traefik root
+	cmd.Dir = "../.." // code-contract root
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("go list -deps failed: %v, out: %s", err, string(out))
@@ -145,8 +145,8 @@ func TestAgentBinaryZeroDBAndZeroPBDependency(t *testing.T) {
 		"pgx",
 		"dynamicpb",
 		"protoregistry",
-		"code-traefik/internal/server",
-		"code-traefik/models",
+		"code-contract/internal/server",
+		"code-contract/models",
 	}
 
 	lines := strings.Split(string(out), "\n")

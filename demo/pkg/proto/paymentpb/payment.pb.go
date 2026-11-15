@@ -10,7 +10,7 @@
 package paymentpb
 
 import (
-	commonpb "code-traefik/demo/pkg/proto/commonpb"
+	commonpb "code-contract/demo/pkg/proto/commonpb"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -386,7 +386,7 @@ const file_demo_proto_payment_proto_rawDesc = "" +
 	"refundTxNo2\xa3\x01\n" +
 	"\x0ePaymentService\x12L\n" +
 	"\fAuthorizePay\x12\x1d.demo.payment.AuthorizePayReq\x1a\x1d.demo.payment.AuthorizePayRsp\x12C\n" +
-	"\tRefundPay\x12\x1a.demo.payment.RefundPayReq\x1a\x1a.demo.payment.RefundPayRspB'Z%code-traefik/demo/pkg/proto/paymentpbb\x06proto3"
+	"\tRefundPay\x12\x1a.demo.payment.RefundPayReq\x1a\x1a.demo.payment.RefundPayRspB(Z&code-contract/demo/pkg/proto/paymentpbb\x06proto3"
 
 var (
 	file_demo_proto_payment_proto_rawDescOnce sync.Once

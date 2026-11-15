@@ -16,12 +16,12 @@ import (
 	commonAudit "code-common/backend/audit"
 	commonModels "code-common/backend/models"
 	"code-common/backend/testdb"
-	"code-traefik/config"
-	"code-traefik/handlers"
-	"code-traefik/internal/server/decoder"
-	"code-traefik/internal/server/hub"
-	"code-traefik/models"
-	"code-traefik/pkg/crosrpc"
+	"code-contract/config"
+	"code-contract/handlers"
+	"code-contract/internal/server/decoder"
+	"code-contract/internal/server/hub"
+	"code-contract/models"
+	"code-contract/pkg/crosrpc"
 
 	"github.com/gin-gonic/gin"
 	"google.golang.org/protobuf/proto"
@@ -39,7 +39,7 @@ func setupProtoDocRouterAndDB(t *testing.T) (*gin.Engine, *gorm.DB) {
 	}
 	gin.SetMode(gin.TestMode)
 
-	db := testdb.SetupIsolatedDB(t, "traefik_pdoc_api_test")
+	db := testdb.SetupIsolatedDB(t, "contract_pdoc_api_test")
 	if err := models.SetupWithDB(db); err != nil {
 		t.Fatalf("SetupWithDB 失败: %v", err)
 	}
@@ -368,7 +368,7 @@ service BillingService {
 	}
 
 	// SQL 注入尝试不得触发 500 或破坏库表
-	sqliReq := httptest.NewRequest(http.MethodGet, "/api/proto-docs/tree?search=';DROP+TABLE+traefik_proto_doc_symbols;--", nil)
+	sqliReq := httptest.NewRequest(http.MethodGet, "/api/proto-docs/tree?search=';DROP+TABLE+contract_proto_doc_symbols;--", nil)
 	sqliReq.Header.Set("Authorization", "Bearer "+viewerToken)
 	sqliResp := httptest.NewRecorder()
 	r.ServeHTTP(sqliResp, sqliReq)

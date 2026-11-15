@@ -18,9 +18,9 @@ import (
 	"time"
 
 	"code-common/backend/testdb"
-	"code-traefik/config"
-	"code-traefik/internal/server/decoder"
-	"code-traefik/models"
+	"code-contract/config"
+	"code-contract/internal/server/decoder"
+	"code-contract/models"
 
 	"github.com/go-git/go-billy/v5/memfs"
 	"github.com/go-git/go-git/v5"
@@ -190,7 +190,7 @@ func setupGitClientTestDB(t *testing.T) (*gorm.DB, *decoder.Registry) {
 	if os.Getenv("TEST_DB_DSN") == "" {
 		t.Skip("TEST_DB_DSN 未配置，跳过数据库隔离测试")
 	}
-	t.Setenv("TRAEFIK_CRYPTO_KEY", "test-traefik-crypto-key-m25-32bytes!")
+	t.Setenv("CONTRACT_CRYPTO_KEY", "test-contract-crypto-key-m25-32bytes!")
 	db := testdb.SetupIsolatedDB(t, config.ServiceName)
 	if err := models.SetupWithDB(db); err != nil {
 		t.Fatalf("SetupWithDB 失败: %v", err)
@@ -310,11 +310,11 @@ message ExtraNote {
 
 	// 放行 127.0.0.1/32 白名单
 	if err := db.Where("setting_key = ?", "outbound_trusted_cidrs").
-		Assign(models.TraefikSetting{
+		Assign(models.ModuleSetting{
 			SettingKey: "outbound_trusted_cidrs",
 			SettingVal: "127.0.0.1/32",
 		}).
-		FirstOrCreate(&models.TraefikSetting{}).Error; err != nil {
+		FirstOrCreate(&models.ModuleSetting{}).Error; err != nil {
 		t.Fatalf("更新 outbound_trusted_cidrs 失败: %v", err)
 	}
 
@@ -614,11 +614,11 @@ service BillingService { rpc Charge(ChargeReq) returns (ChargeRsp); }
 	}
 
 	if err := db.Where("setting_key = ?", "outbound_trusted_cidrs").
-		Assign(models.TraefikSetting{
+		Assign(models.ModuleSetting{
 			SettingKey: "outbound_trusted_cidrs",
 			SettingVal: "127.0.0.1/32",
 		}).
-		FirstOrCreate(&models.TraefikSetting{}).Error; err != nil {
+		FirstOrCreate(&models.ModuleSetting{}).Error; err != nil {
 		t.Fatalf("更新 outbound_trusted_cidrs 失败: %v", err)
 	}
 

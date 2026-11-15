@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"code-traefik/internal/server/security"
+	"code-contract/internal/server/security"
 )
 
 const defaultSMTPTimeout = 8 * time.Second
@@ -41,7 +41,7 @@ func SendViaSMTP(ctx context.Context, cfg SMTPConfig, to []string, cc []string, 
 		from = strings.TrimSpace(cfg.Username)
 	}
 	if from == "" {
-		from = "noreply@code-traefik.local"
+		from = "noreply@code-contract.local"
 	}
 
 	allRcpts := make([]string, 0, len(to)+len(cc))

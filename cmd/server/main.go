@@ -9,13 +9,13 @@ import (
 
 	commonAudit "code-common/backend/audit"
 	commonServer "code-common/backend/server"
-	traefik "code-traefik"
-	"code-traefik/config"
-	"code-traefik/handlers"
-	"code-traefik/internal/server/decoder"
-	"code-traefik/internal/server/hub"
-	"code-traefik/models"
-	"code-traefik/pkg/version"
+	contract "code-contract"
+	"code-contract/config"
+	"code-contract/handlers"
+	"code-contract/internal/server/decoder"
+	"code-contract/internal/server/hub"
+	"code-contract/models"
+	"code-contract/pkg/version"
 
 	"github.com/gin-gonic/gin"
 )
@@ -116,7 +116,7 @@ func main() {
 		WriteTimeout:      config.AppConfig.Server.WriteTimeout,
 		IdleTimeout:       config.AppConfig.Server.IdleTimeout,
 		MaxHeaderBytes:    config.AppConfig.Server.MaxHeaderBytes,
-		FrontendFS:        &traefik.FrontendFS,
+		FrontendFS:        &contract.FrontendFS,
 		FrontendDistPath:  "frontend/dist",
 		CustomMiddlewares: []gin.HandlerFunc{
 			securityHeadersMiddleware(),

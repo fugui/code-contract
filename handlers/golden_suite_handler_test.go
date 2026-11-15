@@ -12,13 +12,13 @@ import (
 	commonAuth "code-common/backend/auth"
 	commonModels "code-common/backend/models"
 	"code-common/backend/testdb"
-	"code-traefik/config"
-	"code-traefik/handlers"
-	"code-traefik/internal/server/decoder"
-	"code-traefik/internal/server/diff"
-	"code-traefik/models"
-	"code-traefik/pkg/agentproto"
-	"code-traefik/pkg/crosrpc"
+	"code-contract/config"
+	"code-contract/handlers"
+	"code-contract/internal/server/decoder"
+	"code-contract/internal/server/diff"
+	"code-contract/models"
+	"code-contract/pkg/agentproto"
+	"code-contract/pkg/crosrpc"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/datatypes"
@@ -264,7 +264,7 @@ func TestGoldenSuiteSelfContainedSnapshot_SurvivesSourceSessionAndPartitionDrop(
 	}
 
 	// 7. 【关键验证】：物理销毁源 RecordingSession 与清空全部 TrafficRecord
-	if err := db.Exec("DELETE FROM traefik_traffic_records").Error; err != nil {
+	if err := db.Exec("DELETE FROM contract_traffic_records").Error; err != nil {
 		t.Fatalf("清空流量分区表失败: %v", err)
 	}
 	if err := db.Delete(&recSess).Error; err != nil {

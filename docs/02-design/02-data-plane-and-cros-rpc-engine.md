@@ -1,4 +1,4 @@
-# 架构与活体契约治理 (`code-traefik`) 数据面引擎与 CROS RPC 协议栈设计
+# 架构与活体契约治理 (`code-contract`) 数据面引擎与 CROS RPC 协议栈设计
 
 - **文档编号**：`02-data-plane-and-cros-rpc-engine.md`
 - **文档版本**：v1.5.0
@@ -370,7 +370,7 @@ package agentproto
 
 // ReplayIngressItem 单条待重放入站请求及其不透明记录标识（供 Agent 切换 ScopedMocks 作用域）
 type ReplayIngressItem struct {
-	RecordID uint64 `json:"record_id"` // 对应主控 traefik_traffic_records.id
+	RecordID uint64 `json:"record_id"` // 对应主控 contract_traffic_records.id
 	RawReq   []byte `json:"raw_req"`   // 原始入站 CROS RPC 请求帧
 }
 
@@ -427,7 +427,7 @@ import (
 	"encoding/binary"
 	"errors"
 
-	"code-traefik/pkg/crosrpc"
+	"code-contract/pkg/crosrpc"
 )
 
 var (

@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"code-common/backend/testdb"
-	"code-traefik/config"
-	"code-traefik/models"
+	"code-contract/config"
+	"code-contract/models"
 	"gorm.io/gorm"
 )
 

@@ -1,4 +1,4 @@
-package traefik_test
+package contract_test
 
 import (
 	"bytes"
@@ -17,15 +17,15 @@ import (
 	commonAuth "code-common/backend/auth"
 	commonModels "code-common/backend/models"
 	"code-common/backend/testdb"
-	"code-traefik/config"
-	"code-traefik/handlers"
-	"code-traefik/internal/server/decoder"
-	"code-traefik/internal/server/diff"
-	"code-traefik/internal/server/hub"
-	"code-traefik/internal/server/topology"
-	"code-traefik/models"
-	"code-traefik/pkg/agentproto"
-	"code-traefik/pkg/crosrpc"
+	"code-contract/config"
+	"code-contract/handlers"
+	"code-contract/internal/server/decoder"
+	"code-contract/internal/server/diff"
+	"code-contract/internal/server/hub"
+	"code-contract/internal/server/topology"
+	"code-contract/models"
+	"code-contract/pkg/agentproto"
+	"code-contract/pkg/crosrpc"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/datatypes"
@@ -42,7 +42,7 @@ func setupE2EEnvironment(t *testing.T) (*gin.Engine, *gorm.DB) {
 	gin.SetMode(gin.TestMode)
 
 	// 1. 物理隔离测试数据库
-	db := testdb.SetupIsolatedDB(t, "traefik_e2e_test")
+	db := testdb.SetupIsolatedDB(t, "contract_e2e_test")
 	if err := models.SetupWithDB(db); err != nil {
 		t.Fatalf("SetupWithDB 失败: %v", err)
 	}
@@ -121,7 +121,7 @@ func createE2EUser(t *testing.T, db *gorm.DB, username string, isAdmin bool) (*c
 	user := &commonModels.User{
 		Username: username,
 		Name:     "Test " + username,
-		Email:    username + "@code-traefik.org",
+		Email:    username + "@code-contract.org",
 		Password: "hashed_password",
 		Roles:    datatypes.JSON([]byte(`["` + role + `"]`)),
 		IsActive: true,

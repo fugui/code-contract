@@ -148,8 +148,8 @@ describe('ArchPhysicalBlueprintWorkbench Test Suite', () => {
     id: 1,
     username: 'admin',
     name: '系统管理员',
-    roles: ['traefik_admin'],
-    required_ad_role: 'traefik_admin',
+    roles: ['contract_admin'],
+    required_ad_role: 'contract_admin',
     is_module_admin: true,
     is_super_admin: false,
   };

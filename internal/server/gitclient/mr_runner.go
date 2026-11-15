@@ -17,13 +17,13 @@ import (
 	"strings"
 	"time"
 
-	"code-traefik/internal/server/decoder"
-	"code-traefik/internal/server/hub"
-	"code-traefik/internal/server/linter"
-	"code-traefik/internal/server/notify"
-	"code-traefik/internal/server/protodoc"
-	"code-traefik/internal/server/security"
-	"code-traefik/models"
+	"code-contract/internal/server/decoder"
+	"code-contract/internal/server/hub"
+	"code-contract/internal/server/linter"
+	"code-contract/internal/server/notify"
+	"code-contract/internal/server/protodoc"
+	"code-contract/internal/server/security"
+	"code-contract/models"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/descriptorpb"
@@ -99,7 +99,7 @@ func (p *overlayProtoSourceProvider) ResolveProtoSource(ctx context.Context, cle
 	return nil, nil
 }
 
-// CreateOrGetCheckRun 按 uk_traefik_mr_dedup 幂等创建或复用 MRCheckRun 记录
+// CreateOrGetCheckRun 按 uk_contract_mr_dedup 幂等创建或复用 MRCheckRun 记录
 // 返回 (run, alreadyExisted, err)
 func (r *MRGateRunner) CreateOrGetCheckRun(ctx context.Context, in MRExecuteInput) (*models.MRCheckRun, bool, error) {
 	if r == nil || r.db == nil {
@@ -536,7 +536,7 @@ func (r *MRGateRunner) ApplyAdminOverride(
 	run.OverriddenAt = &now
 
 	// 更新远端 Git 评论（追加 Override 豁免横幅）并将 Commit Status 翻转为 success
-	overrideComment := fmt.Sprintf("### ⚠️ [CodeTraefik Protobuf 门禁] 已由管理员强制豁免 (OVERRIDDEN)\n\n"+
+	overrideComment := fmt.Sprintf("### ⚠️ [CodeContract Protobuf 门禁] 已由管理员强制豁免 (OVERRIDDEN)\n\n"+
 		"- **MR**: `!%d` (%s)\n"+
 		"- **Commit**: `%s`\n"+
 		"- **豁免操作人**: `%s` (ID: %d)\n"+
@@ -718,7 +718,7 @@ func (r *MRGateRunner) syncAndPublishMergedBundle(
 		return nil
 	}
 
-	// 1. 将合入后的虚拟树文件同步落库至 traefik_proto_files & traefik_proto_file_versions (SourceType = GIT_MR_AUTO)
+	// 1. 将合入后的虚拟树文件同步落库至 contract_proto_files & contract_proto_file_versions (SourceType = GIT_MR_AUTO)
 	paths := make([]string, 0, len(virtualTree))
 	for p := range virtualTree {
 		paths = append(paths, p)
@@ -1128,9 +1128,9 @@ func (r *MRGateRunner) postRemoteCommitStatus(
 	client := newGuardedHTTPClient(dialer, 6*time.Second)
 	defer client.CloseIdleConnections()
 
-	contextName := "code-traefik/proto-mr-gate"
+	contextName := "code-contract/proto-mr-gate"
 	if bundle != nil && bundle.BundleName != "" {
-		contextName = "code-traefik/proto-mr-gate/" + bundle.BundleName
+		contextName = "code-contract/proto-mr-gate/" + bundle.BundleName
 	}
 
 	var statusURL string
@@ -1149,7 +1149,7 @@ func (r *MRGateRunner) postRemoteCommitStatus(
 		bodyMap = map[string]string{
 			"state":       glState,
 			"name":        contextName,
-			"description": fmt.Sprintf("CodeTraefik Proto Gate: %s", gateStatus),
+			"description": fmt.Sprintf("CodeContract Proto Gate: %s", gateStatus),
 		}
 	case models.GitProviderGitHub, models.GitProviderGitea:
 		ghState := "success"
@@ -1164,7 +1164,7 @@ func (r *MRGateRunner) postRemoteCommitStatus(
 		bodyMap = map[string]string{
 			"state":       ghState,
 			"context":     contextName,
-			"description": fmt.Sprintf("CodeTraefik Proto Gate: %s", gateStatus),
+			"description": fmt.Sprintf("CodeContract Proto Gate: %s", gateStatus),
 		}
 	default:
 		return
@@ -1305,7 +1305,7 @@ func buildMRBotCommentMarkdown(
 		badge = "⚠️ OVERRIDDEN (管理员豁免)"
 	}
 
-	b.WriteString(fmt.Sprintf("### 🛡️ CodeTraefik Protobuf 契约四合一门禁报告 — %s\n\n", badge))
+	b.WriteString(fmt.Sprintf("### 🛡️ CodeContract Protobuf 契约四合一门禁报告 — %s\n\n", badge))
 	b.WriteString(fmt.Sprintf("- **目标契约 Bundle**: `%s` (`%s`, 分类: `%s`)\n", bundle.BundleName, bundle.TargetSchemaName, bundle.Category))
 	b.WriteString(fmt.Sprintf("- **分支与提交**: `%s -> %s` (`%s`)\n\n", run.SourceBranch, run.TargetBranch, shortSHA(run.HeadCommitSHA)))
 

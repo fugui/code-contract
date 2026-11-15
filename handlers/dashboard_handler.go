@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"code-traefik/internal/server/dashboard"
-	"code-traefik/models"
+	"code-contract/internal/server/dashboard"
+	"code-contract/models"
 
 	"github.com/gin-gonic/gin"
 )

@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"code-traefik/pkg/agentproto"
-	"code-traefik/pkg/crosrpc"
+	"code-contract/pkg/agentproto"
+	"code-contract/pkg/crosrpc"
 )
 
 // helper to build a CROS RPC request frame
@@ -371,7 +371,7 @@ func TestReplayExecutorEndToEnd(t *testing.T) {
 func TestReplayExecutor_CollectsObservedEgressCalls_HitAndMiss(t *testing.T) {
 	// 1. 物理防腐依赖核验：断言 cmd/agent, pkg/replay 零 gorm、零 dynamicpb、零 protoregistry
 	cmd := exec.Command("go", "list", "-deps", "./cmd/agent", "./pkg/replay")
-	cmd.Dir = "../.." // code-traefik root
+	cmd.Dir = "../.." // code-contract root
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("go list -deps 失败: %v, out: %s", err, string(out))

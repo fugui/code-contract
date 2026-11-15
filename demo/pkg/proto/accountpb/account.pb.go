@@ -10,7 +10,7 @@
 package accountpb
 
 import (
-	commonpb "code-traefik/demo/pkg/proto/commonpb"
+	commonpb "code-contract/demo/pkg/proto/commonpb"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -737,7 +737,7 @@ const file_demo_proto_account_proto_rawDesc = "" +
 	"GetBalance\x12\x1b.demo.account.GetBalanceReq\x1a\x1b.demo.account.GetBalanceRsp\x12O\n" +
 	"\rDeductBalance\x12\x1e.demo.account.DeductBalanceReq\x1a\x1e.demo.account.DeductBalanceRsp\x12O\n" +
 	"\rRefundBalance\x12\x1e.demo.account.RefundBalanceReq\x1a\x1e.demo.account.RefundBalanceRsp\x12R\n" +
-	"\x0eDepositBalance\x12\x1f.demo.account.DepositBalanceReq\x1a\x1f.demo.account.DepositBalanceRspB'Z%code-traefik/demo/pkg/proto/accountpbb\x06proto3"
+	"\x0eDepositBalance\x12\x1f.demo.account.DepositBalanceReq\x1a\x1f.demo.account.DepositBalanceRspB(Z&code-contract/demo/pkg/proto/accountpbb\x06proto3"
 
 var (
 	file_demo_proto_account_proto_rawDescOnce sync.Once

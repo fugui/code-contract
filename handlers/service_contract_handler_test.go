@@ -8,9 +8,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"code-traefik/config"
-	"code-traefik/handlers"
-	"code-traefik/models"
+	"code-contract/config"
+	"code-contract/handlers"
+	"code-contract/models"
 )
 
 func TestServiceContract_API_RBACAndConversion(t *testing.T) {

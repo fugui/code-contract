@@ -363,7 +363,7 @@ export const BreakingChangeAlertDrawer: React.FC<BreakingChangeAlertDrawerProps>
               color: 'var(--color-text-muted)',
             }}
           >
-            当前为只读视窗，如需紧急回滚或大版本强推，请联系具有 traefik_admin 权限的管理员操作。
+            当前为只读视窗，如需紧急回滚或大版本强推，请联系具有 contract_admin 权限的管理员操作。
           </div>
         )}
 

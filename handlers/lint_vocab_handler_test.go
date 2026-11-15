@@ -13,10 +13,10 @@ import (
 
 	commonAudit "code-common/backend/audit"
 	"code-common/backend/testdb"
-	"code-traefik/config"
-	"code-traefik/handlers"
-	"code-traefik/internal/server/decoder"
-	"code-traefik/models"
+	"code-contract/config"
+	"code-contract/handlers"
+	"code-contract/internal/server/decoder"
+	"code-contract/models"
 )
 
 func TestSC15_StaticLinterVocabSeedDuplicateGuardrailsAndLLMTimeout(t *testing.T) {
@@ -34,7 +34,7 @@ func TestSC15_StaticLinterVocabSeedDuplicateGuardrailsAndLLMTimeout(t *testing.T
 		_ = commonAudit.Close(context.Background())
 	}()
 
-	t.Setenv("TRAEFIK_CRYPTO_KEY", "sc15-e2e-aes-256-gcm-crypto-key!!")
+	t.Setenv("CONTRACT_CRYPTO_KEY", "sc15-e2e-aes-256-gcm-crypto-key!!")
 	r, _ := setupGoldenSuiteTestServer(t, db)
 	decReg, err := decoder.NewRegistry(db)
 	if err != nil {
@@ -400,12 +400,12 @@ message OrderDetail {
 		t.Fatalf("报告详情应包含 violations 与重构的 duplicate_groups，实际 violations=%d dups=%d", len(detail.Violations), len(detail.DuplicateGroups))
 	}
 
-	// 8. 刷新并校验 traefik_linter 审计字典事件，且绝无 LLM Secret 泄露
+	// 8. 刷新并校验 contract_linter 审计字典事件，且绝无 LLM Secret 泄露
 	if err := commonAudit.Close(context.Background()); err != nil {
 		t.Fatalf("关闭刷新审计日志失败: %v", err)
 	}
 	var auditLogs []models.SysAuditLog
-	if err := db.Where("module = ?", "traefik_linter").Find(&auditLogs).Error; err != nil {
+	if err := db.Where("module = ?", "contract_linter").Find(&auditLogs).Error; err != nil {
 		t.Fatalf("查询审计日志失败: %v", err)
 	}
 	seenActions := map[string]bool{}
@@ -417,7 +417,7 @@ message OrderDetail {
 	}
 	for _, expected := range []string{"create_rule", "update_rule", "delete_rule", "upsert_vocab", "run_scan"} {
 		if !seenActions[expected] {
-			t.Fatalf("审计日志缺少事件 traefik_linter.%s，已记录: %v", expected, seenActions)
+			t.Fatalf("审计日志缺少事件 contract_linter.%s，已记录: %v", expected, seenActions)
 		}
 	}
 }

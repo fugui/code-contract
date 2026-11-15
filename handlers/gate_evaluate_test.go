@@ -13,12 +13,12 @@ import (
 	"time"
 
 	"code-common/backend/testdb"
-	"code-traefik/config"
-	"code-traefik/handlers"
-	"code-traefik/internal/server/hub"
-	"code-traefik/models"
-	"code-traefik/pkg/agentproto"
-	"code-traefik/pkg/crosrpc"
+	"code-contract/config"
+	"code-contract/handlers"
+	"code-contract/internal/server/hub"
+	"code-contract/models"
+	"code-contract/pkg/agentproto"
+	"code-contract/pkg/crosrpc"
 )
 
 // 核心用例 1: CI 机器 Token 生成轮换、SHA-256 常量时间鉴权、拒绝 URL Query 传参与吊销
@@ -69,9 +69,9 @@ func TestCITokenRotate_ConstantTimeAuth_RejectQueryToken_AndRevoke(t *testing.T)
 	}
 
 	// 3. 校验数据库：仅持久化 SHA-256 摘要，绝无明文
-	var setting models.TraefikSetting
+	var setting models.ModuleSetting
 	if err := db.Where("setting_key = ?", handlers.SettingKeyCIGateTokenSHA256).First(&setting).Error; err != nil {
-		t.Fatalf("查询 traefik_settings 失败: %v", err)
+		t.Fatalf("查询 contract_settings 失败: %v", err)
 	}
 	if strings.Contains(setting.SettingVal, "ctk_") {
 		t.Fatalf("安全红线违规：数据库中持久化了明文 Token: %s", setting.SettingVal)
@@ -89,8 +89,8 @@ func TestCITokenRotate_ConstantTimeAuth_RejectQueryToken_AndRevoke(t *testing.T)
 		t.Fatalf("GET /api/admin/settings 失败: %d", wGetSettings.Code)
 	}
 	var settingsResp struct {
-		Settings          []models.TraefikSetting `json:"settings"`
-		CITokenConfigured bool                    `json:"ci_token_configured"`
+		Settings          []models.ModuleSetting `json:"settings"`
+		CITokenConfigured bool                   `json:"ci_token_configured"`
 	}
 	_ = json.Unmarshal(wGetSettings.Body.Bytes(), &settingsResp)
 	if !settingsResp.CITokenConfigured {
@@ -137,7 +137,7 @@ func TestCITokenRotate_ConstantTimeAuth_RejectQueryToken_AndRevoke(t *testing.T)
 
 	// 7. 携带错误或伪造 Token -> 401 Unauthorized
 	evalWrongReq := httptest.NewRequest(http.MethodPost, "/api/gates/evaluate", bytes.NewReader([]byte("{}")))
-	evalWrongReq.Header.Set("X-Traefik-CI-Token", "ctk_fake_invalid_token_1234567890abcdef")
+	evalWrongReq.Header.Set("X-Contract-CI-Token", "ctk_fake_invalid_token_1234567890abcdef")
 	wWrong := httptest.NewRecorder()
 	r.ServeHTTP(wWrong, evalWrongReq)
 	if wWrong.Code != http.StatusUnauthorized {
@@ -155,7 +155,7 @@ func TestCITokenRotate_ConstantTimeAuth_RejectQueryToken_AndRevoke(t *testing.T)
 
 	// 吊销后再用原 Token 访问 -> 401
 	evalAfterRevoke := httptest.NewRequest(http.MethodPost, "/api/gates/evaluate", bytes.NewReader([]byte("{}")))
-	evalAfterRevoke.Header.Set("X-Traefik-CI-Token", rotateResp.CIToken)
+	evalAfterRevoke.Header.Set("X-Contract-CI-Token", rotateResp.CIToken)
 	wAfterRevoke := httptest.NewRecorder()
 	r.ServeHTTP(wAfterRevoke, evalAfterRevoke)
 	if wAfterRevoke.Code != http.StatusUnauthorized {
@@ -312,7 +312,7 @@ func TestGateEvaluate_ObservedEgressCallsBlocksViolationWith422(t *testing.T) {
 		TimeoutSeconds:      10,
 	})
 	evalReq := httptest.NewRequest(http.MethodPost, "/api/gates/evaluate", bytes.NewReader(evalReqBody))
-	evalReq.Header.Set("X-Traefik-CI-Token", ciToken)
+	evalReq.Header.Set("X-Contract-CI-Token", ciToken)
 	evalReq.Header.Set("Content-Type", "application/json")
 	wEval := httptest.NewRecorder()
 	r.ServeHTTP(wEval, evalReq)
@@ -339,8 +339,8 @@ func TestGateEvaluate_ObservedEgressCallsBlocksViolationWith422(t *testing.T) {
 	if !strings.Contains(evalResp.MarkdownReport, "GATED_VIOLATION") || !strings.Contains(evalResp.MarkdownReport, "com.demo.UnknownUnregisteredService") {
 		t.Errorf("期望 Markdown 报告包含违规服务与状态，实际:\n%s", evalResp.MarkdownReport)
 	}
-	if !strings.Contains(evalResp.MarkdownReport, "/traefik/debug?replay_task_id=") {
-		t.Errorf("期望 Markdown 报告包含 /traefik/debug 快速排障深链，实际:\n%s", evalResp.MarkdownReport)
+	if !strings.Contains(evalResp.MarkdownReport, "/contract/debug?replay_task_id=") {
+		t.Errorf("期望 Markdown 报告包含 /contract/debug 快速排障深链，实际:\n%s", evalResp.MarkdownReport)
 	}
 }
 
@@ -447,7 +447,7 @@ func TestGateEvaluate_BlocksBreakingDiffWith422(t *testing.T) {
 		TimeoutSeconds:      10,
 	})
 	evalReq := httptest.NewRequest(http.MethodPost, "/api/gates/evaluate", bytes.NewReader(evalReqBody))
-	evalReq.Header.Set("X-Traefik-CI-Token", ciToken)
+	evalReq.Header.Set("X-Contract-CI-Token", ciToken)
 	evalReq.Header.Set("Content-Type", "application/json")
 	wEval := httptest.NewRecorder()
 	r.ServeHTTP(wEval, evalReq)
@@ -471,7 +471,7 @@ func TestGateEvaluate_BlocksBreakingDiffWith422(t *testing.T) {
 	if !strings.Contains(evalResp.MarkdownReport, "GATED_BREAKING_DIFF") {
 		t.Errorf("期望 Markdown 报告标明 GATED_BREAKING_DIFF，实际:\n%s", evalResp.MarkdownReport)
 	}
-	if !strings.Contains(evalResp.MarkdownReport, "/traefik/debug?replay_task_id=") {
+	if !strings.Contains(evalResp.MarkdownReport, "/contract/debug?replay_task_id=") {
 		t.Errorf("期望 Markdown 报告包含排障直达链接，实际:\n%s", evalResp.MarkdownReport)
 	}
 }
@@ -586,7 +586,7 @@ func TestGateEvaluate_ConcurrentPipelinesQueueSmoothly_AndTimeoutReturns503(t *t
 		WaitLeaseSeconds:    &waitLeaseSec,
 	})
 	reqQueue := httptest.NewRequest(http.MethodPost, "/api/gates/evaluate", bytes.NewReader(evalReqBodyQueue))
-	reqQueue.Header.Set("X-Traefik-CI-Token", ciToken)
+	reqQueue.Header.Set("X-Contract-CI-Token", ciToken)
 	reqQueue.Header.Set("Content-Type", "application/json")
 	wQueue := httptest.NewRecorder()
 	r.ServeHTTP(wQueue, reqQueue)
@@ -612,7 +612,7 @@ func TestGateEvaluate_ConcurrentPipelinesQueueSmoothly_AndTimeoutReturns503(t *t
 		WaitLeaseSeconds:    &timeoutWaitSec,
 	})
 	reqBusy := httptest.NewRequest(http.MethodPost, "/api/gates/evaluate", bytes.NewReader(evalReqBodyBusy))
-	reqBusy.Header.Set("X-Traefik-CI-Token", ciToken)
+	reqBusy.Header.Set("X-Contract-CI-Token", ciToken)
 	reqBusy.Header.Set("Content-Type", "application/json")
 	wBusy := httptest.NewRecorder()
 	r.ServeHTTP(wBusy, reqBusy)
@@ -629,7 +629,7 @@ func TestGateEvaluate_ConcurrentPipelinesQueueSmoothly_AndTimeoutReturns503(t *t
 	// -------------------------------------------------------------
 	db.Model(&proc).Update("probe_status", models.ProbeStatusNeedReconnect)
 	reqNotReady := httptest.NewRequest(http.MethodPost, "/api/gates/evaluate", bytes.NewReader(evalReqBodyQueue))
-	reqNotReady.Header.Set("X-Traefik-CI-Token", ciToken)
+	reqNotReady.Header.Set("X-Contract-CI-Token", ciToken)
 	reqNotReady.Header.Set("Content-Type", "application/json")
 	wNotReady := httptest.NewRecorder()
 	r.ServeHTTP(wNotReady, reqNotReady)
@@ -781,7 +781,7 @@ func TestSC10_CICDQualityGateHardEvaluationAndReport(t *testing.T) {
 		TimeoutSeconds:      10,
 	})
 	evalReq := httptest.NewRequest(http.MethodPost, "/api/gates/evaluate", bytes.NewReader(evalReqBody))
-	evalReq.Header.Set("X-Traefik-CI-Token", ciToken)
+	evalReq.Header.Set("X-Contract-CI-Token", ciToken)
 	evalReq.Header.Set("Content-Type", "application/json")
 	wEval := httptest.NewRecorder()
 	r.ServeHTTP(wEval, evalReq)
@@ -808,7 +808,7 @@ func TestSC10_CICDQualityGateHardEvaluationAndReport(t *testing.T) {
 	if !strings.Contains(evalResp.MarkdownReport, "✅ 通过 (PASSED)") {
 		t.Errorf("期望 Markdown 报告包含 ✅ 通过 (PASSED)，实际:\n%s", evalResp.MarkdownReport)
 	}
-	if !strings.Contains(evalResp.MarkdownReport, "/traefik/debug?replay_task_id=") {
+	if !strings.Contains(evalResp.MarkdownReport, "/contract/debug?replay_task_id=") {
 		t.Errorf("期望 Markdown 报告包含排障直达链接，实际:\n%s", evalResp.MarkdownReport)
 	}
 
@@ -828,7 +828,7 @@ func TestSC10_CICDQualityGateHardEvaluationAndReport(t *testing.T) {
 				WaitLeaseSeconds:    &waitSec,
 			})
 			req := httptest.NewRequest(http.MethodPost, "/api/gates/evaluate", bytes.NewReader(b))
-			req.Header.Set("X-Traefik-CI-Token", ciToken)
+			req.Header.Set("X-Contract-CI-Token", ciToken)
 			req.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
 			r.ServeHTTP(w, req)

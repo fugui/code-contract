@@ -9,21 +9,21 @@ import (
 	"testing"
 	"time"
 
-	"code-traefik/internal/server/security"
+	"code-contract/internal/server/security"
 )
 
-func TestTRAEFIKCryptoKey_SafeDialer_TrustedCIDRsAndAuditRedaction(t *testing.T) {
-	// 1. 测试未配置 TRAEFIK_CRYPTO_KEY 时拒绝明文回退与降级
-	t.Setenv("TRAEFIK_CRYPTO_KEY", "")
+func TestContractCryptoKey_SafeDialer_TrustedCIDRsAndAuditRedaction(t *testing.T) {
+	// 1. 测试未配置 CONTRACT_CRYPTO_KEY 时拒绝明文回退与降级
+	t.Setenv("CONTRACT_CRYPTO_KEY", "")
 	if _, err := security.EncryptSecret("sk-secret-123456"); err == nil {
-		t.Fatalf("未设置 TRAEFIK_CRYPTO_KEY 时应当报错拒绝加密，禁止硬编码默认密钥")
+		t.Fatalf("未设置 CONTRACT_CRYPTO_KEY 时应当报错拒绝加密，禁止硬编码默认密钥")
 	}
 	if _, err := security.DecryptSecret("v1:invalid"); err == nil {
-		t.Fatalf("未设置 TRAEFIK_CRYPTO_KEY 时应当报错拒绝解密")
+		t.Fatalf("未设置 CONTRACT_CRYPTO_KEY 时应当报错拒绝解密")
 	}
 
 	// 2. 配置密钥后验证 AES-256-GCM 加解密闭环及随机 Nonce
-	t.Setenv("TRAEFIK_CRYPTO_KEY", "test-traefik-master-crypto-key-32bytes!")
+	t.Setenv("CONTRACT_CRYPTO_KEY", "test-contract-master-crypto-key-32bytes!")
 	plain := "sk-live-secret-token-for-llm-and-smtp"
 	cipher1, err := security.EncryptSecret(plain)
 	if err != nil {

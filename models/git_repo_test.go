@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"code-common/backend/testdb"
-	"code-traefik/config"
+	"code-contract/config"
 	"gorm.io/datatypes"
 )
 
@@ -18,14 +18,14 @@ func TestGitRepoBundleProtoFileAndVersionMigration_ConstraintsAndEncryption(t *t
 		t.Skip("TEST_DB_DSN 未配置，跳过数据库隔离测试")
 	}
 
-	t.Setenv("TRAEFIK_CRYPTO_KEY", "test-traefik-crypto-key-m25-32bytes!")
+	t.Setenv("CONTRACT_CRYPTO_KEY", "test-contract-crypto-key-m25-32bytes!")
 
 	db := testdb.SetupIsolatedDB(t, config.ServiceName)
 	if err := SetupWithDB(db); err != nil {
 		t.Fatalf("SetupWithDB 失败: %v", err)
 	}
 
-	// 1. 校验 4 张新实体表存在及 traefik_ 前缀隔离
+	// 1. 校验 4 张新实体表存在及 contract_ 前缀隔离
 	for _, m := range []tabler{
 		GitRepo{},
 		GitProtoBundle{},
@@ -41,7 +41,7 @@ func TestGitRepoBundleProtoFileAndVersionMigration_ConstraintsAndEncryption(t *t
 		}
 	}
 
-	// 2. 强制审计红线：traefik_proto_files 与 Go Struct 严格禁止任何悲观锁字段
+	// 2. 强制审计红线：contract_proto_files 与 Go Struct 严格禁止任何悲观锁字段
 	pfType := reflect.TypeOf(ProtoFile{})
 	forbiddenCols := []string{"locked", "locked_by", "locked_at", "file_lock", "lock_owner"}
 	for i := 0; i < pfType.NumField(); i++ {
@@ -57,7 +57,7 @@ func TestGitRepoBundleProtoFileAndVersionMigration_ConstraintsAndEncryption(t *t
 	if err := db.Raw(`
 		SELECT column_name
 		FROM information_schema.columns
-		WHERE table_schema = current_schema() AND table_name = 'traefik_proto_files'
+		WHERE table_schema = current_schema() AND table_name = 'contract_proto_files'
 	`).Scan(&colNames).Error; err != nil {
 		t.Fatalf("查询 information_schema 失败: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestGitRepoBundleProtoFileAndVersionMigration_ConstraintsAndEncryption(t *t
 		lc := strings.ToLower(col)
 		for _, fc := range forbiddenCols {
 			if strings.Contains(lc, fc) {
-				t.Fatalf("数据库表 traefik_proto_files 存在禁止锁字段: %s", col)
+				t.Fatalf("数据库表 contract_proto_files 存在禁止锁字段: %s", col)
 			}
 		}
 	}
@@ -154,10 +154,10 @@ func TestGitRepoBundleProtoFileAndVersionMigration_ConstraintsAndEncryption(t *t
 		SubdirPath:       "proto",
 	}
 	if err := db.Create(&dupTarget).Error; err == nil {
-		t.Fatalf("违反契约：跨 GitRepo 插入重复 target_schema_name 应被 uk_traefik_git_bundle_target 拦截")
+		t.Fatalf("违反契约：跨 GitRepo 插入重复 target_schema_name 应被 uk_contract_git_bundle_target 拦截")
 	}
 
-	// 5. 校验 ProtoFile 部分唯一索引 uk_traefik_pfile_bundle_path (bundle_id, file_path) WHERE is_deleted = false
+	// 5. 校验 ProtoFile 部分唯一索引 uk_contract_pfile_bundle_path (bundle_id, file_path) WHERE is_deleted = false
 	pf := ProtoFile{
 		GitRepoID:        repo.ID,
 		BundleID:         b1.ID,

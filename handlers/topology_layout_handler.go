@@ -15,8 +15,8 @@ import (
 
 	commonAuth "code-common/backend/auth"
 	commonModels "code-common/backend/models"
-	"code-traefik/internal/server/topology"
-	"code-traefik/models"
+	"code-contract/internal/server/topology"
+	"code-contract/models"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/datatypes"
@@ -692,7 +692,7 @@ func CreatePersonalTopologyLayout(c *gin.Context) {
 
 	txErr := models.DB.Transaction(func(tx *gorm.DB) error {
 		// 事务咨询锁串行化单用户书签配额计数与默认书签切换
-		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext('traefik_topo_layout_quota'), CAST(? AS integer))", int32(ownerID)).Error; err != nil {
+		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext('contract_topo_layout_quota'), CAST(? AS integer))", int32(ownerID)).Error; err != nil {
 			return err
 		}
 
@@ -848,7 +848,7 @@ func UpdatePersonalTopologyLayout(c *gin.Context) {
 	var updatedRow models.TopologyLayout
 
 	txErr := models.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext('traefik_topo_layout_quota'), CAST(? AS integer))", int32(uc.UserID)).Error; err != nil {
+		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext('contract_topo_layout_quota'), CAST(? AS integer))", int32(uc.UserID)).Error; err != nil {
 			return err
 		}
 

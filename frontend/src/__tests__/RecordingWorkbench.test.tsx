@@ -174,10 +174,10 @@ export function testSessionLedger_EmbeddedModulePrefixLinks(): void {
     </ModuleUserProvider>
   );
 
-  // 嵌入宿主门户时，所有模块内跳转必须携带 /traefik 前缀
-  expect(html).toContain('href="/traefik/debug?session_id=sess-embed"');
-  expect(html).toContain('href="/traefik/replay?session_id=sess-embed&amp;auto_create=1"');
-  expect(html).toContain('href="/traefik/topology?session_id=sess-embed"');
+  // 嵌入宿主门户时，所有模块内跳转必须携带 /contract 前缀
+  expect(html).toContain('href="/contract/debug?session_id=sess-embed"');
+  expect(html).toContain('href="/contract/replay?session_id=sess-embed&amp;auto_create=1"');
+  expect(html).toContain('href="/contract/topology?session_id=sess-embed"');
   expect(html).not.toContain('href="/debug');
 
   // 批次流水号可点击，直达该批次录制数据流
@@ -199,7 +199,7 @@ describe('RecordingWorkbench Test Suite', () => {
   });
 
   it('TC-RECORD-03: resolveModulePath 按运行模式解析模块内路径', () => {
-    expect(resolveModulePath('/debug?session_id=s1', true)).toBe('/traefik/debug?session_id=s1');
+    expect(resolveModulePath('/debug?session_id=s1', true)).toBe('/contract/debug?session_id=s1');
     expect(resolveModulePath('/debug?session_id=s1', false)).toBe('/debug?session_id=s1');
   });
 });

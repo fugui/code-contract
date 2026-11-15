@@ -7,7 +7,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"code-traefik/models"
+	"code-contract/models"
 	"gorm.io/gorm"
 )
 
@@ -493,7 +493,7 @@ func MoveFunctionalGroupWithResult(db *gorm.DB, groupID uint64, newParentID *uin
 		// 原子更新子树的 path 和 level
 		// 注意：使用 SUBSTRING(path FROM CAST(? AS INTEGER)) 显式类型转换，避免 PostgreSQL 误当作正则表达式
 		res := tx.Exec(`
-			UPDATE traefik_functional_groups
+			UPDATE contract_functional_groups
 			SET path = ? || SUBSTRING(path FROM CAST(? AS INTEGER)),
 			    level = level + CAST(? AS INTEGER)
 			WHERE path LIKE ?

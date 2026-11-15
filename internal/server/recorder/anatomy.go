@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"strings"
 
-	"code-traefik/internal/server/decoder"
-	"code-traefik/models"
-	"code-traefik/pkg/crosrpc"
+	"code-contract/internal/server/decoder"
+	"code-contract/models"
+	"code-contract/pkg/crosrpc"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )

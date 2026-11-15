@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"code-traefik/config"
-	"code-traefik/internal/server/topology"
-	"code-traefik/models"
+	"code-contract/config"
+	"code-contract/internal/server/topology"
+	"code-contract/models"
 
 	"gorm.io/datatypes"
 )

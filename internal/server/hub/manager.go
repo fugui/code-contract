@@ -12,10 +12,10 @@ import (
 	"sync"
 	"time"
 
-	"code-traefik/config"
-	"code-traefik/internal/server/topology"
-	"code-traefik/models"
-	"code-traefik/pkg/agentproto"
+	"code-contract/config"
+	"code-contract/internal/server/topology"
+	"code-contract/models"
+	"code-contract/pkg/agentproto"
 	"golang.org/x/sync/singleflight"
 	"gorm.io/gorm"
 )

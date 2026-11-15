@@ -20,13 +20,13 @@ import (
 	commonAuth "code-common/backend/auth"
 	commonModels "code-common/backend/models"
 	"code-common/backend/testdb"
-	"code-traefik/config"
-	"code-traefik/handlers"
-	"code-traefik/internal/server/decoder"
-	"code-traefik/internal/server/hub"
-	"code-traefik/internal/server/topology"
-	"code-traefik/models"
-	"code-traefik/pkg/agentproto"
+	"code-contract/config"
+	"code-contract/handlers"
+	"code-contract/internal/server/decoder"
+	"code-contract/internal/server/hub"
+	"code-contract/internal/server/topology"
+	"code-contract/models"
+	"code-contract/pkg/agentproto"
 
 	"github.com/gin-gonic/gin"
 	"google.golang.org/protobuf/proto"
@@ -47,7 +47,7 @@ func setupRouterAndDB(t *testing.T) (*gin.Engine, *gorm.DB) {
 	gin.SetMode(gin.TestMode)
 
 	// 使用隔离数据库
-	db := testdb.SetupIsolatedDB(t, "traefik_api_test")
+	db := testdb.SetupIsolatedDB(t, "contract_api_test")
 	if err := models.SetupWithDB(db); err != nil {
 		t.Fatalf("SetupWithDB 失败: %v", err)
 	}
@@ -313,7 +313,7 @@ func RegisterRoutesForTest(r *gin.Engine) {
 func TestSC01_HealthAuthAndPublicPrivateRBAC(t *testing.T) {
 	r, db := setupRouterAndDB(t)
 
-	admin := createTestUserInDB(t, db, "admin_user", "traefik_admin")
+	admin := createTestUserInDB(t, db, "admin_user", "contract_admin")
 	adminToken := generateTestJWT(t, admin)
 
 	userA := createTestUserInDB(t, db, "user_alice", "operator")
@@ -333,7 +333,7 @@ func TestSC01_HealthAuthAndPublicPrivateRBAC(t *testing.T) {
 		}
 		var resp map[string]interface{}
 		_ = json.Unmarshal(w.Body.Bytes(), &resp)
-		if resp["service"] != "Code-Traefik" || resp["module_key"] != "traefik" {
+		if resp["service"] != "Code-Contract" || resp["module_key"] != "contract" {
 			t.Fatalf("健康检查响应格式不正确: %+v", resp)
 		}
 	})
@@ -794,7 +794,7 @@ func createMultipartUploadReq(url string, values map[string]string, fieldName, f
 func TestSC02_ArchProtoAndTopologyFlows(t *testing.T) {
 	r, db := setupRouterAndDB(t)
 
-	admin := createTestUserInDB(t, db, "sc02_admin", "traefik_admin")
+	admin := createTestUserInDB(t, db, "sc02_admin", "contract_admin")
 	adminToken := generateTestJWT(t, admin)
 
 	// 1. 创建子系统 SUB_TRADE
@@ -1064,7 +1064,7 @@ func TestSC02_ArchProtoAndTopologyFlows(t *testing.T) {
 func TestSC03_ProcessBindingAndLeaseGuards(t *testing.T) {
 	r, db := setupRouterAndDB(t)
 
-	admin := createTestUserInDB(t, db, "sc03_admin", "traefik_admin")
+	admin := createTestUserInDB(t, db, "sc03_admin", "contract_admin")
 	adminToken := generateTestJWT(t, admin)
 
 	sub := models.Subsystem{Code: "SUB_PROC", Name: "进程测试子系统"}
@@ -1639,7 +1639,7 @@ func TestArchProcessCRUD_AutoPinPortConflict_RegexValidateAndAntiIDOR(t *testing
 	r, db := setupRouterAndDB(t)
 
 	// 1. 初始化测试用户
-	admin := createTestUserInDB(t, db, "admin_arch", "traefik_admin")
+	admin := createTestUserInDB(t, db, "admin_arch", "contract_admin")
 	userA := createTestUserInDB(t, db, "user_a", "operator")
 	userB := createTestUserInDB(t, db, "user_b", "operator")
 
@@ -1933,7 +1933,7 @@ func TestArchProcessCRUD_AutoPinPortConflict_RegexValidateAndAntiIDOR(t *testing
 func TestBatchProcessMounts_OptimisticLock_AndDisarm(t *testing.T) {
 	r, db := setupRouterAndDB(t)
 
-	admin := createTestUserInDB(t, db, "admin_mount", "traefik_admin")
+	admin := createTestUserInDB(t, db, "admin_mount", "contract_admin")
 	adminToken := generateTestJWT(t, admin)
 
 	// 1. 创建架构进程

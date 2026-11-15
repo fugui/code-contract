@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"code-common/backend/testdb"
-	"code-traefik/config"
+	"code-contract/config"
 	"gorm.io/datatypes"
 )
 
@@ -43,11 +43,11 @@ func TestAll14ModelsTablePrefixAndMigration(t *testing.T) {
 		GoldenSuite{},
 		GoldenSuiteItem{},
 		TopologyLayout{},
-		TraefikSetting{},
+		ModuleSetting{},
 	}
 
 	if len(modelsList) != 19 {
-		t.Fatalf("模型清单数量期望为 19 (18 张业务模型 + TraefikSetting)，实际为: %d", len(modelsList))
+		t.Fatalf("模型清单数量期望为 19 (18 张业务模型 + ModuleSetting)，实际为: %d", len(modelsList))
 	}
 
 	for _, m := range modelsList {
@@ -63,9 +63,9 @@ func TestAll14ModelsTablePrefixAndMigration(t *testing.T) {
 		}
 	}
 
-	// 确认旧模板脚手架表 traefik_items 不存在
-	if db.Migrator().HasTable("traefik_items") {
-		t.Fatalf("检测到旧脚手架模板表 traefik_items 仍残留存在！")
+	// 确认旧模板脚手架表 contract_items 不存在
+	if db.Migrator().HasTable("contract_items") {
+		t.Fatalf("检测到旧脚手架模板表 contract_items 仍残留存在！")
 	}
 }
 
@@ -202,10 +202,10 @@ func TestPartialUniqueIndexesAndFKConstraints(t *testing.T) {
 		ModuleID:    mod2.ID,
 		ServiceName: "pkg.order.OrderService",
 	}
-	// 期望被 uk_traefik_mod_svc_name 唯一索引拦截
+	// 期望被 uk_contract_mod_svc_name 唯一索引拦截
 	errProv2 := db.Create(&prov2).Error
 	if errProv2 == nil {
-		t.Fatalf("期望不同模块声明相同 PROVIDE Service 被 uk_traefik_mod_svc_name 拦截，但成功插入了！")
+		t.Fatalf("期望不同模块声明相同 PROVIDE Service 被 uk_contract_mod_svc_name 拦截，但成功插入了！")
 	}
 
 	depInternal := ModuleDependency{
@@ -224,7 +224,7 @@ func TestPartialUniqueIndexesAndFKConstraints(t *testing.T) {
 		ProviderModuleID: &mod1.ID,
 	}
 	if err := db.Create(&depInternalDup).Error; err == nil {
-		t.Fatalf("期望重复依赖相同 Service 被 uk_traefik_dep_tuple 拦截，但成功插入了！")
+		t.Fatalf("期望重复依赖相同 Service 被 uk_contract_dep_tuple 拦截，但成功插入了！")
 	}
 
 	// 验证外部系统依赖支持
@@ -238,7 +238,7 @@ func TestPartialUniqueIndexesAndFKConstraints(t *testing.T) {
 		t.Fatalf("Module1 声明依赖外部三方系统失败: %v", err)
 	}
 
-	// 2. 验证不同 ProtoSchema 激活相同 (ServiceName, Operation) 被 uk_traefik_active_proto_op 拦截
+	// 2. 验证不同 ProtoSchema 激活相同 (ServiceName, Operation) 被 uk_contract_active_proto_op 拦截
 	schema1 := ProtoSchema{
 		Name:            "order_proto_v1",
 		Version:         1,
@@ -293,7 +293,7 @@ func TestPartialUniqueIndexesAndFKConstraints(t *testing.T) {
 	}
 	errOp2 := db.Create(&op2).Error
 	if errOp2 == nil {
-		t.Fatalf("期望两个生效 Schema 激活相同接口被 uk_traefik_active_proto_op 拦截，但成功插入了！")
+		t.Fatalf("期望两个生效 Schema 激活相同接口被 uk_contract_active_proto_op 拦截，但成功插入了！")
 	}
 
 	// 3. 验证删除仍挂载 FunctionalGroup 的 Subsystem 被 ON DELETE RESTRICT 拦截
@@ -332,7 +332,7 @@ SELECT COUNT(*)
 FROM pg_inherits i
 JOIN pg_class c ON c.oid = i.inhrelid
 JOIN pg_class p ON p.oid = i.inhparent
-WHERE p.relname = 'traefik_traffic_records' AND c.relname = ?;
+WHERE p.relname = 'contract_traffic_records' AND c.relname = ?;
 `
 	if err := db.Raw(checkInheritsSQL, oldTable).Scan(&count).Error; err != nil {
 		t.Fatalf("查询 pg_inherits 失败: %v", err)
@@ -423,37 +423,40 @@ WHERE p.relname = 'traefik_traffic_records' AND c.relname = ?;
 func TestCleanRebuild15Tables_MultiSharedEnvAndPortPartialUnique(t *testing.T) {
 	db := testdb.SetupIsolatedDB(t, config.ServiceName)
 
-	// 1. 模拟遗留旧 traefik_process_modules 表
-	if err := db.Exec(`CREATE TABLE traefik_process_modules (id serial primary key, process_id bigint, module_id bigint)`).Error; err != nil {
-		t.Fatalf("模拟创建旧表失败: %v", err)
-	}
-
-	// 2. 执行 SetupWithDB，触发清库直接重建
+	// 1. 执行 SetupWithDB，验证 15 张核心业务表与 BusinessTableNames() 清单完整创建
 	if err := SetupWithDB(db); err != nil {
 		t.Fatalf("SetupWithDB 失败: %v", err)
 	}
 
-	// 验证旧表已被干净清理且 15 张核心业务表重建
-	if db.Migrator().HasTable("traefik_process_modules") {
-		t.Fatalf("旧表 traefik_process_modules 应当已被清理销毁，但依然存在！")
+	bizTables := BusinessTableNames()
+	if len(bizTables) != 30 {
+		t.Fatalf("BusinessTableNames() 期望返回 30 张业务表，实际为 %d", len(bizTables))
+	}
+	for _, tbl := range bizTables {
+		if tbl == (ModuleSetting{}).TableName() {
+			t.Fatalf("BusinessTableNames() 不应包含配置表 %s", tbl)
+		}
+		if !db.Migrator().HasTable(tbl) {
+			t.Fatalf("业务表 [%s] 未成功创建", tbl)
+		}
 	}
 
 	coreTables := []string{
-		"traefik_subsystems",
-		"traefik_functional_groups",
-		"traefik_arch_process_groups",
-		"traefik_arch_processes",
-		"traefik_modules",
-		"traefik_module_services",
-		"traefik_module_dependencies",
-		"traefik_agents",
-		"traefik_processes",
-		"traefik_proto_schemas",
-		"traefik_proto_operations",
-		"traefik_recording_sessions",
-		"traefik_traffic_records",
-		"traefik_replay_tasks",
-		"traefik_replay_items",
+		"contract_subsystems",
+		"contract_functional_groups",
+		"contract_arch_process_groups",
+		"contract_arch_processes",
+		"contract_modules",
+		"contract_module_services",
+		"contract_module_dependencies",
+		"contract_agents",
+		"contract_processes",
+		"contract_proto_schemas",
+		"contract_proto_operations",
+		"contract_recording_sessions",
+		"contract_traffic_records",
+		"contract_replay_tasks",
+		"contract_replay_items",
 	}
 	for _, tbl := range coreTables {
 		if !db.Migrator().HasTable(tbl) {
@@ -461,8 +464,8 @@ func TestCleanRebuild15Tables_MultiSharedEnvAndPortPartialUnique(t *testing.T) {
 		}
 	}
 
-	// 验证 TraefikSetting 默认预挂策略已初始化
-	var sShared, sPrivate TraefikSetting
+	// 验证 ModuleSetting 默认预挂策略已初始化
+	var sShared, sPrivate ModuleSetting
 	if err := db.Where("setting_key = ?", "default_probe_desired_state_shared").First(&sShared).Error; err != nil || sShared.SettingVal != "ARMED" {
 		t.Fatalf("默认预挂策略 default_probe_desired_state_shared 未初始化为 ARMED: %v, val: %s", err, sShared.SettingVal)
 	}
@@ -550,7 +553,7 @@ func TestCleanRebuild15Tables_MultiSharedEnvAndPortPartialUnique(t *testing.T) {
 		t.Fatalf("Agent-UAT 挂载 P1 失败（多套公共环境 1:1 挂载冲突）: %v", err)
 	}
 
-	// 6. 同一 Agent-SIT 重复挂载 P1 触发 uk_traefik_proc_agent_arch 唯一约束拦截
+	// 6. 同一 Agent-SIT 重复挂载 P1 触发 uk_contract_proc_agent_arch 唯一约束拦截
 	mountSIT1Dup := Process{
 		AgentID:             agentSIT.ID,
 		ArchProcessID:       p1.ID,
@@ -558,7 +561,7 @@ func TestCleanRebuild15Tables_MultiSharedEnvAndPortPartialUnique(t *testing.T) {
 		ProbeDesiredState:   "ARMED",
 	}
 	if err := db.Create(&mountSIT1Dup).Error; err == nil {
-		t.Fatalf("同一 Agent 重复挂载同一 ArchProcess 期望被 uk_traefik_proc_agent_arch 拦截，但成功插入了！")
+		t.Fatalf("同一 Agent 重复挂载同一 ArchProcess 期望被 uk_contract_proc_agent_arch 拦截，但成功插入了！")
 	}
 
 	// 7. 同一 Agent 同时挂载 P2(port=0) 与 P3(port=0) 成功通过（允许多个纯客户端进程并存）
@@ -582,10 +585,10 @@ func TestCleanRebuild15Tables_MultiSharedEnvAndPortPartialUnique(t *testing.T) {
 		t.Fatalf("Agent-SIT 挂载纯客户端 P3 失败: %v", err)
 	}
 
-	// 8. 将 P2 的有效端口修改为 18080 与同机 P1 冲突，触发 uk_traefik_proc_agent_port 部分唯一索引拦截
+	// 8. 将 P2 的有效端口修改为 18080 与同机 P1 冲突，触发 uk_contract_proc_agent_port 部分唯一索引拦截
 	errConflict := db.Model(&mountSIT2).Update("effective_listen_port", 18080).Error
 	if errConflict == nil {
-		t.Fatalf("同一 Agent 端口冲突修改期望被 uk_traefik_proc_agent_port 拦截，但成功执行了！")
+		t.Fatalf("同一 Agent 端口冲突修改期望被 uk_contract_proc_agent_port 拦截，但成功执行了！")
 	}
 }
 
@@ -595,11 +598,7 @@ func TestProtoSchemaConstraints_16MBSize_CategoryEnum_AndBackfillCounts(t *testi
 		t.Fatalf("初次 SetupWithDB 失败: %v", err)
 	}
 
-	// 模拟存量库状态：设置旧版 4MB CHECK 约束，并插入未回填计数的存量行
-	_ = db.Exec("ALTER TABLE traefik_proto_schemas DROP CONSTRAINT IF EXISTS chk_traefik_proto_size").Error
-	_ = db.Exec("ALTER TABLE traefik_proto_schemas ADD CONSTRAINT chk_traefik_proto_size CHECK (file_size > 0 AND file_size <= 4194304)").Error
-	_ = db.Exec("ALTER TABLE traefik_proto_schemas DROP CONSTRAINT IF EXISTS chk_traefik_proto_category").Error
-
+	// 插入未回填计数的描述集记录，验证二次幂等 SetupWithDB 可准确回填统计字段且 16MB/分类约束生效
 	legacySchema := ProtoSchema{
 		Name:            "legacy_proto_schema",
 		Version:         1,
@@ -664,7 +663,7 @@ func TestProtoSchemaConstraints_16MBSize_CategoryEnum_AndBackfillCounts(t *testi
 		t.Fatalf("插入 8MB BASE_LIB 描述集失败（旧 4MB 约束未能自动升级）: %v", err)
 	}
 
-	// 3. 验证 > 16MB (16,777,217 bytes) 触发 chk_traefik_proto_size 拦截
+	// 3. 验证 > 16MB (16,777,217 bytes) 触发 chk_contract_proto_size 拦截
 	schemaTooLarge := ProtoSchema{
 		Name:            "too_large_pb",
 		Version:         1,
@@ -675,10 +674,10 @@ func TestProtoSchemaConstraints_16MBSize_CategoryEnum_AndBackfillCounts(t *testi
 		Category:        ProtoCategoryBusiness,
 	}
 	if err := db.Create(&schemaTooLarge).Error; err == nil {
-		t.Fatalf("插入 > 16MB 记录期望被 chk_traefik_proto_size 拦截，但成功插入了！")
+		t.Fatalf("插入 > 16MB 记录期望被 chk_contract_proto_size 拦截，但成功插入了！")
 	}
 
-	// 4. 验证非法 category = 'UNKNOWN' 触发 chk_traefik_proto_category 拦截
+	// 4. 验证非法 category = 'UNKNOWN' 触发 chk_contract_proto_category 拦截
 	schemaBadCategory := ProtoSchema{
 		Name:            "bad_category_pb",
 		Version:         1,
@@ -689,6 +688,6 @@ func TestProtoSchemaConstraints_16MBSize_CategoryEnum_AndBackfillCounts(t *testi
 		Category:        "UNKNOWN",
 	}
 	if err := db.Create(&schemaBadCategory).Error; err == nil {
-		t.Fatalf("插入非法 category='UNKNOWN' 期望被 chk_traefik_proto_category 拦截，但成功插入了！")
+		t.Fatalf("插入非法 category='UNKNOWN' 期望被 chk_contract_proto_category 拦截，但成功插入了！")
 	}
 }

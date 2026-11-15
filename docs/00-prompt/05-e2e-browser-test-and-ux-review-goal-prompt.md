@@ -1,6 +1,6 @@
-# code-traefik: 微前端全链路端到端黑盒测试与产品交互体验走查 Goal 提示词
+# code-contract: 微前端全链路端到端黑盒测试与产品交互体验走查 Goal 提示词
 
-> 💡 **资产说明**：本提示词资产专门用于在 Antigravity 中通过 `/goal` 自主执行 `code-traefik` 的全链路端到端黑盒验证（Zero-State 数据清空 -> 微服务/探针编排 -> 宿主门户微前端浏览器模拟人交互 -> 真实业务发压 -> 流量录制与回放 -> 产品交互与微前端体验双份报告输出）。
+> 💡 **资产说明**：本提示词资产专门用于在 Antigravity 中通过 `/goal` 自主执行 `code-contract` 的全链路端到端黑盒验证（Zero-State 数据清空 -> 微服务/探针编排 -> 宿主门户微前端浏览器模拟人交互 -> 真实业务发压 -> 流量录制与回放 -> 产品交互与微前端体验双份报告输出）。
 
 ---
 
@@ -10,24 +10,24 @@
 1. **中文字体与无头渲染**：宿主机必须安装 CJK 中文字体包（`fonts-noto-cjk` 思源黑体/宋体、`fonts-wqy-microhei` 文泉驿微米黑），防止截图与文本断言退化为方块乱码（`□□□`）。
 2. **浏览器驱动**：全局或本地配置了 `playwright` 及系统已有的 `/usr/bin/google-chrome`。
 3. **物理 IP 与网络访问铁律**：严禁访问 `localhost` 或 `127.0.0.1`，统一访问宿主门户物理地址 **`http://192.168.56.18:8000`**。
-4. **数据库保护**：仅清空 `traefik_*` 业务表，严格保留平台公共 `users`、`departments`、`sys_audit_logs`。
+4. **数据库保护**：仅清空 `contract_*` 业务表，严格保留平台公共 `users`、`departments`、`sys_audit_logs`。
 
 ---
 
 ## 2. 标准 `/goal` 指令全文 (可以直接复制使用)
 
 ```markdown
-/goal 基于 code-bench 宿主微前端与真实浏览器模拟操作，对 code-traefik 进行全链路 E2E 测试并输出体验与功能建议
+/goal 基于 code-bench 宿主微前端与真实浏览器模拟操作，对 code-contract 进行全链路 E2E 测试并输出体验与功能建议
 
 ### 1. 目标概述
-首先清空本地数据库中所有 `traefik_*` 业务表（保留平台公共表）。
+首先清空本地数据库中所有 `contract_*` 业务表（保留平台公共表）。
 确保并编排以下本地服务链路正常运行：
 - 宿主门户 `code-bench` (:8000)
-- 主控服务 `code-traefik-server` (:8091)
-- 数据面探针 `code-traefik-agent` (:9091)
+- 主控服务 `code-contract-server` (:8091)
+- 数据面探针 `code-contract-agent` (:9091)
 - Demo 4 进程微服务集群 (:9001 ~ :9003)
 
-通过自动化无头浏览器（Playwright / Google Chrome）以真实用户视角访问宿主门户 **`http://192.168.56.18:8000`**，登录后进入微前端主入口 **`http://192.168.56.18:8000/traefik`**。
+通过自动化无头浏览器（Playwright / Google Chrome）以真实用户视角访问宿主门户 **`http://192.168.56.18:8000`**，登录后进入微前端主入口 **`http://192.168.56.18:8000/contract`**。
 全流程走通：架构建模 -> Proto 契约上传 -> 进程挂载 -> 流量录制 -> Demo 业务发压 -> 流量回放与 Diff 对比。
 测试过程中兼任“资深产品体验官与全栈架构师”，针对微前端集成效果、中文界面交互与功能完备度输出深度体检报告；测试完毕后彻底关闭本地临时进程并释放端口。
 
@@ -42,15 +42,15 @@
 
 ### 3. 前置数据清空与服务编排 (Step 0)
 1. **数据清空**：
-   - 连接本地数据库 `code_shield`，执行 SQL 清空所有 `traefik_*` 业务数据表（RESTART IDENTITY CASCADE），严格保留 `users`、`departments`、`sys_audit_logs`。
+   - 连接本地数据库 `code_shield`，执行 SQL 清空所有 `contract_*` 业务数据表（RESTART IDENTITY CASCADE），严格保留 `users`、`departments`、`sys_audit_logs`。
 2. **进程检查与拉起**：
-   - 检查端口 `:8000` (code-bench)、`:8091` (code-traefik-server)、`:9091` (code-traefik-agent)、`:9001~9003` (demo 集群)；
+   - 检查端口 `:8000` (code-bench)、`:8091` (code-contract-server)、`:9091` (code-contract-agent)、`:9001~9003` (demo 集群)；
    - 未运行的服务进行构建并启动；Demo 4 进程统一在 `demo/` 下通过 `make start` 启动。
 
 ### 4. 浏览器模拟人类操作路径 (微前端嵌入模式)
 1. **门户登录与微前端加载**：
    - 访问 `http://192.168.56.18:8000`，使用管理员账号登录（`admin@code-shield.com` / `admin123`）；
-   - 在门户侧边栏/顶部菜单点击“业务流量监控与重放”或直接导航至 `http://192.168.56.18:8000/traefik`；
+   - 在门户侧边栏/顶部菜单点击“业务流量监控与重放”或直接导航至 `http://192.168.56.18:8000/contract`；
    - 验证 Module Federation 远程组件是否顺畅加载，Token 是否无感传递。
 2. **架构建模与服务维护**：
    - 录入逻辑架构（子系统 `ECOMMERCE` -> 功能组 `TRADE_CORE` -> 模块 `ORDER_CORE` -> 服务契约 `demo.order-OrderService`）。
@@ -76,7 +76,7 @@
 
 ### 6. 输出交付物：双份结构化报告 (DoD)
 
-#### 报告一：《code-traefik 微前端全链路端到端功能测试报告》
+#### 报告一：《code-contract 微前端全链路端到端功能测试报告》
 - 各操作步骤及页面验证状态（PASS/FAIL）；
 - 报文捕获条数、Protobuf 解析成功率、回放命中率指标；
 - 端口与资源彻底释放的检查结果。
@@ -85,8 +85,8 @@
 以“产品经理 + 前端架构师”视角，重点审查并输出：
 1. **【微前端集成与体验】**：
    - 门户嵌入模式下是否存在双重滚动条、高度自适应问题？
-   - Traefik 的抽屉（Drawer）与弹窗（Modal）的 z-index 是否会被门户 Header 遮挡？
-   - 门户切换主题（Dark/Light）时，Traefik 内部样式的跟随同步是否完美？
+   - Contract 的抽屉（Drawer）与弹窗（Modal）的 z-index 是否会被门户 Header 遮挡？
+   - 门户切换主题（Dark/Light）时，Contract 内部样式的跟随同步是否完美？
 2. **【操作流与人机工效】**：
    - 从建架构到录制回放，操作步长是否过长？是否有冗余输入？
 3. **【界面与视觉规范】**：

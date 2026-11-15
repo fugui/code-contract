@@ -12,9 +12,9 @@ import (
 	"syscall"
 	"time"
 
-	"code-traefik/internal/agent/server"
-	"code-traefik/pkg/ebpf"
-	"code-traefik/pkg/version"
+	"code-contract/internal/agent/server"
+	"code-contract/pkg/ebpf"
+	"code-contract/pkg/version"
 )
 
 var (
@@ -26,9 +26,9 @@ var (
 // DefaultAllowIPs 默认受信任主控 IP 白名单（支持环回联调及现网主控服务器 10.1.64.178 直连挂载）
 const DefaultAllowIPs = "127.0.0.1,10.1.64.178"
 
-// resolveDefaultAllowIPs 支持环境变量 TRAEFIK_AGENT_ALLOW_IPS 覆盖默认白名单
+// resolveDefaultAllowIPs 支持环境变量 CONTRACT_AGENT_ALLOW_IPS 覆盖默认白名单
 func resolveDefaultAllowIPs() string {
-	if env := os.Getenv("TRAEFIK_AGENT_ALLOW_IPS"); env != "" {
+	if env := os.Getenv("CONTRACT_AGENT_ALLOW_IPS"); env != "" {
 		return env
 	}
 	return DefaultAllowIPs
@@ -51,7 +51,7 @@ func parseAllowIPs(raw string) []string {
 // runDoctorCheck 执行宿主机环境与 eBPF 内核特权就绪诊断
 func runDoctorCheck(procRoot string) int {
 	fmt.Println("================================================================================")
-	fmt.Printf("   code-traefik-agent 运行环境与内核特权就绪诊断 (Doctor) - %s\n", version.Full())
+	fmt.Printf("   code-contract-agent 运行环境与内核特权就绪诊断 (Doctor) - %s\n", version.Full())
 	fmt.Println("================================================================================")
 
 	hasErrors := false
@@ -93,7 +93,7 @@ func runDoctorCheck(procRoot string) int {
 	fmt.Printf("      - 特权详情: %s\n", detail)
 	if !hasCaps {
 		fmt.Printf("      - [✗] 权限不足: 缺少必要 Capabilities: %s\n", strings.Join(missing, ", "))
-		fmt.Printf("      - [💡] 修复指引: 请使用 sudo 权限启动 Agent (sudo ./bin/code-traefik-agent)，或通过 setcap 授权\n")
+		fmt.Printf("      - [💡] 修复指引: 请使用 sudo 权限启动 Agent (sudo ./bin/code-contract-agent)，或通过 setcap 授权\n")
 		hasErrors = true
 	} else {
 		fmt.Printf("      - [✓] Linux Capabilities 具备状态完整\n")
@@ -129,7 +129,7 @@ func main() {
 		listenAddr  = flag.String("listen", "0.0.0.0:9091", "Agent 监听地址 (IP:Port)")
 		allowIPsStr = flag.String("allow-ips", defaultAllowIPs, "允许访问的主控 IP/CIDR 白名单 (逗号分隔)")
 		claimCode   = flag.String("claim-code", "", "预设认领码 (留空自动生成一次性认领码)")
-		claimFile   = flag.String("claim-code-file", "", "认领码保存路径 (如 /var/run/code-traefik/claim.token)")
+		claimFile   = flag.String("claim-code-file", "", "认领码保存路径 (如 /var/run/code-contract/claim.token)")
 		maxBufferMB = flag.Int64("max-buffer-mb", 64, "单个活跃会话有界缓冲上限 (MB)")
 		procRoot    = flag.String("proc-root", "/proc", "宿主机 procfs 挂载路径")
 		showVersion = flag.Bool("version", false, "显示版本信息并退出")
@@ -151,7 +151,7 @@ func main() {
 	}
 
 	if *showVersion {
-		fmt.Printf("code-traefik-agent %s\n", version.Full())
+		fmt.Printf("code-contract-agent %s\n", version.Full())
 		os.Exit(0)
 	}
 
@@ -173,10 +173,10 @@ func main() {
 
 	srv, err := server.NewAgentServer(cfg)
 	if err != nil {
-		log.Fatalf("初始化 code-traefik-agent 失败: %v", err)
+		log.Fatalf("初始化 code-contract-agent 失败: %v", err)
 	}
 
-	log.Printf("[Agent] 启动 code-traefik-agent 版本: %s", version.Full())
+	log.Printf("[Agent] 启动 code-contract-agent 版本: %s", version.Full())
 	log.Printf("[Agent] 监听地址: %s, 白名单: %v", *listenAddr, allowIPs)
 	log.Printf("[Agent] 认领码 (ClaimCode): %s", srv.ClaimCode())
 	log.Printf("[Agent] 实例 BootID: %s", srv.BootID())

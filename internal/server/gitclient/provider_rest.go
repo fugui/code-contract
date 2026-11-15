@@ -16,9 +16,9 @@ import (
 	"strings"
 	"time"
 
-	"code-traefik/internal/server/decoder"
-	"code-traefik/internal/server/security"
-	"code-traefik/models"
+	"code-contract/internal/server/decoder"
+	"code-contract/internal/server/security"
+	"code-contract/models"
 )
 
 const (

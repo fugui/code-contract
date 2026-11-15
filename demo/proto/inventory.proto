@@ -3,7 +3,7 @@ syntax = "proto3";
 // 库存履约领域服务契约 (BUSINESS: demo.inventory.InventoryService)
 // @owner: inventory-fulfillment-team
 package demo.inventory;
-option go_package = "code-traefik/demo/pkg/proto/inventorypb";
+option go_package = "code-contract/demo/pkg/proto/inventorypb";
 
 import "demo/proto/common.proto";
 

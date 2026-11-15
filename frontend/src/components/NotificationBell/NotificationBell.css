@@ -199,13 +199,13 @@
   gap: 8px;
 }
 
-.code-traefik-embedded-shell {
+.code-contract-embedded-shell {
   display: flex;
   flex-direction: column;
   width: 100%;
 }
 
-.code-traefik-utility-header {
+.code-contract-utility-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -215,7 +215,7 @@
   background: var(--color-bg-surface);
 }
 
-.code-traefik-utility-header__brand {
+.code-contract-utility-header__brand {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -224,7 +224,7 @@
   color: var(--color-text-secondary);
 }
 
-.code-traefik-utility-header__actions {
+.code-contract-utility-header__actions {
   display: flex;
   align-items: center;
   gap: 10px;

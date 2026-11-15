@@ -39,7 +39,7 @@ import { ModuleUserProvider, useModuleUser } from './context/ModuleUserContext';
 import { resolveModulePath } from './hooks/useModulePath';
 import { NotificationBell } from './components/NotificationBell';
 import { WorkspaceUtilityHeader } from './components/WorkspaceUtilityHeader';
-import { traefikMenuConfig } from './menu';
+import { contractMenuConfig } from './menu';
 import DashboardWorkbenchPage from './pages/DashboardWorkbenchPage';
 import RecordingWorkbenchPage from './pages/RecordingWorkbenchPage';
 import TrafficDebugWorkbenchPage from './pages/TrafficDebugWorkbenchPage';
@@ -203,7 +203,7 @@ const renderNavIcon = (path: string) => {
 export const EmbeddedRoutes: React.FC = () => {
   const defaultTarget = `${MODULE_BASE_PATH}/dashboard`;
   return (
-    <div className="code-traefik-embedded-shell">
+    <div className="code-contract-embedded-shell">
       <WorkspaceUtilityHeader />
       <Routes>
       <Route path="/" element={<LegacyRouteRedirect to={defaultTarget} />} />
@@ -254,7 +254,7 @@ export const EmbeddedRoutes: React.FC = () => {
 
 /**
  * 独立调试模式布局外壳：自带简易导航、主题明暗切换器与本地登录守卫
- * 直接消费 traefikMenuConfig 数据驱动渲染，消除双处硬编码漂移
+ * 直接消费 contractMenuConfig 数据驱动渲染，消除双处硬编码漂移
  */
 export const StandaloneShell: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   const location = useLocation();
@@ -281,7 +281,7 @@ export const StandaloneShell: React.FC<{ onLogout: () => void }> = ({ onLogout }
   const pathname = location.pathname;
   const isAdmin = Boolean(user.is_module_admin || user.is_super_admin);
 
-  const currentMenuItem = traefikMenuConfig.groups
+  const currentMenuItem = contractMenuConfig.groups
     .flatMap((g) => g.items)
     .find((item) => pathname === item.path || (item.path !== '/' && pathname.startsWith(item.path)));
 
@@ -297,7 +297,7 @@ export const StandaloneShell: React.FC<{ onLogout: () => void }> = ({ onLogout }
         </div>
 
         <nav className="code-tpl-nav">
-          {traefikMenuConfig.groups.map((group) => {
+          {contractMenuConfig.groups.map((group) => {
             if (group.adminOnly && !isAdmin) return null;
             const visibleItems = group.items.filter((item) => !item.adminOnly || isAdmin);
             if (visibleItems.length === 0) return null;

@@ -8,18 +8,18 @@ import (
 	"gorm.io/gorm"
 )
 
-var partitionNameRegex = regexp.MustCompile(`^traefik_traffic_records_y(\d{4})m(\d{2})d(\d{2})$`)
+var partitionNameRegex = regexp.MustCompile(`^contract_traffic_records_y(\d{4})m(\d{2})d(\d{2})$`)
 
-// PartitionManager 负责 traefik_traffic_records 物理分区母表与按日分区的自动生命周期管理
+// PartitionManager 负责 contract_traffic_records 物理分区母表与按日分区的自动生命周期管理
 type PartitionManager struct{}
 
 // EnsureParentTable 幂等创建物理分区母表及自增序列
 func (pm *PartitionManager) EnsureParentTable(db *gorm.DB) error {
 	ddl := `
-CREATE SEQUENCE IF NOT EXISTS traefik_traffic_records_id_seq;
+CREATE SEQUENCE IF NOT EXISTS contract_traffic_records_id_seq;
 
-CREATE TABLE IF NOT EXISTS traefik_traffic_records (
-    id BIGINT NOT NULL DEFAULT nextval('traefik_traffic_records_id_seq'),
+CREATE TABLE IF NOT EXISTS contract_traffic_records (
+    id BIGINT NOT NULL DEFAULT nextval('contract_traffic_records_id_seq'),
     created_at TIMESTAMPTZ NOT NULL,
     session_id BIGINT NOT NULL,
     seq_no BIGINT NOT NULL,
@@ -64,13 +64,13 @@ CREATE TABLE IF NOT EXISTS traefik_traffic_records (
     PRIMARY KEY (id, created_at)
 ) PARTITION BY RANGE (created_at);
 
-CREATE INDEX IF NOT EXISTS idx_traefik_tr_payload_gin ON traefik_traffic_records USING GIN (payload_json jsonb_path_ops);
-CREATE INDEX IF NOT EXISTS idx_traefik_tr_session_seq ON traefik_traffic_records (session_id, seq_no);
-CREATE INDEX IF NOT EXISTS idx_traefik_tr_session_svc ON traefik_traffic_records (session_id, service_name, operation);
-CREATE INDEX IF NOT EXISTS idx_traefik_tr_conn_sno ON traefik_traffic_records (conn_key, sno);
-CREATE INDEX IF NOT EXISTS idx_traefik_tr_session_req_ns ON traefik_traffic_records (session_id, req_captured_at_ns, id);
-ALTER TABLE traefik_traffic_records ADD COLUMN IF NOT EXISTS dst_contract_id BIGINT;
-CREATE INDEX IF NOT EXISTS idx_traefik_tr_dst_contract ON traefik_traffic_records (dst_contract_id) WHERE dst_contract_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_contract_tr_payload_gin ON contract_traffic_records USING GIN (payload_json jsonb_path_ops);
+CREATE INDEX IF NOT EXISTS idx_contract_tr_session_seq ON contract_traffic_records (session_id, seq_no);
+CREATE INDEX IF NOT EXISTS idx_contract_tr_session_svc ON contract_traffic_records (session_id, service_name, operation);
+CREATE INDEX IF NOT EXISTS idx_contract_tr_conn_sno ON contract_traffic_records (conn_key, sno);
+CREATE INDEX IF NOT EXISTS idx_contract_tr_session_req_ns ON contract_traffic_records (session_id, req_captured_at_ns, id);
+ALTER TABLE contract_traffic_records ADD COLUMN IF NOT EXISTS dst_contract_id BIGINT;
+CREATE INDEX IF NOT EXISTS idx_contract_tr_dst_contract ON contract_traffic_records (dst_contract_id) WHERE dst_contract_id IS NOT NULL;
 `
 	return db.Exec(ddl).Error
 }
@@ -78,7 +78,7 @@ CREATE INDEX IF NOT EXISTS idx_traefik_tr_dst_contract ON traefik_traffic_record
 // FormatPartitionName 计算按日分区表名
 func (pm *PartitionManager) FormatPartitionName(date time.Time) string {
 	d := date.UTC()
-	return fmt.Sprintf("traefik_traffic_records_y%04dm%02dd%02d", d.Year(), d.Month(), d.Day())
+	return fmt.Sprintf("contract_traffic_records_y%04dm%02dd%02d", d.Year(), d.Month(), d.Day())
 }
 
 // EnsureDailyPartition 幂等预建单日物理子分区及其局部 GIN 索引
@@ -92,7 +92,7 @@ func (pm *PartitionManager) EnsureDailyPartition(db *gorm.DB, date time.Time) (s
 	toStr := to.Format("2006-01-02 15:04:05+00")
 
 	createPartitionSQL := fmt.Sprintf(`
-CREATE TABLE IF NOT EXISTS %s PARTITION OF traefik_traffic_records
+CREATE TABLE IF NOT EXISTS %s PARTITION OF contract_traffic_records
 FOR VALUES FROM ('%s') TO ('%s');
 
 CREATE INDEX IF NOT EXISTS idx_%s_payload_gin ON %s USING GIN (payload_json jsonb_path_ops);
@@ -132,7 +132,7 @@ SELECT c.relname
 FROM pg_inherits i
 JOIN pg_class c ON c.oid = i.inhrelid
 JOIN pg_class p ON p.oid = i.inhparent
-WHERE p.relname = 'traefik_traffic_records';
+WHERE p.relname = 'contract_traffic_records';
 `
 	var partitionNames []string
 	if err := db.Raw(query).Scan(&partitionNames).Error; err != nil {

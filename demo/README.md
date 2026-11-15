@@ -1,6 +1,6 @@
 # CROS RPC 4 进程仿真微服务测试系统 (CROS RPC Benchmark Cluster)
 
-> 本工程是基于 [`code-traefik/docs/07-references/01-cros-rpc-protocol-spec.md`](../docs/07-references/01-cros-rpc-protocol-spec.md) 协议规范构建的 4 进程分布式电商交易微服务系统，专门作为 `code-traefik` 流量监控、架构拓扑校验及离线 Mock 重放的标准靶场应用。
+> 本工程是基于 [`code-contract/docs/07-references/01-cros-rpc-protocol-spec.md`](../docs/07-references/01-cros-rpc-protocol-spec.md) 协议规范构建的 4 进程分布式电商交易微服务系统，专门作为 `code-contract` 流量监控、架构拓扑校验及离线 Mock 重放的标准靶场应用。
 
 ---
 
@@ -48,7 +48,7 @@ make build
 ### 2.2 启动微服务集群
 
 #### 方式 A: Tmux 分屏可视化启动 (强烈推荐: 左 3 框 + 右 2 框)
-参考工程根目录 `../../start.sh` 架构风格，一键在 Tmux 中以分屏模式启动 5 个进程（包含两个 Backend、code-traefik-agent、SUT 网关及交互客户端），实现全链路链路日志、治理 Agent 与业务终端同屏联动：
+参考工程根目录 `../../start.sh` 架构风格，一键在 Tmux 中以分屏模式启动 5 个进程（包含两个 Backend、code-contract-agent、SUT 网关及交互客户端），实现全链路链路日志、治理 Agent 与业务终端同屏联动：
 ```bash
 ./start.sh
 # 或使用 make 别名
@@ -64,7 +64,7 @@ make tmux
 │     backend-inventory     │                           │
 │   (左中: 库存服务 :9003)   │       client (TUI)        │
 ├───────────────────────────┤   (右下: 交互客户端控制台) │
-│    code-traefik-agent     │                           │
+│    code-contract-agent     │                           │
 │   (左下: 数据面 Agent :9091)│                           │
 └───────────────────────────┴───────────────────────────┘
 ```
@@ -109,11 +109,11 @@ make stop
 
 ---
 
-## 4. 与 `code-traefik` 平台的联动验证场景
+## 4. 与 `code-contract` 平台的联动验证场景
 
 1. **流量旁路录制**：
-   在 `code-traefik` 控制台启动对 `sut-order` (PID) 的录制，TUI 按 `[2]` 或 `[8]` 注入流量。查看平台生成的 `traefik_traffic_records` 双向报文（入站 `:9001` 与出站 `:9002/:9003`）。
+   在 `code-contract` 控制台启动对 `sut-order` (PID) 的录制，TUI 按 `[2]` 或 `[8]` 注入流量。查看平台生成的 `contract_traffic_records` 双向报文（入站 `:9001` 与出站 `:9002/:9003`）。
 2. **架构一致性核验**：
-   在 `code-traefik` 架构管理中录入 `order-core`、`account-core`、`inventory-core`，运行一致性检查，拓扑比对结果将为 `MATCH`。
+   在 `code-contract` 架构管理中录入 `order-core`、`account-core`、`inventory-core`，运行一致性检查，拓扑比对结果将为 `MATCH`。
 3. **离线 Mock 重放与 `ullSNO` 自愈**：
-   执行 `kill -9 $(pgrep -f backend-account) $(pgrep -f backend-inventory)` 强制关闭两个 Backend；通过 `code-traefik` 重放历史录制流量，观察 Agent 拦截出站请求并命中 Mock 帧、自动覆写 `ullSNO`，SUT 顺利完成业务逻辑！
+   执行 `kill -9 $(pgrep -f backend-account) $(pgrep -f backend-inventory)` 强制关闭两个 Backend；通过 `code-contract` 重放历史录制流量，观察 Agent 拦截出站请求并命中 Mock 帧、自动覆写 `ullSNO`，SUT 顺利完成业务逻辑！

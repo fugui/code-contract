@@ -3,7 +3,7 @@ package models
 import (
 	"time"
 
-	"code-traefik/config"
+	"code-contract/config"
 	"gorm.io/datatypes"
 )
 
@@ -14,14 +14,14 @@ const (
 	DocSymbolEnum    = "ENUM"
 )
 
-// 24. ProtoDocSymbol 活体接口参考文档符号与注释元数据表 (traefik_proto_doc_symbols, F-18 / M23)
+// 24. ProtoDocSymbol 活体接口参考文档符号与注释元数据表 (contract_proto_doc_symbols, F-18 / M23)
 type ProtoDocSymbol struct {
 	ID                  uint64         `gorm:"primaryKey;autoIncrement" json:"id"`
-	SchemaID            uint64         `gorm:"not null;uniqueIndex:uk_traefik_pdoc_schema_kind_full,priority:1;index:idx_traefik_pdoc_schema" json:"schema_id"`
+	SchemaID            uint64         `gorm:"not null;uniqueIndex:uk_contract_pdoc_schema_kind_full,priority:1;index:idx_contract_pdoc_schema" json:"schema_id"`
 	Schema              *ProtoSchema   `gorm:"foreignKey:SchemaID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE" json:"-"`
-	SymbolKind          string         `gorm:"size:16;not null;uniqueIndex:uk_traefik_pdoc_schema_kind_full,priority:2;check:chk_traefik_pdoc_kind,symbol_kind IN ('SERVICE','METHOD','MESSAGE','ENUM')" json:"symbol_kind"`
-	FullName            string         `gorm:"size:255;not null;uniqueIndex:uk_traefik_pdoc_schema_kind_full,priority:3;index:idx_traefik_pdoc_fullname" json:"full_name"`
-	PackageName         string         `gorm:"size:128;not null;index:idx_traefik_pdoc_pkg" json:"package_name"`
+	SymbolKind          string         `gorm:"size:16;not null;uniqueIndex:uk_contract_pdoc_schema_kind_full,priority:2;check:chk_contract_pdoc_kind,symbol_kind IN ('SERVICE','METHOD','MESSAGE','ENUM')" json:"symbol_kind"`
+	FullName            string         `gorm:"size:255;not null;uniqueIndex:uk_contract_pdoc_schema_kind_full,priority:3;index:idx_contract_pdoc_fullname" json:"full_name"`
+	PackageName         string         `gorm:"size:128;not null;index:idx_contract_pdoc_pkg" json:"package_name"`
 	ShortName           string         `gorm:"size:128;not null" json:"short_name"`
 	ProtoFile           string         `gorm:"size:255;not null" json:"proto_file"`
 	StartLine           int            `gorm:"not null;default:0" json:"start_line"`
@@ -29,7 +29,7 @@ type ProtoDocSymbol struct {
 	LeadingComments     string         `gorm:"type:text;not null;default:''" json:"leading_comments"`
 	TrailingComments    string         `gorm:"type:text;not null;default:''" json:"trailing_comments"`
 	Summary             string         `gorm:"size:512;not null;default:''" json:"summary"`
-	IsDeprecated        bool           `gorm:"not null;default:false;index:idx_traefik_pdoc_deprecated" json:"is_deprecated"`
+	IsDeprecated        bool           `gorm:"not null;default:false;index:idx_contract_pdoc_deprecated" json:"is_deprecated"`
 	DeprecationReason   string         `gorm:"size:512;not null;default:''" json:"deprecation_reason"`
 	OwnerTag            string         `gorm:"size:128;not null;default:''" json:"owner_tag"`
 	ErrorCodesJSON      datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"error_codes_json"`

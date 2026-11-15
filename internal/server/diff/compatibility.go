@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"code-traefik/models"
+	"code-contract/models"
 )
 
 var (

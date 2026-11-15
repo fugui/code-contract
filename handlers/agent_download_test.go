@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"code-traefik/handlers"
+	"code-contract/handlers"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -19,12 +19,12 @@ func TestDownloadAgentBinary(t *testing.T) {
 
 	t.Run("SuccessDownloadWhenFileExists", func(t *testing.T) {
 		tempDir := t.TempDir()
-		dummyBinPath := filepath.Join(tempDir, "code-traefik-agent")
-		dummyContent := []byte("#!/bin/sh\necho 'code-traefik-agent-binary-content'\n")
+		dummyBinPath := filepath.Join(tempDir, "code-contract-agent")
+		dummyContent := []byte("#!/bin/sh\necho 'code-contract-agent-binary-content'\n")
 		err := os.WriteFile(dummyBinPath, dummyContent, 0755)
 		require.NoError(t, err)
 
-		t.Setenv("TRAEFIK_AGENT_BIN_PATH", dummyBinPath)
+		t.Setenv("CONTRACT_AGENT_BIN_PATH", dummyBinPath)
 
 		r := gin.New()
 		r.GET("/api/agent/download", handlers.DownloadAgentBinary)
@@ -36,7 +36,7 @@ func TestDownloadAgentBinary(t *testing.T) {
 		r.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Contains(t, w.Header().Get("Content-Disposition"), "attachment; filename=\"code-traefik-agent\"")
+		assert.Contains(t, w.Header().Get("Content-Disposition"), "attachment; filename=\"code-contract-agent\"")
 		assert.Equal(t, "application/octet-stream", w.Header().Get("Content-Type"))
 		assert.Equal(t, dummyContent, w.Body.Bytes())
 	})
@@ -44,7 +44,7 @@ func TestDownloadAgentBinary(t *testing.T) {
 	t.Run("NotFoundWhenFileDoesNotExist", func(t *testing.T) {
 		tempDir := t.TempDir()
 		nonExistentPath := filepath.Join(tempDir, "non-existent-agent-bin")
-		t.Setenv("TRAEFIK_AGENT_BIN_PATH", nonExistentPath)
+		t.Setenv("CONTRACT_AGENT_BIN_PATH", nonExistentPath)
 
 		r := gin.New()
 		r.GET("/api/agent/download", handlers.DownloadAgentBinary)
@@ -55,7 +55,7 @@ func TestDownloadAgentBinary(t *testing.T) {
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 
-		// 由于系统根目录可能存在编译好的 ./code-traefik-agent，如果环境变量设置的路径不存在，候选路径还会尝试 ./code-traefik-agent
+		// 由于系统根目录可能存在编译好的 ./code-contract-agent，如果环境变量设置的路径不存在，候选路径还会尝试 ./code-contract-agent
 		// 若要确保走到 404 分支，我们将 working directory 指向空临时目录测试
 		origWd, _ := os.Getwd()
 		_ = os.Chdir(tempDir)

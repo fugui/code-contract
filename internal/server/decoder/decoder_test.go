@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"code-common/backend/testdb"
-	"code-traefik/config"
-	"code-traefik/models"
-	"code-traefik/pkg/crosrpc"
+	"code-contract/config"
+	"code-contract/models"
+	"code-contract/pkg/crosrpc"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/reflect/protoreflect"

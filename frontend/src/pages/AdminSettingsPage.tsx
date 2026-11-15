@@ -293,7 +293,7 @@ export const AdminSettingsPage: React.FC = () => {
         </div>
       </div>
 
-      {/* 卡片 2: 安全出向白名单、3s 熔断 LLM 与加密凭据托管 (TRAEFIK_CRYPTO_KEY AES-256-GCM) */}
+      {/* 卡片 2: 安全出向白名单、3s 熔断 LLM 与加密凭据托管 (CONTRACT_CRYPTO_KEY AES-256-GCM) */}
       <form className="code-card code-tpl-panel" onSubmit={(e) => void handleSaveAll(e)}>
         <div className="flex-between">
           <div>
@@ -517,7 +517,7 @@ export const AdminSettingsPage: React.FC = () => {
               type="text"
               className="code-input"
               aria-label="smtp_from"
-              placeholder="code-traefik@corp.local"
+              placeholder="code-contract@corp.local"
               value={getSettingVal('smtp_from')}
               onChange={(e) => handleValueChange('smtp_from', e.target.value, 'SMTP 发件人地址')}
             />
@@ -604,9 +604,9 @@ export const AdminSettingsPage: React.FC = () => {
               <strong>凭据仅展示一次，离开本页后将无法再次查看！</strong>
               <p style={{ margin: '4px 0 0 0', lineHeight: 1.5 }}>
                 请立即复制并妥善保存至您的 CI/CD 流水线 Secret 变量（如 GitLab CI/CD Variables 中的{' '}
-                <code className="code-tpl-code-inline">TRAEFIK_CI_TOKEN</code>
+                <code className="code-tpl-code-inline">CONTRACT_CI_TOKEN</code>
                 ）。流水线请求门禁时将其填入请求头{' '}
-                <code className="code-tpl-code-inline">X-Traefik-CI-Token</code>。
+                <code className="code-tpl-code-inline">X-Contract-CI-Token</code>。
               </p>
             </div>
           </div>

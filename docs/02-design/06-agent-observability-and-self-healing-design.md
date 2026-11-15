@@ -8,7 +8,7 @@
 
 ```mermaid
 flowchart TD
-    A["用户以普通身份启动 ./bin/code-traefik-agent"] --> B["Agent 静默无日志<br>(无特权自检 / 0行 HTTP 日志)"]
+    A["用户以普通身份启动 ./bin/code-contract-agent"] --> B["Agent 静默无日志<br>(无特权自检 / 0行 HTTP 日志)"]
     B --> C["主控发起 /agent/v1/monitors/arm"]
     C --> D["Agent 抛出缺少特权，返回 HTTP 503"]
     D --> E["主控进入指数退避 (10s~300s)<br>且未持久化 ExpectedArmedDigest"]
@@ -46,7 +46,7 @@ flowchart TD
 
 ### 模块二：主控端 Hub 状态对账与闭环自愈 (Control Plane Hub)
 1. **期望规格 (`ExpectedArmedDigest`) 提前固化**：
-   * 在 `AutoRearmAgent` 中，一旦完成待命规格编译，立即将 `expected_armed_digest` 写入 `traefik_agents` 表；
+   * 在 `AutoRearmAgent` 中，一旦完成待命规格编译，立即将 `expected_armed_digest` 写入 `contract_agents` 表；
    * 即使本次下发因 503 或网络失败，期望意图已被系统持久化记住。
 2. **HTTP 503 结构化诊断解析与 7 态精准落盘**：
    * 解析 Agent 返回的 503 响应体 `{"error": "...", "diagnostics": [...]}`；

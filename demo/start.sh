@@ -10,7 +10,7 @@
 #   │     backend-inventory     │                           │
 #   │   (左中: 库存服务 :9003)   │       client (TUI)        │
 #   ├───────────────────────────┤   (右下: 交互客户端控制台) │
-#   │    code-traefik-agent     │                           │
+#   │    code-contract-agent     │                           │
 #   │   (左下: 数据面 Agent :9091)│                           │
 #   └───────────────────────────┴───────────────────────────┘
 # ==============================================================================
@@ -135,7 +135,7 @@ BIN_TARGETS=(
     "$BIN_DIR/backend-payment"
     "$BIN_DIR/sut-order"
     "$BIN_DIR/client"
-    "$BIN_DIR/code-traefik-agent"
+    "$BIN_DIR/code-contract-agent"
 )
 NEED_BUILD=false
 
@@ -196,7 +196,7 @@ fi
 # 2. 从左侧向右水平切分 (对半左右开窗)，创建【右侧上框】: sut-order
 PANE_R_TOP=$(tmux split-window -h -P -F '#{pane_id}' -t "$PANE_L_TOP" -c "$DEMO_DIR")
 
-# 3. 将右侧垂直切分为 3 框: sut-order / code-traefik-agent / client
+# 3. 将右侧垂直切分为 3 框: sut-order / code-contract-agent / client
 PANE_R_MID=$(tmux split-window -v -l '70%' -P -F '#{pane_id}' -t "$PANE_R_TOP" -c "$DEMO_DIR")
 PANE_R_BOT=$(tmux split-window -v -l '62%' -P -F '#{pane_id}' -t "$PANE_R_MID" -c "$DEMO_DIR")
 
@@ -215,7 +215,7 @@ tmux select-pane -t "$PANE_L_MID1" -T "左上2: backend-inventory (库存服务 
 tmux select-pane -t "$PANE_L_MID2" -T "左下1: backend-payment ALIPAY (:9004)"
 tmux select-pane -t "$PANE_L_BOT"  -T "左下2: backend-payment WECHAT (:9005)"
 tmux select-pane -t "$PANE_R_TOP"  -T "右上: sut-order (订单核心网关 :9001)"
-tmux select-pane -t "$PANE_R_MID"  -T "右中: code-traefik-agent (治理 Agent :9091)"
+tmux select-pane -t "$PANE_R_MID"  -T "右中: code-contract-agent (治理 Agent :9091)"
 tmux select-pane -t "$PANE_R_BOT"  -T "右下: client (TUI 交互控制台)"
 
 # ==============================================================================
@@ -229,7 +229,7 @@ tmux send-keys -t "$PANE_L_MID1" "./bin/backend-inventory --addr=127.0.0.1:9003"
 tmux send-keys -t "$PANE_L_MID2" "./bin/backend-payment --addr=127.0.0.1:9004 --channel=ALIPAY" C-m
 tmux send-keys -t "$PANE_L_BOT"  "./bin/backend-payment --addr=127.0.0.1:9005 --channel=WECHAT" C-m
 
-# 2. 启动数据面 code-traefik-agent (:9091) - 使用提权启动器确保具备 eBPF 内核特权
+# 2. 启动数据面 code-contract-agent (:9091) - 使用提权启动器确保具备 eBPF 内核特权
 tmux send-keys -t "$PANE_R_MID" "./start-agent.sh --listen=127.0.0.1:9091" C-m
 
 # 3. 启动订单网关核心 (:9001) - 稍候 0.2 秒确保下游端口已就绪

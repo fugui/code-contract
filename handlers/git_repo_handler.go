@@ -14,10 +14,10 @@ import (
 	"time"
 
 	commonModels "code-common/backend/models"
-	"code-traefik/internal/server/decoder"
-	"code-traefik/internal/server/gitclient"
-	"code-traefik/internal/server/security"
-	"code-traefik/models"
+	"code-contract/internal/server/decoder"
+	"code-contract/internal/server/gitclient"
+	"code-contract/internal/server/security"
+	"code-contract/models"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/datatypes"
@@ -212,7 +212,7 @@ func toGitRepoResponseDTO(repo models.GitRepo, bundles []models.GitProtoBundle) 
 }
 
 func loadSafeDialerFromSettings(db *gorm.DB) (*security.SafeDialer, error) {
-	var setting models.TraefikSetting
+	var setting models.ModuleSetting
 	trusted := ""
 	if db != nil {
 		if err := db.Where("setting_key = ?", "outbound_trusted_cidrs").Limit(1).Find(&setting).Error; err == nil {
@@ -728,7 +728,7 @@ func CreateGitRepo(c *gin.Context) {
 		savedBundles = append(savedBundles, *bm)
 	}
 	dto := toGitRepoResponseDTO(repo, savedBundles)
-	recordAudit(c, "traefik_git:create_repo", commonModels.AuditLevelP2,
+	recordAudit(c, "contract_git:create_repo", commonModels.AuditLevelP2,
 		fmt.Sprintf("新建 Git 仓库绑定 [%s]（含 %d 个 Proto Bundle）", repo.Name, len(savedBundles)),
 		"git_repo", repo.ID, repo.Name, nil, dto)
 
@@ -868,7 +868,7 @@ func UpdateGitRepo(c *gin.Context) {
 	}
 
 	afterDTO := toGitRepoResponseDTO(*repo, bundles)
-	recordAudit(c, "traefik_git:update_repo", commonModels.AuditLevelP2,
+	recordAudit(c, "contract_git:update_repo", commonModels.AuditLevelP2,
 		fmt.Sprintf("更新 Git 仓库绑定 [%s]", repo.Name),
 		"git_repo", repo.ID, repo.Name, beforeDTO, afterDTO)
 
@@ -915,7 +915,7 @@ func DeleteGitRepo(c *gin.Context) {
 			Update("latest_version_id", nil).Error; err != nil {
 			return err
 		}
-		if err := tx.Where("proto_file_id IN (SELECT id FROM traefik_proto_files WHERE git_repo_id = ?)", repo.ID).
+		if err := tx.Where("proto_file_id IN (SELECT id FROM contract_proto_files WHERE git_repo_id = ?)", repo.ID).
 			Delete(&models.ProtoFileVersion{}).Error; err != nil {
 			return err
 		}
@@ -931,7 +931,7 @@ func DeleteGitRepo(c *gin.Context) {
 		return
 	}
 
-	recordAudit(c, "traefik_git:delete_repo", commonModels.AuditLevelP1,
+	recordAudit(c, "contract_git:delete_repo", commonModels.AuditLevelP1,
 		fmt.Sprintf("删除 Git 仓库绑定 [%s]（历史编译产物已保全归档）", repo.Name),
 		"git_repo", repo.ID, repo.Name, beforeDTO, nil)
 
@@ -1003,7 +1003,7 @@ func CreateGitRepoBundle(c *gin.Context) {
 	}
 
 	dto := toGitProtoBundleDTO(*bundle)
-	recordAudit(c, "traefik_git:upsert_bundle", commonModels.AuditLevelP2,
+	recordAudit(c, "contract_git:upsert_bundle", commonModels.AuditLevelP2,
 		fmt.Sprintf("新增 Monorepo Bundle [%s -> %s]", bundle.BundleName, bundle.TargetSchemaName),
 		"git_proto_bundle", bundle.ID, bundle.BundleName, nil, dto)
 
@@ -1112,7 +1112,7 @@ func UpdateGitRepoBundle(c *gin.Context) {
 	}
 
 	afterDTO := toGitProtoBundleDTO(existing)
-	recordAudit(c, "traefik_git:upsert_bundle", commonModels.AuditLevelP2,
+	recordAudit(c, "contract_git:upsert_bundle", commonModels.AuditLevelP2,
 		fmt.Sprintf("更新 Monorepo Bundle [%s -> %s]", existing.BundleName, existing.TargetSchemaName),
 		"git_proto_bundle", existing.ID, existing.BundleName, beforeDTO, afterDTO)
 
@@ -1163,7 +1163,7 @@ func DeleteGitRepoBundle(c *gin.Context) {
 			Update("latest_version_id", nil).Error; err != nil {
 			return err
 		}
-		if err := tx.Where("proto_file_id IN (SELECT id FROM traefik_proto_files WHERE bundle_id = ?)", existing.ID).
+		if err := tx.Where("proto_file_id IN (SELECT id FROM contract_proto_files WHERE bundle_id = ?)", existing.ID).
 			Delete(&models.ProtoFileVersion{}).Error; err != nil {
 			return err
 		}
@@ -1176,7 +1176,7 @@ func DeleteGitRepoBundle(c *gin.Context) {
 		return
 	}
 
-	recordAudit(c, "traefik_git:upsert_bundle", commonModels.AuditLevelP2,
+	recordAudit(c, "contract_git:upsert_bundle", commonModels.AuditLevelP2,
 		fmt.Sprintf("删除 Monorepo Bundle [%s -> %s]（已入池 Schema 已保留归档）", existing.BundleName, existing.TargetSchemaName),
 		"git_proto_bundle", existing.ID, existing.BundleName, beforeDTO, nil)
 
@@ -1347,7 +1347,7 @@ func TriggerGitRepoSync(c *gin.Context) {
 		}
 	}()
 
-	recordAudit(c, "traefik_git:manual_sync", commonModels.AuditLevelP2,
+	recordAudit(c, "contract_git:manual_sync", commonModels.AuditLevelP2,
 		fmt.Sprintf("触发 Git 仓库 [%s] 分支 [%s] 异步契约同步", repo.Name, branch),
 		"git_repo", repo.ID, repo.Name, nil, gin.H{
 			"repo_id":   repo.ID,
@@ -1367,7 +1367,7 @@ func TriggerGitRepoSync(c *gin.Context) {
 }
 
 // GetGitRepoConsistency GET /api/git-repos/:id/consistency
-// 只读对比远端最新分支源码 SHA256 与数据库 traefik_proto_files 快照差异（不写入磁盘/DB）
+// 只读对比远端最新分支源码 SHA256 与数据库 contract_proto_files 快照差异（不写入磁盘/DB）
 func GetGitRepoConsistency(c *gin.Context) {
 	repoID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil || repoID == 0 {

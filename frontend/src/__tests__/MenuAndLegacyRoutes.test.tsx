@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { renderToString } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
-import { traefikMenuConfig, DEFAULT_ENTRY_PATH, DEFAULT_STANDALONE_PATH } from '../menu';
+import { contractMenuConfig, DEFAULT_ENTRY_PATH, DEFAULT_STANDALONE_PATH } from '../menu';
 import { EmbeddedRoutes, SchemasRouteWrapper } from '../App';
 
 function getRedirectTarget(html: string): string | null {
@@ -11,53 +11,53 @@ function getRedirectTarget(html: string): string | null {
 
 export function testMenuStructure_FiveGroupsThirteenItems_ProtoGovernanceSplit(): void {
   // 1. 严格包含 全局概览、架构数字孪生、Proto 契约治理、契约核验与回归、环境与治理 5 个分组
-  expect(traefikMenuConfig.groups.length).toBe(5);
-  expect(traefikMenuConfig.groups[0].title).toBe('全局概览');
-  expect(traefikMenuConfig.groups[1].title).toBe('架构数字孪生');
-  expect(traefikMenuConfig.groups[2].title).toBe('Proto 契约治理');
-  expect(traefikMenuConfig.groups[3].title).toBe('契约核验与回归');
-  expect(traefikMenuConfig.groups[4].title).toBe('环境与治理');
+  expect(contractMenuConfig.groups.length).toBe(5);
+  expect(contractMenuConfig.groups[0].title).toBe('全局概览');
+  expect(contractMenuConfig.groups[1].title).toBe('架构数字孪生');
+  expect(contractMenuConfig.groups[2].title).toBe('Proto 契约治理');
+  expect(contractMenuConfig.groups[3].title).toBe('契约核验与回归');
+  expect(contractMenuConfig.groups[4].title).toBe('环境与治理');
 
-  const allItems = traefikMenuConfig.groups.flatMap((g) => g.items);
+  const allItems = contractMenuConfig.groups.flatMap((g) => g.items);
   // 严格共 13 个子项（ADR-19 将 Proto 域拆分为 4 个独立工作台）
   expect(allItems.length).toBe(13);
 
-  const group0Paths = traefikMenuConfig.groups[0].items.map((i) => i.path);
+  const group0Paths = contractMenuConfig.groups[0].items.map((i) => i.path);
   expect(group0Paths).toEqual(['/dashboard']);
-  expect(traefikMenuConfig.groups[0].items[0].label).toBe('治理大盘');
+  expect(contractMenuConfig.groups[0].items[0].label).toBe('治理大盘');
 
-  const group1Paths = traefikMenuConfig.groups[1].items.map((i) => i.path);
+  const group1Paths = contractMenuConfig.groups[1].items.map((i) => i.path);
   expect(group1Paths).toEqual(['/topology', '/architecture']);
-  expect(traefikMenuConfig.groups[1].items[0].label).toBe('架构拓扑');
-  expect(traefikMenuConfig.groups[1].items[1].label).toBe('架构元素');
+  expect(contractMenuConfig.groups[1].items[0].label).toBe('架构拓扑');
+  expect(contractMenuConfig.groups[1].items[1].label).toBe('架构元素');
 
-  const group2Paths = traefikMenuConfig.groups[2].items.map((i) => i.path);
+  const group2Paths = contractMenuConfig.groups[2].items.map((i) => i.path);
   expect(group2Paths).toEqual(['/proto-docs', '/proto-sources', '/proto-governance', '/schemas']);
-  expect(traefikMenuConfig.groups[2].items[0].label).toBe('接口参考文档');
-  expect(traefikMenuConfig.groups[2].items[1].label).toBe('源码与 Git 仓');
-  expect(traefikMenuConfig.groups[2].items[2].label).toBe('MR 门禁与规范');
-  expect(traefikMenuConfig.groups[2].items[3].label).toBe('描述集与依赖');
+  expect(contractMenuConfig.groups[2].items[0].label).toBe('接口参考文档');
+  expect(contractMenuConfig.groups[2].items[1].label).toBe('源码与 Git 仓');
+  expect(contractMenuConfig.groups[2].items[2].label).toBe('MR 门禁与规范');
+  expect(contractMenuConfig.groups[2].items[3].label).toBe('描述集与依赖');
 
-  const group3Paths = traefikMenuConfig.groups[3].items.map((i) => i.path);
+  const group3Paths = contractMenuConfig.groups[3].items.map((i) => i.path);
   expect(group3Paths).toEqual(['/record', '/debug', '/replay', '/golden-suites']);
-  expect(traefikMenuConfig.groups[3].items[0].label).toBe('契约采集');
-  expect(traefikMenuConfig.groups[3].items[1].label).toBe('事务分析');
-  expect(traefikMenuConfig.groups[3].items[2].label).toBe('防劣化回归');
-  expect(traefikMenuConfig.groups[3].items[3].label).toBe('黄金用例库');
+  expect(contractMenuConfig.groups[3].items[0].label).toBe('契约采集');
+  expect(contractMenuConfig.groups[3].items[1].label).toBe('事务分析');
+  expect(contractMenuConfig.groups[3].items[2].label).toBe('防劣化回归');
+  expect(contractMenuConfig.groups[3].items[3].label).toBe('黄金用例库');
 
-  const group4Paths = traefikMenuConfig.groups[4].items.map((i) => i.path);
+  const group4Paths = contractMenuConfig.groups[4].items.map((i) => i.path);
   expect(group4Paths).toEqual(['/agents', '/admin/settings']);
-  expect(traefikMenuConfig.groups[4].items[0].label).toBe('Agent 与进程');
-  expect(traefikMenuConfig.groups[4].items[1].label).toBe('模块参数配置');
+  expect(contractMenuConfig.groups[4].items[0].label).toBe('Agent 与进程');
+  expect(contractMenuConfig.groups[4].items[1].label).toBe('模块参数配置');
 
-  // 2. 模块根默认路径 path === '/traefik/dashboard'
-  expect(DEFAULT_ENTRY_PATH).toBe('/traefik/dashboard');
-  expect(traefikMenuConfig.defaultPath).toBe('/traefik/dashboard');
+  // 2. 模块根默认路径 path === '/contract/dashboard'
+  expect(DEFAULT_ENTRY_PATH).toBe('/contract/dashboard');
+  expect(contractMenuConfig.defaultPath).toBe('/contract/dashboard');
   expect(DEFAULT_STANDALONE_PATH).toBe('/dashboard');
 
-  // 仅 /admin/settings (或 /traefik/admin/settings) 标记 adminOnly: true
+  // 仅 /admin/settings (或 /contract/admin/settings) 标记 adminOnly: true
   allItems.forEach((item) => {
-    if (item.path === '/admin/settings' || item.path === '/traefik/admin/settings') {
+    if (item.path === '/admin/settings' || item.path === '/contract/admin/settings') {
       expect(item.adminOnly).toBe(true);
     } else {
       expect(Boolean(item.adminOnly)).toBe(false);
@@ -73,7 +73,7 @@ export function testLegacyDeepLinks_LosslessRedirect(): void {
         <EmbeddedRoutes />
       </MemoryRouter>
     );
-    expect(getRedirectTarget(html)).toBe('/traefik/debug?session_id=s1&trace_id=t9');
+    expect(getRedirectTarget(html)).toBe('/contract/debug?session_id=s1&trace_id=t9');
   }
 
   // 2. /architecture?tab=physical&session_id=s1 重定向至 /topology?view=PHYSICAL&session_id=s1
@@ -83,17 +83,17 @@ export function testLegacyDeepLinks_LosslessRedirect(): void {
         <EmbeddedRoutes />
       </MemoryRouter>
     );
-    expect(getRedirectTarget(html)).toBe('/traefik/topology?session_id=s1&view=PHYSICAL');
+    expect(getRedirectTarget(html)).toBe('/contract/topology?session_id=s1&view=PHYSICAL');
   }
 
-  // 3. / 自动落地至 /dashboard (嵌入模式下为 /traefik/dashboard)
+  // 3. / 自动落地至 /dashboard (嵌入模式下为 /contract/dashboard)
   {
     const html = renderToString(
       <MemoryRouter initialEntries={['/']}>
         <EmbeddedRoutes />
       </MemoryRouter>
     );
-    expect(getRedirectTarget(html)).toBe('/traefik/dashboard');
+    expect(getRedirectTarget(html)).toBe('/contract/dashboard');
   }
 
   // 4. /sessions?page=1 自动落地至 /record (保留 query 参数)
@@ -103,38 +103,38 @@ export function testLegacyDeepLinks_LosslessRedirect(): void {
         <EmbeddedRoutes />
       </MemoryRouter>
     );
-    expect(getRedirectTarget(html)).toBe('/traefik/record?page=1');
+    expect(getRedirectTarget(html)).toBe('/contract/record?page=1');
   }
 
   // 5. ADR-19: /schemas?tab=docs|catalog|sources|mr-gates|lint-* 无损重映射至独立工作台路由（含 Hash）
   const schemaRedirectCases: Array<{ from: string; expectedEmbeddedTarget: string }> = [
     {
       from: '/schemas?tab=docs&service_name=demo.billing.v1.BillingService',
-      expectedEmbeddedTarget: '/traefik/proto-docs?service_name=demo.billing.v1.BillingService&docs_view=reference',
+      expectedEmbeddedTarget: '/contract/proto-docs?service_name=demo.billing.v1.BillingService&docs_view=reference',
     },
     {
       from: '/schemas?tab=catalog&claimed_status=UNCLAIMED',
-      expectedEmbeddedTarget: '/traefik/proto-docs?claimed_status=UNCLAIMED&docs_view=catalog-ops',
+      expectedEmbeddedTarget: '/contract/proto-docs?claimed_status=UNCLAIMED&docs_view=catalog-ops',
     },
     {
       from: '/schemas?tab=sources&file_id=501#L42',
-      expectedEmbeddedTarget: '/traefik/proto-sources?file_id=501#L42',
+      expectedEmbeddedTarget: '/contract/proto-sources?file_id=501#L42',
     },
     {
       from: '/schemas?tab=mr-gates&runId=102',
-      expectedEmbeddedTarget: '/traefik/proto-governance?runId=102&gov_tab=mr-gates',
+      expectedEmbeddedTarget: '/contract/proto-governance?runId=102&gov_tab=mr-gates',
     },
     {
       from: '/schemas?tab=lint-rules',
-      expectedEmbeddedTarget: '/traefik/proto-governance?gov_tab=rules',
+      expectedEmbeddedTarget: '/contract/proto-governance?gov_tab=rules',
     },
     {
       from: '/schemas?tab=lint-vocab',
-      expectedEmbeddedTarget: '/traefik/proto-governance?gov_tab=vocab',
+      expectedEmbeddedTarget: '/contract/proto-governance?gov_tab=vocab',
     },
     {
       from: '/schemas?tab=lint-report',
-      expectedEmbeddedTarget: '/traefik/proto-governance?gov_tab=report',
+      expectedEmbeddedTarget: '/contract/proto-governance?gov_tab=report',
     },
   ];
 

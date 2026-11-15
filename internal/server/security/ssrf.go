@@ -56,7 +56,7 @@ type TrustedAllowlist struct {
 	hostPorts map[string]struct{}
 }
 
-// ParseTrustedAllowlist 解析并校验 traefik_settings.outbound_trusted_cidrs 配置文本。
+// ParseTrustedAllowlist 解析并校验 contract_settings.outbound_trusted_cidrs 配置文本。
 func ParseTrustedAllowlist(raw string) (*TrustedAllowlist, error) {
 	allow := &TrustedAllowlist{
 		nets:      make([]*net.IPNet, 0),

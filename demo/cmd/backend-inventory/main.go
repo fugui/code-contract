@@ -7,7 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"code-traefik/demo/pkg/crosframe"
+	"code-contract/demo/pkg/crosframe"
 )
 
 func main() {

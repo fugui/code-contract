@@ -8,8 +8,8 @@ import (
 	"sort"
 	"time"
 
-	"code-traefik/internal/server/topology"
-	"code-traefik/models"
+	"code-contract/internal/server/topology"
+	"code-contract/models"
 
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
@@ -595,7 +595,7 @@ func computeStaticCompliance(ctx context.Context, db *gorm.DB, since7d time.Time
 		return out
 	}
 
-	// (a) 活跃 .proto 文件数（优先统计 traefik_proto_files，若尚未同步 Git 则回退活跃 ProtoSchema 的 proto_file_count 之和）
+	// (a) 活跃 .proto 文件数（优先统计 contract_proto_files，若尚未同步 Git 则回退活跃 ProtoSchema 的 proto_file_count 之和）
 	var activeFileCnt int64
 	if err := db.WithContext(ctx).Model(&models.ProtoFile{}).Where("is_deleted = false").Count(&activeFileCnt).Error; err == nil && activeFileCnt > 0 {
 		out.TotalProtoFiles = int(activeFileCnt)

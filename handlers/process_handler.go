@@ -10,8 +10,8 @@ import (
 
 	commonAuth "code-common/backend/auth"
 	commonModels "code-common/backend/models"
-	"code-traefik/internal/server/topology"
-	"code-traefik/models"
+	"code-contract/internal/server/topology"
+	"code-contract/models"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -47,28 +47,28 @@ func ListProcesses(c *gin.Context) {
 
 	// ScopeReadGuard: 普通用户仅能看到挂载在 SHARED Agent 或本人 PRIVATE Agent 下的进程
 	if !isAdmin {
-		query = query.Joins("LEFT JOIN traefik_agents ON traefik_agents.id = traefik_processes.agent_id").
-			Where("traefik_agents.scope = ? OR (traefik_agents.scope = ? AND traefik_agents.owner_id = ?)",
+		query = query.Joins("LEFT JOIN contract_agents ON contract_agents.id = contract_processes.agent_id").
+			Where("contract_agents.scope = ? OR (contract_agents.scope = ? AND contract_agents.owner_id = ?)",
 				models.ScopeShared, models.ScopePrivate, uc.UserID)
 	}
 
 	if agentIDStr != "" {
 		if aid, err := strconv.ParseUint(agentIDStr, 10, 64); err == nil {
-			query = query.Where("traefik_processes.agent_id = ?", aid)
+			query = query.Where("contract_processes.agent_id = ?", aid)
 		}
 	}
 	if moduleIDStr != "" {
 		if mid, err := strconv.ParseUint(moduleIDStr, 10, 64); err == nil {
 			var mod models.Module
 			if err := models.DB.First(&mod, mid).Error; err == nil && mod.ArchProcessID != nil {
-				query = query.Where("traefik_processes.arch_process_id = ?", *mod.ArchProcessID)
+				query = query.Where("contract_processes.arch_process_id = ?", *mod.ArchProcessID)
 			}
 		}
 	}
 	if search != "" {
 		s := "%" + search + "%"
-		query = query.Joins("LEFT JOIN traefik_arch_processes ON traefik_arch_processes.id = traefik_processes.arch_process_id").
-			Where("traefik_arch_processes.name ILIKE ? OR traefik_arch_processes.code ILIKE ? OR traefik_processes.advertise_ip ILIKE ?", s, s, s)
+		query = query.Joins("LEFT JOIN contract_arch_processes ON contract_arch_processes.id = contract_processes.arch_process_id").
+			Where("contract_arch_processes.name ILIKE ? OR contract_arch_processes.code ILIKE ? OR contract_processes.advertise_ip ILIKE ?", s, s, s)
 	}
 
 	var total int64
@@ -79,7 +79,7 @@ func ListProcesses(c *gin.Context) {
 
 	items := make([]models.Process, 0)
 	offset := (page - 1) * pageSize
-	if err := query.Order("traefik_processes.id ASC").Offset(offset).Limit(pageSize).Find(&items).Error; err != nil {
+	if err := query.Order("contract_processes.id ASC").Offset(offset).Limit(pageSize).Find(&items).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询进程映射失败"})
 		return
 	}

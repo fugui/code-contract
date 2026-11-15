@@ -3,7 +3,7 @@ syntax = "proto3";
 // 统一支付通道公共接口契约 (BASE_LIB 多实现契约: demo.payment.PaymentService)
 // @owner: payment-team
 package demo.payment;
-option go_package = "code-traefik/demo/pkg/proto/paymentpb";
+option go_package = "code-contract/demo/pkg/proto/paymentpb";
 
 import "demo/proto/common.proto";
 

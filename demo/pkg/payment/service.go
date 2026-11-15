@@ -9,9 +9,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"code-traefik/demo/pkg/crosframe"
-	"code-traefik/demo/pkg/proto/paymentpb"
-	"code-traefik/pkg/crosrpc"
+	"code-contract/demo/pkg/crosframe"
+	"code-contract/demo/pkg/proto/paymentpb"
+	"code-contract/pkg/crosrpc"
 	"google.golang.org/protobuf/proto"
 )
 

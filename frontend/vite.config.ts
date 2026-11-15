@@ -9,9 +9,9 @@ import { versionTrackerPlugin } from '../../code-common/build-utils/versionTrack
 export default defineConfig({
   plugins: [
     react(),
-    versionTrackerPlugin({ appName: 'code-traefik' }),
+    versionTrackerPlugin({ appName: 'code-contract' }),
     federation({
-      name: 'traefik',
+      name: 'contract',
       filename: 'remoteEntry.js',
       exposes: {
         './App': './src/App.tsx',
@@ -31,7 +31,7 @@ export default defineConfig({
       'use-sync-external-store': path.resolve(__dirname, 'src/shims/useSyncExternalStoreShim.ts'),
     },
   },
-  base: process.env.VITE_BASE_PATH || '/traefik/',
+  base: process.env.VITE_BASE_PATH || '/contract/',
   build: {
     target: 'esnext',
     minify: 'esbuild',
@@ -40,7 +40,7 @@ export default defineConfig({
   server: {
     port: 5181,
     proxy: {
-      '/traefik/api': {
+      '/contract/api': {
         target: 'http://127.0.0.1:8091',
         changeOrigin: true,
       },

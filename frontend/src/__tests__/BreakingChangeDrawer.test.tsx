@@ -107,6 +107,6 @@ describe('BreakingChangeAlertDrawer Unit Suite (M16 / SC-09)', () => {
       />
     );
     expect(html).not.toContain('管理员强推 / 紧急回滚逃生舱');
-    expect(html).toContain('当前为只读视窗，如需紧急回滚或大版本强推，请联系具有 traefik_admin 权限的管理员操作');
+    expect(html).toContain('当前为只读视窗，如需紧急回滚或大版本强推，请联系具有 contract_admin 权限的管理员操作');
   });
 });

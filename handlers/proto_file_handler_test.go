@@ -9,16 +9,16 @@ import (
 	"strings"
 	"testing"
 
-	"code-traefik/handlers"
-	"code-traefik/internal/server/gitclient"
-	"code-traefik/models"
+	"code-contract/handlers"
+	"code-contract/internal/server/gitclient"
+	"code-contract/models"
 
 	"gorm.io/datatypes"
 	"gorm.io/gorm/clause"
 )
 
 func TestProtoFiles_ReadOnlyVersionsDiff_ZeroLockColumns(t *testing.T) {
-	t.Setenv("TRAEFIK_CRYPTO_KEY", "test-traefik-crypto-key-m25-32bytes!")
+	t.Setenv("CONTRACT_CRYPTO_KEY", "test-contract-crypto-key-m25-32bytes!")
 	r, db := setupProtoDocRouterAndDB(t)
 
 	if err := models.EnsureBuiltinCheckRules(db); err != nil {
@@ -27,22 +27,22 @@ func TestProtoFiles_ReadOnlyVersionsDiff_ZeroLockColumns(t *testing.T) {
 	if err := db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "setting_key"}},
 		DoUpdates: clause.AssignmentColumns([]string{"setting_val"}),
-	}).Create(&models.TraefikSetting{
+	}).Create(&models.ModuleSetting{
 		SettingKey: "outbound_trusted_cidrs",
 		SettingVal: "127.0.0.0/8",
 	}).Error; err != nil {
 		t.Fatalf("写入 outbound_trusted_cidrs 失败: %v", err)
 	}
 
-	// 1. 强校验 traefik_proto_files 绝对禁止存在任何写锁/悲观锁字段
+	// 1. 强校验 contract_proto_files 绝对禁止存在任何写锁/悲观锁字段
 	colTypes, err := db.Migrator().ColumnTypes(&models.ProtoFile{})
 	if err != nil {
-		t.Fatalf("获取 traefik_proto_files 列信息失败: %v", err)
+		t.Fatalf("获取 contract_proto_files 列信息失败: %v", err)
 	}
 	for _, ct := range colTypes {
 		name := strings.ToLower(ct.Name())
 		if strings.Contains(name, "lock") {
-			t.Fatalf("traefik_proto_files 严禁存在悲观锁列，发现禁止列: %s", name)
+			t.Fatalf("contract_proto_files 严禁存在悲观锁列，发现禁止列: %s", name)
 		}
 	}
 

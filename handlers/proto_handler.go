@@ -14,8 +14,8 @@ import (
 
 	commonAuth "code-common/backend/auth"
 	commonModels "code-common/backend/models"
-	"code-traefik/internal/server/decoder"
-	"code-traefik/models"
+	"code-contract/internal/server/decoder"
+	"code-contract/models"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -273,7 +273,7 @@ func ListProtoSchemas(c *gin.Context) {
 		if search != "" {
 			s := "%" + search + "%"
 			tx = tx.Where(
-				"name ILIKE ? OR version_tag ILIKE ? OR file_name ILIKE ? OR source_commit_sha ILIKE ? OR proto_files::text ILIKE ? OR EXISTS (SELECT 1 FROM traefik_proto_operations po WHERE po.schema_id = traefik_proto_schemas.id AND po.service_name ILIKE ?)",
+				"name ILIKE ? OR version_tag ILIKE ? OR file_name ILIKE ? OR source_commit_sha ILIKE ? OR proto_files::text ILIKE ? OR EXISTS (SELECT 1 FROM contract_proto_operations po WHERE po.schema_id = contract_proto_schemas.id AND po.service_name ILIKE ?)",
 				s, s, s, s, s, s,
 			)
 		}
@@ -1402,8 +1402,8 @@ func ListProtoServices(c *gin.Context) {
 	search := strings.TrimSpace(c.Query("search"))
 
 	// 1. 构建针对 service_name 聚合的查询
-	baseQuery := models.DB.Table("traefik_proto_operations AS po").
-		Joins("JOIN traefik_proto_schemas AS ps ON ps.id = po.schema_id")
+	baseQuery := models.DB.Table("contract_proto_operations AS po").
+		Joins("JOIN contract_proto_schemas AS ps ON ps.id = po.schema_id")
 
 	if schemaIDStr != "" {
 		if sid, err := strconv.ParseUint(schemaIDStr, 10, 64); err == nil {
@@ -1425,9 +1425,9 @@ func ListProtoServices(c *gin.Context) {
 	}
 
 	if claimedStatus == "CLAIMED" {
-		baseQuery = baseQuery.Where("po.service_name IN (SELECT service_name FROM traefik_module_services)")
+		baseQuery = baseQuery.Where("po.service_name IN (SELECT service_name FROM contract_module_services)")
 	} else if claimedStatus == "UNCLAIMED" {
-		baseQuery = baseQuery.Where("po.service_name NOT IN (SELECT service_name FROM traefik_module_services)")
+		baseQuery = baseQuery.Where("po.service_name NOT IN (SELECT service_name FROM contract_module_services)")
 	}
 
 	// 统计不同 service_name 的总数

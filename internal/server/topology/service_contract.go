@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"code-traefik/models"
+	"code-contract/models"
 	"gorm.io/gorm"
 )
 
@@ -192,8 +192,8 @@ func AssertContractImplProcessDisjoint(db *gorm.DB, moduleID uint64, contractID 
 
 	// 检查同一 procID 下是否已有其他模块以共享契约名实现了其中任意一个契约
 	var conflictCount int64
-	err := db.Table("traefik_module_services ms").
-		Joins("JOIN traefik_modules m ON m.id = ms.module_id").
+	err := db.Table("contract_module_services ms").
+		Joins("JOIN contract_modules m ON m.id = ms.module_id").
 		Where("ms.contract_id IN ? AND ms.module_id != ? AND ms.is_custom_service_name = false AND m.arch_process_id = ?", contractIDs, moduleID, procID).
 		Count(&conflictCount).Error
 	if err != nil {
@@ -446,9 +446,9 @@ func ListServiceContracts(db *gorm.DB, filter ServiceContractFilter) ([]ServiceC
 		DeployedCount int
 	}
 	var implAggs []implAgg
-	_ = db.Table("traefik_module_services ms").
+	_ = db.Table("contract_module_services ms").
 		Select("ms.contract_id, COUNT(ms.id) as total_count, COUNT(CASE WHEN m.arch_process_id IS NOT NULL THEN 1 END) as deployed_count").
-		Joins("JOIN traefik_modules m ON m.id = ms.module_id").
+		Joins("JOIN contract_modules m ON m.id = ms.module_id").
 		Where("ms.contract_id IN ?", contractIDs).
 		Group("ms.contract_id").
 		Scan(&implAggs)
@@ -464,7 +464,7 @@ func ListServiceContracts(db *gorm.DB, filter ServiceContractFilter) ([]ServiceC
 		Count      int
 	}
 	var depAggs []depAgg
-	_ = db.Table("traefik_module_dependencies").
+	_ = db.Table("contract_module_dependencies").
 		Select("contract_id, COUNT(id) as count").
 		Where("contract_id IN ?", contractIDs).
 		Group("contract_id").

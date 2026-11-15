@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"code-traefik/pkg/agentproto"
-	"code-traefik/pkg/crosrpc"
+	"code-contract/pkg/agentproto"
+	"code-contract/pkg/crosrpc"
 )
 
 // DefaultGlobalFramerBudgetPool 默认 64MB 全局分帧预算池

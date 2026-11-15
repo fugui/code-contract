@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"code-traefik/internal/server/decoder"
-	"code-traefik/models"
+	"code-contract/internal/server/decoder"
+	"code-contract/models"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protodesc"
@@ -47,7 +47,7 @@ func LoadExtraActiveFiles(db *gorm.DB, excludeSchemaID uint64) []*protoregistry.
 	return out
 }
 
-// RebuildForSchema 抽取指定 ProtoSchema 的全部文档符号并原子重建 traefik_proto_doc_symbols 索引
+// RebuildForSchema 抽取指定 ProtoSchema 的全部文档符号并原子重建 contract_proto_doc_symbols 索引
 func RebuildForSchema(db *gorm.DB, schema *models.ProtoSchema, extraFiles ...*protoregistry.Files) (int, error) {
 	if db == nil || schema == nil || schema.ID == 0 {
 		return 0, errors.New("db 或 schema 无效，无法重建文档符号")
@@ -531,8 +531,8 @@ func GetServiceDocDetail(db *gorm.DB, serviceName string, schemaID *uint64) (*Pr
 		}
 	} else {
 		var syms []models.ProtoDocSymbol
-		if err := db.Joins("JOIN traefik_proto_schemas s ON s.id = traefik_proto_doc_symbols.schema_id").
-			Where("s.is_active = ? AND traefik_proto_doc_symbols.symbol_kind = ? AND traefik_proto_doc_symbols.full_name = ?",
+		if err := db.Joins("JOIN contract_proto_schemas s ON s.id = contract_proto_doc_symbols.schema_id").
+			Where("s.is_active = ? AND contract_proto_doc_symbols.symbol_kind = ? AND contract_proto_doc_symbols.full_name = ?",
 				true, models.DocSymbolService, trimmedSvc).
 			Order("s.id DESC").
 			Limit(1).
@@ -553,8 +553,8 @@ func GetServiceDocDetail(db *gorm.DB, serviceName string, schemaID *uint64) (*Pr
 			for i := range activeSchemas {
 				EnsureSymbolsForSchema(db, &activeSchemas[i])
 			}
-			if err := db.Joins("JOIN traefik_proto_schemas s ON s.id = traefik_proto_doc_symbols.schema_id").
-				Where("s.is_active = ? AND traefik_proto_doc_symbols.symbol_kind = ? AND traefik_proto_doc_symbols.full_name = ?",
+			if err := db.Joins("JOIN contract_proto_schemas s ON s.id = contract_proto_doc_symbols.schema_id").
+				Where("s.is_active = ? AND contract_proto_doc_symbols.symbol_kind = ? AND contract_proto_doc_symbols.full_name = ?",
 					true, models.DocSymbolService, trimmedSvc).
 				Limit(1).
 				First(&svcSymbol).Error; err != nil {

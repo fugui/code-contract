@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"code-common/backend/testdb"
-	"code-traefik/config"
-	"code-traefik/internal/server/decoder"
-	"code-traefik/models"
+	"code-contract/config"
+	"code-contract/internal/server/decoder"
+	"code-contract/models"
 
 	"gorm.io/datatypes"
 )
@@ -156,13 +156,13 @@ func TestMRRunner_FourInOneGate_BotCommentInPlaceUpsert_AndMergeAutoCompile(t *t
 	if os.Getenv("TEST_DB_DSN") == "" {
 		t.Skip("TEST_DB_DSN 未配置，跳过数据库隔离测试")
 	}
-	t.Setenv("TRAEFIK_CRYPTO_KEY", "m26-mr-runner-crypto-key-32bytes")
+	t.Setenv("CONTRACT_CRYPTO_KEY", "m26-mr-runner-crypto-key-32bytes")
 
 	db := testdb.SetupIsolatedDB(t, config.ServiceName)
 	if err := models.SetupWithDB(db); err != nil {
 		t.Fatalf("SetupWithDB 失败: %v", err)
 	}
-	if err := db.Model(&models.TraefikSetting{}).Where("setting_key = ?", "outbound_trusted_cidrs").
+	if err := db.Model(&models.ModuleSetting{}).Where("setting_key = ?", "outbound_trusted_cidrs").
 		Update("setting_val", "127.0.0.1/32").Error; err != nil {
 		t.Fatalf("设置 outbound_trusted_cidrs 失败: %v", err)
 	}

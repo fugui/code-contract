@@ -13,17 +13,17 @@ describe('AdminSettingsPage CI Gate Token Governance', () => {
     roles: ['developer'],
     is_super_admin: false,
     is_module_admin: false,
-    required_ad_role: 'traefik_admin',
+    required_ad_role: 'contract_admin',
   };
 
   const adminUser: CurrentUserProfile = {
     id: 2,
     username: 'admin_user',
     name: '管理员',
-    roles: ['traefik_admin'],
+    roles: ['contract_admin'],
     is_super_admin: false,
     is_module_admin: true,
-    required_ad_role: 'traefik_admin',
+    required_ad_role: 'contract_admin',
   };
 
   it('renders permission empty state when accessed by non-admin user', () => {

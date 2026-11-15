@@ -146,7 +146,7 @@ type DownstreamEndpoint struct {
 
 // ProcessMonitorSpec 单进程监控元信息（零 .pb Schema 依赖）
 type ProcessMonitorSpec struct {
-	ProcessID   uint64               `json:"process_id"`  // 主控 traefik_processes.id
+	ProcessID   uint64               `json:"process_id"`  // 主控 contract_processes.id
 	ListenPort  uint16               `json:"listen_port"` // 唯一监听端口 (A-02)
 	CmdPattern  string               `json:"cmd_pattern"` // /proc/<pid>/cmdline 匹配表达式
 	Downstreams []DownstreamEndpoint `json:"downstreams"` // 下游端点清单

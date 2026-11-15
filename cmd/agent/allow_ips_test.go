@@ -8,14 +8,14 @@ import (
 
 func TestResolveDefaultAllowIPs(t *testing.T) {
 	// 默认状态下包含 127.0.0.1 与现网主控 10.1.64.178
-	_ = os.Unsetenv("TRAEFIK_AGENT_ALLOW_IPS")
+	_ = os.Unsetenv("CONTRACT_AGENT_ALLOW_IPS")
 	gotDefault := resolveDefaultAllowIPs()
 	if gotDefault != "127.0.0.1,10.1.64.178" {
 		t.Fatalf("expected default %q, got %q", "127.0.0.1,10.1.64.178", gotDefault)
 	}
 
 	// 环境变量覆盖
-	t.Setenv("TRAEFIK_AGENT_ALLOW_IPS", "192.168.1.100,10.0.0.0/8")
+	t.Setenv("CONTRACT_AGENT_ALLOW_IPS", "192.168.1.100,10.0.0.0/8")
 	gotEnv := resolveDefaultAllowIPs()
 	if gotEnv != "192.168.1.100,10.0.0.0/8" {
 		t.Fatalf("expected env overridden %q, got %q", "192.168.1.100,10.0.0.0/8", gotEnv)

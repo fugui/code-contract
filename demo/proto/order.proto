@@ -4,7 +4,7 @@ syntax = "proto3";
 // 依赖基础契约库 demo.common 与多实现支付契约 demo.payment
 // @owner: trade-order-team
 package demo.order;
-option go_package = "code-traefik/demo/pkg/proto/orderpb";
+option go_package = "code-contract/demo/pkg/proto/orderpb";
 
 import "demo/proto/common.proto";
 import "demo/proto/payment.proto";

@@ -1,7 +1,7 @@
-# 架构与活体契约治理平台 (`code-traefik`)
+# 架构与活体契约治理平台 (`code-contract`)
 
 > **产品定位**：以真实运行态为活水，架设微服务架构防漂移与活体契约防劣化的自愈防线  
-> **当前版本**：`v0.2.0` | **服务标识**：`Code-Traefik` (`traefik`) | **专有协议**：DOPHI `CROS RPC` over IPv4 TCP
+> **当前版本**：`v0.2.0` | **服务标识**：`Code-Contract` (`contract`) | **专有协议**：DOPHI `CROS RPC` over IPv4 TCP
 
 本项目基于 CodeBench 微前端架构与 `code-common` 公共底座构建，严格遵循 **SDD (Spec-Driven Development，规范驱动开发) + TDD (Test-Driven Development，测试驱动开发)** 工程模式：  
 **「契约基线与特性边界 (`01-features`) ➔ 系统架构与数据模型 (`02-design`) ➔ 接口契约与任务拆解 (`03-api` & `04-tasks`) ➔ TDD 测试先行与分阶段交付」**
@@ -12,7 +12,7 @@
 
 传统的接口与契约管理（Swagger、Postman、Proto 仓库等）普遍局限于**“设计态的静态文档”**，存在“文档与实现两张皮”、“无法感知生产实际调用”、“架构偷偷腐化漂移”及“跨微服务联调严重依赖完整下游环境”等系统性痛点。
 
-`code-traefik` 的业务本质是**「以契约治理为核心、以运行态真实流量为活水、以零侵入仿真为闭环的活体契约与微服务架构治理平台」**：
+`code-contract` 的业务本质是**「以契约治理为核心、以运行态真实流量为活水、以零侵入仿真为闭环的活体契约与微服务架构治理平台」**：
 * **“流量录制与重放”是底座技术手段**：提供零代码侵入、零业务改造成本的高保真交互采集与本地回放。
 * **“契约治理、架构防漂移与防劣化闭环”是真正的业务目的**：
 
@@ -35,7 +35,7 @@ flowchart LR
 
 ## 2. 系统总体拓扑 (System Topology)
 
-系统采用 **「控制面主框架 (`code-traefik-server`) + 独立数据面代理 (`code-traefik-agent`)」同仓双二进制物理防腐** 架构：
+系统采用 **「控制面主框架 (`code-contract-server`) + 独立数据面代理 (`code-contract-agent`)」同仓双二进制物理防腐** 架构：
 
 ```mermaid
 flowchart TB
@@ -46,18 +46,18 @@ flowchart TB
         UI_Env["④ 环境治理台: Agent 与进程纳管 (/agents · 含下载接入说明) · 治理参数与 CI 门禁 (/settings)"]
     end
 
-    subgraph ControlPlane["code-traefik-server 控制面 (:8091)"]
+    subgraph ControlPlane["code-contract-server 控制面 (:8091)"]
         Arch_SSOT["架构基线、蓝图与契约中心 (SSOT)"]
         Agent_Hub["Agent 调度与排他租约管控 (Mutex Lease)"]
         Decoder["CROS RPC 分帧 + Protobuf 动态解码"]
         Verify_Eng["实测拓扑还原与架构一致性核验引擎"]
         Diff_Eng["协议状态码 + Protobuf 字段级双层回归 Diff"]
         Breaking_Radar["Proto AST 破坏性变更雷达与下游血缘分析"]
-        CI_Gate["CI/CD 自动化门禁判定 (X-Traefik-CI-Token)"]
-        DB[("PostgreSQL 共享库 (traefik_* 表前缀 / 按日分区)")]
+        CI_Gate["CI/CD 自动化门禁判定 (X-Contract-CI-Token)"]
+        DB[("PostgreSQL 共享库 (contract_* 表前缀 / 按日分区)")]
     end
 
-    subgraph DataPlane["业务运行节点 (每机 1 个 code-traefik-agent | 零 .pb 依赖)"]
+    subgraph DataPlane["业务运行节点 (每机 1 个 code-contract-agent | 零 .pb 依赖)"]
         Agent_Srv["受控信道服务 (HTTP 下发 + WS 二进制流回传)"]
         BPF_Mgr["cilium/ebpf 探针生命周期 (预挂待命 ARMED · setcap 免 sudo)"]
         Mock_Replay["透明出站代理 + ScopedMock 闭包自愈重放"]
@@ -91,11 +91,11 @@ flowchart TB
 ## 3. 目录结构 (Repository Layout)
 
 ```text
-code-traefik/
+code-contract/
 ├── docs/                # SDD + TDD 规范文档库 (00-prompt ~ 07-references)
 ├── cmd/
-│   ├── server/          # 控制面入口 code-traefik-server（微前端托管、契约中心、Diff 引擎）
-│   ├── agent/           # 数据面探针入口 code-traefik-agent（零数据库、零.pb、嵌入式 eBPF）
+│   ├── server/          # 控制面入口 code-contract-server（微前端托管、契约中心、Diff 引擎）
+│   ├── agent/           # 数据面探针入口 code-contract-agent（零数据库、零.pb、嵌入式 eBPF）
 │   └── seed/            # Demo 拓扑与测试数据重置播种入口
 ├── demo/                # 4 进程完整微服务仿真集群与田字格 Tmux 可视化联调演示
 ├── internal/
@@ -106,8 +106,8 @@ code-traefik/
 │   ├── ebpf/            # cilium/ebpf 内核探针、Socket 预热与三态出站代理
 │   ├── replay/          # 零 .pb 二进制 ScopedMock 匹配与 ullSNO 自愈引擎
 │   └── version/         # 规范化语义版本号与构建指纹
-├── config/              # 配置加载与模块级元数据常量 (ModuleKey="traefik", TablePrefix="traefik_")
-├── models/              # GORM 数据模型（强制 traefik_ 物理表前缀隔离）
+├── config/              # 配置加载与模块级元数据常量 (ModuleKey="contract", TablePrefix="contract_")
+├── models/              # GORM 数据模型（强制 contract_ 物理表前缀隔离）
 ├── handlers/            # HTTP 控制器、RBAC 权限守卫、审计 Diff、CI 门禁与物理隔离单元测试
 ├── frontend/            # React 18 + Vite 5 + Module Federation 微前端工程
 ├── scripts/             # 自动化构建与辅助脚本
@@ -129,7 +129,7 @@ code-traefik/
   - [x] [`02-data-plane-and-cros-rpc-engine.md`](./docs/02-design/02-data-plane-and-cros-rpc-engine.md)（CROS RPC 协议栈、eBPF 采集与二进制 Mock 引擎）
   - [x] [`03-architecture-elements-and-topology.md`](./docs/02-design/03-architecture-elements-and-topology.md)（三级架构模型 SSOT、模块服务契约与拓扑一致性核验）
   - [x] [`04-control-plane-and-web-console.md`](./docs/02-design/04-control-plane-and-web-console.md)（控制面调度、Protobuf 编解码、回归 Diff 与业务透视抽屉）
-  - [x] [`05-database-schema.md`](./docs/02-design/05-database-schema.md)（17 张 `traefik_*` 物理表字典、黄金套件自包含快照与按日范围分区设计）
+  - [x] [`05-database-schema.md`](./docs/02-design/05-database-schema.md)（17 张 `contract_*` 物理表字典、黄金套件自包含快照与按日范围分区设计）
 - [x] **阶段三：接口契约与 TDD 任务分解** (`docs/03-api/`, `docs/04-tasks/`)
   - [x] [`01-http-api-contract.md`](./docs/03-api/01-http-api-contract.md)（RESTful API 契约、CI 门禁鉴权、主从 HTTP/WS 信道协议与 RBAC 权限矩阵）
   - [x] [`01-roadmap.md`](./docs/04-tasks/01-roadmap.md)（Milestone 1~18 DAG 拓扑、特性矩阵覆盖与全局质量门禁）
@@ -172,12 +172,12 @@ make lint
 make build
 
 # 4. 启动控制面服务（默认监听 :8091）
-./code-traefik-server
+./code-contract-server
 
 # 5. 启动数据面 Agent（需特权或 setcap 权能，默认监听 :9091）
-sudo ./code-traefik-agent
-# 或免 sudo 启动（提前执行: sudo setcap cap_net_raw,cap_net_admin,cap_bpf+ep ./code-traefik-agent）
-./code-traefik-agent
+sudo ./code-contract-agent
+# 或免 sudo 启动（提前执行: sudo setcap cap_net_raw,cap_net_admin,cap_bpf+ep ./code-contract-agent）
+./code-contract-agent
 
 # 6. 运行 4 进程微服务 Demo 集群（田字格 Tmux 可视化分屏联调）
 cd demo && make tmux-demo
@@ -200,7 +200,7 @@ cd demo && make tmux-demo
   - 自动化全网下游微服务消费血缘影响推导与风险评级；
   - 提供管理员加签（`allow_breaking` + 审计说明）紧急逃生舱。
 * **🛡️ CI/CD 自动化流水线强阻断门禁 (M17)**：
-  - 开放专用 CI 门禁判定 API（`POST /api/v1/gate/verify`）与 `X-Traefik-CI-Token` SHA-256 常量时间安全比对；
+  - 开放专用 CI 门禁判定 API（`POST /api/v1/gate/verify`）与 `X-Contract-CI-Token` SHA-256 常量时间安全比对；
   - 引入排他租约锁有界排队机制（Bounded Mutex Lease Queue），彻底消除高并发流水线踩踏冲突；
   - 支持实测边双向回传校验（Confirmed / External / Violation）与非零状态码强阻断，沉淀结构化 MR/PR 评估报告。
 * **🔍 面向业务视角的 RPC 报文透视与双模解剖 (M18)**：
@@ -222,7 +222,7 @@ cd demo && make tmux-demo
 ### v0.1.0 (2026-11-05)
 * **🌟 战略定位升维**：明确从纯技术视角的“业务流量录制工具”升维为“**基于真实流量的活体契约与微服务架构治理平台**”，确立“接口资产治理”、“架构漂移雷达”与“无依赖自愈防劣化”三大价值支柱。
 * **🧩 核心架构与微前端集成**：
-  - 基于 CodeBench 微前端模块联邦规范设计，支持主控控制面（`code-traefik-server`）与数据面探针（`code-traefik-agent`）物理防腐隔离。
+  - 基于 CodeBench 微前端模块联邦规范设计，支持主控控制面（`code-contract-server`）与数据面探针（`code-contract-agent`）物理防腐隔离。
   - 前端基于 React 18 + Vite 5 + Module Federation，暴露 `./App` 与 `./menu` 双模接入点。
 * **🛡️ 业务协议与契约治理**：
   - 聚焦明文 IPv4 TCP CROS RPC 二进制分帧与 SessionHead 会话头解析（支持 V01~V05 会话头演进）。

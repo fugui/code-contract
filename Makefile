@@ -1,5 +1,5 @@
-BINARY          := code-traefik-server
-AGENT_BINARY    := code-traefik-agent
+BINARY          := code-contract-server
+AGENT_BINARY    := code-contract-agent
 FRONTEND_DIR    := frontend
 DIST_DIR        := $(FRONTEND_DIR)/dist
 NODE_MODULES    := $(FRONTEND_DIR)/node_modules
@@ -13,9 +13,9 @@ GIT_TAG         := $(shell git describe --tags --exact-match 2>/dev/null)
 GIT_DESCRIBE    := $(shell git describe --tags --always --dirty 2>/dev/null)
 VERSION         ?= $(if $(GIT_TAG),$(GIT_TAG),$(shell if echo "$(GIT_DESCRIBE)" | grep -qE '^v[0-9]'; then echo "$(GIT_DESCRIBE)"; else echo "$(DEFAULT_VERSION)-dev+$(COMMIT)"; fi))
 
-LDFLAGS         := -X 'code-traefik/pkg/version.Version=$(VERSION)' \
-                   -X 'code-traefik/pkg/version.CommitID=$(COMMIT)' \
-                   -X 'code-traefik/pkg/version.BuildTime=$(BUILDTIME)' \
+LDFLAGS         := -X 'code-contract/pkg/version.Version=$(VERSION)' \
+                   -X 'code-contract/pkg/version.CommitID=$(COMMIT)' \
+                   -X 'code-contract/pkg/version.BuildTime=$(BUILDTIME)' \
                    -X 'main.Version=$(VERSION)' \
                    -X 'main.CommitID=$(COMMIT)' \
                    -X 'main.BuildTime=$(BUILDTIME)'

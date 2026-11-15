@@ -13,8 +13,8 @@ import (
 	"sync/atomic"
 	"unicode/utf8"
 
-	"code-traefik/models"
-	"code-traefik/pkg/crosrpc"
+	"code-contract/models"
+	"code-contract/pkg/crosrpc"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -837,7 +837,7 @@ func (r *Registry) UploadSchema(in UploadSchemaInput) (*models.ProtoSchema, []mo
 
 	err := r.db.Transaction(func(tx *gorm.DB) error {
 		// 获取 PostgreSQL 事务级咨询锁防并发竞争
-		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext('traefik_proto_schema_registry'))").Error; err != nil {
+		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext('contract_proto_schema_registry'))").Error; err != nil {
 			return fmt.Errorf("获取描述集事务咨询锁失败: %w", err)
 		}
 
@@ -1059,7 +1059,7 @@ func (r *Registry) UploadSchema(in UploadSchemaInput) (*models.ProtoSchema, []mo
 			_ = tx.Model(&models.ProtoSchema{}).Where("name = ? AND id != ?", name, schema.ID).
 				Updates(map[string]interface{}{"is_active": false}).Error
 			_ = tx.Model(&models.ProtoOperation{}).
-				Where("schema_id IN (SELECT id FROM traefik_proto_schemas WHERE name = ? AND id != ?)", name, schema.ID).
+				Where("schema_id IN (SELECT id FROM contract_proto_schemas WHERE name = ? AND id != ?)", name, schema.ID).
 				Updates(map[string]interface{}{"is_active": false}).Error
 
 			if err := tx.Model(&models.ProtoSchema{}).Where("id = ?", schema.ID).
@@ -1128,7 +1128,7 @@ func (r *Registry) BatchActivate(schemaIDs []uint64, opts ...BatchActivateOption
 
 	err := r.db.Transaction(func(tx *gorm.DB) error {
 		// 咨询锁防并发竞争
-		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext('traefik_proto_schema_registry'))").Error; err != nil {
+		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext('contract_proto_schema_registry'))").Error; err != nil {
 			return fmt.Errorf("获取描述集事务咨询锁失败: %w", err)
 		}
 
@@ -1232,7 +1232,7 @@ func (r *Registry) BatchActivate(schemaIDs []uint64, opts ...BatchActivateOption
 			Where("name IN ? AND id NOT IN ?", targetNames, schemaIDs).
 			Updates(map[string]interface{}{"is_active": false}).Error
 		_ = tx.Model(&models.ProtoOperation{}).
-			Where("schema_id IN (SELECT id FROM traefik_proto_schemas WHERE name IN ? AND id NOT IN ?)", targetNames, schemaIDs).
+			Where("schema_id IN (SELECT id FROM contract_proto_schemas WHERE name IN ? AND id NOT IN ?)", targetNames, schemaIDs).
 			Updates(map[string]interface{}{"is_active": false}).Error
 
 		// 激活 targets
@@ -1271,7 +1271,7 @@ func (r *Registry) DeactivateSchemaVersion(schemaID uint64) (*models.ProtoSchema
 
 	err := r.db.Transaction(func(tx *gorm.DB) error {
 		// 咨询锁防并发竞争
-		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext('traefik_proto_schema_registry'))").Error; err != nil {
+		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext('contract_proto_schema_registry'))").Error; err != nil {
 			return fmt.Errorf("获取描述集事务咨询锁失败: %w", err)
 		}
 
@@ -1329,7 +1329,7 @@ func (r *Registry) DeactivateSchemaVersion(schemaID uint64) (*models.ProtoSchema
 func (r *Registry) DeleteSchemaVersion(schemaID uint64) (*models.ProtoSchema, error) {
 	var schema models.ProtoSchema
 	err := r.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext('traefik_proto_schema_registry'))").Error; err != nil {
+		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext('contract_proto_schema_registry'))").Error; err != nil {
 			return fmt.Errorf("获取描述集事务咨询锁失败: %w", err)
 		}
 

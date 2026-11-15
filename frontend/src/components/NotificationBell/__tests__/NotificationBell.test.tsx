@@ -126,7 +126,7 @@ describe('NotificationBell Dual-Mode & SSE Incremental State Test Suite', () => 
               roles: ['super_admin'],
               is_super_admin: true,
               is_module_admin: true,
-              required_ad_role: 'traefik_admin',
+              required_ad_role: 'contract_admin',
             },
             loadingUser: false,
             isEmbedded: false,

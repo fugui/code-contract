@@ -9,8 +9,8 @@ import (
 	"time"
 
 	commonAuth "code-common/backend/auth"
-	"code-traefik/internal/server/hub"
-	"code-traefik/models"
+	"code-contract/internal/server/hub"
+	"code-contract/models"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"

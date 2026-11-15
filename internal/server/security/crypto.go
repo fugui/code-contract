@@ -14,26 +14,26 @@ import (
 	"strings"
 )
 
-// EnvTraefikCryptoKey 系统主密钥环境变量名（用于敏感配置 AES-256-GCM 加解密）
-const EnvTraefikCryptoKey = "TRAEFIK_CRYPTO_KEY"
+// EnvContractCryptoKey 系统主密钥环境变量名（用于敏感配置 AES-256-GCM 加解密）
+const EnvContractCryptoKey = "CONTRACT_CRYPTO_KEY"
 
 const encryptedEnvelopePrefix = "enc:v1:"
 
 // TODO(security): 后续接入企业 KMS/Vault 信封密钥轮换体系以替代静态环境变量主密钥。
 
-// deriveAES256Key 从 TRAEFIK_CRYPTO_KEY 派生 32 字节 AES-256 密钥；未配置时 fail-closed 报错。
+// deriveAES256Key 从 CONTRACT_CRYPTO_KEY 派生 32 字节 AES-256 密钥；未配置时 fail-closed 报错。
 func deriveAES256Key(keyMaterial string) ([]byte, error) {
 	trimmed := strings.TrimSpace(keyMaterial)
 	if trimmed == "" {
-		return nil, fmt.Errorf("未配置环境变量 %s，拒绝执行敏感凭据加密或降级明文存储", EnvTraefikCryptoKey)
+		return nil, fmt.Errorf("未配置环境变量 %s，拒绝执行敏感凭据加密或降级明文存储", EnvContractCryptoKey)
 	}
 	sum := sha256.Sum256([]byte(trimmed))
 	return sum[:], nil
 }
 
-// EncryptSecret 使用环境变量 TRAEFIK_CRYPTO_KEY 派生的 AES-256-GCM 密钥加密敏感文本。
+// EncryptSecret 使用环境变量 CONTRACT_CRYPTO_KEY 派生的 AES-256-GCM 密钥加密敏感文本。
 func EncryptSecret(plaintext string) (string, error) {
-	return EncryptSecretWithKey(plaintext, os.Getenv(EnvTraefikCryptoKey))
+	return EncryptSecretWithKey(plaintext, os.Getenv(EnvContractCryptoKey))
 }
 
 // EncryptSecretWithKey 使用指定密钥材料执行 AES-256-GCM 加密（带随机 96-bit Nonce）。
@@ -58,9 +58,9 @@ func EncryptSecretWithKey(plaintext, keyMaterial string) (string, error) {
 	return encryptedEnvelopePrefix + base64.StdEncoding.EncodeToString(sealed), nil
 }
 
-// DecryptSecret 使用环境变量 TRAEFIK_CRYPTO_KEY 解密 AES-256-GCM 密文。
+// DecryptSecret 使用环境变量 CONTRACT_CRYPTO_KEY 解密 AES-256-GCM 密文。
 func DecryptSecret(ciphertext string) (string, error) {
-	return DecryptSecretWithKey(ciphertext, os.Getenv(EnvTraefikCryptoKey))
+	return DecryptSecretWithKey(ciphertext, os.Getenv(EnvContractCryptoKey))
 }
 
 // DecryptSecretWithKey 使用指定密钥材料解密 AES-256-GCM 密文。

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"code-traefik/models"
+	"code-contract/models"
 )
 
 func TestServiceContract_CRUDAndExclusiveMutex(t *testing.T) {

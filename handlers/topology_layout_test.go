@@ -12,8 +12,8 @@ import (
 
 	commonAudit "code-common/backend/audit"
 	commonModels "code-common/backend/models"
-	"code-traefik/config"
-	"code-traefik/models"
+	"code-contract/config"
+	"code-contract/models"
 	"context"
 )
 
@@ -21,7 +21,7 @@ func TestTopologyLayout_SchemaConstraints_ScopeOwnerAndPartialUniques(t *testing
 	_, db := setupRouterAndDB(t)
 	userA := createTestUserInDB(t, db, "layout_schema_user_a", "user")
 
-	// 1. SHARED + owner_id != NULL 违反 chk_traefik_topo_layout_owner
+	// 1. SHARED + owner_id != NULL 违反 chk_contract_topo_layout_owner
 	badSharedOwner := models.TopologyLayout{
 		Scope:      models.ScopeShared,
 		View:       "LOGICAL",
@@ -34,7 +34,7 @@ func TestTopologyLayout_SchemaConstraints_ScopeOwnerAndPartialUniques(t *testing
 		t.Fatalf("期望 SHARED + owner_id!=NULL 违反 CHECK 约束，但插入成功")
 	}
 
-	// 2. PRIVATE + owner_id IS NULL 违反 chk_traefik_topo_layout_owner
+	// 2. PRIVATE + owner_id IS NULL 违反 chk_contract_topo_layout_owner
 	badPrivateNoOwner := models.TopologyLayout{
 		Scope:      models.ScopePrivate,
 		View:       "LOGICAL",
@@ -46,7 +46,7 @@ func TestTopologyLayout_SchemaConstraints_ScopeOwnerAndPartialUniques(t *testing
 		t.Fatalf("期望 PRIVATE + owner_id IS NULL 违反 CHECK 约束，但插入成功")
 	}
 
-	// 3. SHARED + focus_scope != GLOBAL 或 is_default = true 违反 chk_traefik_topo_layout_owner
+	// 3. SHARED + focus_scope != GLOBAL 或 is_default = true 违反 chk_contract_topo_layout_owner
 	badSharedFocus := models.TopologyLayout{
 		Scope:      models.ScopeShared,
 		View:       "LOGICAL",
@@ -59,7 +59,7 @@ func TestTopologyLayout_SchemaConstraints_ScopeOwnerAndPartialUniques(t *testing
 		t.Fatalf("期望 SHARED + focus_scope!=GLOBAL 违反 CHECK 约束，但插入成功")
 	}
 
-	// 4. 同 view 第二条 SHARED 违反 uk_traefik_topo_layout_shared
+	// 4. 同 view 第二条 SHARED 违反 uk_contract_topo_layout_shared
 	shared1 := models.TopologyLayout{
 		Scope:      models.ScopeShared,
 		View:       "LOGICAL",
@@ -80,10 +80,10 @@ func TestTopologyLayout_SchemaConstraints_ScopeOwnerAndPartialUniques(t *testing
 		IsDefault:  false,
 	}
 	if err := db.Create(&shared2).Error; err == nil {
-		t.Fatalf("期望同 view 第二条 SHARED 违反部分唯一索引 uk_traefik_topo_layout_shared，但插入成功")
+		t.Fatalf("期望同 view 第二条 SHARED 违反部分唯一索引 uk_contract_topo_layout_shared，但插入成功")
 	}
 
-	// 5. 同人同视图同名书签违反 uk_traefik_topo_layout_private_name
+	// 5. 同人同视图同名书签违反 uk_contract_topo_layout_private_name
 	priv1 := models.TopologyLayout{
 		Scope:      models.ScopePrivate,
 		View:       "LOGICAL",
@@ -104,10 +104,10 @@ func TestTopologyLayout_SchemaConstraints_ScopeOwnerAndPartialUniques(t *testing
 		IsDefault:  false,
 	}
 	if err := db.Create(&privDupName).Error; err == nil {
-		t.Fatalf("期望同人同视图同名书签违反 uk_traefik_topo_layout_private_name，但插入成功")
+		t.Fatalf("期望同人同视图同名书签违反 uk_contract_topo_layout_private_name，但插入成功")
 	}
 
-	// 6. 同 (owner, view, focus_scope) 第二个默认书签违反 uk_traefik_topo_layout_private_default
+	// 6. 同 (owner, view, focus_scope) 第二个默认书签违反 uk_contract_topo_layout_private_default
 	privDupDefault := models.TopologyLayout{
 		Scope:      models.ScopePrivate,
 		View:       "LOGICAL",
@@ -117,7 +117,7 @@ func TestTopologyLayout_SchemaConstraints_ScopeOwnerAndPartialUniques(t *testing
 		IsDefault:  true,
 	}
 	if err := db.Create(&privDupDefault).Error; err == nil {
-		t.Fatalf("期望同 (owner, view, focus_scope) 第二个默认书签违反 uk_traefik_topo_layout_private_default，但插入成功")
+		t.Fatalf("期望同 (owner, view, focus_scope) 第二个默认书签违反 uk_contract_topo_layout_private_default，但插入成功")
 	}
 }
 

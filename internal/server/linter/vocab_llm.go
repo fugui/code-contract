@@ -18,8 +18,8 @@ import (
 	"time"
 	"unicode"
 
-	"code-traefik/internal/server/security"
-	"code-traefik/models"
+	"code-contract/internal/server/security"
+	"code-contract/models"
 
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
@@ -168,7 +168,7 @@ var commonEnglishWords = map[string]struct{}{
 	"tags": {}, "target": {}, "task": {}, "tax": {}, "team": {}, "template": {},
 	"tenant": {}, "term": {}, "terms": {}, "test": {}, "text": {}, "time": {},
 	"timeout": {}, "timestamp": {}, "title": {}, "to": {}, "token": {}, "total": {},
-	"trace": {}, "track": {}, "trade": {}, "traefik": {}, "tree": {}, "trigger": {},
+	"trace": {}, "track": {}, "trade": {}, "tree": {}, "trigger": {},
 	"type": {}, "types": {}, "uid": {}, "unit": {}, "unknown": {}, "update": {},
 	"updated": {}, "upload": {}, "url": {}, "use": {}, "user": {}, "users": {},
 	"uuid": {}, "val": {}, "valid": {}, "value": {}, "values": {}, "ver": {},

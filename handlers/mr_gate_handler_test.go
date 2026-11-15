@@ -16,9 +16,9 @@ import (
 
 	commonAudit "code-common/backend/audit"
 	"code-common/backend/testdb"
-	"code-traefik/config"
-	"code-traefik/internal/server/decoder"
-	"code-traefik/models"
+	"code-contract/config"
+	"code-contract/internal/server/decoder"
+	"code-contract/models"
 
 	"gorm.io/datatypes"
 )
@@ -27,7 +27,7 @@ func TestMRGateWebhook_SignatureGuard_Dedup_OverrideGuardAndP1Audit(t *testing.T
 	if os.Getenv("TEST_DB_DSN") == "" {
 		t.Skip("TEST_DB_DSN 未配置，跳过数据库隔离测试")
 	}
-	t.Setenv("TRAEFIK_CRYPTO_KEY", "m26-mr-handler-crypto-key-32byte")
+	t.Setenv("CONTRACT_CRYPTO_KEY", "m26-mr-handler-crypto-key-32byte")
 
 	db := testdb.SetupIsolatedDB(t, config.ServiceName)
 	if err := models.SetupWithDB(db); err != nil {
@@ -259,13 +259,13 @@ func TestMRGateWebhook_SignatureGuard_Dedup_OverrideGuardAndP1Audit(t *testing.T
 	var auditLogs []models.SysAuditLog
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if err := db.Where("module = ? AND action = ?", "traefik_mr_gate", "override_mr_gate").Find(&auditLogs).Error; err == nil && len(auditLogs) > 0 {
+		if err := db.Where("module = ? AND action = ?", "contract_mr_gate", "override_mr_gate").Find(&auditLogs).Error; err == nil && len(auditLogs) > 0 {
 			break
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
 	if len(auditLogs) == 0 || auditLogs[0].Level != "P1" {
-		t.Fatalf("期望写入 Level=P1 的 traefik_mr_gate/override_mr_gate 审计日志，实际: %+v", auditLogs)
+		t.Fatalf("期望写入 Level=P1 的 contract_mr_gate/override_mr_gate 审计日志，实际: %+v", auditLogs)
 	}
 
 	// 5. 验证 GitHub X-Hub-Signature-256 HMAC-SHA256 验签与 GET /api/mr-check-runs 列表/详情查询

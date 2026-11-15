@@ -295,7 +295,7 @@ export const ArchTopologyTabPane: React.FC<ArchTopologyTabPaneProps> = ({
     user?.is_super_admin ||
       user?.is_module_admin ||
       user?.roles?.includes('admin') ||
-      user?.roles?.includes('traefik_admin')
+      user?.roles?.includes('contract_admin')
   );
 
   // 1. 视角与 URL 同步状态

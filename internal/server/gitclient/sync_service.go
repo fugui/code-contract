@@ -13,11 +13,11 @@ import (
 	"strings"
 	"time"
 
-	"code-traefik/internal/server/decoder"
-	"code-traefik/internal/server/linter"
-	"code-traefik/internal/server/protodoc"
-	"code-traefik/internal/server/security"
-	"code-traefik/models"
+	"code-contract/internal/server/decoder"
+	"code-contract/internal/server/linter"
+	"code-contract/internal/server/protodoc"
+	"code-contract/internal/server/security"
+	"code-contract/models"
 
 	"gorm.io/gorm"
 )
@@ -158,7 +158,7 @@ func loadOutboundTrustedCIDRs(db *gorm.DB) string {
 	if db == nil {
 		return ""
 	}
-	var setting models.TraefikSetting
+	var setting models.ModuleSetting
 	if err := db.Where("setting_key = ?", "outbound_trusted_cidrs").Limit(1).Find(&setting).Error; err != nil {
 		return ""
 	}
@@ -407,7 +407,7 @@ func (s *SyncService) applyBundleSnapshot(
 
 	touchedVersionIDs := make([]uint64, 0, len(sliced))
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if lockErr := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", fmt.Sprintf("traefik_git_sync_%d", bundle.ID)).Error; lockErr != nil {
+		if lockErr := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", fmt.Sprintf("contract_git_sync_%d", bundle.ID)).Error; lockErr != nil {
 			return lockErr
 		}
 

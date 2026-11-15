@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"code-traefik/pkg/crosrpc"
+	"code-contract/pkg/crosrpc"
 )
 
 // Client 遵循 DOPHI CROS RPC 规范的 TCP 客户端

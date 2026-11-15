@@ -1,4 +1,4 @@
-# code-traefik: 阶段二系统架构与数据模型设计 (SDD) 提示词指令
+# code-contract: 阶段二系统架构与数据模型设计 (SDD) 提示词指令
 
 ## 角色定位与工程原则
 你是一名资深 Go 全栈系统架构师与底层网络协议专家。阶段一特性清单与需求边界（[`docs/01-features/01-feature-matrix.md`](../01-features/01-feature-matrix.md) v2.6.0）与协议规范（[`docs/07-references/01-cros-rpc-protocol-spec.md`](../07-references/01-cros-rpc-protocol-spec.md)）已冻结定稿。
@@ -16,7 +16,7 @@
 ---
 
 ## 2. 阶段二交付物结构体系（双子系统拆解与五大专篇设计）
-为了彻底解耦**管理面（`code-traefik-server`）**与**数据面（`code-traefik-agent`）**两大独立物理子系统，并清晰治理核心业务领域（架构元素管理、CROS RPC 协议栈、数据持久化），阶段二采用**高内聚低耦合的五篇专篇矩阵**进行输出：
+为了彻底解耦**管理面（`code-contract-server`）**与**数据面（`code-contract-agent`）**两大独立物理子系统，并清晰治理核心业务领域（架构元素管理、CROS RPC 协议栈、数据持久化），阶段二采用**高内聚低耦合的五篇专篇矩阵**进行输出：
 
 | 文档编号与路径 | 篇目类型 | 归属子系统 / 核心职责与设计边界 |
 | :--- | :--- | :--- |
@@ -24,7 +24,7 @@
 | `docs/02-design/02-data-plane-and-cros-rpc-engine.md` | **【数据面篇】CROS RPC 协议栈与 Agent 引擎** | 数据面子系统 (`cmd/agent`) 与共享协议库 (`pkg/crosrpc`)：分帧状态机、eBPF 采集引擎 (`pkg/ebpf`)、纯二进制 Mock 匹配与自愈重写 (`pkg/replay`) |
 | `docs/02-design/03-architecture-elements-and-topology.md` | **【业务篇】架构元素建模与拓扑一致性验证** | 业务核心资产 (SSOT)：三级架构模型树、模块接口供给/依赖契约、1 进程包含 N 模块物理映射、运行态报文穿透定位与架构一致性比对引擎 |
 | `docs/02-design/04-control-plane-and-web-console.md` | **【管理面篇】Server 控制面、微前端控制台与回归断言** | 管理面子系统 (`cmd/server`) 与微前端：任务协同编排器、Protobuf 解码中心与四段解剖抽屉 DTO、双层回归 Diff 断言引擎、四大工作台组件树、RBAC 与审计 |
-| `docs/02-design/05-database-schema.md` | **【数据模型篇】数据库物理模型与 GORM 建模字典** | 持久化基石：全部 11 张 `traefik_*` 表的 GORM Go struct 代码定义、字段类型、GORM Tag、联合唯一索引、外键级联与安全约束 |
+| `docs/02-design/05-database-schema.md` | **【数据模型篇】数据库物理模型与 GORM 建模字典** | 持久化基石：全部 11 张 `contract_*` 表的 GORM Go struct 代码定义、字段类型、GORM Tag、联合唯一索引、外键级联与安全约束 |
 
 ---
 
@@ -82,17 +82,17 @@
    - 模块联邦路由表与导出契约（`./App`、`./menu`）；
    - 四大核心工作台（架构拓扑台、接口文档台、流量解剖台、重放断言台）的 React 组件分层树；
    - 流量解剖右侧抽屉 DTO：分段呈现 ① 24B公共头位图、② 会话头明细、③ 扩展头 Trace、④ Protobuf JSON 对比 Hex 的前后端数据契约；
-5. **权限与审计治理**：`commonAuth`（普通认证用户 vs `traefik_admin` 管理员权限矩阵）与 `commonAudit` 字段级 Diff 审计接入点。
+5. **权限与审计治理**：`commonAuth`（普通认证用户 vs `contract_admin` 管理员权限矩阵）与 `commonAudit` 字段级 Diff 审计接入点。
 
 ### 3.5 `05-database-schema.md`：数据库物理模型与 GORM 建模字典
-1. **表前缀与隔离规范**：全量表强制以 `traefik_` 开头，模型显式实现 `TableName() string`；
+1. **表前缀与隔离规范**：全量表强制以 `contract_` 开头，模型显式实现 `TableName() string`；
 2. **11 张核心数据表 GORM Struct 代码定义与 DDL 字典**：
-   - 架构元素：`traefik_subsystems`、`traefik_functional_groups`、`traefik_modules`；
-   - 接口契约：`traefik_module_interfaces`；
-   - 实体部署：`traefik_agents`、`traefik_processes`；
-   - IDL 描述：`traefik_proto_schemas`、`traefik_proto_operations`；
-   - 录制与流量：`traefik_recording_sessions`（支持公私素材作用域）、`traefik_traffic_records`（同时持久化无损 `raw_req_packet` / `raw_rsp_packet` `bytea` 与结构化 `payload_json` `jsonb`）；
-   - 回放断言：`traefik_replay_tasks`；
+   - 架构元素：`contract_subsystems`、`contract_functional_groups`、`contract_modules`；
+   - 接口契约：`contract_module_interfaces`；
+   - 实体部署：`contract_agents`、`contract_processes`；
+   - IDL 描述：`contract_proto_schemas`、`contract_proto_operations`；
+   - 录制与流量：`contract_recording_sessions`（支持公私素材作用域）、`contract_traffic_records`（同时持久化无损 `raw_req_packet` / `raw_rsp_packet` `bytea` 与结构化 `payload_json` `jsonb`）；
+   - 回放断言：`contract_replay_tasks`；
 3. **字段与索引规范**：提供包含完整 GORM Tag、字段注释、主键、联合唯一索引（如 `UK(agent_id, listen_port)`、`UK(service_name, operation)` 等）、外键或逻辑外键关联的 Go 结构体代码及安全级联保护逻辑。
 
 ---

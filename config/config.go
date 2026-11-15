@@ -13,10 +13,10 @@ import (
 
 // 模块级核心元数据常量（集中声明，便于 scripts/init-module.sh 或手工派生时一站式替换）
 const (
-	ModuleKey   = "traefik"
-	ServiceName = "Code-Traefik"
-	AdminRole   = "traefik_admin"
-	TablePrefix = "traefik_"
+	ModuleKey   = "contract"
+	ServiceName = "Code-Contract"
+	AdminRole   = "contract_admin"
+	TablePrefix = "contract_"
 	DefaultPort = ":8091"
 )
 

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"code-traefik/pkg/crosrpc"
+	"code-contract/pkg/crosrpc"
 )
 
 func TestBuildPacketValidation(t *testing.T) {

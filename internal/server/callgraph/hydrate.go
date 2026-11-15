@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"time"
 
-	"code-traefik/models"
+	"code-contract/models"
 	"gorm.io/gorm"
 )
 

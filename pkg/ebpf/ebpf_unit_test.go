@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"code-traefik/pkg/agentproto"
-	"code-traefik/pkg/crosrpc"
-	"code-traefik/pkg/replay"
+	"code-contract/pkg/agentproto"
+	"code-contract/pkg/crosrpc"
+	"code-contract/pkg/replay"
 )
 
 // mockProcTree 在临时目录下构建伪造的 procfs 结构
@@ -1045,7 +1045,7 @@ func TestProcScanner_OwnSocketInodesOnly_InboundPrewarm_AndProxyExclusion(t *tes
 		}, "\n"),
 		"101/cmdline": "sut-order-service\x00",
 		"101/comm":    "sut-order",
-		"9999/comm":   "code-traefik-agent",
+		"9999/comm":   "code-contract-agent",
 		"8888/comm":   "other-service",
 	}
 

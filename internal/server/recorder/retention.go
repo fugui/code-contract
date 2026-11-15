@@ -7,8 +7,8 @@ import (
 	"time"
 
 	commonAudit "code-common/backend/audit"
-	"code-traefik/config"
-	"code-traefik/models"
+	"code-contract/config"
+	"code-contract/models"
 	"gorm.io/gorm"
 )
 

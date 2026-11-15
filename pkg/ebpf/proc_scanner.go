@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"code-traefik/pkg/agentproto"
+	"code-contract/pkg/agentproto"
 )
 
 // DefaultProcRoot 默认 /proc 根目录

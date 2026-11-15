@@ -8,8 +8,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"code-traefik/demo/pkg/crosframe"
-	"code-traefik/demo/pkg/payment"
+	"code-contract/demo/pkg/crosframe"
+	"code-contract/demo/pkg/payment"
 )
 
 func main() {

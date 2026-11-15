@@ -3,7 +3,7 @@ syntax = "proto3";
 // 电商核心领域公共基础类型与枚举字典契约 (BASE_LIB: demo.common)
 // @owner: platform-arch-team
 package demo.common;
-option go_package = "code-traefik/demo/pkg/proto/commonpb";
+option go_package = "code-contract/demo/pkg/proto/commonpb";
 
 // 订单交易终态枚举字典
 // @owner: platform-arch-team

@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"code-traefik/models"
+	"code-contract/models"
 	"gorm.io/gorm"
 )
 
@@ -673,10 +673,10 @@ func buildPhysicalTopologyGraph(db *gorm.DB, dto *TopologyGraphDTO, envAgentID u
 	}
 	var counts []sharedCount
 	_ = db.Model(&models.Process{}).
-		Select("traefik_processes.arch_process_id, count(DISTINCT traefik_processes.agent_id) as count").
-		Joins("JOIN traefik_agents ON traefik_agents.id = traefik_processes.agent_id").
-		Where("traefik_agents.scope = ?", models.ScopeShared).
-		Group("traefik_processes.arch_process_id").
+		Select("contract_processes.arch_process_id, count(DISTINCT contract_processes.agent_id) as count").
+		Joins("JOIN contract_agents ON contract_agents.id = contract_processes.agent_id").
+		Where("contract_agents.scope = ?", models.ScopeShared).
+		Group("contract_processes.arch_process_id").
 		Scan(&counts).Error
 	sharedCountMap := make(map[uint64]int)
 	for _, c := range counts {

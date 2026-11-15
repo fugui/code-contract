@@ -1,4 +1,4 @@
-# 架构与活体契约治理 (`code-traefik`) 文档知识库 (Docs Hub)
+# 架构与活体契约治理 (`code-contract`) 文档知识库 (Docs Hub)
 
 > **定位升级**：本项目已从纯技术视角的“业务流量录制工具”战略升维为**「基于真实流量的活体契约、架构一致性与防劣化自愈平台」**。录制与重放作为底层零侵入数据面手段，服务于**接口资产治理、架构防漂移雷达、无依赖自愈防劣化**三大核心业务价值。
 
@@ -23,7 +23,7 @@ docs/
 │   ├── 02-data-plane-and-cros-rpc-engine.md       # 【数据面篇】CROS RPC 协议栈、Agent eBPF 采集与自愈重放引擎
 │   ├── 03-architecture-elements-and-topology.md   # 【业务篇】架构元素建模 (SSOT)、模块接口契约与拓扑验证
 │   ├── 04-control-plane-and-web-console.md        # 【管理面篇】Server 控制面、微前端控制台、Protobuf 编译与参考文档中心、静态规范与 MR 门禁
-│   ├── 05-database-schema.md                      # 【数据模型篇】30 张核心 traefik_* 业务表 + traefik_settings 物理表 GORM 字典、多实现契约、只读源码与 MR 门禁、分区表与索引设计
+│   ├── 05-database-schema.md                      # 【数据模型篇】30 张核心 contract_* 业务表 + contract_settings 物理表 GORM 字典、多实现契约、只读源码与 MR 门禁、分区表与索引设计
 │   └── 06-agent-observability-and-self-healing-design.md # 【运维可观测与自愈篇】Agent 探针特权感知、体检诊断与全链路闭环自愈设计
 ├── 03-api/          # 接口与数据契约：RESTful / SSE API 签名、主从信道契约、RBAC 权限与审计规范
 │   └── 01-http-api-contract.md                    # 【API 契约】控制面 REST/SSE 字典（含活体文档、只读源码、Git/MR 门禁与通知）、CI 门禁契约、主从 HTTP/WS 契约与 RBAC 守卫
@@ -52,7 +52,7 @@ docs/
 │   ├── 22-m21-topology-single-layer-drilldown-and-layout-ux.md       # 【M21 作战卡】架构拓扑单层平铺逐级下钻重构、ELK 正交布局校准与全链路易用性升级
 │   ├── 23-m22-protocompile-layering-and-dependency-graph.md          # 【M22 作战卡 | ✅ 已交付】纯 Go protocompile 四级虚拟解析器、layer_level 正反向拦截与 BASE_LIB 影响及依赖图/矢量导出 (F-32)
 │   ├── 24-m23-living-proto-docs-and-readonly-sources.md              # 【M23 作战卡 | ✅ 已交付】全注释活体参考文档中心 (F-18) 与轻量无锁只读源码视图 (增量 <=150KB gzip)
-│   ├── 25-m24-static-lint-vocabulary-and-duplicate-ast.md            # 【M24 作战卡 | ✅ 已交付】安全底座 (TRAEFIK_CRYPTO_KEY / SafeDialer 信任白名单)、设置脱敏、规范引擎、原生词库 Seed/CRUD、3s LLM 与 Jaccard>=0.85 三护栏重复检测
+│   ├── 25-m24-static-lint-vocabulary-and-duplicate-ast.md            # 【M24 作战卡 | ✅ 已交付】安全底座 (CONTRACT_CRYPTO_KEY / SafeDialer 信任白名单)、设置脱敏、规范引擎、原生词库 Seed/CRUD、3s LLM 与 Jaccard>=0.85 三护栏重复检测
 │   ├── 26-m25-git-sync-and-monorepo-bundles.md                       # 【M25 作战卡 | ✅ 已交付】Git 无状态同步、GitRepo 1:N GitProtoBundle 多包对账、Tier-2 DB Resolver 与只读历史 Diff
 │   ├── 27-m26-mr-gates-notifications-and-compliance-dashboard.md     # 【M26 作战卡 | ✅ 已交付】MR 四合一门禁 (FF 去重/原位评论/Override P1)、SSE 按 userID 定向、持久化通知 (LAN code-notifier/SMTP) 与 F-24 合标卡片
 │   └── 28-m27-proto-ia-unbundling-and-four-workbenches.md            # 【M27 作战卡 | ✅ 已交付】Proto 契约控制台 IA 拆解：5 组 13 项菜单、四工作台正交拆分与无损深链兼容 (ADR-19)
@@ -76,7 +76,7 @@ docs/
 │   ├── 17-topology-single-layer-drilldown-and-layout-ux-adr.md       # ADR-17：架构拓扑单层平铺逐级下钻、ELK 正交布局校准与全链路易用性升级设计
 │   ├── 18-proto-full-lifecycle-and-git-mr-governance-adr.md            # ADR-18：废弃未落地的 code-proto 与 protohub 后，Proto 全生命周期与 Git/MR 协同治理架构决策
 │   ├── 19-proto-contract-ia-unbundling-and-four-workbenches-adr.md     # ADR-19：Proto 契约控制台信息架构拆解与四工作台正交拆分架构决策 (5 组 13 项菜单 + 无损深链重定向)
-│   └── 20-module-rebranding-code-traefik-to-code-contract-adr.md       # ADR-20：[提议中/暂不实施] 模块正式更名为 code-contract 的战略演进与全仓干净重构方案 (v1.1.0)
+│   └── 20-module-rebranding-*-to-code-contract-adr.md       # ADR-20：[已实施] 模块正式更名为 code-contract 的战略演进与全仓干净重构方案 (v1.2.0)
 ├── 06-ops/          # 交付与验证：双模联调、物理隔离数据库测试与生产环境单二进制部署手册
 │   └── 01-verification-and-deployment-guide.md    # 联调验证、自动化回归测试与生产部署操作指南
 └── 07-references/   # 外部参考与上位契约基准：协议包规范、字节字典与领域标准文档

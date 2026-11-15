@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"code-traefik/models"
+	"code-contract/models"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/reflect/protoregistry"

@@ -11,7 +11,7 @@ import (
 
 	commonAuth "code-common/backend/auth"
 	commonModels "code-common/backend/models"
-	"code-traefik/models"
+	"code-contract/models"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/datatypes"
@@ -357,13 +357,13 @@ func ListArchProcesses(c *gin.Context) {
 	}
 	if moduleIDStr != "" {
 		if mid, err := strconv.ParseUint(moduleIDStr, 10, 64); err == nil {
-			query = query.Joins("JOIN traefik_modules ON traefik_modules.arch_process_id = traefik_arch_processes.id").
-				Where("traefik_modules.id = ?", mid)
+			query = query.Joins("JOIN contract_modules ON contract_modules.arch_process_id = contract_arch_processes.id").
+				Where("contract_modules.id = ?", mid)
 		}
 	}
 	if search != "" {
 		s := "%" + search + "%"
-		query = query.Where("traefik_arch_processes.code ILIKE ? OR traefik_arch_processes.name ILIKE ?", s, s)
+		query = query.Where("contract_arch_processes.code ILIKE ? OR contract_arch_processes.name ILIKE ?", s, s)
 	}
 
 	var total int64
@@ -374,7 +374,7 @@ func ListArchProcesses(c *gin.Context) {
 
 	items := make([]models.ArchProcess, 0)
 	offset := (page - 1) * pageSize
-	if err := query.Order("traefik_arch_processes.sort_order ASC, traefik_arch_processes.id ASC").
+	if err := query.Order("contract_arch_processes.sort_order ASC, contract_arch_processes.id ASC").
 		Offset(offset).Limit(pageSize).Find(&items).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询标准进程列表失败"})
 		return

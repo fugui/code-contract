@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"time"
 
-	"code-traefik/config"
-	"code-traefik/pkg/version"
+	"code-contract/config"
+	"code-contract/pkg/version"
 
 	"github.com/gin-gonic/gin"
 )

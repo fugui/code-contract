@@ -1,5 +1,5 @@
 # ==============================================================================
-# Code-Traefik 微前端业务子系统配置示例
+# Code-Contract 微前端业务子系统配置示例
 # 使用说明：本地或生产部署时请复制为 config.yaml 并按需修改（config.yaml 已加入 .gitignore）
 # ==============================================================================
 
@@ -18,7 +18,7 @@ database:
   port: 5432
   user: "postgres"
   password: "YOUR_POSTGRES_PASSWORD"    # 生产环境建议通过安全配置中心或受控文件注入，切勿提交明文密码
-  dbname: "code_shield"                 # 与平台共享的核心数据库名（业务表统一加 traefik_ 前缀防冲突）
+  dbname: "code_shield"                 # 与平台共享的核心数据库名（业务表统一加 contract_ 前缀防冲突）
   sslmode: "disable"                    # 生产环境建议开启 require / verify-full
   timezone: "Asia/Shanghai"
   max_open_conns: 30
@@ -35,7 +35,7 @@ auth:
   # ── 独立部署时的可选 OAuth2 / OIDC 配置（嵌入 CodeBench 运行时由宿主统一完成 SSO，无需开启） ──
   oauth2:
     enabled: false
-    client_id: "code-traefik"
+    client_id: "code-contract"
     client_secret: ""
     auth_url: ""
     token_url: ""

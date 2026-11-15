@@ -8,11 +8,11 @@ import (
 	"time"
 
 	"code-common/backend/testdb"
-	"code-traefik/config"
-	"code-traefik/internal/server/decoder"
-	"code-traefik/models"
-	"code-traefik/pkg/agentproto"
-	"code-traefik/pkg/crosrpc"
+	"code-contract/config"
+	"code-contract/internal/server/decoder"
+	"code-contract/models"
+	"code-contract/pkg/agentproto"
+	"code-contract/pkg/crosrpc"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/descriptorpb"
 )

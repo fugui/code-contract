@@ -97,7 +97,7 @@ func RenderServicesMarkdown(details []*ProtoServiceDocDetailDTO, title string) s
 		title = "CROS Protobuf 接口参考手册"
 	}
 	sb.WriteString("# " + escapeMDProse(title) + "\n\n")
-	sb.WriteString("> 由 Code-Traefik 活体文档引擎 (`protodoc`) 自动生成，包含全层级注释、错误码矩阵、Enum 枚举字典、AST 缺省示例与 ACTIVE 黄金测试样本。\n\n")
+	sb.WriteString("> 由 Code-Contract 活体文档引擎 (`protodoc`) 自动生成，包含全层级注释、错误码矩阵、Enum 枚举字典、AST 缺省示例与 ACTIVE 黄金测试样本。\n\n")
 
 	if len(details) > 1 {
 		sb.WriteString("## 目录 (Table of Contents)\n\n")

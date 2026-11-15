@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"code-traefik/models"
+	"code-contract/models"
 	"gorm.io/datatypes"
 )
 

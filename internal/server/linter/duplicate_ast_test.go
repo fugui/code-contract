@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"code-traefik/internal/server/linter"
-	"code-traefik/models"
+	"code-contract/internal/server/linter"
+	"code-contract/models"
 
 	"gorm.io/datatypes"
 )

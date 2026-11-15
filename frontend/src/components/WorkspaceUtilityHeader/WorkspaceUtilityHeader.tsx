@@ -14,14 +14,14 @@ export interface WorkspaceUtilityHeaderProps {
 export const WorkspaceUtilityHeader: React.FC<WorkspaceUtilityHeaderProps> = ({ className }) => {
   return (
     <div
-      className={className ? `code-traefik-utility-header ${className}` : 'code-traefik-utility-header'}
+      className={className ? `code-contract-utility-header ${className}` : 'code-contract-utility-header'}
       data-testid="workspace-utility-header"
     >
-      <div className="code-traefik-utility-header__brand">
+      <div className="code-contract-utility-header__brand">
         <BellRing size={15} />
         <span>{MODULE_TITLE} · 契约变更通知与 MR 门禁雷达</span>
       </div>
-      <div className="code-traefik-utility-header__actions">
+      <div className="code-contract-utility-header__actions">
         <NotificationBell />
       </div>
     </div>

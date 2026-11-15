@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"code-traefik/demo/pkg/crosframe"
-	"code-traefik/demo/pkg/proto/inventorypb"
-	"code-traefik/pkg/crosrpc"
+	"code-contract/demo/pkg/crosframe"
+	"code-contract/demo/pkg/proto/inventorypb"
+	"code-contract/pkg/crosrpc"
 	"google.golang.org/protobuf/proto"
 )
 

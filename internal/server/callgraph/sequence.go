@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"code-traefik/models"
+	"code-contract/models"
 	"gorm.io/gorm"
 )
 

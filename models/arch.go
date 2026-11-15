@@ -3,18 +3,18 @@ package models
 import (
 	"time"
 
-	"code-traefik/config"
+	"code-contract/config"
 	"gorm.io/datatypes"
 )
 
-// 1. Subsystem 顶层业务子系统表 (traefik_subsystems)
+// 1. Subsystem 顶层业务子系统表 (contract_subsystems)
 type Subsystem struct {
 	ID          uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
-	Code        string    `gorm:"size:64;not null;uniqueIndex:uk_traefik_subsystems_code" json:"code"` // 全局唯一大写编码
-	Name        string    `gorm:"size:128;not null;index:idx_traefik_subsystems_name" json:"name"`
-	OwnerID     *uint     `gorm:"index:idx_traefik_subsystems_owner" json:"owner_id"`
+	Code        string    `gorm:"size:64;not null;uniqueIndex:uk_contract_subsystems_code" json:"code"` // 全局唯一大写编码
+	Name        string    `gorm:"size:128;not null;index:idx_contract_subsystems_name" json:"name"`
+	OwnerID     *uint     `gorm:"index:idx_contract_subsystems_owner" json:"owner_id"`
 	Owner       *User     `gorm:"foreignKey:OwnerID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL" json:"owner,omitempty"`
-	LayerLevel  int       `gorm:"not null;default:0;index:idx_traefik_subsystems_layer;check:chk_traefik_subsystems_layer,layer_level >= 0 AND layer_level <= 99" json:"layer_level"` // 架构层级 (0=不限/豁免; 1=底层基础设施 -> N=顶层接入网关; M22 ADR-18)
+	LayerLevel  int       `gorm:"not null;default:0;index:idx_contract_subsystems_layer;check:chk_contract_subsystems_layer,layer_level >= 0 AND layer_level <= 99" json:"layer_level"` // 架构层级 (0=不限/豁免; 1=底层基础设施 -> N=顶层接入网关; M22 ADR-18)
 	Description string    `gorm:"type:text" json:"description"`
 	CreatedBy   uint      `gorm:"not null;default:0" json:"created_by"`
 	UpdatedBy   uint      `gorm:"not null;default:0" json:"updated_by"`
@@ -24,17 +24,17 @@ type Subsystem struct {
 
 func (Subsystem) TableName() string { return config.TablePrefix + "subsystems" }
 
-// 2. FunctionalGroup 多级自嵌套功能组树表 (traefik_functional_groups)
+// 2. FunctionalGroup 多级自嵌套功能组树表 (contract_functional_groups)
 type FunctionalGroup struct {
 	ID          uint64           `gorm:"primaryKey;autoIncrement" json:"id"`
-	SubsystemID uint64           `gorm:"not null;uniqueIndex:uk_traefik_fg_sub_code,priority:1;index:idx_traefik_fg_sub_path,priority:1" json:"subsystem_id"`
+	SubsystemID uint64           `gorm:"not null;uniqueIndex:uk_contract_fg_sub_code,priority:1;index:idx_contract_fg_sub_path,priority:1" json:"subsystem_id"`
 	Subsystem   *Subsystem       `gorm:"foreignKey:SubsystemID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT" json:"subsystem,omitempty"`
-	ParentID    *uint64          `gorm:"index:idx_traefik_fg_parent" json:"parent_id"` // 根节点为 nil
+	ParentID    *uint64          `gorm:"index:idx_contract_fg_parent" json:"parent_id"` // 根节点为 nil
 	Parent      *FunctionalGroup `gorm:"foreignKey:ParentID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT" json:"-"`
-	Code        string           `gorm:"size:64;not null;uniqueIndex:uk_traefik_fg_sub_code,priority:2" json:"code"` // 同子系统内唯一
+	Code        string           `gorm:"size:64;not null;uniqueIndex:uk_contract_fg_sub_code,priority:2" json:"code"` // 同子系统内唯一
 	Name        string           `gorm:"size:128;not null" json:"name"`
-	Level       int              `gorm:"not null;default:1;check:chk_traefik_fg_level,level >= 1 AND level <= 8" json:"level"` // 最大深度 8 级
-	Path        string           `gorm:"size:256;not null;index:idx_traefik_fg_sub_path,priority:2" json:"path"`               // 物化路径 "/10/12/"
+	Level       int              `gorm:"not null;default:1;check:chk_contract_fg_level,level >= 1 AND level <= 8" json:"level"` // 最大深度 8 级
+	Path        string           `gorm:"size:256;not null;index:idx_contract_fg_sub_path,priority:2" json:"path"`               // 物化路径 "/10/12/"
 	SortOrder   int              `gorm:"not null;default:0" json:"sort_order"`
 	Description string           `gorm:"type:text" json:"description"`
 	CreatedBy   uint             `gorm:"not null;default:0" json:"created_by"`
@@ -45,11 +45,11 @@ type FunctionalGroup struct {
 
 func (FunctionalGroup) TableName() string { return config.TablePrefix + "functional_groups" }
 
-// 3. ArchProcessGroup 全局架构物理进程组蓝图表 (traefik_arch_process_groups)
+// 3. ArchProcessGroup 全局架构物理进程组蓝图表 (contract_arch_process_groups)
 type ArchProcessGroup struct {
 	ID          uint64        `gorm:"primaryKey;autoIncrement" json:"id"`
-	Code        string        `gorm:"size:64;not null;uniqueIndex:uk_traefik_arch_pgrp_code" json:"code"` // 全局唯一大写编码，如 "CORE_TRADE"
-	Name        string        `gorm:"size:128;not null;uniqueIndex:uk_traefik_arch_pgrp_name" json:"name"`
+	Code        string        `gorm:"size:64;not null;uniqueIndex:uk_contract_arch_pgrp_code" json:"code"` // 全局唯一大写编码，如 "CORE_TRADE"
+	Name        string        `gorm:"size:128;not null;uniqueIndex:uk_contract_arch_pgrp_name" json:"name"`
 	SortOrder   int           `gorm:"not null;default:0" json:"sort_order"`
 	Description string        `gorm:"type:text" json:"description"`
 	Processes   []ArchProcess `gorm:"foreignKey:GroupID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT" json:"processes,omitempty"`
@@ -61,16 +61,16 @@ type ArchProcessGroup struct {
 
 func (ArchProcessGroup) TableName() string { return config.TablePrefix + "arch_process_groups" }
 
-// 4. ArchProcess 全局架构标准业务进程蓝图表 (traefik_arch_processes)
+// 4. ArchProcess 全局架构标准业务进程蓝图表 (contract_arch_processes)
 type ArchProcess struct {
 	ID                      uint64            `gorm:"primaryKey;autoIncrement" json:"id"`
-	GroupID                 uint64            `gorm:"not null;index:idx_traefik_arch_proc_group" json:"group_id"`
+	GroupID                 uint64            `gorm:"not null;index:idx_contract_arch_proc_group" json:"group_id"`
 	Group                   *ArchProcessGroup `gorm:"foreignKey:GroupID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT" json:"group,omitempty"`
-	Code                    string            `gorm:"size:64;not null;uniqueIndex:uk_traefik_arch_proc_code" json:"code"` // 全局唯一标准进程编码，如 "sut-order"
-	Name                    string            `gorm:"size:128;not null;index:idx_traefik_arch_proc_name" json:"name"`
-	DefaultListenPort       int               `gorm:"not null;default:0;check:chk_traefik_arch_proc_port,default_listen_port >= 0 AND default_listen_port <= 65535" json:"default_listen_port"` // 0 表示纯客户端进程；1..65535 为默认监听端口
-	DefaultCmdPattern       string            `gorm:"size:512;not null;default:''" json:"default_cmd_pattern"`                                                                                  // 默认 /proc/<pid>/cmdline 匹配特征
-	DefaultExtraDownstreams datatypes.JSON    `gorm:"type:jsonb;not null;default:'[]'" json:"default_extra_downstreams"`                                                                        // 默认补充下游 ["IP:Port"]
+	Code                    string            `gorm:"size:64;not null;uniqueIndex:uk_contract_arch_proc_code" json:"code"` // 全局唯一标准进程编码，如 "sut-order"
+	Name                    string            `gorm:"size:128;not null;index:idx_contract_arch_proc_name" json:"name"`
+	DefaultListenPort       int               `gorm:"not null;default:0;check:chk_contract_arch_proc_port,default_listen_port >= 0 AND default_listen_port <= 65535" json:"default_listen_port"` // 0 表示纯客户端进程；1..65535 为默认监听端口
+	DefaultCmdPattern       string            `gorm:"size:512;not null;default:''" json:"default_cmd_pattern"`                                                                                   // 默认 /proc/<pid>/cmdline 匹配特征
+	DefaultExtraDownstreams datatypes.JSON    `gorm:"type:jsonb;not null;default:'[]'" json:"default_extra_downstreams"`                                                                         // 默认补充下游 ["IP:Port"]
 	SortOrder               int               `gorm:"not null;default:0" json:"sort_order"`
 	Description             string            `gorm:"type:text" json:"description"`
 	Modules                 []Module          `gorm:"foreignKey:ArchProcessID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL" json:"modules,omitempty"` // 组装承载的 FM 功能模块集合 (1:N)
@@ -88,20 +88,20 @@ const (
 	ModuleKindContractLib = "CONTRACT_LIB"
 )
 
-// 5. Module 最小接口契约功能模块表 (traefik_modules)
+// 5. Module 最小接口契约功能模块表 (contract_modules)
 type Module struct {
 	ID            uint64           `gorm:"primaryKey;autoIncrement" json:"id"`
-	SubsystemID   uint64           `gorm:"not null;index:idx_traefik_modules_subsystem" json:"subsystem_id"` // 冗余所属子系统加速检索
+	SubsystemID   uint64           `gorm:"not null;index:idx_contract_modules_subsystem" json:"subsystem_id"` // 冗余所属子系统加速检索
 	Subsystem     *Subsystem       `gorm:"foreignKey:SubsystemID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT" json:"subsystem,omitempty"`
-	GroupID       uint64           `gorm:"not null;index:idx_traefik_modules_group" json:"group_id"` // 可挂载于任意层级功能组
+	GroupID       uint64           `gorm:"not null;index:idx_contract_modules_group" json:"group_id"` // 可挂载于任意层级功能组
 	Group         *FunctionalGroup `gorm:"foreignKey:GroupID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT" json:"group,omitempty"`
-	ArchProcessID *uint64          `gorm:"index:idx_traefik_modules_arch_proc" json:"arch_process_id"` // 指向全局架构标准进程蓝图 (A-03 单模块至多归属 1 个标准进程)
+	ArchProcessID *uint64          `gorm:"index:idx_contract_modules_arch_proc" json:"arch_process_id"` // 指向全局架构标准进程蓝图 (A-03 单模块至多归属 1 个标准进程)
 	ArchProcess   *ArchProcess     `gorm:"foreignKey:ArchProcessID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL" json:"arch_process,omitempty"`
-	ModuleKind    string           `gorm:"size:16;not null;default:'BUSINESS';index:idx_traefik_modules_kind" json:"module_kind"`                                                        // BUSINESS | CONTRACT_LIB (ADR-16)
-	LayerLevel    int              `gorm:"not null;default:0;index:idx_traefik_modules_layer;check:chk_traefik_modules_layer,layer_level >= 0 AND layer_level <= 99" json:"layer_level"` // 0=继承所属子系统层级，1~99 显式覆盖层级 (M22 ADR-18)
-	Code          string           `gorm:"size:64;not null;uniqueIndex:uk_traefik_modules_code" json:"code"`                                                                             // 全局唯一编码
-	Name          string           `gorm:"size:128;not null;index:idx_traefik_modules_name" json:"name"`
-	OwnerID       *uint            `gorm:"index:idx_traefik_modules_owner" json:"owner_id"`
+	ModuleKind    string           `gorm:"size:16;not null;default:'BUSINESS';index:idx_contract_modules_kind" json:"module_kind"`                                                         // BUSINESS | CONTRACT_LIB (ADR-16)
+	LayerLevel    int              `gorm:"not null;default:0;index:idx_contract_modules_layer;check:chk_contract_modules_layer,layer_level >= 0 AND layer_level <= 99" json:"layer_level"` // 0=继承所属子系统层级，1~99 显式覆盖层级 (M22 ADR-18)
+	Code          string           `gorm:"size:64;not null;uniqueIndex:uk_contract_modules_code" json:"code"`                                                                              // 全局唯一编码
+	Name          string           `gorm:"size:128;not null;index:idx_contract_modules_name" json:"name"`
+	OwnerID       *uint            `gorm:"index:idx_contract_modules_owner" json:"owner_id"`
 	Owner         *User            `gorm:"foreignKey:OwnerID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL" json:"owner,omitempty"`
 	Description   string           `gorm:"type:text" json:"description"`
 	CreatedBy     uint             `gorm:"not null;default:0" json:"created_by"`
@@ -112,15 +112,15 @@ type Module struct {
 
 func (Module) TableName() string { return config.TablePrefix + "modules" }
 
-// 19. ServiceContract 多实现服务契约定义表 (traefik_service_contracts, ADR-16, M20)
+// 19. ServiceContract 多实现服务契约定义表 (contract_service_contracts, ADR-16, M20)
 const (
 	ContractProvideModeMultiImpl = "MULTI_IMPL"
 )
 
 type ServiceContract struct {
 	ID              uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
-	ServiceName     string    `gorm:"size:128;not null;uniqueIndex:uk_traefik_svc_contract_name" json:"service_name"` // 格式 {package}.{serviceName}
-	DefinerModuleID uint64    `gorm:"not null;index:idx_traefik_svc_contract_definer" json:"definer_module_id"`
+	ServiceName     string    `gorm:"size:128;not null;uniqueIndex:uk_contract_svc_contract_name" json:"service_name"` // 格式 {package}.{serviceName}
+	DefinerModuleID uint64    `gorm:"not null;index:idx_contract_svc_contract_definer" json:"definer_module_id"`
 	DefinerModule   *Module   `gorm:"foreignKey:DefinerModuleID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT" json:"definer_module,omitempty"`
 	ProvideMode     string    `gorm:"size:16;not null;default:'MULTI_IMPL'" json:"provide_mode"`
 	ImplKeyLabel    string    `gorm:"size:64;not null;default:''" json:"impl_key_label"`
@@ -133,7 +133,7 @@ type ServiceContract struct {
 
 func (ServiceContract) TableName() string { return config.TablePrefix + "service_contracts" }
 
-// 6. ModuleService 模块级对外供给服务契约表 (traefik_module_services)
+// 6. ModuleService 模块级对外供给服务契约表 (contract_module_services)
 type DownstreamConsumer struct {
 	ModuleID      uint64 `json:"module_id"`
 	ModuleName    string `json:"module_name"`
@@ -143,9 +143,9 @@ type DownstreamConsumer struct {
 
 type ModuleService struct {
 	ID                  uint64               `gorm:"primaryKey;autoIncrement" json:"id"`
-	ModuleID            uint64               `gorm:"not null;index:idx_traefik_mod_svc_mod" json:"module_id"`
+	ModuleID            uint64               `gorm:"not null;index:idx_contract_mod_svc_mod" json:"module_id"`
 	Module              *Module              `gorm:"foreignKey:ModuleID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE" json:"module,omitempty"`
-	ContractID          *uint64              `gorm:"index:idx_traefik_mod_svc_contract" json:"contract_id,omitempty"` // 指向多实现服务契约 (ADR-16)，NULL 表示独占服务 (EXCLUSIVE)
+	ContractID          *uint64              `gorm:"index:idx_contract_mod_svc_contract" json:"contract_id,omitempty"` // 指向多实现服务契约 (ADR-16)，NULL 表示独占服务 (EXCLUSIVE)
 	Contract            *ServiceContract     `gorm:"foreignKey:ContractID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT" json:"contract,omitempty"`
 	ServiceName         string               `gorm:"size:128;not null" json:"service_name"`                     // 运行期实际发布的 CROS 服务名（独占全局唯一；多实现可共享契约名或自定义唯一名如 DH_SyncService）
 	ImplKey             string               `gorm:"size:64;not null;default:''" json:"impl_key"`               // 多实现时必填身份标识，独占服务恒为空串
@@ -163,19 +163,19 @@ type ModuleService struct {
 
 func (ModuleService) TableName() string { return config.TablePrefix + "module_services" }
 
-// 7. ModuleDependency 模块间服务依赖关系表 (traefik_module_dependencies)
+// 7. ModuleDependency 模块间服务依赖关系表 (contract_module_dependencies)
 type ModuleDependency struct {
 	ID               uint64           `gorm:"primaryKey;autoIncrement" json:"id"`
-	ConsumerModuleID uint64           `gorm:"not null;uniqueIndex:uk_traefik_dep_tuple,priority:1;index:idx_traefik_dep_consumer" json:"consumer_module_id"`
+	ConsumerModuleID uint64           `gorm:"not null;uniqueIndex:uk_contract_dep_tuple,priority:1;index:idx_contract_dep_consumer" json:"consumer_module_id"`
 	ConsumerModule   *Module          `gorm:"foreignKey:ConsumerModuleID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE" json:"consumer_module,omitempty"`
-	IsExternal       bool             `gorm:"not null;default:false;index:idx_traefik_dep_external" json:"is_external"`                              // 是否依赖外部第三方/未登记系统
-	ExternalSystem   string           `gorm:"size:128;not null;default:''" json:"external_system"`                                                   // 外部系统名称 (如 "WeChatPay")
-	ExternalService  string           `gorm:"size:128;not null;default:''" json:"external_service"`                                                  // 外部服务名称 (如 "UnifiedOrderService")
-	ServiceID        *uint64          `gorm:"uniqueIndex:uk_traefik_dep_tuple,priority:2;index:idx_traefik_dep_service" json:"service_id,omitempty"` // 内部具体实现依赖
+	IsExternal       bool             `gorm:"not null;default:false;index:idx_contract_dep_external" json:"is_external"`                               // 是否依赖外部第三方/未登记系统
+	ExternalSystem   string           `gorm:"size:128;not null;default:''" json:"external_system"`                                                     // 外部系统名称 (如 "WeChatPay")
+	ExternalService  string           `gorm:"size:128;not null;default:''" json:"external_service"`                                                    // 外部服务名称 (如 "UnifiedOrderService")
+	ServiceID        *uint64          `gorm:"uniqueIndex:uk_contract_dep_tuple,priority:2;index:idx_contract_dep_service" json:"service_id,omitempty"` // 内部具体实现依赖
 	Service          *ModuleService   `gorm:"foreignKey:ServiceID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT" json:"service,omitempty"`
-	ContractID       *uint64          `gorm:"index:idx_traefik_dep_contract" json:"contract_id,omitempty"` // 分发依赖契约 ID (DISPATCH, ADR-16)
+	ContractID       *uint64          `gorm:"index:idx_contract_dep_contract" json:"contract_id,omitempty"` // 分发依赖契约 ID (DISPATCH, ADR-16)
 	Contract         *ServiceContract `gorm:"foreignKey:ContractID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE" json:"contract,omitempty"`
-	ProviderModuleID *uint64          `gorm:"index:idx_traefik_dep_provider" json:"provider_module_id,omitempty"` // 内部依赖冗余提供方 FM
+	ProviderModuleID *uint64          `gorm:"index:idx_contract_dep_provider" json:"provider_module_id,omitempty"` // 内部依赖冗余提供方 FM
 	ProviderModule   *Module          `gorm:"foreignKey:ProviderModuleID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL" json:"provider_module,omitempty"`
 	Description      string           `gorm:"type:text" json:"description"` // 调用与依赖业务场景说明
 	CreatedBy        uint             `gorm:"not null;default:0" json:"created_by"`
@@ -185,18 +185,18 @@ type ModuleDependency struct {
 
 func (ModuleDependency) TableName() string { return config.TablePrefix + "module_dependencies" }
 
-// 18. TopologyLayout 拓扑画布双层布局表 (traefik_topology_layouts)，位置层 + 视角层分离 (ADR-15 v1.1.0 §4.2)：
-//   - SHARED（团队基准布局 / 位置层）：每个 view 至多 1 条 (uk_traefik_topo_layout_shared)，由 traefik_admin 发布；
+// 18. TopologyLayout 拓扑画布双层布局表 (contract_topology_layouts)，位置层 + 视角层分离 (ADR-15 v1.1.0 §4.2)：
+//   - SHARED（团队基准布局 / 位置层）：每个 view 至多 1 条 (uk_contract_topo_layout_shared)，由 contract_admin 发布；
 //     owner_id 为 NULL、focus_scope 恒为 'GLOBAL'；node_positions 为全视图完整相对父坐标；revision 乐观锁防并发覆盖；
 //   - PRIVATE（个人视图书签 / 视角层）：单人上限 20 条，保存聚焦域、过滤条件、展开态与视口，
 //     node_positions 仅存相对团队基准的坐标差量覆写（团队基准更新后未覆写节点自动继承）；
 //   - 坐标均为相对 parentId 父容器的局部坐标，与聚焦域无关；聚焦根与外部邻居卡坐标不落库。
-//   - 约束：chk_traefik_topo_layout_scope / chk_traefik_topo_layout_view / chk_traefik_topo_layout_owner。
+//   - 约束：chk_contract_topo_layout_scope / chk_contract_topo_layout_view / chk_contract_topo_layout_owner。
 type TopologyLayout struct {
 	ID               uint64         `gorm:"primaryKey;autoIncrement" json:"id"`
-	Scope            string         `gorm:"size:16;not null;default:'PRIVATE';index:idx_traefik_topo_layout_owner_view,priority:3" json:"scope"` // SHARED | PRIVATE
-	View             string         `gorm:"size:16;not null;index:idx_traefik_topo_layout_owner_view,priority:2" json:"view"`                    // LOGICAL | PHYSICAL
-	OwnerID          *uint          `gorm:"index:idx_traefik_topo_layout_owner_view,priority:1" json:"owner_id"`                                 // PRIVATE 归属人 ID；SHARED 为 NULL
+	Scope            string         `gorm:"size:16;not null;default:'PRIVATE';index:idx_contract_topo_layout_owner_view,priority:3" json:"scope"` // SHARED | PRIVATE
+	View             string         `gorm:"size:16;not null;index:idx_contract_topo_layout_owner_view,priority:2" json:"view"`                    // LOGICAL | PHYSICAL
+	OwnerID          *uint          `gorm:"index:idx_contract_topo_layout_owner_view,priority:1" json:"owner_id"`                                 // PRIVATE 归属人 ID；SHARED 为 NULL
 	Owner            *User          `gorm:"foreignKey:OwnerID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE" json:"owner,omitempty"`
 	Name             string         `gorm:"size:128;not null" json:"name"` // 书签名称（SHARED 固定为 "团队基准布局"）
 	Description      string         `gorm:"size:512;not null;default:''" json:"description"`

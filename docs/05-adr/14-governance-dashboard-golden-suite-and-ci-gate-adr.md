@@ -4,6 +4,7 @@
 - **日期**：2026-11-05
 - **决策者**：CodeBench 架构委员会 / `code-traefik` 核心研发组
 - **文档版本**：v1.1.0（经架构深度检视加固修订）
+- **演进提示**：CI 门禁请求头 `X-Traefik-CI-Token` 与 `traefik_admin` 角色约定已由 [`ADR-20`](./20-module-rebranding-code-traefik-to-code-contract-adr.md) 演进更新为 `X-Contract-CI-Token` 与 `contract_admin`。
 - **关联基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.12.1)、[`01-system-architecture.md`](../02-design/01-system-architecture.md) (v1.5.0)、[`03-architecture-elements-and-topology.md`](../02-design/03-architecture-elements-and-topology.md)、[`04-control-plane-and-web-console.md`](../02-design/04-control-plane-and-web-console.md)、[`05-database-schema.md`](../02-design/05-database-schema.md) (v1.4.0)、[`01-http-api-contract.md`](../03-api/01-http-api-contract.md) (v1.4.0)、[`12-packet-causality-call-tree-and-sequence-ux-adr.md`](./12-packet-causality-call-tree-and-sequence-ux-adr.md) (ADR-12 v1.0.0)
 
 ---

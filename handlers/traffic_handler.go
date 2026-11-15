@@ -7,9 +7,9 @@ import (
 	"strings"
 
 	commonAuth "code-common/backend/auth"
-	"code-traefik/internal/server/callgraph"
-	"code-traefik/internal/server/recorder"
-	"code-traefik/models"
+	"code-contract/internal/server/callgraph"
+	"code-contract/internal/server/recorder"
+	"code-contract/models"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"

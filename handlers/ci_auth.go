@@ -10,8 +10,8 @@ import (
 	"time"
 
 	commonAuth "code-common/backend/auth"
-	"code-traefik/config"
-	"code-traefik/models"
+	"code-contract/config"
+	"code-contract/models"
 
 	"github.com/gin-gonic/gin"
 )
@@ -58,18 +58,18 @@ func (l *slidingWindowLimiter) Allow(key string) bool {
 
 var ciGateRateLimiter = newSlidingWindowLimiter(120, time.Minute)
 
-// CIOrAdminGuard 双模鉴权守卫：支持平台管理员 JWT 或专用 X-Traefik-CI-Token 请求头 (ADR-14, M17, F-27)
+// CIOrAdminGuard 双模鉴权守卫：支持平台管理员 JWT 或专用 X-Contract-CI-Token 请求头 (ADR-14, M17, F-27)
 func CIOrAdminGuard() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 1. 严格检查 URL Query：严禁在 Query 参数中传递任何 Token
-		if c.Query("token") != "" || c.Query("ci_token") != "" || c.Query("ci-token") != "" || c.Query("x-traefik-ci-token") != "" {
+		if c.Query("token") != "" || c.Query("ci_token") != "" || c.Query("ci-token") != "" || c.Query("x-contract-ci-token") != "" {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "严禁在 URL Query 中传递 Token，必须使用 X-Traefik-CI-Token 请求头或 Authorization 标头",
+				"error": "严禁在 URL Query 中传递 Token，必须使用 X-Contract-CI-Token 请求头或 Authorization 标头",
 			})
 			return
 		}
 
-		ciToken := strings.TrimSpace(c.GetHeader("X-Traefik-CI-Token"))
+		ciToken := strings.TrimSpace(c.GetHeader("X-Contract-CI-Token"))
 		if ciToken != "" {
 			// 2. CI 机器 Token 路径
 			clientIP := c.ClientIP()
@@ -81,7 +81,7 @@ func CIOrAdminGuard() gin.HandlerFunc {
 			}
 
 			// 查询库中存储的 SHA-256 摘要
-			var setting models.TraefikSetting
+			var setting models.ModuleSetting
 			err := models.DB.Where("setting_key = ?", SettingKeyCIGateTokenSHA256).First(&setting).Error
 			if err != nil || strings.TrimSpace(setting.SettingVal) == "" {
 				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
@@ -148,7 +148,7 @@ func CIOrAdminGuard() gin.HandlerFunc {
 
 		// 4. 未提供任何凭据
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-			"error": "未提供认证凭据：需要 X-Traefik-CI-Token 或管理员 Authorization 标头",
+			"error": "未提供认证凭据：需要 X-Contract-CI-Token 或管理员 Authorization 标头",
 		})
 	}
 }

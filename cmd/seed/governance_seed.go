@@ -12,15 +12,15 @@ import (
 	"strings"
 	"time"
 
-	"code-traefik/demo/pkg/crosframe"
-	"code-traefik/demo/pkg/proto/commonpb"
-	"code-traefik/demo/pkg/proto/orderpb"
-	"code-traefik/internal/server/decoder"
-	"code-traefik/internal/server/linter"
-	"code-traefik/internal/server/protodoc"
-	"code-traefik/internal/server/security"
-	"code-traefik/models"
-	"code-traefik/pkg/crosrpc"
+	"code-contract/demo/pkg/crosframe"
+	"code-contract/demo/pkg/proto/commonpb"
+	"code-contract/demo/pkg/proto/orderpb"
+	"code-contract/internal/server/decoder"
+	"code-contract/internal/server/linter"
+	"code-contract/internal/server/protodoc"
+	"code-contract/internal/server/security"
+	"code-contract/models"
+	"code-contract/pkg/crosrpc"
 
 	"google.golang.org/protobuf/proto"
 	"gorm.io/datatypes"
@@ -120,7 +120,7 @@ func resolveSeedAdminUser(db *gorm.DB) models.User {
 	return models.User{
 		ID:       1,
 		Username: "admin",
-		Email:    "admin@code-traefik.local",
+		Email:    "admin@code-contract.local",
 	}
 }
 
@@ -270,7 +270,7 @@ func seedGitBundlesAndCompileSchemas(
 		Description:     "DOPHI 电商 CROS RPC 全链路 Protobuf 接口契约主仓（Monorepo 四包治理基线）",
 		CreatedBy:       adminID,
 	}
-	if strings.TrimSpace(os.Getenv(security.EnvTraefikCryptoKey)) != "" {
+	if strings.TrimSpace(os.Getenv(security.EnvContractCryptoKey)) != "" {
 		gitRepo.AuthType = models.GitAuthToken
 		if err := gitRepo.SetCredentials("glpat-demo-ecommerce-readonly-token"); err != nil {
 			return nil, nil, nil, nil, fmt.Errorf("加密 Git 凭据失败: %w", err)
@@ -501,7 +501,7 @@ func createProtoFileWithHistory(
 			CommitSHA:     seedCommitV1SHA,
 			CommitMessage: "feat(proto): 初始化电商交易与支付网关基础契约 v1.0",
 			AuthorName:    "zhangsan",
-			AuthorEmail:   "zhangsan@code-traefik.local",
+			AuthorEmail:   "zhangsan@code-contract.local",
 			ContentText:   fsp.LegacyV1Text,
 			ContentSHA256: sha256Hex(fsp.LegacyV1Text),
 			LineCount:     countTextLines(fsp.LegacyV1Text),
@@ -521,7 +521,7 @@ func createProtoFileWithHistory(
 		CommitSHA:     seedCommitV2SHA,
 		CommitMessage: "feat(proto): 补充 common 公共枚举审计头、@owner/@error_code 文档标签与对账快照契约",
 		AuthorName:    "lisi",
-		AuthorEmail:   "lisi@code-traefik.local",
+		AuthorEmail:   "lisi@code-contract.local",
 		ContentText:   latestContent,
 		ContentSHA256: latestSHA,
 		LineCount:     latestLines,
@@ -752,7 +752,7 @@ func seedMRCheckRunsAndNotifications(
 		HeadCommitSHA:         seedCommitV2SHA,
 		TargetHeadSHA:         seedCommitV1SHA,
 		AuthorUsername:        "wangwu",
-		AuthorEmail:           "wangwu@code-traefik.local",
+		AuthorEmail:           "wangwu@code-contract.local",
 		Status:                models.MRCheckStatusPassed,
 		CompilePassed:         true,
 		LintErrorCount:        0,
@@ -784,7 +784,7 @@ func seedMRCheckRunsAndNotifications(
 		HeadCommitSHA:         "b4d2e89c1f0a3b7d6e5c4b3a2f1e0d9c8b7a6f5e",
 		TargetHeadSHA:         seedCommitV1SHA,
 		AuthorUsername:        "zhaoliu",
-		AuthorEmail:           "zhaoliu@code-traefik.local",
+		AuthorEmail:           "zhaoliu@code-contract.local",
 		Status:                models.MRCheckStatusFailed,
 		CompilePassed:         true,
 		LintErrorCount:        0,
@@ -828,7 +828,7 @@ func seedMRCheckRunsAndNotifications(
 		HeadCommitSHA:         "c5e3f90d2a1b4c8e7f6a5b4c3d2e1f0a9b8c7d6e",
 		TargetHeadSHA:         seedCommitV2SHA,
 		AuthorUsername:        "lisi",
-		AuthorEmail:           "lisi@code-traefik.local",
+		AuthorEmail:           "lisi@code-contract.local",
 		Status:                models.MRCheckStatusOverridden,
 		CompilePassed:         true,
 		LintErrorCount:        0,
@@ -992,7 +992,7 @@ func countTextLines(content string) int {
 const legacyPaymentProtoV1 = `syntax = "proto3";
 
 package demo.payment;
-option go_package = "code-traefik/demo/pkg/proto/paymentpb";
+option go_package = "code-contract/demo/pkg/proto/paymentpb";
 
 // 统一支付通道接口契约 v1.0 (无 common.proto 强类型枚举，无结构化文档标签)
 service PaymentService {
@@ -1037,7 +1037,7 @@ message RefundPayRsp {
 const legacyOrderProtoV1 = `syntax = "proto3";
 
 package demo.order;
-option go_package = "code-traefik/demo/pkg/proto/orderpb";
+option go_package = "code-contract/demo/pkg/proto/orderpb";
 
 // 订单综合服务契约 v1.0 (尚无 @owner / @error_code 与跨包状态枚举引用)
 service OrderService {

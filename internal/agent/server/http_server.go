@@ -19,10 +19,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"code-traefik/pkg/agentproto"
-	"code-traefik/pkg/crosrpc"
-	"code-traefik/pkg/ebpf"
-	"code-traefik/pkg/replay"
+	"code-contract/pkg/agentproto"
+	"code-contract/pkg/crosrpc"
+	"code-contract/pkg/ebpf"
+	"code-contract/pkg/replay"
 
 	"github.com/gorilla/websocket"
 )
@@ -40,7 +40,7 @@ type AgentServerConfig struct {
 	CapabilityChecker     ebpf.CapabilityChecker
 }
 
-// AgentServer code-traefik-agent HTTP REST + WebSocket 二进制数据面服务端
+// AgentServer code-contract-agent HTTP REST + WebSocket 二进制数据面服务端
 type AgentServer struct {
 	mu              sync.Mutex
 	cfg             AgentServerConfig

@@ -3,7 +3,7 @@ package decoder
 import (
 	"testing"
 
-	"code-traefik/models"
+	"code-contract/models"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/descriptorpb"
 )

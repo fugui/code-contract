@@ -3,7 +3,7 @@ package crosframe
 import (
 	"encoding/binary"
 
-	"code-traefik/pkg/crosrpc"
+	"code-contract/pkg/crosrpc"
 )
 
 // BuildReqPacket 拼装符合 DOPHI CROS RPC 规范的完整请求报文帧

@@ -12,9 +12,9 @@ import (
 
 	commonAudit "code-common/backend/audit"
 	commonModels "code-common/backend/models"
-	"code-traefik/config"
-	"code-traefik/internal/server/decoder"
-	"code-traefik/models"
+	"code-contract/config"
+	"code-contract/internal/server/decoder"
+	"code-contract/models"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/descriptorpb"
 )

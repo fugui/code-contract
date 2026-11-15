@@ -3,8 +3,8 @@
 - **文档编号**：`01-cros-rpc-demo-app-proposal.md`
 - **文档版本**：v1.0.0
 - **编制日期**：2026-10-29
-- **协议依据**：[`code-traefik/docs/07-references/01-cros-rpc-protocol-spec.md`](../../docs/07-references/01-cros-rpc-protocol-spec.md)
-- **归属模块**：`code-traefik/demo` 业务仿真与全链路测试靶场
+- **协议依据**：[`code-contract/docs/07-references/01-cros-rpc-protocol-spec.md`](../../docs/07-references/01-cros-rpc-protocol-spec.md)
+- **归属模块**：`code-contract/demo` 业务仿真与全链路测试靶场
 - **状态**：方案建议书 (Proposal - Ready for Review)
 
 ---
@@ -12,9 +12,9 @@
 ## 1. 方案背景与目标 (Background & Objectives)
 
 ### 1.1 背景
-`code-traefik` 是专为 DOPHI 平台 **CROS RPC** 协议（24 字节公共头 `RPC_COMM_HEAD_S` + 请求/应答/管理会话头 + 扩展头 + Protobuf Payload）量身打造的业务流量监控、架构拓扑还原、录制采集与离线 Mock 重放平台。
+`code-contract` 是专为 DOPHI 平台 **CROS RPC** 协议（24 字节公共头 `RPC_COMM_HEAD_S` + 请求/应答/管理会话头 + 扩展头 + Protobuf Payload）量身打造的业务流量监控、架构拓扑还原、录制采集与离线 Mock 重放平台。
 
-为了全方位验证 `code-traefik` 的以下核心能力：
+为了全方位验证 `code-contract` 的以下核心能力：
 1. **eBPF 旁路无侵入入站/出站双向流量采集**（单 Agent 纳管目标进程，精准区分入站服务端口与出站重定向端口）；
 2. **三级架构元素（子系统 → 功能组 → 功能模块）与契约拓扑一致性自动推导**；
 3. **离线 Mock 重放与 `ullSNO` 自愈**（在下游依赖进程完全离线的情况下，SUT 进程依然能基于历史录制正常运行）；
@@ -37,7 +37,7 @@
 │ 2. 被测核心服务 (System Under Test, 简称 SUT)                                │
 │    - 监听 Client 请求，负责业务编排、事务状态机流转与跨下游聚合                      │
 │    - 处理过程中，作为 RPC Client 分别调用两个下游 Backend 进程                     │
-│    - 【关键】：这是 code-traefik 监控、录制与离线 Mock 重放的唯一核心目标进程！         │
+│    - 【关键】：这是 code-contract 监控、录制与离线 Mock 重放的唯一核心目标进程！         │
 └───────────────────────┬─────────────────────────────┬───────────────────────┘
                         │ CROS RPC (:9002)            │ CROS RPC (:9003)
                         ▼                             ▼
@@ -71,7 +71,7 @@
    - Backend 1 (`account-service`) 专注用户资金与积分账本，提供资产维度的「读（查询）」与「写（扣划/返还）」；
    - Backend 2 (`inventory-service`) 专注商品与仓储库存，提供履约维度的「读（查询）」与「两阶段写（锁定预占/确认扣除/超时释放）」。
 2. **经典的分布式事务与补偿场景**：
-   - 下单流程天然需要协调两个微服务：SUT 先向 Backend 2 预占库存（保证商品可售），再向 Backend 1 扣除金额（保证买家可付）。如果买家余额不足，SUT 必须调用 Backend 2 释放库存进行事务补偿。这为 `code-traefik` 的多步骤录制、Mock 编排以及 `ullSNO` 自愈提供了最极致的真实用例！
+   - 下单流程天然需要协调两个微服务：SUT 先向 Backend 2 预占库存（保证商品可售），再向 Backend 1 扣除金额（保证买家可付）。如果买家余额不足，SUT 必须调用 Backend 2 释放库存进行事务补偿。这为 `code-contract` 的多步骤录制、Mock 编排以及 `ullSNO` 自愈提供了最极致的真实用例！
 3. **极佳的可视化表现力**：
    - 用户在 Client TUI 上可以直观查看：商品详情、库存数字、钱包余额的每一次增减变动，测试状态一目了然。
 
@@ -135,7 +135,7 @@ flowchart TB
 | **API 操作名** | 遵循契约 A-07：`ascOperation` 与 Method 名字符串直接相等 | 如 `CreateOrder`、`GetOrderDetail`、`DeductBalance`、`LockStock` 等 |
 | **调用链与扩展头** | 扩展头携带 Trace 信息 | 启用 `RPC_EXTEND_HEAD_TYPE_TRACE_KEY`，SUT 将 Client 请求中的 `TraceID` 提取并透传给 Backend 1 和 Backend 2，确保链路还原 |
 | **Payload 格式** | Protobuf 序列化字节流 | 使用标准 Protocol Buffers v3 编译器生成 Go 结构体 |
-| **三级架构映射** | 映射为 `code-traefik` 维护的 SSOT | • 子系统：`MallSubsystem`<br/>• 功能组：`OrderGroup`, `AssetGroup`, `FulfillmentGroup`<br/>• 功能模块：`order-core`, `account-core`, `inventory-core` |
+| **三级架构映射** | 映射为 `code-contract` 维护的 SSOT | • 子系统：`MallSubsystem`<br/>• 功能组：`OrderGroup`, `AssetGroup`, `FulfillmentGroup`<br/>• 功能模块：`order-core`, `account-core`, `inventory-core` |
 
 ---
 
@@ -480,7 +480,7 @@ sequenceDiagram
 
 ### 场景 4：余额不足触发补偿事务回滚 (Compensating Rollback Flow)
 - **触发**：Client TUI 按 `[4]` 使用穷困用户 Bob (余额 ￥50.00) 购买 1 件机械键盘 (￥299.00)
-- **特点**：预占库存成功，但扣款失败；SUT 必须发起 `ReleaseStock` 释放库存，完成最终一致性回滚。这是检验 `code-traefik` 录制多分支流量与离线 Mock 的黄金用例！
+- **特点**：预占库存成功，但扣款失败；SUT 必须发起 `ReleaseStock` 释放库存，完成最终一致性回滚。这是检验 `code-contract` 录制多分支流量与离线 Mock 的黄金用例！
 
 ```mermaid
 sequenceDiagram
@@ -575,13 +575,13 @@ SUT 在测试体系中处于承上启下的**枢纽地位**，其架构需要兼
 ### 7.2 全链路 Trace 透传与可观测性
 - SUT 接收 Client 的请求时，读取扩展头中的 `RPC_DOTR_TRACE_HEAD_S`（或会话头中的 `aucTraceBuff`）；
 - 若 Client 携带了 `TraceID`，SUT 往下游发送 RPC 请求时，将该 `TraceID` 原样写入出站扩展头，并将 `FatherSpanID` 设置为当前 SUT 的 `SpanID`；
-- 使得 `code-traefik` 的流量监控能够 100% 还原跨进程三级拓扑链路：`Client -> SUT -> Backend 1 / Backend 2`！
+- 使得 `code-contract` 的流量监控能够 100% 还原跨进程三级拓扑链路：`Client -> SUT -> Backend 1 / Backend 2`！
 
 ---
 
-## 8. 与 `code-traefik` 的联动与验证方案 (Testing & Verification with code-traefik)
+## 8. 与 `code-contract` 的联动与验证方案 (Testing & Verification with code-contract)
 
-该 Demo App 将作为 `code-traefik` 最重要的集成测试与演示场景，支撑四大核心验证流程：
+该 Demo App 将作为 `code-contract` 最重要的集成测试与演示场景，支撑四大核心验证流程：
 
 ```mermaid
 flowchart LR
@@ -590,14 +590,14 @@ flowchart LR
         C1["Client TUI"] -- "Req :9001" --> SUT1["SUT :9001"]
         SUT1 -- "Req :9002" --> B1["Backend 1 :9002"]
         SUT1 -- "Req :9003" --> B2["Backend 2 :9003"]
-        Agent1["code-traefik-agent<br/>(eBPF 旁路挂载 SUT PID)"]
+        Agent1["code-contract-agent<br/>(eBPF 旁路挂载 SUT PID)"]
         SUT1 -. "抓取 Ingress & Egress 原始帧" .-> Agent1
-        Agent1 --> DB[("traefik_traffic_records<br/>(raw_packet + jsonb)")]
+        Agent1 --> DB[("contract_traffic_records<br/>(raw_packet + jsonb)")]
     end
 
     subgraph ReplayMode["阶段二：离线 Mock 重放模式 (Offline Replay)"]
         direction TB
-        Ctrl["code-traefik-server 控制面"] -- "重放指令" --> Agent2["code-traefik-agent"]
+        Ctrl["code-contract-server 控制面"] -- "重放指令" --> Agent2["code-contract-agent"]
         Agent2 -- "1. 注入入站请求" --> SUT2["SUT :9001<br/>(业务逻辑不变)"]
         SUT2 -- "2. 出站调用" --> AgentProxy["Agent 出站拦截代理"]
         B1_Down["Backend 1<br/>(已关闭 ❌)"]
@@ -610,20 +610,20 @@ flowchart LR
 
 ### 8.1 验证场景 1：无侵入旁路录制与架构拓扑自动还原
 1. 启动 4 个进程；
-2. 在 `code-traefik` Web 控制台将 SUT 进程注册为目标；
+2. 在 `code-contract` Web 控制台将 SUT 进程注册为目标；
 3. 用户在 Client TUI 按 `[2]` 触发一次正向下单；
-4. `code-traefik-agent` 通过内核 eBPF 探针自动捕获 SUT 的入站 `:9001` 报文以及出站 `:9002`, `:9003` 报文；
+4. `code-contract-agent` 通过内核 eBPF 探针自动捕获 SUT 的入站 `:9001` 报文以及出站 `:9002`, `:9003` 报文；
 5. 主控自动解析 Protobuf，并在前端拓扑画布上画出：
    `demo.order.OrderService` -> 调用 -> `demo.account.AccountService` & `demo.inventory.InventoryService`。
 
 ### 8.2 验证场景 2：三级架构元素 SSOT 一致性核对
-1. 架构师在 `code-traefik` 声明模块依赖规则：`order-core` 允许依赖 `account-core` 和 `inventory-core`；
+1. 架构师在 `code-contract` 声明模块依赖规则：`order-core` 允许依赖 `account-core` 和 `inventory-core`；
 2. 架构校验引擎以实测报文的 `(ascServiceName, ascOperation)` 与 `order-core` 进程端口比对；
 3. 验证结果状态为 **MATCH**（合规，无非法或未纳管调用）。
 
 ### 8.3 验证场景 3：下游停机下的离线 Mock 重放与 `ullSNO` 自愈
 1. **彻底关闭** 进程 3 (`backend-account`) 和进程 4 (`backend-inventory`)；
-2. 在 `code-traefik` 上选中之前录制的 `ORD-001` 会话，启动单次或批量重放；
+2. 在 `code-contract` 上选中之前录制的 `ORD-001` 会话，启动单次或批量重放；
 3. Agent 拦截 SUT 发往 `:9002` 和 `:9003` 的 TCP 出站连接；
 4. Agent 基于 `(ascServiceName, ascOperation, PayloadHash)` 命中录制池中的应答包，将新产生的 `ullSNO` 自动覆写回应答帧的偏移 8~16 字节，回传给 SUT；
 5. SUT 在下游全部断网的情况下，**成功完成业务处理**并向重放端返回完全相同的 Order 成功响应！
@@ -631,7 +631,7 @@ flowchart LR
 ### 8.4 验证场景 4：代码变更与双层回归 Diff 报告
 1. 开发者修改 SUT 代码：故意将购买单价打 8 折（`amount = amount * 0.8`），导致发送给 Account 的扣款金额变动；
 2. 再次执行离线重放；
-3. `code-traefik` 报告精准检测到：
+3. `code-contract` 报告精准检测到：
    - 出站层：对 Account 发起的 `DeductBalance` 请求 Payload Hash 未精确匹配，回退至序列 Mock 或报错；
    - 最终应答层：`total_amount_cents` 发生字段级 Diff（预期 `29900` vs 实际 `23920`），直观标红展示！
 
@@ -639,10 +639,10 @@ flowchart LR
 
 ## 9. Demo 工程目录规划与实现清单 (Directory Layout)
 
-建议在 `code-traefik/demo` 目录下组织如下工程结构：
+建议在 `code-contract/demo` 目录下组织如下工程结构：
 
 ```text
-code-traefik/demo/
+code-contract/demo/
 ├── docs/                               # 文档目录
 │   └── 01-cros-rpc-demo-app-proposal.md # 本方案建议书
 ├── proto/                              # Protocol Buffers IDL 定义
@@ -654,7 +654,7 @@ code-traefik/demo/
 │   │   ├── orderpb/
 │   │   ├── accountpb/
 │   │   └── inventorypb/
-│   ├── crosframe/                      # 基于 code-traefik/pkg/crosrpc 封装的高级客户端与服务端脚手架
+│   ├── crosframe/                      # 基于 code-contract/pkg/crosrpc 封装的高级客户端与服务端脚手架
 │   │   ├── client.go                   # 通用 CROS RPC TCP 客户端 (带连接池、SNO自增、Trace透传)
 │   │   ├── server.go                   # 通用 CROS RPC TCP 服务端 (带 Framer、路由分发)
 │   │   └── packet_builder.go           # 便捷拼装 Req/Rsp 公共头与会话头辅助类
@@ -689,18 +689,18 @@ code-traefik/demo/
 | **M1: 契约与协议脚手架** | 1. 编写 3 份 `.proto` 文件并生成 Go pb 代码<br/>2. 封装 `crosframe.Client` 与 `crosframe.Server` | 1 天 | 单元测试通过：能够通过 CROS RPC TCP 正常收发 Echo 请求 |
 | **M2: 被测核心与双下游实现** | 1. 实现 `backend-account` 与 `backend-inventory`<br/>2. 实现 `sut-order` 编排、两阶段锁扣与补偿逻辑 | 1.5 天 | 自动化联调测试：Go Test 驱动 SUT 完成场景 1~4 全链路调用 |
 | **M3: Client TUI 终端开发** | 1. 实现 Bubbletea 终端三栏交互界面<br/>2. 实现快捷键触发、参数自定义表单与 CROS RPC 实时报文解剖视窗 | 1 天 | 人机交互验证：在终端流畅通过快捷键完成交互并实时查看 SNO/TraceID/JSON |
-| **M4: code-traefik 联调验收** | 1. 编写一键启动脚本并录入 `code-traefik` 架构元素<br/>2. 实施录制、架构拓扑还原、离线 Mock 重放与回归 Diff 全流程验证 | 1 天 | 在 code-traefik 平台上完成全流程黑盒演示，重放自愈成功率 100% |
+| **M4: code-contract 联调验收** | 1. 编写一键启动脚本并录入 `code-contract` 架构元素<br/>2. 实施录制、架构拓扑还原、离线 Mock 重放与回归 Diff 全流程验证 | 1 天 | 在 code-contract 平台上完成全流程黑盒演示，重放自愈成功率 100% |
 
 ---
 
 ## 11. 总结与建议行动项 (Conclusion & Next Steps)
 
-本提案以**分布式电商交易协同中心（订单 + 账户 + 库存）**为核心业务载体，严格遵循 `code-traefik/docs/07-references/01-cros-rpc-protocol-spec.md` 协议规范，构建由 **Client TUI、SUT 订单中枢、Backend 账户服务、Backend 库存服务** 组成的 4 进程仿真集群。
+本提案以**分布式电商交易协同中心（订单 + 账户 + 库存）**为核心业务载体，严格遵循 `code-contract/docs/07-references/01-cros-rpc-protocol-spec.md` 协议规范，构建由 **Client TUI、SUT 订单中枢、Backend 账户服务、Backend 库存服务** 组成的 4 进程仿真集群。
 
 该方案具有如下不可替代的优势：
 1. **概念直观、无理解成本**：开发与测试人员无需耗费精力理解复杂冷门的业务规则；
 2. **场景丰富、天然契合分布式测试**：涵盖单查、聚合查、两阶段事务、失败熔断、逆向补偿；
-3. **完美对齐 code-traefik 核心能力**：完美支持 eBPF 旁路录制、架构一致性检验、全链路 Trace 还原与离线 Mock 重放验证。
+3. **完美对齐 code-contract 核心能力**：完美支持 eBPF 旁路录制、架构一致性检验、全链路 Trace 还原与离线 Mock 重放验证。
 
 ### 建议后续行动项：
 - [ ] 审阅并确认本建议书（包括业务领域、端口分配 `:9001/:9002/:9003` 及 `.proto` 接口定义）；

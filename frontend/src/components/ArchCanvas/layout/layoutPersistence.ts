@@ -10,7 +10,7 @@ import {
   type TopologyStatusFilter,
 } from '../../../types/topology_graph';
 
-export const DRAFT_KEY_PREFIX = 'traefik_topo_draft_v2_';
+export const DRAFT_KEY_PREFIX = 'contract_topo_draft_v2_';
 export const DRAFT_DEBOUNCE_MS = 400;
 
 export interface TopologyLocalDraft {

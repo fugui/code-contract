@@ -7,7 +7,7 @@ import (
 	"strings"
 	"unicode"
 
-	"code-traefik/models"
+	"code-contract/models"
 
 	"gorm.io/datatypes"
 )

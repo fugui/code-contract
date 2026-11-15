@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"code-traefik/models"
+	"code-contract/models"
 	"gorm.io/gorm"
 )
 

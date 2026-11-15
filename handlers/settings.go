@@ -17,9 +17,9 @@ import (
 	commonAudit "code-common/backend/audit"
 	commonAuth "code-common/backend/auth"
 	commonModels "code-common/backend/models"
-	"code-traefik/config"
-	"code-traefik/internal/server/security"
-	"code-traefik/models"
+	"code-contract/config"
+	"code-contract/internal/server/security"
+	"code-contract/models"
 
 	"github.com/gin-gonic/gin"
 )
@@ -63,8 +63,8 @@ func isSensitiveSettingKeyForAudit(key string) bool {
 	return isSecretWrite || strings.Contains(k, "password") || strings.Contains(k, "api_key") || strings.Contains(k, "token")
 }
 
-func sanitizeSettingsForView(allSettings []models.TraefikSetting) ([]models.TraefikSetting, settingSecretFlags) {
-	visible := make([]models.TraefikSetting, 0, len(allSettings))
+func sanitizeSettingsForView(allSettings []models.ModuleSetting) ([]models.ModuleSetting, settingSecretFlags) {
+	visible := make([]models.ModuleSetting, 0, len(allSettings))
 	var flags settingSecretFlags
 	for _, s := range allSettings {
 		configured := strings.TrimSpace(s.SettingVal) != ""
@@ -90,8 +90,8 @@ func sanitizeSettingsForView(allSettings []models.TraefikSetting) ([]models.Trae
 	return visible, flags
 }
 
-func redactSettingsForAudit(allSettings []models.TraefikSetting) []models.TraefikSetting {
-	masked := make([]models.TraefikSetting, 0, len(allSettings))
+func redactSettingsForAudit(allSettings []models.ModuleSetting) []models.ModuleSetting {
+	masked := make([]models.ModuleSetting, 0, len(allSettings))
 	for _, s := range allSettings {
 		item := s
 		if isSensitiveSettingKeyForAudit(s.SettingKey) && strings.TrimSpace(s.SettingVal) != "" {
@@ -106,7 +106,7 @@ var validSettingKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{1,63}$`)
 
 // GetModuleSettings 读取模块级参数列表 GET /api/admin/settings（仅模块管理员/超级管理员可访问）
 func GetModuleSettings(c *gin.Context) {
-	var allSettings []models.TraefikSetting
+	var allSettings []models.ModuleSetting
 	if err := models.DB.Order("setting_key ASC").Find(&allSettings).Error; err != nil {
 		log.Printf("[%s] 读取模块配置失败: %v", config.ServiceName, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取模块配置失败"})
@@ -150,7 +150,7 @@ func UpdateModuleSettings(c *gin.Context) {
 		return
 	}
 
-	var beforeList []models.TraefikSetting
+	var beforeList []models.ModuleSetting
 	if err := models.DB.Order("setting_key ASC").Find(&beforeList).Error; err != nil {
 		log.Printf("[%s] 读取变更前配置失败: %v", config.ServiceName, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新配置失败"})
@@ -221,7 +221,7 @@ func UpdateModuleSettings(c *gin.Context) {
 			cipherText, encErr := security.EncryptSecret(val)
 			if encErr != nil {
 				log.Printf("[%s] 加密敏感配置 [%s] 失败: %v", config.ServiceName, key, encErr)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "敏感凭据加密失败，请检查 TRAEFIK_CRYPTO_KEY 环境变量配置"})
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "敏感凭据加密失败，请检查 CONTRACT_CRYPTO_KEY 环境变量配置"})
 				return
 			}
 			targetKey = encKey
@@ -236,10 +236,10 @@ func UpdateModuleSettings(c *gin.Context) {
 	}
 
 	for _, entry := range prepared {
-		var setting models.TraefikSetting
+		var setting models.ModuleSetting
 		err := models.DB.Where("setting_key = ?", entry.key).First(&setting).Error
 		if err != nil {
-			setting = models.TraefikSetting{
+			setting = models.ModuleSetting{
 				SettingKey:  entry.key,
 				SettingVal:  entry.val,
 				Description: entry.description,
@@ -264,7 +264,7 @@ func UpdateModuleSettings(c *gin.Context) {
 		}
 	}
 
-	var afterList []models.TraefikSetting
+	var afterList []models.ModuleSetting
 	if err := models.DB.Order("setting_key ASC").Find(&afterList).Error; err != nil {
 		log.Printf("[%s] 读取变更后配置失败: %v", config.ServiceName, err)
 	}
@@ -326,10 +326,10 @@ func RotateCIToken(c *gin.Context) {
 		desc = strings.TrimSpace(req.Description)
 	}
 
-	var setting models.TraefikSetting
+	var setting models.ModuleSetting
 	err := models.DB.Where("setting_key = ?", SettingKeyCIGateTokenSHA256).First(&setting).Error
 	if err != nil {
-		setting = models.TraefikSetting{
+		setting = models.ModuleSetting{
 			SettingKey:  SettingKeyCIGateTokenSHA256,
 			SettingVal:  sha256Hex,
 			Description: desc,
@@ -380,7 +380,7 @@ func RevokeCIToken(c *gin.Context) {
 		operator = uc.Username
 	}
 
-	if delErr := models.DB.Where("setting_key = ?", SettingKeyCIGateTokenSHA256).Delete(&models.TraefikSetting{}).Error; delErr != nil {
+	if delErr := models.DB.Where("setting_key = ?", SettingKeyCIGateTokenSHA256).Delete(&models.ModuleSetting{}).Error; delErr != nil {
 		log.Printf("[%s] 吊销 CI 门禁 Token 失败: %v", config.ServiceName, delErr)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "吊销 CI 门禁凭据失败"})
 		return

@@ -3,6 +3,7 @@
 - **文档编号**：`01-microfrontend-and-table-prefix-isolation.md`
 - **日期**：2026-10-27
 - **状态**：已采纳 (Accepted)
+- **演进提示**：`ModuleKey`（`traefik` ➔ `contract`）、`TablePrefix`（`traefik_` ➔ `contract_`）与 `base` 路由已由 [`ADR-20`](./20-module-rebranding-code-traefik-to-code-contract-adr.md) 正式更名演进，详见 `ADR-20`。
 
 ---
 

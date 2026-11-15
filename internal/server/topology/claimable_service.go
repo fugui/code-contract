@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	"code-traefik/models"
+	"code-contract/models"
 
 	"gorm.io/gorm"
 )

@@ -12,9 +12,9 @@ import (
 
 	commonAuth "code-common/backend/auth"
 	commonModels "code-common/backend/models"
-	"code-traefik/internal/server/callgraph"
-	"code-traefik/models"
-	"code-traefik/pkg/agentproto"
+	"code-contract/internal/server/callgraph"
+	"code-contract/models"
+	"code-contract/pkg/agentproto"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/datatypes"
@@ -88,7 +88,7 @@ func ListGoldenSuites(c *gin.Context) {
 		var recentTasks []TaskSummary
 		models.DB.WithContext(c.Request.Context()).
 			Raw(`SELECT DISTINCT ON (golden_suite_id) golden_suite_id, result_status, created_at 
-			     FROM traefik_replay_tasks 
+			     FROM contract_replay_tasks 
 			     WHERE golden_suite_id IN ? 
 			     ORDER BY golden_suite_id, id DESC`, suiteIDs).
 			Scan(&recentTasks)

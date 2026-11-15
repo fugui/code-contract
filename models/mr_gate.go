@@ -3,7 +3,7 @@ package models
 import (
 	"time"
 
-	"code-traefik/config"
+	"code-contract/config"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
@@ -20,24 +20,24 @@ const (
 	MRCheckStatusOverridden = "OVERRIDDEN"
 )
 
-// 29. MRCheckRun Git Merge Request / Pull Request 质量门禁检查流水表 (traefik_mr_check_runs)
+// 29. MRCheckRun Git Merge Request / Pull Request 质量门禁检查流水表 (contract_mr_check_runs)
 type MRCheckRun struct {
 	ID                    uint64          `gorm:"primaryKey;autoIncrement" json:"id"`
-	GitRepoID             uint64          `gorm:"not null;index:idx_traefik_mr_repo_iid,priority:1" json:"git_repo_id"`
+	GitRepoID             uint64          `gorm:"not null;index:idx_contract_mr_repo_iid,priority:1" json:"git_repo_id"`
 	GitRepo               *GitRepo        `gorm:"foreignKey:GitRepoID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE" json:"git_repo,omitempty"`
-	BundleID              *uint64         `gorm:"index:idx_traefik_mr_bundle" json:"bundle_id,omitempty"`
+	BundleID              *uint64         `gorm:"index:idx_contract_mr_bundle" json:"bundle_id,omitempty"`
 	Bundle                *GitProtoBundle `gorm:"foreignKey:BundleID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL" json:"bundle,omitempty"`
-	MRIID                 int             `gorm:"column:mr_iid;not null;index:idx_traefik_mr_repo_iid,priority:2" json:"mr_iid"`
+	MRIID                 int             `gorm:"column:mr_iid;not null;index:idx_contract_mr_repo_iid,priority:2" json:"mr_iid"`
 	EventPhase            string          `gorm:"size:16;not null;default:'MR_GATE'" json:"event_phase"` // MR_GATE | MAIN_MERGE
 	MRTitle               string          `gorm:"column:mr_title;size:255;not null;default:''" json:"mr_title"`
 	MRURL                 string          `gorm:"column:mr_url;size:512;not null;default:''" json:"mr_url"`
 	SourceBranch          string          `gorm:"size:128;not null" json:"source_branch"`
 	TargetBranch          string          `gorm:"size:128;not null" json:"target_branch"`
-	HeadCommitSHA         string          `gorm:"column:head_commit_sha;size:64;not null;index:idx_traefik_mr_head_sha" json:"head_commit_sha"`
+	HeadCommitSHA         string          `gorm:"column:head_commit_sha;size:64;not null;index:idx_contract_mr_head_sha" json:"head_commit_sha"`
 	TargetHeadSHA         string          `gorm:"column:target_head_sha;size:64;not null;default:''" json:"target_head_sha"`
 	AuthorUsername        string          `gorm:"size:64;not null;default:''" json:"author_username"`
 	AuthorEmail           string          `gorm:"size:128;not null;default:''" json:"author_email"`
-	Status                string          `gorm:"size:24;not null;default:'PENDING';index:idx_traefik_mr_status" json:"status"` // PENDING | RUNNING | PASSED | WARN | FAILED | OVERRIDDEN
+	Status                string          `gorm:"size:24;not null;default:'PENDING';index:idx_contract_mr_status" json:"status"` // PENDING | RUNNING | PASSED | WARN | FAILED | OVERRIDDEN
 	CompilePassed         bool            `gorm:"not null;default:false" json:"compile_passed"`
 	LintErrorCount        int             `gorm:"not null;default:0" json:"lint_error_count"`
 	LintWarningCount      int             `gorm:"not null;default:0" json:"lint_warning_count"`
@@ -48,7 +48,7 @@ type MRCheckRun struct {
 	CompileErrorText      string          `gorm:"type:text;not null;default:''" json:"compile_error_text"`
 	BreakingDetailsJSON   datatypes.JSON  `gorm:"column:breaking_details;type:jsonb;not null;default:'[]'" json:"breaking_details"`
 	AffectedModulesJSON   datatypes.JSON  `gorm:"column:affected_modules;type:jsonb;not null;default:'[]'" json:"affected_modules"`
-	CheckReportID         *uint64         `gorm:"index:idx_traefik_mr_report" json:"check_report_id,omitempty"`
+	CheckReportID         *uint64         `gorm:"index:idx_contract_mr_report" json:"check_report_id,omitempty"`
 	CheckReport           *CheckReport    `gorm:"foreignKey:CheckReportID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL" json:"check_report,omitempty"`
 	RemoteCommentID       string          `gorm:"size:64;not null;default:''" json:"remote_comment_id"`
 	AttemptCount          int             `gorm:"not null;default:1" json:"attempt_count"`
@@ -70,49 +70,49 @@ func ensureM26MRGateAndNotificationConstraints(db *gorm.DB) error {
 		return nil
 	}
 	stmts := []string{
-		`CREATE UNIQUE INDEX IF NOT EXISTS uk_traefik_mr_dedup
-			ON traefik_mr_check_runs (git_repo_id, COALESCE(bundle_id, 0), event_phase, head_commit_sha, target_head_sha)`,
-		`CREATE INDEX IF NOT EXISTS idx_traefik_mr_repo_iid
-			ON traefik_mr_check_runs (git_repo_id, mr_iid)`,
-		`CREATE INDEX IF NOT EXISTS idx_traefik_mr_status
-			ON traefik_mr_check_runs (status, created_at DESC)`,
-		`CREATE INDEX IF NOT EXISTS idx_traefik_notif_user_read
-			ON traefik_notifications (recipient_user_id, is_read, created_at DESC)`,
-		`CREATE INDEX IF NOT EXISTS idx_traefik_notif_category
-			ON traefik_notifications (category, created_at DESC)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS uk_contract_mr_dedup
+			ON contract_mr_check_runs (git_repo_id, COALESCE(bundle_id, 0), event_phase, head_commit_sha, target_head_sha)`,
+		`CREATE INDEX IF NOT EXISTS idx_contract_mr_repo_iid
+			ON contract_mr_check_runs (git_repo_id, mr_iid)`,
+		`CREATE INDEX IF NOT EXISTS idx_contract_mr_status
+			ON contract_mr_check_runs (status, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_contract_notif_user_read
+			ON contract_notifications (recipient_user_id, is_read, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_contract_notif_category
+			ON contract_notifications (category, created_at DESC)`,
 		`DO $$ BEGIN
-			IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_traefik_mr_phase') THEN
-				ALTER TABLE traefik_mr_check_runs ADD CONSTRAINT chk_traefik_mr_phase
+			IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_mr_phase') THEN
+				ALTER TABLE contract_mr_check_runs ADD CONSTRAINT chk_contract_mr_phase
 					CHECK (event_phase IN ('MR_GATE', 'MAIN_MERGE'));
 			END IF;
 		END $$;`,
 		`DO $$ BEGIN
-			IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_traefik_mr_status') THEN
-				ALTER TABLE traefik_mr_check_runs ADD CONSTRAINT chk_traefik_mr_status
+			IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_mr_status') THEN
+				ALTER TABLE contract_mr_check_runs ADD CONSTRAINT chk_contract_mr_status
 					CHECK (status IN ('PENDING', 'RUNNING', 'PASSED', 'WARN', 'FAILED', 'OVERRIDDEN'));
 			END IF;
 		END $$;`,
 		`DO $$ BEGIN
-			IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_traefik_check_reports_mr_run') THEN
-				ALTER TABLE traefik_check_reports ADD CONSTRAINT fk_traefik_check_reports_mr_run
-					FOREIGN KEY (mr_check_run_id) REFERENCES traefik_mr_check_runs(id) ON DELETE SET NULL;
+			IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_contract_check_reports_mr_run') THEN
+				ALTER TABLE contract_check_reports ADD CONSTRAINT fk_contract_check_reports_mr_run
+					FOREIGN KEY (mr_check_run_id) REFERENCES contract_mr_check_runs(id) ON DELETE SET NULL;
 			END IF;
 		END $$;`,
 		`DO $$ BEGIN
-			IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_traefik_notif_sev') THEN
-				ALTER TABLE traefik_notifications ADD CONSTRAINT chk_traefik_notif_sev
+			IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_notif_sev') THEN
+				ALTER TABLE contract_notifications ADD CONSTRAINT chk_contract_notif_sev
 					CHECK (severity IN ('INFO', 'WARNING', 'CRITICAL'));
 			END IF;
 		END $$;`,
 		`DO $$ BEGIN
-			IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_traefik_notif_email_status') THEN
-				ALTER TABLE traefik_notifications ADD CONSTRAINT chk_traefik_notif_email_status
+			IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_notif_email_status') THEN
+				ALTER TABLE contract_notifications ADD CONSTRAINT chk_contract_notif_email_status
 					CHECK (email_status IN ('SKIPPED', 'PENDING', 'SENT', 'FAILED'));
 			END IF;
 		END $$;`,
 		`DO $$ BEGIN
-			IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_traefik_notif_ext_chan') THEN
-				ALTER TABLE traefik_notifications ADD CONSTRAINT chk_traefik_notif_ext_chan
+			IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_notif_ext_chan') THEN
+				ALTER TABLE contract_notifications ADD CONSTRAINT chk_contract_notif_ext_chan
 					CHECK (external_channel IN ('NONE', 'CODE_NOTIFIER', 'SMTP'));
 			END IF;
 		END $$;`,

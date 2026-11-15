@@ -6,9 +6,9 @@ import (
 	"sort"
 	"strings"
 
-	"code-traefik/internal/server/decoder"
-	"code-traefik/internal/server/protodoc"
-	"code-traefik/models"
+	"code-contract/internal/server/decoder"
+	"code-contract/internal/server/protodoc"
+	"code-contract/models"
 
 	"gorm.io/gorm"
 )
@@ -181,9 +181,9 @@ func BuildMRVirtualTree(
 		ContentText string
 	}
 	var rows []baselineRow
-	if err := db.Table("traefik_proto_files AS f").
+	if err := db.Table("contract_proto_files AS f").
 		Select("f.file_path AS file_path, v.content_text AS content_text").
-		Joins("JOIN traefik_proto_file_versions AS v ON v.id = f.latest_version_id").
+		Joins("JOIN contract_proto_file_versions AS v ON v.id = f.latest_version_id").
 		Where("f.bundle_id = ? AND f.is_deleted = false", bundle.ID).
 		Order("f.file_path ASC").
 		Find(&rows).Error; err != nil {
@@ -197,7 +197,7 @@ func BuildMRVirtualTree(
 		virtualTree[cleaned] = r.ContentText
 	}
 
-	// 若 traefik_proto_files 尚未落库但 Bundle 已关联既有 ProtoSchema（或同名活跃 Schema），从描述符重建基线文件兜底
+	// 若 contract_proto_files 尚未落库但 Bundle 已关联既有 ProtoSchema（或同名活跃 Schema），从描述符重建基线文件兜底
 	if len(virtualTree) == 0 {
 		var baseSchema models.ProtoSchema
 		var err error

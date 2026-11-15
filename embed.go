@@ -1,4 +1,4 @@
-package traefik
+package contract
 
 import "embed"
 

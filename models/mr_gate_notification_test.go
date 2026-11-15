@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"code-common/backend/testdb"
-	"code-traefik/config"
+	"code-contract/config"
 	"gorm.io/datatypes"
 )
 
@@ -22,7 +22,7 @@ func TestM26_All30CoreTablesPlusSettings_MRDedupAndNotifications(t *testing.T) {
 		t.Fatalf("SetupWithDB 失败: %v", err)
 	}
 
-	// 1. 验证 30 张核心业务表 + 1 张 traefik_settings (共 31 张表) 全部带 traefik_ 前缀且已迁移
+	// 1. 验证 30 张核心业务表 + 1 张 contract_settings (共 31 张表) 全部带 contract_ 前缀且已迁移
 	allModels := []tabler{
 		Subsystem{},        // 1
 		FunctionalGroup{},  // 2
@@ -54,10 +54,10 @@ func TestM26_All30CoreTablesPlusSettings_MRDedupAndNotifications(t *testing.T) {
 		ProtoFileVersion{}, // 28
 		MRCheckRun{},       // 29 (M26 #29)
 		Notification{},     // 30 (M26 #30)
-		TraefikSetting{},   // +1 配置表 (31)
+		ModuleSetting{},    // +1 配置表 (31)
 	}
 	if len(allModels) != 31 {
-		t.Fatalf("期望 30 张核心业务表 + 1 张 TraefikSetting (共 31 张表)，实际定义 %d", len(allModels))
+		t.Fatalf("期望 30 张核心业务表 + 1 张 ModuleSetting (共 31 张表)，实际定义 %d", len(allModels))
 	}
 	seenTables := make(map[string]struct{}, len(allModels))
 	for _, m := range allModels {
@@ -71,11 +71,11 @@ func TestM26_All30CoreTablesPlusSettings_MRDedupAndNotifications(t *testing.T) {
 		}
 		seenTables[tbl] = struct{}{}
 	}
-	if _, ok := seenTables["traefik_mr_check_runs"]; !ok {
-		t.Fatalf("缺少 traefik_mr_check_runs")
+	if _, ok := seenTables["contract_mr_check_runs"]; !ok {
+		t.Fatalf("缺少 contract_mr_check_runs")
 	}
-	if _, ok := seenTables["traefik_notifications"]; !ok {
-		t.Fatalf("缺少 traefik_notifications")
+	if _, ok := seenTables["contract_notifications"]; !ok {
+		t.Fatalf("缺少 contract_notifications")
 	}
 
 	// 2. 验证 M26 默认通知/外发配置项已幂等种子化
@@ -89,13 +89,13 @@ func TestM26_All30CoreTablesPlusSettings_MRDedupAndNotifications(t *testing.T) {
 		"smtp_from",
 	}
 	for _, k := range expectedKeys {
-		var s TraefikSetting
+		var s ModuleSetting
 		if err := db.Where("setting_key = ?", k).First(&s).Error; err != nil {
 			t.Fatalf("M26 默认设置项 %s 未初始化: %v", k, err)
 		}
 	}
 
-	// 3. 验证 uk_traefik_mr_dedup 表达式唯一索引:
+	// 3. 验证 uk_contract_mr_dedup 表达式唯一索引:
 	// (git_repo_id, COALESCE(bundle_id, 0), event_phase, head_commit_sha, target_head_sha)
 	repo := GitRepo{
 		Name:          "mr-gate-test-repo",
@@ -142,11 +142,11 @@ func TestM26_All30CoreTablesPlusSettings_MRDedupAndNotifications(t *testing.T) {
 		t.Fatalf("创建首条 MRCheckRun (MR_GATE) 失败: %v", err)
 	}
 
-	// (a) 相同 (git_repo_id, bundle_id, event_phase='MR_GATE', head_commit_sha, target_head_sha) 重复插入必须被 uk_traefik_mr_dedup 拦截
+	// (a) 相同 (git_repo_id, bundle_id, event_phase='MR_GATE', head_commit_sha, target_head_sha) 重复插入必须被 uk_contract_mr_dedup 拦截
 	dupGateRun := run1
 	dupGateRun.ID = 0
 	if err := db.Create(&dupGateRun).Error; err == nil {
-		t.Fatalf("违反契约：相同 (repo, bundle, MR_GATE, head_sha, target_sha) 应当被 uk_traefik_mr_dedup 唯一索引拦截")
+		t.Fatalf("违反契约：相同 (repo, bundle, MR_GATE, head_sha, target_sha) 应当被 uk_contract_mr_dedup 唯一索引拦截")
 	}
 
 	// (b) Fast-Forward 合入场景：相同 head_commit_sha，但 event_phase='MAIN_MERGE' 必须允许独立写入，绝不漏触发！
@@ -189,7 +189,7 @@ func TestM26_All30CoreTablesPlusSettings_MRDedupAndNotifications(t *testing.T) {
 		t.Fatalf("违反契约：bundle_id=NULL 的相同 (repo, phase, head_sha, target_sha) 应被 COALESCE(bundle_id, 0) 唯一索引拦截")
 	}
 
-	// 4. 验证 traefik_notifications 写入、索引与状态枚举约束
+	// 4. 验证 contract_notifications 写入、索引与状态枚举约束
 	now := time.Now().UTC()
 	notif := Notification{
 		RecipientUserID: 7,
@@ -215,6 +215,6 @@ func TestM26_All30CoreTablesPlusSettings_MRDedupAndNotifications(t *testing.T) {
 	badNotif.ID = 0
 	badNotif.EmailStatus = "INVALID_STATUS"
 	if err := db.Create(&badNotif).Error; err == nil {
-		t.Fatalf("非法 email_status 应当被 chk_traefik_notif_email_status 拦截")
+		t.Fatalf("非法 email_status 应当被 chk_contract_notif_email_status 拦截")
 	}
 }

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"code-traefik/models"
+	"code-contract/models"
 )
 
 func intPtr(v int) *int {

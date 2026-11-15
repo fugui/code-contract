@@ -10,9 +10,9 @@ import (
 
 	commonAuth "code-common/backend/auth"
 	commonModels "code-common/backend/models"
-	"code-traefik/internal/server/diff"
-	"code-traefik/internal/server/recorder"
-	"code-traefik/models"
+	"code-contract/internal/server/diff"
+	"code-contract/internal/server/recorder"
+	"code-contract/models"
 
 	"github.com/gin-gonic/gin"
 )

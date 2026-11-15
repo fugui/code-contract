@@ -1,4 +1,4 @@
-module code-traefik
+module code-contract
 
 go 1.26.1
 

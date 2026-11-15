@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"code-traefik/pkg/agentproto"
+	"code-contract/pkg/agentproto"
 )
 
 // TestEbpfSameHostDualProcessLoopbackBypass 特权环境下同机双进程互调无死锁集成测试

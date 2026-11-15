@@ -7,8 +7,8 @@ import (
 	"errors"
 	"sync"
 
-	"code-traefik/pkg/agentproto"
-	"code-traefik/pkg/crosrpc"
+	"code-contract/pkg/agentproto"
+	"code-contract/pkg/crosrpc"
 )
 
 var (

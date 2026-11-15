@@ -3,7 +3,7 @@ import { MODULE_KEY, MODULE_TITLE, MODULE_BASE_PATH } from './constants';
 
 export type { SubMenuItem, MenuGroup, ModuleMenuConfig };
 
-export interface TraefikMenuConfig extends ModuleMenuConfig {
+export interface ContractMenuConfig extends ModuleMenuConfig {
   defaultPath?: string;
 }
 
@@ -12,7 +12,7 @@ export const DEFAULT_STANDALONE_PATH = '/dashboard';
 
 // 标准侧边栏菜单契约（由 CodeBench 宿主在运行时通过 remoteEntry.js -> ./menu 动态拉取）
 // 按照 ADR-14 与 ADR-19 演进为「全局概览 ➔ 架构数字孪生 ➔ Proto 契约治理 ➔ 契约核验与回归 ➔ 环境与治理」5 组 13 项结构 (F-15, F-25)
-export const traefikMenuConfig: TraefikMenuConfig = {
+export const contractMenuConfig: ContractMenuConfig = {
   moduleKey: MODULE_KEY,
   moduleName: MODULE_TITLE,
   defaultPath: DEFAULT_ENTRY_PATH,
@@ -111,12 +111,12 @@ export const traefikMenuConfig: TraefikMenuConfig = {
   ],
 };
 
-export const menuGroups: MenuGroup[] = traefikMenuConfig.groups;
-export const menuItems: SubMenuItem[] = traefikMenuConfig.groups.flatMap((group) => group.items);
+export const menuGroups: MenuGroup[] = contractMenuConfig.groups;
+export const menuItems: SubMenuItem[] = contractMenuConfig.groups.flatMap((group) => group.items);
 
 type MenuChangeListener = (config: ModuleMenuConfig) => void;
 const listeners = new Set<MenuChangeListener>();
-let currentConfig: ModuleMenuConfig = traefikMenuConfig;
+let currentConfig: ModuleMenuConfig = contractMenuConfig;
 
 export function subscribeMenuChanges(listener: MenuChangeListener): () => void {
   listeners.add(listener);
@@ -131,4 +131,4 @@ export function notifyMenuUpdated(nextConfig: ModuleMenuConfig): void {
   listeners.forEach((fn) => fn(currentConfig));
 }
 
-export default traefikMenuConfig;
+export default contractMenuConfig;

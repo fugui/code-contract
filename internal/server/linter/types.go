@@ -6,7 +6,7 @@ import (
 	"log"
 	"strings"
 
-	"code-traefik/models"
+	"code-contract/models"
 
 	"github.com/bufbuild/protocompile"
 	"github.com/bufbuild/protocompile/parser"

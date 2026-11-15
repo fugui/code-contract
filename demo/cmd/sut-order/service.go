@@ -8,13 +8,13 @@ import (
 	"sync"
 	"time"
 
-	"code-traefik/demo/pkg/crosframe"
-	"code-traefik/demo/pkg/payment"
-	"code-traefik/demo/pkg/proto/accountpb"
-	"code-traefik/demo/pkg/proto/inventorypb"
-	"code-traefik/demo/pkg/proto/orderpb"
-	"code-traefik/demo/pkg/proto/paymentpb"
-	"code-traefik/pkg/crosrpc"
+	"code-contract/demo/pkg/crosframe"
+	"code-contract/demo/pkg/payment"
+	"code-contract/demo/pkg/proto/accountpb"
+	"code-contract/demo/pkg/proto/inventorypb"
+	"code-contract/demo/pkg/proto/orderpb"
+	"code-contract/demo/pkg/proto/paymentpb"
+	"code-contract/pkg/crosrpc"
 	"google.golang.org/protobuf/proto"
 )
 

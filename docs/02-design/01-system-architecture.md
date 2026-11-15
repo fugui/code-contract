@@ -1,7 +1,7 @@
-# 架构与活体契约治理 (`code-traefik`) 系统总体架构与主从协同设计
+# 架构与活体契约治理 (`code-contract`) 系统总体架构与主从协同设计
 
 - **文档编号**：`01-system-architecture.md`
-- **文档版本**：v1.8.1（依据 `ADR-18` v1.3.0 清除无用的 `protohub` SQLite 数据迁移工具，保留 `30` 张核心表 + `traefik_settings` 共 `31` 张、`TRAEFIK_CRYPTO_KEY` 与跨机 `code-notifier` / `SafeDialer` 信任白名单架构）
+- **文档版本**：v1.8.1（依据 `ADR-18` v1.3.0 清除无用的 `protohub` SQLite 数据迁移工具，保留 `30` 张核心表 + `contract_settings` 共 `31` 张、`CONTRACT_CRYPTO_KEY` 与跨机 `code-notifier` / `SafeDialer` 信任白名单架构）
 - **更新日期**：2026-11-14
 - **归属阶段**：阶段二：系统架构与数据模型设计 (`02-design`)
 - **状态**：M1~M23 已交付；M24~M26 已完成设计待实施 (Approved for M24~M26)
@@ -12,43 +12,43 @@
 | 版本 | 日期 | 修订说明 |
 | :--- | :--- | :--- |
 | v1.5.0 | 2026-11-05 | 对齐 ADR-11 / ADR-12 双录、调用树与 `ScopedEgressMocks` 事务闭包重放设计 |
-| v1.6.0 | 2026-11-11 | 依据 ADR-16 (v1.0.0 / M20) 同步核心 `traefik_*` 业务表总数（扩展至 19 张，新增 `traefik_service_contracts`）、录制 `endpoint_snapshots` 固化及 `DownstreamEndpoint.DstTag` 多实现重放 Mock 隔离标签契约 |
+| v1.6.0 | 2026-11-11 | 依据 ADR-16 (v1.0.0 / M20) 同步核心 `contract_*` 业务表总数（扩展至 19 张，新增 `contract_service_contracts`）、录制 `endpoint_snapshots` 固化及 `DownstreamEndpoint.DstTag` 多实现重放 Mock 隔离标签契约 |
 | v1.7.0 | 2026-11-13 | 依据 [`ADR-18`](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (v1.1.0, `M22~M25`) 升级架构基线：增设纯 Go `protocompile`、`gitclient`、`protodoc`、`linter`、`notify` 与 `security` 模块，严格恪守 `cmd/agent` 与 `pkg/*` 零 `.pb`/零 DB/零 Git 防腐红线 |
-| v1.8.0 | 2026-11-13 | 依据 [`ADR-18`](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (v1.2.0, `M22~M26`) 全面检视修订：1. 核心表收敛为 **`30` 张核心 `traefik_*` 业务表 + `traefik_settings`（共 `31` 张物理表）**，拆分 `GitRepo (1:N) GitProtoBundle` 支持 Monorepo 多目录包、MR 原位评论去重与 `COALESCE(bundle_id,0)` 防 Fast-Forward 同 SHA 误丢；2. 明确统一主密钥 env **`TRAEFIK_CRYPTO_KEY`**；3. `SafeDialer` 在永久阻断云元数据/组播前提下支持 `outbound_trusted_cidrs` 白名单放行同内网 GitLab/LLM 与**跨机部署的 `code-notifier` 邮件服务**（调用 `POST /api/notify/email` 严格校验非空 `markdown_content` 并解析真实收件邮箱）；4. 明确 `handlers/settings.go` 敏感字段脱敏及审计掩码 `***REDACTED***`，并将前端预算精确校准为基于 M21 基线的 **`<= 150KB gzip`（`<= 500KB` 原始文本）增量上限** |
+| v1.8.0 | 2026-11-13 | 依据 [`ADR-18`](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (v1.2.0, `M22~M26`) 全面检视修订：1. 核心表收敛为 **`30` 张核心 `contract_*` 业务表 + `contract_settings`（共 `31` 张物理表）**，拆分 `GitRepo (1:N) GitProtoBundle` 支持 Monorepo 多目录包、MR 原位评论去重与 `COALESCE(bundle_id,0)` 防 Fast-Forward 同 SHA 误丢；2. 明确统一主密钥 env **`CONTRACT_CRYPTO_KEY`**；3. `SafeDialer` 在永久阻断云元数据/组播前提下支持 `outbound_trusted_cidrs` 白名单放行同内网 GitLab/LLM 与**跨机部署的 `code-notifier` 邮件服务**（调用 `POST /api/notify/email` 严格校验非空 `markdown_content` 并解析真实收件邮箱）；4. 明确 `handlers/settings.go` 敏感字段脱敏及审计掩码 `***REDACTED***`，并将前端预算精确校准为基于 M21 基线的 **`<= 150KB gzip`（`<= 500KB` 原始文本）增量上限** |
 
 ---
 
 ## 1. 微前端双模运行拓扑 (Dual-Mode Micro-Frontend Topology)
 
-控制面 `code-traefik-server` 遵循 CodeBench 微前端家族统一规范，通过 Go 1.16+ `//go:embed all:frontend/dist` 单二进制托管与 `@originjs/vite-plugin-federation` 模块联邦机制，无缝兼容**宿主门户嵌入**与**独立开发调试**双模运行。
+控制面 `code-contract-server` 遵循 CodeBench 微前端家族统一规范，通过 Go 1.16+ `//go:embed all:frontend/dist` 单二进制托管与 `@originjs/vite-plugin-federation` 模块联邦机制，无缝兼容**宿主门户嵌入**与**独立开发调试**双模运行。
 
 ```mermaid
 flowchart LR
     subgraph Browser["浏览器客户端 (Light / Dark 双主题)"]
         HostApp["CodeBench 宿主门户 (:8000)"]
-        RemoteApp["traefik 联邦子应用 (./App & ./menu)"]
+        RemoteApp["contract 联邦子应用 (./App & ./menu)"]
         StandaloneApp["StandaloneShell 独立外壳 (:5181 / :8091)"]
     end
 
     subgraph Gateway["平台接入层"]
-        Caddy["Caddy 统一反向代理 (/traefik/*)"]
+        Caddy["Caddy 统一反向代理 (/contract/*)"]
     end
 
-    subgraph ServerBin["code-traefik-server 单二进制 (:8091)"]
-        StripPrefix["commonServer 前缀剥离中间件 (/traefik -> /)"]
+    subgraph ServerBin["code-contract-server 单二进制 (:8091)"]
+        StripPrefix["commonServer 前缀剥离中间件 (/contract -> /)"]
         SecHeaders["安全响应头中间件 (CSP / Frame / Nosniff)"]
         StaticFS["embed.FS 静态资源与 SPA History Fallback"]
-        AuthGuard["commonAuth JWT 校验 + RequireAdmin('traefik_admin')"]
+        AuthGuard["commonAuth JWT 校验 + RequireAdmin('contract_admin')"]
         AuditMW["commonAudit 异步字段级 Diff 审计中间件"]
         Router["Gin REST API & SSE 实时事件流 (/api/*)"]
     end
 
     subgraph SharedInfra["平台共享基础设施"]
-        PG[("PostgreSQL 共享实例 (users / audit_logs / traefik_*)")]
+        PG[("PostgreSQL 共享实例 (users / audit_logs / contract_*)")]
     end
 
-    HostApp -- "动态加载 /traefik/assets/remoteEntry.js" --> Caddy
-    RemoteApp -- "fetch 拦截重写 /traefik/api/* + Bearer JWT" --> Caddy
+    HostApp -- "动态加载 /contract/assets/remoteEntry.js" --> Caddy
+    RemoteApp -- "fetch 拦截重写 /contract/api/* + Bearer JWT" --> Caddy
     Caddy -- "反向代理透传" --> StripPrefix
     StandaloneApp -- "直连 /api/* (开发 :5181 Proxy 或单二进制 :8091)" --> StripPrefix
     StripPrefix --> SecHeaders
@@ -62,25 +62,25 @@ flowchart LR
 
 | 维度 | 门户嵌入模式 (`isEmbedded = true`) | 独立开发调试模式 (`isEmbedded = false`) |
 | :--- | :--- | :--- |
-| **入口识别** | 宿主传入 `props.isEmbedded = true` 或检测 `window.__POWERED_BY_PORTAL__ === true` | 直接访问 `http://192.168.56.18:5181/traefik/` 或 `http://192.168.56.18:8091/` |
+| **入口识别** | 宿主传入 `props.isEmbedded = true` 或检测 `window.__POWERED_BY_PORTAL__ === true` | 直接访问 `http://192.168.56.18:5181/contract/` 或 `http://192.168.56.18:8091/` |
 | **导航与布局** | 宿主通过 `./menu` 渲染左侧二级导航，子应用仅挂载 `EmbeddedRoutes` 内容区 | 挂载 `StandaloneShell`（内置独立侧边栏、亮/暗主题切换与 `UnifiedLogin` 登录页） |
-| **API 路径治理** | `setupFetchInterceptor({ appPrefix: '/traefik' })` 自动重写 `/api/*` 为 `/traefik/api/*` | 前端直接请求 `/api/*`，Vite Dev Server 代理至 `127.0.0.1:8091` 或由单二进制直接响应 |
-| **后端前缀剥离** | `commonServer.Run(Options{ Prefix: "traefik" })` 自动剥离 `/traefik`，内部统一匹配 `/api/*` | 无需剥离或兼容 `/traefik` 访问，共享同一套 `RegisterAPIRoutes` 处理器 |
-| **实时推送通道** | 基于 `fetch` + `ReadableStream` 请求 `/traefik/api/events`，通过 HTTP Header 携带 `Bearer JWT`（严禁 URL Query 传 Token） | 同样通过 Header 携带 `Bearer JWT` 订阅 `/api/events` SSE 实时流量与任务事件 |
+| **API 路径治理** | `setupFetchInterceptor({ appPrefix: '/contract' })` 自动重写 `/api/*` 为 `/contract/api/*` | 前端直接请求 `/api/*`，Vite Dev Server 代理至 `127.0.0.1:8091` 或由单二进制直接响应 |
+| **后端前缀剥离** | `commonServer.Run(Options{ Prefix: "contract" })` 自动剥离 `/contract`，内部统一匹配 `/api/*` | 无需剥离或兼容 `/contract` 访问，共享同一套 `RegisterAPIRoutes` 处理器 |
+| **实时推送通道** | 基于 `fetch` + `ReadableStream` 请求 `/contract/api/events`，通过 HTTP Header 携带 `Bearer JWT`（严禁 URL Query 传 Token） | 同样通过 Header 携带 `Bearer JWT` 订阅 `/api/events` SSE 实时流量与任务事件 |
 
 ---
 
 ## 2. 主从双子系统物理架构与代码分层 (Dual-Subsystem Architecture)
 
-为彻底隔离「控制面元数据治理 / 动态解码」与「宿主机内核态流量采集 / 二进制重放」，系统在单仓库（Monorepo）下拆分为两个物理职责正交的可执行程序：**`code-traefik-server`** 与 **`code-traefik-agent`**。
+为彻底隔离「控制面元数据治理 / 动态解码」与「宿主机内核态流量采集 / 二进制重放」，系统在单仓库（Monorepo）下拆分为两个物理职责正交的可执行程序：**`code-contract-server`** 与 **`code-contract-agent`**。
 
 ### 2.1 双子系统物理职责与防腐边界
 
-| 架构维度 | 控制面主控 (`cmd/server` -> `code-traefik-server`) | 数据面代理 (`cmd/agent` -> `code-traefik-agent`) |
+| 架构维度 | 控制面主控 (`cmd/server` -> `code-contract-server`) | 数据面代理 (`cmd/agent` -> `code-contract-agent`) |
 | :--- | :--- | :--- |
 | **部署拓扑与规模** | 集中式无特权部署（对接 CodeBench 网关与共享 PostgreSQL） | 每台受控业务宿主机部署 1 个守护进程（`1 Agent : N 目标进程`） |
 | **操作系统特权** | 普通非特权用户运行，**零内核钩子、零业务宿主机 `/proc` 访问** | 需具备 `CAP_BPF` + `CAP_NET_ADMIN`（挂载 eBPF 与读取本机 `/proc`） |
-| **持久化与状态** | 有状态：唯一连接 PostgreSQL（读写 **30 张核心 `traefik_*` 业务表**、`traefik_settings` 及共享表） | **完全无数据库**：不连任何 DB、不持有数据库凭据，仅维护运行期内存态 |
+| **持久化与状态** | 有状态：唯一连接 PostgreSQL（读写 **30 张核心 `contract_*` 业务表**、`contract_settings` 及共享表） | **完全无数据库**：不连任何 DB、不持有数据库凭据，仅维护运行期内存态 |
 | **Protobuf 依赖** | 引入 `google.golang.org/protobuf/types/dynamicpb` 动态反序列化、`protocompile` 纯 Go 编译与 AST Diff | **零 `.pb` 依赖**：编译依赖图严禁出现 `dynamicpb` / `protoregistry` / `protocompile` / `gorm` |
 | **协议解析深度** | 调用 `pkg/crosrpc` 解析头 + 调用 `internal/server/decoder` 解码 Payload | 仅调用 `pkg/crosrpc` 解析 `24 + usHeadLen` 之前的协议头，Payload 视为不透明字节切片 |
 | **录制与重放职责** | 批次协同编排、落盘归档、模块穿透定位、架构一致性验证、双层回归 Diff 报告 | 入站旁路复制、出站透明代理、重放连接注入、二进制 Mock 匹配与头部偏移自愈 |
@@ -88,7 +88,7 @@ flowchart LR
 ### 2.2 工程目录分层与包依赖拓扑
 
 ```text
-code-traefik/
+code-contract/
 ├── cmd/
 │   ├── server/main.go               # 控制面可执行入口：内嵌 frontend/dist，挂载 Gin、DB、Audit 与调度器
 │   └── agent/main.go                # 数据面可执行入口：挂载 IP 白名单、eBPF 管理器、透明代理与重放器
@@ -99,7 +99,7 @@ code-traefik/
 │   └── replay/                      # Agent 专属：零 .pb 二进制 Mock 匹配器、请求注入器与应答头偏移自愈改写器
 ├── internal/
 │   └── server/                      # Server 专属核心业务引擎
-│       ├── security/                # AES-256-GCM (TRAEFIK_CRYPTO_KEY)、SafeDialer SSRF 含信任白名单与常量时间验签工具 (M24)
+│       ├── security/                # AES-256-GCM (CONTRACT_CRYPTO_KEY)、SafeDialer SSRF 含信任白名单与常量时间验签工具 (M24)
 │       ├── hub/                     # Agent 连接池、10s 心跳探活、WebSocket 接收器与按 userID 定向的 SSEBroker 中心
 │       ├── recorder/                # 多进程协同录制编排器、发起序 SeqNo + SNO 配对器与异步批量落盘流水线
 │       ├── callgraph/               # DOTR 事务调用树组装、跨进程 EGRESS⇔INGRESS 缝合、参数数据流血缘与跨事务实体链引擎
@@ -111,8 +111,8 @@ code-traefik/
 │       ├── dashboard/               # 治理大盘聚合引擎（含三维健康指数与 F-24 独立静态合标率指标卡片）
 │       ├── topology/                # 三级架构树、layer_level 正反向与成环守卫、静态拓扑推导、报文穿透定位与一致性八分类引擎
 │       └── diff/                    # 协议头级 + Protobuf 语义字段级双层回归 Diff 断言与重放调度器
-├── config/                          # Server 与 Agent 各自的配置结构体、TRAEFIK_CRYPTO_KEY/LLM/Notifier 配置注入与安全默认值
-├── models/                          # 30 张核心 traefik_* + traefik_settings 共 31 张 GORM 实体模型、幂等迁移与级联校验辅助函数
+├── config/                          # Server 与 Agent 各自的配置结构体、CONTRACT_CRYPTO_KEY/LLM/Notifier 配置注入与安全默认值
+├── models/                          # 30 张核心 contract_* + contract_settings 共 31 张 GORM 实体模型、幂等迁移与级联校验辅助函数
 ├── handlers/                        # Server HTTP/Webhook/SSE 控制器、settings.go 脱敏、参数白名单校验、RBAC 守卫与 commonAudit 接入
 └── frontend/                        # React 18 + TypeScript + Vite 5 微前端控制台工程（M22~M26 新增 JS 增量 <= 150KB gzip / <= 500KB raw）
 ```
@@ -130,9 +130,9 @@ code-traefik/
 
 | 资源类别 | 公共级 (`SHARED`) | 个人级 (`PRIVATE`) | 跨环境关联与安全边界 |
 | :--- | :--- | :--- | :--- |
-| **三级逻辑架构、多实现服务契约 (`ServiceContract`)、物理进程蓝图 (`ArchProcess`) 与 `.pb`** | **全局唯一公共 SSOT**（`traefik_admin` 维护，全体只读） | *不设私有架构元素与野生进程* | `1 台 Agent = 1 套独立运行环境`：支持多套团队 `SHARED` 公共测试环境（如 SIT/UAT）与个人 `PRIVATE` 联调环境各自从 `ArchProcess` 树中 `1:1` 勾选挂载进程，继承 `FM` 模块组装并支持本地覆盖端口/启动特征及 `FallbackAgentID` 基线环境兜底 |
-| **数据面实例 (`Agent`) 与挂载实例 (`Process`)** | `traefik_admin` 登记管理；全团队可见，空闲时（包括已处于 `ARMED` 预挂待命态）任意认证用户可申请排他租约进行录制或重放 | **普通用户可自建、编辑、删除本人的私有 Agent 及挂载配置**；**创建人本人及 `traefik_admin` 可见**；普通用户之间严格防横向越权 | 他人普通用户尝试查看、修改、探针开关或租用某用户的 `PRIVATE` Agent 拦截返回 `403 Forbidden`；管理员 (`traefik_admin`) 具备全团队可见、审计与故障解锁特权 |
-| **录制流量素材 (`RecordingSession`)** | 全团队可见并可作为重放输入资产（支持将合格个人素材发布为 `SHARED`） | **仅录制发起人本人及 `traefik_admin` 可见**、管理与用于重放；普通用户之间严格隔离 | 只要用户对某录制素材有访问权（公共素材或本人素材），即可将其投递到任何有权限且**挂载同构架构进程/模块**的进程（含本人 `PRIVATE` Agent 进程，以及当前空闲的团队 `SHARED` 进程）上执行隔离重放 |
+| **三级逻辑架构、多实现服务契约 (`ServiceContract`)、物理进程蓝图 (`ArchProcess`) 与 `.pb`** | **全局唯一公共 SSOT**（`contract_admin` 维护，全体只读） | *不设私有架构元素与野生进程* | `1 台 Agent = 1 套独立运行环境`：支持多套团队 `SHARED` 公共测试环境（如 SIT/UAT）与个人 `PRIVATE` 联调环境各自从 `ArchProcess` 树中 `1:1` 勾选挂载进程，继承 `FM` 模块组装并支持本地覆盖端口/启动特征及 `FallbackAgentID` 基线环境兜底 |
+| **数据面实例 (`Agent`) 与挂载实例 (`Process`)** | `contract_admin` 登记管理；全团队可见，空闲时（包括已处于 `ARMED` 预挂待命态）任意认证用户可申请排他租约进行录制或重放 | **普通用户可自建、编辑、删除本人的私有 Agent 及挂载配置**；**创建人本人及 `contract_admin` 可见**；普通用户之间严格防横向越权 | 他人普通用户尝试查看、修改、探针开关或租用某用户的 `PRIVATE` Agent 拦截返回 `403 Forbidden`；管理员 (`contract_admin`) 具备全团队可见、审计与故障解锁特权 |
+| **录制流量素材 (`RecordingSession`)** | 全团队可见并可作为重放输入资产（支持将合格个人素材发布为 `SHARED`） | **仅录制发起人本人及 `contract_admin` 可见**、管理与用于重放；普通用户之间严格隔离 | 只要用户对某录制素材有访问权（公共素材或本人素材），即可将其投递到任何有权限且**挂载同构架构进程/模块**的进程（含本人 `PRIVATE` Agent 进程，以及当前空闲的团队 `SHARED` 进程）上执行隔离重放 |
 
 ### 3.2 Agent 动态排他租约状态机 (`Agent Mutex Lease`) 与 `ARMED` 预挂待命的正交性
 
@@ -156,13 +156,13 @@ stateDiagram-v2
 
 * **多 Agent 升序原子加锁算法 (`AcquireAgentLeases`)**：
   1. 提取本次录制/重放涉及的全部 `agent_id` 去重并**严格按主键升序排序**（彻底消除并发交叉申请 `Agent_1, Agent_2` 与 `Agent_2, Agent_1` 导致的 PostgreSQL 行锁死锁）；
-  2. 在数据库事务内执行 `SELECT * FROM traefik_agents WHERE id IN (?) ORDER BY id ASC FOR UPDATE`；
+  2. 在数据库事务内执行 `SELECT * FROM contract_agents WHERE id IN (?) ORDER BY id ASC FOR UPDATE`；
   3. 逐台校验：
      - ① **归属防越权**：若 `scope == 'PRIVATE' && owner_id != currentUser.ID && !currentUser.IsAdmin`，立即回滚并返回 **`403 Forbidden`**；
      - ② **探活健康与能力检查**：若 `status != 'ONLINE'` 或无 eBPF 权限，返回 `400/503`；
      - ③ **租约互斥冲突检查**：若存在未过期的活跃租约（`lease_type != '' && now < lease_expires_at`），回滚事务并返回 **`409 Conflict`**（响应体附带 `lease_holder_name`、`lease_type`、`lease_acquired_at`、`lease_expires_at`）；
      - ④ **租约惰性对账自愈**：若旧租约已超硬性安全期 `lease_expires_at`（默认任务最大时长 + `2 分钟` 缓冲），或主控后台检测到关联 Session/Task 已终止，执行惰性自愈清理后授予新租约。
-* **租约滑动续期与对账看门狗**：在活跃录制或重放执行期间，主控与 Agent 的 10s 心跳探活正常成功时，主控自动执行 `UPDATE traefik_agents SET lease_expires_at = NOW() + INTERVAL '2 minutes'` 滑动续约，防止长耗时重放或大规模多帧录制任务被误判超时收回。
+* **租约滑动续期与对账看门狗**：在活跃录制或重放执行期间，主控与 Agent 的 10s 心跳探活正常成功时，主控自动执行 `UPDATE contract_agents SET lease_expires_at = NOW() + INTERVAL '2 minutes'` 滑动续约，防止长耗时重放或大规模多帧录制任务被误判超时收回。
 * **Agent 进程侧双重防御 (`SingleTenantGuard`)**：`cmd/agent` 在内存中同步维护唯一 `activeLease{Type, RefID}`，拒绝任何非当前活跃 `SessionID/TaskID` 的并发下发指令（返回 `409`），从而在物理上保证每台 Agent 任意时刻最多只存在 **1 个 64MB 有界会话缓冲**。
 
 ---
@@ -183,7 +183,7 @@ stateDiagram-v2
      - ② 严禁指向公有云/私有云元数据地址（如 `169.254.169.254`）及广播/组播段；
      - ③ 校验目标端口在合规端口范围（`1024..65535`）；探测超时统一为 `3s`，握手探测失败时返回通用错误提示，严禁将对端真实原始响应体透出给客户端。
 3. **PRIVATE Agent 认领防抢注机制 (`Claim Code Guard`)**：
-   - 为防止普通用户在共享网络中恶意探测或将他人已启动的宿主机 Agent 抢注为个人的 `PRIVATE` 资产，Agent 在启动时通过 `crypto/rand` 自动生成一次性 16 字节十六进制安全认领码（`ClaimCode`，打印于 Agent 本地终端日志及受保护的本地文件 `/var/run/code-traefik/claim.token`，仅宿主机拥有者可见）；
+   - 为防止普通用户在共享网络中恶意探测或将他人已启动的宿主机 Agent 抢注为个人的 `PRIVATE` 资产，Agent 在启动时通过 `crypto/rand` 自动生成一次性 16 字节十六进制安全认领码（`ClaimCode`，打印于 Agent 本地终端日志及受保护的本地文件 `/var/run/code-contract/claim.token`，仅宿主机拥有者可见）；
    - 普通用户在控制台纳管个人 `PRIVATE` Agent 时，除填写 `IP:Port` 外必须填写正确的 `ClaimCode`；主控在向 Agent 发送首次初始化校验时传递该认领码，Agent 内存比对一致后建立绑定关系，杜绝内网盲注与未授权窃听。
 4. **WebSocket 流量与帧安全边界**：
    - 主控在升级接收 WebSocket 连接时，设置 `conn.SetReadLimit(int64(MaxFrameBytes) + 56 + 1024)`，防止畸形超大帧引起内存溢出；单 Agent 实例挂载滑动窗口速率限制器。
@@ -234,7 +234,7 @@ type DownstreamEndpoint struct {
 
 // ProcessMonitorSpec 单进程监控元信息（零 .pb Schema 依赖）
 type ProcessMonitorSpec struct {
-	ProcessID   uint64               `json:"process_id"`   // 主控 traefik_processes.id
+	ProcessID   uint64               `json:"process_id"`   // 主控 contract_processes.id
 	ListenPort  uint16               `json:"listen_port"`  // 唯一有效监听端口 (0 表示纯客户端，A-02)
 	CmdPattern  string               `json:"cmd_pattern"`  // /proc/<pid>/cmdline 有效匹配表达式
 	Downstreams []DownstreamEndpoint `json:"downstreams"`  // 录制/待命期用作已声明下游参考集(未配置时仍默认透明代理全部出站连接, ADR-11)；重放期为静态推导 ∪ 历史 EGRESS 实测 DstAddr 并集
@@ -242,7 +242,7 @@ type ProcessMonitorSpec struct {
 
 // ArmStandbyReq 声明式同步 Agent 预挂载待命规格（不占排他租约，携带单调递增 Revision 防乱序覆盖）
 type ArmStandbyReq struct {
-	Revision  uint64               `json:"revision"`  // 对应 traefik_agents.mounts_revision，Agent 拒绝 Revision < lastAppliedRevision (409)
+	Revision  uint64               `json:"revision"`  // 对应 contract_agents.mounts_revision，Agent 拒绝 Revision < lastAppliedRevision (409)
 	Processes []ProcessMonitorSpec `json:"processes"` // 期望处于 ARMED 态的挂载进程集合（为空表示卸载全部待命探针）
 }
 
@@ -346,7 +346,7 @@ stateDiagram-v2
    - Agent 收到后比对本地内存 `activeLease` 并返回 `ArmedDigest`：
      - **孤儿租约无损回退**：若主控下发期望租约为 `NONE` 但 Agent 处于活跃 `RECORDING`/`REPLAY` 状态，Agent **立即中止孤儿采集/重放闸门并回退至 `ArmedStandby`（若 `ArmedProcessCount == 0` 则转入平滑排空卸载探针）**，释放本地租约的同时避免误杀正常待命业务长连接；
      - **Single-Flight 版本化自动补挂 (`Auto-Rearm`) 与指数退避**：
-       - `AgentHub` 为每台 Agent 维护独立的内存互斥锁 `rearmMu[agentID]`，且每次挂载/覆盖/探针开关变更均单调递增 `traefik_agents.mounts_revision` 与重算 `expected_armed_digest`；
+       - `AgentHub` 为每台 Agent 维护独立的内存互斥锁 `rearmMu[agentID]`，且每次挂载/覆盖/探针开关变更均单调递增 `contract_agents.mounts_revision` 与重算 `expected_armed_digest`；
        - 当空闲在线 Agent 返回的 `BootID` 变化或 `ArmedDigest != expected_armed_digest` 时，`AgentHub` 在 `rearmMu[agentID]` 保护下读取最新 `mounts_revision` 发起 `PUT /agent/v1/monitors/arm`（彻底消除用户手动改挂载与 10s 心跳并发推送导致的旧配置覆盖竞态）；
        - 若因宿主机缺 `CAP_BPF` 等持久性错误导致补挂失败，主控自动将该 Agent 关联进程快照标为 `CAP_DENIED` / `ERROR` 并启动**指数退避（`10s -> 30s -> 60s -> 300s` 封顶）**，直到挂载配置版本变更或用户在 UI 手动点击重新挂载才立即重置退避，防止每 10s 无意义风暴重试。
 4. **主控单实例部署假设与启动恢复序列 (`ServerRecoveryPipeline`)**：
@@ -365,9 +365,9 @@ stateDiagram-v2
 sequenceDiagram
     autonumber
     actor User as 用户 (普通用户自建 PRIVATE / 管理员建 SHARED)
-    participant Server as code-traefik-server (AgentHub)
-    participant DB as PostgreSQL (traefik_agents / traefik_processes)
-    participant Agent as code-traefik-agent
+    participant Server as code-contract-server (AgentHub)
+    participant DB as PostgreSQL (contract_agents / contract_processes)
+    participant Agent as code-contract-agent
     participant Kernel as Linux Kernel (BPF Subsystem)
 
     User->>Server: POST /api/agents (指定 scope=PRIVATE/SHARED 与 IP:Port, PRIVATE 携带 claim_code)
@@ -376,15 +376,15 @@ sequenceDiagram
     Agent->>Kernel: Capget 校验 CAP_BPF + CAP_NET_ADMIN + CAP_PERFMON + CAP_SYS_PTRACE & 读取 uname
     Kernel-->>Agent: 返回权限位图与内核版本
     Agent-->>Server: 200 OK (ProtocolVersion="1.0", BootID="...", HasEbpfCap=true, ActiveLease="", ArmedDigest="")
-    Server->>DB: INSERT traefik_agents (status='ONLINE', lease_type='', boot_id='...', last_heartbeat_at=NOW())
+    Server->>DB: INSERT contract_agents (status='ONLINE', lease_type='', boot_id='...', last_heartbeat_at=NOW())
     Server-->>User: 201 Created (写入 commonAudit 审计日志)
 
     User->>Server: PUT /api/agents/:id/process-mounts (携带 expected_revision, 勾选 ArchProcess_A/B + 可选本地覆盖)
-    Server->>DB: 单事务 UPSERT traefik_processes (UNIQUE(agent_id, arch_process_id), mounts_revision++, 计算 expected_armed_digest)
+    Server->>DB: 单事务 UPSERT contract_processes (UNIQUE(agent_id, arch_process_id), mounts_revision++, 计算 expected_armed_digest)
     Server->>Agent: Single-Flight PUT /agent/v1/monitors/arm (Revision=R, [Spec_A, Spec_B], 不占租约)
     Agent->>Kernel: 挂载低频建连钩子 (connect4/sock_ops/sched_*) + 启动 EgressProxy PASSTHROUGH 纯透传 + 扫描 /proc
     Agent-->>Server: 200 OK (Revision=R, ArmedDigest="sha256...", Diagnostics: READY / NEED_RECONNECT / WAITING_PROC)
-    Server->>DB: 回写 traefik_agents.armed_digest 与 traefik_processes 七态就绪快照
+    Server->>DB: 回写 contract_agents.armed_digest 与 contract_processes 七态就绪快照
 
     loop 每 10s 周期探活、租约对账与自动补挂 (Auto-Rearm)
         Server->>Agent: GET /agent/v1/handshake (携带 Header: X-Expected-Lease-Type 与 X-Expected-Lease-Ref)
@@ -414,8 +414,8 @@ sequenceDiagram
     autonumber
     actor User as 认证用户 (租用本人 PRIVATE 或空闲 SHARED Agent)
     participant UI as 微前端 (/agents -> /record)
-    participant Server as code-traefik-server
-    participant Agent as code-traefik-agent
+    participant Server as code-contract-server
+    participant Agent as code-contract-agent
     participant Kernel as eBPF (Ingress Copy + cgroup/connect4)
     participant ProcA as 目标进程 A (ArchProcess_A)
     participant ProcB as 目标进程 B (ArchProcess_B)
@@ -444,7 +444,7 @@ sequenceDiagram
     Agent-->>Server: 推送各自 RSP 原始二进制信封帧
 
     Server->>Server: 双轨分发 Track A (快轨 SSE 预览) + Track B (慢轨 ullSNO 配对 + dynamicpb 解码 + 模块穿透)
-    Server->>Server: 双模批量落盘 traefik_traffic_records (raw_req_packet + raw_rsp_packet + payload_json)
+    Server->>Server: 双模批量落盘 contract_traffic_records (raw_req_packet + raw_rsp_packet + payload_json)
 
     User->>Server: POST /api/recording-sessions/:id/stop (或触发上限自动停止)
     Server->>Agent: POST /agent/v1/monitors/:sessionId/stop
@@ -459,7 +459,7 @@ sequenceDiagram
     autonumber
     actor Dev as 开发/测试工程师
     participant UI as 微前端重放编排台
-    participant Server as code-traefik-server (Replay & Diff)
+    participant Server as code-contract-server (Replay & Diff)
     participant PrivAgent as 目标环境 Agent (如开发者 PRIVATE 或空闲 SHARED Agent)
     participant Kernel as eBPF (cgroup/connect4 & EgressProxy REPLAY_MOCK)
     participant LocalProcA as 目标进程 A' (已处于 🟢 READY，承载同构模块 Module_A)
@@ -505,29 +505,29 @@ sequenceDiagram
     participant Compiler as protocompile + Linter + AST Diff
     participant DB as PostgreSQL (30+1 表)
     participant Notifier as Notify Engine (Web SSE + 跨机 code-notifier/SMTP)
-    actor Admin as 架构师 (traefik_admin)
+    actor Admin as 架构师 (contract_admin)
 
     Dev->>Webhook: 1. 推送 MR (open/update) 携带 X-Gitlab-Token / X-Hub-Signature-256
-    Webhook->>DB: 查找 GitRepo 并经 TRAEFIK_CRYPTO_KEY 解密 Secret -> ConstantTimeCompare 验签
-    Webhook->>DB: INSERT traefik_mr_check_runs ON CONFLICT uk_traefik_mr_dedup DO NOTHING (含 target_head_sha 防 FF 漏判)
+    Webhook->>DB: 查找 GitRepo 并经 CONTRACT_CRYPTO_KEY 解密 Secret -> ConstantTimeCompare 验签
+    Webhook->>DB: INSERT contract_mr_check_runs ON CONFLICT uk_contract_mr_dedup DO NOTHING (含 target_head_sha 防 FF 漏判)
     Webhook-->>Dev: 202 Accepted (accepted / duplicate_ignored, < 50ms 快速响应)
 
     Note over Worker,Compiler: 后台协程受并发池与 SafeDialer (信任白名单含内网 GitLab/LLM/跨机 code-notifier) 保护
     Worker->>GitHost: 2. 通过 Git REST API / go-git memfs 获取对应 Bundle (proto_root_dir) Target 基线树 + MR Diff
     Worker->>Worker: 合成虚拟目录树 (覆写 Added/Modified, 剔除 Deleted/Renamed-Old，杜绝幽灵依赖)
     Worker->>Compiler: 3. 四合一检查：protocompile 编译 + Linter/词库(含 3s LLM 熔断) + AST 重复(>=0.85) + F-26 (含 BASE_LIB 传递影响)
-    Compiler->>DB: 写入 traefik_check_reports / violations + 更新 MRCheckRun (含 bundle_id / remote_comment_id)
+    Compiler->>DB: 写入 contract_check_reports / violations + 更新 MRCheckRun (含 bundle_id / remote_comment_id)
 
     alt 检出 ERROR 违规或 FATAL Breaking 且 merge_blocking_enabled=true
         Worker->>GitHost: 4a. 回写 failed 提交状态 + 按 remote_comment_id 原位更新/新建 Bot Markdown 评审意见
-        Worker->>Notifier: 写入 traefik_notifications (MR_GATE_FAILED) -> SSEBroker(userID) 定向推送 + 异步投递跨机 code-notifier/SMTP
+        Worker->>Notifier: 写入 contract_notifications (MR_GATE_FAILED) -> SSEBroker(userID) 定向推送 + 异步投递跨机 code-notifier/SMTP
         Dev->>UI: 查看失败详情并评估是否为授权重构
         Admin->>Webhook: POST /api/mr-check-runs/:id/override (携带 override_reason)
         Webhook->>DB: 更新 Status=OVERRIDDEN + 写入 P1 高危审计日志
         Webhook->>GitHost: 回写 passed (overridden) 状态解除阻塞 + 下发 MR_GATE_OVERRIDDEN 通知
     else 门禁通过且收到 event_action=merge
         Worker->>Compiler: 4b. 若 auto_compile_on_merge=true 执行对应 Bundle 默认分支最新树全量 protocompile
-        Compiler->>DB: 写入新版本 ProtoSchema (GIT_MR_AUTO, source_bundle_id) & 刷新 traefik_proto_doc_symbols + 通知
+        Compiler->>DB: 写入新版本 ProtoSchema (GIT_MR_AUTO, source_bundle_id) & 刷新 contract_proto_doc_symbols + 通知
     end
 ```
 
@@ -541,13 +541,13 @@ sequenceDiagram
    - 控制面所有非公开 `/api/*` 接口（含 `/api/events` SSE 流）强制经 `commonAuth.AuthMiddleware` 校验 `HS256` JWT（显式拒绝 `none` 算法、强制校验 `exp` 过期时间）；`JWT_SECRET` 通过环境变量或密钥管理系统注入，严禁源码硬编码回退字面量（生产集群接入 KMS 标记见 `config/config.go` `TODO(security)`）。
    - 严禁在 URL Query 参数中传递 JWT 或任何凭据；前端登出时清空内存认证上下文并触发页面级重载跳转。
    - 独立密码登录（调试模式）复用平台 `bcrypt` 加盐哈希存储，预留 MFA 与泄露密码库检测扩展位（`// TODO(security): 企业生产门户统一走 OAuth2/OIDC + MFA 强认证`）。
-   - **公私域防横向越权（Anti-IDOR）**：所有涉及 `PRIVATE` Agent、名下进程及 `PRIVATE` 录制素材的查询、修改、SSE 订阅与重放接口，普通用户之间强制在数据访问层校验 `owner_id == currentUser.ID`（未匹配返回 `403 Forbidden`）；管理员（`traefik_admin`）被授予全团队运维查看、审计、租约异常解锁与安全审查特权，严禁仅靠前端隐藏入口。
+   - **公私域防横向越权（Anti-IDOR）**：所有涉及 `PRIVATE` Agent、名下进程及 `PRIVATE` 录制素材的查询、修改、SSE 订阅与重放接口，普通用户之间强制在数据访问层校验 `owner_id == currentUser.ID`（未匹配返回 `403 Forbidden`）；管理员（`contract_admin`）被授予全团队运维查看、审计、租约异常解锁与安全审查特权，严禁仅靠前端隐藏入口。
 2. **输入校验、编译沙箱与出站 SSRF/凭据零信任**：
    - `.pb` 描述集上传与 `POST /api/proto-schemas/compile` / Git `protocompile` Compilation Bundle 统一强制通过流式 `http.MaxBytesReader` / 解压边界校验 `<= 16MB` 体积上限；编译 100% 运行于纯 Go `github.com/bufbuild/protocompile` 内存虚拟文件解析器中（**全仓严禁 `os/exec` 调用外部 `protoc` 或 `git` 命令行**），所有 `.proto` 相对路径与 `proto_include_dirs` 经 `path.Clean` 强制消毒，拒绝 `..` 路径穿越与绝对路径；二进制 `FileDescriptorSet` 直接存入 PostgreSQL `bytea` 字段，不落地宿主机可执行文件系统，下载响应强制附加 `Content-Disposition: attachment`、`X-Content-Type-Options: nosniff` 与 `Cache-Control: no-store`（病毒扫描外部网关集成留存 `// TODO(security): 接入企业制品防病毒扫描服务`）。
-   - **Git 凭据 / 敏感集成配置加密与脱敏**：`traefik_git_repos` 的 `credentials_encrypted`、`webhook_secret_encrypted` 及 `traefik_settings` 的 `llm_api_key_enc`、`smtp_password_enc`、`code_notifier_token_enc` 统一使用主密钥 **AES-256-GCM**（通过 **`TRAEFIK_CRYPTO_KEY`** 环境变量或 KMS 注入；`// TODO(security): 生产环境接入 KMS`，严禁生产模式静默无密钥回退）加密持久化；改造 `handlers/settings.go` 与 `git_handler.go`，API 响应结构体统一标注 `json:"-"` 并过滤全部 `*_enc` / `*_sha256` 内部键，仅透出 `has_credentials`、`has_webhook_secret`、`llm_key_configured` 等布尔标记，且严禁向 `commonAudit` 写入未脱敏的敏感配置字段级 Diff；Webhook 回调签名为常量时间比对 (`subtle.ConstantTimeCompare`) 并受 `uk_traefik_mr_dedup` (`git_repo_id, COALESCE(bundle_id, 0), event_phase, head_commit_sha, target_head_sha`) 唯一约束保护，兼顾 Fast-Forward/Rebase 同 SHA 合并门禁与重放幂等性。
+   - **Git 凭据 / 敏感集成配置加密与脱敏**：`contract_git_repos` 的 `credentials_encrypted`、`webhook_secret_encrypted` 及 `contract_settings` 的 `llm_api_key_enc`、`smtp_password_enc`、`code_notifier_token_enc` 统一使用主密钥 **AES-256-GCM**（通过 **`CONTRACT_CRYPTO_KEY`** 环境变量或 KMS 注入；`// TODO(security): 生产环境接入 KMS`，严禁生产模式静默无密钥回退）加密持久化；改造 `handlers/settings.go` 与 `git_handler.go`，API 响应结构体统一标注 `json:"-"` 并过滤全部 `*_enc` / `*_sha256` 内部键，仅透出 `has_credentials`、`has_webhook_secret`、`llm_key_configured` 等布尔标记，且严禁向 `commonAudit` 写入未脱敏的敏感配置字段级 Diff；Webhook 回调签名为常量时间比对 (`subtle.ConstantTimeCompare`) 并受 `uk_contract_mr_dedup` (`git_repo_id, COALESCE(bundle_id, 0), event_phase, head_commit_sha, target_head_sha`) 唯一约束保护，兼顾 Fast-Forward/Rebase 同 SHA 合并门禁与重放幂等性。
    - **出站请求 `SafeDialer` SSRF 防护、信任内网白名单与 3s 熔断超时**：所有由主控主动发起的出站 HTTP/Git 请求（Git REST API / `go-git memfs` 拉取、MR 状态回写、可选外部 LLM 词根建议、**部署在同内网另一台主机上的 `code-notifier` 邮件投递** / SMTP）统一经 `internal/server/security.SafeDialer`：
      1. **永久硬阻断（不可豁免）**：云元数据与链路本地地址（`169.254.0.0/16`、`fe80::/10`、`100.100.100.200/32`、`metadata.google.internal`）、多播段与未指定地址（`0.0.0.0/8`）；
-     2. **默认拦截 + 管理员信任白名单放行 (`outbound_trusted_cidrs`)**：默认拒绝回环（`127.0.0.0/8`、`::1`）、RFC1918 私网与 RFC4193 ULA，同时显式允许管理员在 `traefik_settings.outbound_trusted_cidrs` 配置受信任内网 CIDR 或精确主机（放行企业内网 GitLab/CodeHub、内网 LLM 网关及跨机部署的 `code-notifier`），单测沙箱可通过显式构建期或隔离开关放行受控 `127.0.0.1` mock server；
+     2. **默认拦截 + 管理员信任白名单放行 (`outbound_trusted_cidrs`)**：默认拒绝回环（`127.0.0.0/8`、`::1`）、RFC1918 私网与 RFC4193 ULA，同时显式允许管理员在 `contract_settings.outbound_trusted_cidrs` 配置受信任内网 CIDR 或精确主机（放行企业内网 GitLab/CodeHub、内网 LLM 网关及跨机部署的 `code-notifier`），单测沙箱可通过显式构建期或隔离开关放行受控 `127.0.0.1` mock server；
      3. **Dial/Control DNS 重绑定复检与重定向守卫**：通过 `net.Dialer{Control: ...}` 在 TCP 实际建连前再次校验解析后的最终 IP（防止域名通过 DNS 重绑定跳入元数据 IP 或未授权内网段），并禁止跨信任边界自动跳转；
      4. **强制硬超时与安全降级**：LLM 固定 `<= 3s`、Git API `<= 30s`、`code-notifier` `<= 5s`，任何外部依赖离线或返回 `4xx/5xx` 均安全降级（记录 `TIMEOUT_FALLBACK` 或 `email_status='FAILED'`），严禁阻塞核心研发与 MR 门禁主路径。
    - Agent 进程探查与连接诊断 100% 通过 Go 标准库只读解析 `/proc/<pid>/*` 虚拟文件，**全仓严禁调用 `os/exec` 拼接执行外部 Shell 命令**。

@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"code-traefik/models"
+	"code-contract/models"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protodesc"

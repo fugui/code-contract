@@ -11,8 +11,8 @@
 package orderpb
 
 import (
-	commonpb "code-traefik/demo/pkg/proto/commonpb"
-	paymentpb "code-traefik/demo/pkg/proto/paymentpb"
+	commonpb "code-contract/demo/pkg/proto/commonpb"
+	paymentpb "code-contract/demo/pkg/proto/paymentpb"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -806,7 +806,7 @@ const file_demo_proto_order_proto_rawDesc = "" +
 	"\x11GetCompositeQuote\x12\x1d.demo.order.CompositeQuoteReq\x1a\x1d.demo.order.CompositeQuoteRsp\x12E\n" +
 	"\vCreateOrder\x12\x1a.demo.order.CreateOrderReq\x1a\x1a.demo.order.CreateOrderRsp\x12H\n" +
 	"\x0eGetOrderDetail\x12\x1a.demo.order.OrderDetailReq\x1a\x1a.demo.order.OrderDetailRsp\x12E\n" +
-	"\vCancelOrder\x12\x1a.demo.order.CancelOrderReq\x1a\x1a.demo.order.CancelOrderRspB%Z#code-traefik/demo/pkg/proto/orderpbb\x06proto3"
+	"\vCancelOrder\x12\x1a.demo.order.CancelOrderReq\x1a\x1a.demo.order.CancelOrderRspB&Z$code-contract/demo/pkg/proto/orderpbb\x06proto3"
 
 var (
 	file_demo_proto_order_proto_rawDescOnce sync.Once

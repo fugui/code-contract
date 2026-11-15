@@ -3,8 +3,8 @@ package handlers
 import (
 	commonAudit "code-common/backend/audit"
 	commonAuth "code-common/backend/auth"
-	"code-traefik/config"
-	"code-traefik/models"
+	"code-contract/config"
+	"code-contract/models"
 
 	"github.com/gin-gonic/gin"
 )

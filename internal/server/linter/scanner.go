@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"code-traefik/internal/server/protodoc"
-	"code-traefik/internal/server/security"
-	"code-traefik/models"
+	"code-contract/internal/server/protodoc"
+	"code-contract/internal/server/security"
+	"code-contract/models"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protodesc"
@@ -236,7 +236,7 @@ func RebuildDuplicateGroupsFromViolations(violations []models.CheckViolation) []
 }
 
 func loadSourcesFromDB(req ScanRequest) ([]SourceInput, error) {
-	// 优先读取 M25 持久化 Git 源文件表 traefik_proto_files (当显式传入 GitRepoID / BundleID 或匹配实际 ProtoFileID 时)
+	// 优先读取 M25 持久化 Git 源文件表 contract_proto_files (当显式传入 GitRepoID / BundleID 或匹配实际 ProtoFileID 时)
 	if req.GitRepoID != nil || req.BundleID != nil || (req.ProtoFileID != nil && *req.ProtoFileID > 0) {
 		type dbFileRow struct {
 			ID          uint64
@@ -246,9 +246,9 @@ func loadSourcesFromDB(req ScanRequest) ([]SourceInput, error) {
 			ContentText string
 		}
 		var rows []dbFileRow
-		q := req.DB.Table("traefik_proto_files AS f").
+		q := req.DB.Table("contract_proto_files AS f").
 			Select("f.id AS id, f.file_path AS file_path, f.category AS category, v.schema_id AS schema_id, v.content_text AS content_text").
-			Joins("JOIN traefik_proto_file_versions AS v ON v.id = f.latest_version_id").
+			Joins("JOIN contract_proto_file_versions AS v ON v.id = f.latest_version_id").
 			Where("f.is_deleted = false")
 		if req.GitRepoID != nil && *req.GitRepoID > 0 {
 			q = q.Where("f.git_repo_id = ?", *req.GitRepoID)
@@ -366,7 +366,7 @@ type protoreflectFileRef struct {
 }
 
 func loadLLMSettingsFromDB(db *gorm.DB) *LLMSettings {
-	var rows []models.TraefikSetting
+	var rows []models.ModuleSetting
 	if err := db.Where("setting_key IN ?", []string{
 		"llm_enabled",
 		"llm_base_url",

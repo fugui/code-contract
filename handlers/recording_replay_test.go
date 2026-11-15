@@ -16,16 +16,16 @@ import (
 	"time"
 
 	commonModels "code-common/backend/models"
-	"code-traefik/config"
-	"code-traefik/handlers"
-	"code-traefik/internal/server/callgraph"
-	"code-traefik/internal/server/diff"
-	"code-traefik/internal/server/recorder"
-	"code-traefik/internal/server/topology"
-	"code-traefik/models"
-	"code-traefik/pkg/agentproto"
-	"code-traefik/pkg/crosrpc"
-	"code-traefik/pkg/replay"
+	"code-contract/config"
+	"code-contract/handlers"
+	"code-contract/internal/server/callgraph"
+	"code-contract/internal/server/diff"
+	"code-contract/internal/server/recorder"
+	"code-contract/internal/server/topology"
+	"code-contract/models"
+	"code-contract/pkg/agentproto"
+	"code-contract/pkg/crosrpc"
+	"code-contract/pkg/replay"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/descriptorpb"
@@ -150,7 +150,7 @@ func TestSC05_SC07_SC08_EndToEndRecordingAndReplayPipeline(t *testing.T) {
 	r, db := setupRouterAndDB(t)
 
 	// 1. 创建基础测试用户
-	admin := createTestUserInDB(t, db, "admin_m4", "traefik_admin")
+	admin := createTestUserInDB(t, db, "admin_m4", "contract_admin")
 	adminToken := generateTestJWT(t, admin)
 	_ = adminToken
 
@@ -707,7 +707,7 @@ func TestSC05_SC07_SC08_EndToEndRecordingAndReplayPipeline(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	var auditLogs []commonModels.SysAuditLog
-	if err := db.Where("module = ?", "traefik").Find(&auditLogs).Error; err != nil {
+	if err := db.Where("module = ?", "contract").Find(&auditLogs).Error; err != nil {
 		t.Fatalf("查询审计日志失败: %v", err)
 	}
 
@@ -728,7 +728,7 @@ func TestSC05_SC07_SC08_EndToEndRecordingAndReplayPipeline(t *testing.T) {
 func TestListTrafficRecords_HasErrorFilter(t *testing.T) {
 	r, db := setupRouterAndDB(t)
 
-	admin := createTestUserInDB(t, db, "admin_m8_p1", "traefik_admin")
+	admin := createTestUserInDB(t, db, "admin_m8_p1", "contract_admin")
 	adminToken := generateTestJWT(t, admin)
 
 	session := models.RecordingSession{
@@ -1165,7 +1165,7 @@ func TestSingleProcessZeroTopology_BidirectionalCapture_StopRelease_AndZeroLeakR
 func TestSC12_MultiImplContractDispatchVerifyAndIsolatedMockReplay(t *testing.T) {
 	r, db := setupRouterAndDB(t)
 
-	admin := createTestUserInDB(t, db, "admin_sc12", "traefik_admin")
+	admin := createTestUserInDB(t, db, "admin_sc12", "contract_admin")
 	adminToken := generateTestJWT(t, admin)
 
 	// 1. 搭建三级架构：子系统 + 功能组

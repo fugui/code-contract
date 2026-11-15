@@ -12,13 +12,13 @@ export const AgentInstallGuidePane: React.FC<AgentInstallGuidePaneProps> = ({
   // 解析当前服务器 IP / Host 用于动态建议
   const host = typeof window !== 'undefined' ? window.location.hostname : '192.168.56.18';
   const origin = typeof window !== 'undefined' ? window.location.origin : 'http://192.168.56.18:8000';
-  const downloadUrl = `${origin}/traefik/api/agent/download`;
+  const downloadUrl = `${origin}/contract/api/agent/download`;
 
-  const curlCommand = `curl -fsSL "${downloadUrl}" -o code-traefik-agent && chmod +x code-traefik-agent`;
-  const doctorCommand = `sudo ./code-traefik-agent --doctor`;
-  const startCommand = `sudo ./code-traefik-agent --listen 0.0.0.0:9091 --allow-ips "${host},127.0.0.1"`;
-  const setcapCommand = `sudo setcap 'cap_net_admin,cap_sys_ptrace,cap_sys_admin,cap_perfmon,cap_bpf=ep' ./code-traefik-agent`;
-  const nonSudoStartCommand = `./code-traefik-agent --listen 0.0.0.0:9091 --allow-ips "${host},127.0.0.1"`;
+  const curlCommand = `curl -fsSL "${downloadUrl}" -o code-contract-agent && chmod +x code-contract-agent`;
+  const doctorCommand = `sudo ./code-contract-agent --doctor`;
+  const startCommand = `sudo ./code-contract-agent --listen 0.0.0.0:9091 --allow-ips "${host},127.0.0.1"`;
+  const setcapCommand = `sudo setcap 'cap_net_admin,cap_sys_ptrace,cap_sys_admin,cap_perfmon,cap_bpf=ep' ./code-contract-agent`;
+  const nonSudoStartCommand = `./code-contract-agent --listen 0.0.0.0:9091 --allow-ips "${host},127.0.0.1"`;
 
   const handleCopy = (text: string, key: string) => {
     if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
@@ -38,9 +38,9 @@ export const AgentInstallGuidePane: React.FC<AgentInstallGuidePaneProps> = ({
           <span className="code-badge code-badge--info">自服务部署指南</span>
           <span className="code-badge code-badge--secondary">单二进制 · 零依赖待命</span>
         </div>
-        <h3 className="code-guide-header__title">code-traefik-agent 部署与快速接入</h3>
+        <h3 className="code-guide-header__title">code-contract-agent 部署与快速接入</h3>
         <p className="code-guide-header__desc">
-          <code>code-traefik-agent</code> 是部署在业务宿主机或测试虚机上的无状态常驻探针。基于 Linux 内核 eBPF 技术，实现免重启的进程流量捕获、精准套接字追踪与排他录制重放。
+          <code>code-contract-agent</code> 是部署在业务宿主机或测试虚机上的无状态常驻探针。基于 Linux 内核 eBPF 技术，实现免重启的进程流量捕获、精准套接字追踪与排他录制重放。
           只需完成以下 4 个步骤，即可将您的私有开发机或测试环境纳管至平台。
         </p>
       </div>
@@ -60,7 +60,7 @@ export const AgentInstallGuidePane: React.FC<AgentInstallGuidePaneProps> = ({
             <div className="code-download-actions">
               <a
                 href={downloadUrl}
-                download="code-traefik-agent"
+                download="code-contract-agent"
                 className="code-btn code-btn--primary"
                 data-testid="direct-download-btn"
               >
@@ -201,7 +201,7 @@ export const AgentInstallGuidePane: React.FC<AgentInstallGuidePaneProps> = ({
             <div className="code-log-preview-box code-mt-sm">
               <span className="code-log-preview-box__title">💡 终端启动日志示例（请关注认领码 ClaimCode）：</span>
               <pre className="code-log-preview-box__content code-font-mono">
-{`[Agent] 启动 code-traefik-agent 版本: v0.2.0 (GitCommit: dev, BuildTime: 2026-11-08)
+{`[Agent] 启动 code-contract-agent 版本: v0.2.0 (GitCommit: dev, BuildTime: 2026-11-08)
 [Agent] 监听地址: 0.0.0.0:9091, 白名单: [${host} 127.0.0.1]
 [Agent] 认领码 (ClaimCode): c7a8b9f2e1
 [Agent] 实例 BootID: e702ba7c-728b-4a55-a226-c116c49ce3ea

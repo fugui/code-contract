@@ -12,9 +12,9 @@ import (
 
 	commonAudit "code-common/backend/audit"
 	"code-common/backend/testdb"
-	"code-traefik/config"
-	"code-traefik/internal/server/security"
-	"code-traefik/models"
+	"code-contract/config"
+	"code-contract/internal/server/security"
+	"code-contract/models"
 )
 
 func TestSettingsUpdate_SecretMaskAndAuditRedaction(t *testing.T) {
@@ -32,7 +32,7 @@ func TestSettingsUpdate_SecretMaskAndAuditRedaction(t *testing.T) {
 		_ = commonAudit.Close(context.Background())
 	}()
 
-	t.Setenv("TRAEFIK_CRYPTO_KEY", "unit-test-crypto-key-32bytes-seed!")
+	t.Setenv("CONTRACT_CRYPTO_KEY", "unit-test-crypto-key-32bytes-seed!")
 	r, _ := setupGoldenSuiteTestServer(t, db)
 	_, adminToken := createTestUser(t, db, "settings_admin", config.AdminRole)
 
@@ -104,7 +104,7 @@ func TestSettingsUpdate_SecretMaskAndAuditRedaction(t *testing.T) {
 	}
 
 	// 4. 数据库中应为 *_enc AES-GCM 密文且可正确解密，绝无明文落库
-	var llmRow models.TraefikSetting
+	var llmRow models.ModuleSetting
 	if err := db.Where("setting_key = ?", "llm_api_key_enc").First(&llmRow).Error; err != nil {
 		t.Fatalf("未找到加密落库的 llm_api_key_enc: %v", err)
 	}
@@ -131,11 +131,11 @@ func TestSettingsUpdate_SecretMaskAndAuditRedaction(t *testing.T) {
 		}
 	}
 	var getResp struct {
-		Settings                    []models.TraefikSetting `json:"settings"`
-		CITokenConfigured           bool                    `json:"ci_token_configured"`
-		LLMKeyConfigured            bool                    `json:"llm_key_configured"`
-		CodeNotifierTokenConfigured bool                    `json:"code_notifier_token_configured"`
-		SMTPPasswordConfigured      bool                    `json:"smtp_password_configured"`
+		Settings                    []models.ModuleSetting `json:"settings"`
+		CITokenConfigured           bool                   `json:"ci_token_configured"`
+		LLMKeyConfigured            bool                   `json:"llm_key_configured"`
+		CodeNotifierTokenConfigured bool                   `json:"code_notifier_token_configured"`
+		SMTPPasswordConfigured      bool                   `json:"smtp_password_configured"`
 	}
 	if err := json.Unmarshal(wGet.Body.Bytes(), &getResp); err != nil {
 		t.Fatalf("解析 GET /api/admin/settings 失败: %v", err)

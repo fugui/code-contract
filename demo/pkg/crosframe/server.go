@@ -9,7 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"code-traefik/pkg/crosrpc"
+	"code-contract/pkg/crosrpc"
 )
 
 // HandlerFunc 处理接收到的 CROS RPC 请求并返回业务状态码与应答载荷

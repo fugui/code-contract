@@ -91,8 +91,8 @@ describe('AgentProcessMountAndReadiness Test Suite', () => {
     id: 1,
     username: 'admin',
     name: '系统管理员',
-    roles: ['traefik_admin'],
-    required_ad_role: 'traefik_admin',
+    roles: ['contract_admin'],
+    required_ad_role: 'contract_admin',
     is_module_admin: true,
     is_super_admin: false,
   };
@@ -405,15 +405,15 @@ describe('AgentProcessMountAndReadiness Test Suite', () => {
 
     // 验证 INSTALL Tab 内容面板
     expect(html).toContain('data-testid="agent-install-guide-pane"');
-    expect(html).toContain('code-traefik-agent 部署与快速接入');
+    expect(html).toContain('code-contract-agent 部署与快速接入');
     expect(html).toContain('data-testid="guide-step-download"');
     expect(html).toContain('data-testid="direct-download-btn"');
     expect(html).toContain('data-testid="copy-curl-btn"');
     expect(html).toContain('curl -fsSL');
     expect(html).toContain('data-testid="guide-step-doctor"');
-    expect(html).toContain('sudo ./code-traefik-agent --doctor');
+    expect(html).toContain('sudo ./code-contract-agent --doctor');
     expect(html).toContain('data-testid="guide-step-start"');
-    expect(html).toContain('sudo ./code-traefik-agent --listen 0.0.0.0:9091');
+    expect(html).toContain('sudo ./code-contract-agent --listen 0.0.0.0:9091');
     expect(html).toContain('data-testid="guide-advance-setcap"');
     expect(html).toContain('配置 Linux Capabilities 实现普通用户免 sudo 运行');
     expect(html).toContain('data-testid="copy-setcap-btn"');

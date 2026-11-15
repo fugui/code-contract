@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"code-traefik/demo/pkg/crosframe"
-	"code-traefik/demo/pkg/proto/orderpb"
-	"code-traefik/pkg/crosrpc"
+	"code-contract/demo/pkg/crosframe"
+	"code-contract/demo/pkg/proto/orderpb"
+	"code-contract/pkg/crosrpc"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )

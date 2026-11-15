@@ -247,7 +247,7 @@ const file_demo_proto_common_proto_rawDesc = "" +
 	" PAYMENT_CHANNEL_ENUM_UNSPECIFIED\x10\x00\x12\x1f\n" +
 	"\x1bPAYMENT_CHANNEL_ENUM_ALIPAY\x10\x01\x12\x1f\n" +
 	"\x1bPAYMENT_CHANNEL_ENUM_WECHAT\x10\x02\x12%\n" +
-	"\x1dPAYMENT_CHANNEL_ENUM_UNIONPAY\x10\x03\x1a\x02\b\x01B&Z$code-traefik/demo/pkg/proto/commonpbb\x06proto3"
+	"\x1dPAYMENT_CHANNEL_ENUM_UNIONPAY\x10\x03\x1a\x02\b\x01B'Z%code-contract/demo/pkg/proto/commonpbb\x06proto3"
 
 var (
 	file_demo_proto_common_proto_rawDescOnce sync.Once

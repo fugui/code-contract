@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"code-traefik/models"
+	"code-contract/models"
 )
 
 const (

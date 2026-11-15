@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"code-traefik/models"
+	"code-contract/models"
 	"gorm.io/datatypes"
 )
 

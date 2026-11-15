@@ -151,7 +151,7 @@ export const GitConsistencyDrawer: React.FC<GitConsistencyDrawerProps> = ({
       open={open}
       onClose={onClose}
       title={repo ? `Git 远端 SHA256 只读一致性对账：${repo.name}` : 'Git 远端一致性对账'}
-      subtitle="仅在内存计算远端树对象与数据库 traefik_proto_files 的 SHA256 指纹差异，零落盘、零写库"
+      subtitle="仅在内存计算远端树对象与数据库 contract_proto_files 的 SHA256 指纹差异，零落盘、零写库"
       width={860}
     >
       <div className="pgit-drawer-stack">

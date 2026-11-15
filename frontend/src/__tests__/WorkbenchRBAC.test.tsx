@@ -114,8 +114,8 @@ export function testAgentProcessConsolidation_GroupNameAndRBAC(): void {
     id: 1,
     username: 'lisi_admin',
     name: '李四管理员',
-    roles: ['traefik_admin'],
-    required_ad_role: 'traefik_admin',
+    roles: ['contract_admin'],
+    required_ad_role: 'contract_admin',
     is_module_admin: true,
     is_super_admin: false,
   };
