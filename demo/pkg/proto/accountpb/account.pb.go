@@ -4,9 +4,13 @@
 // 	protoc        v3.21.12
 // source: demo/proto/account.proto
 
+// 账户资产领域服务契约 (BUSINESS: demo.account.AccountService)
+// @owner: asset-account-team
+
 package accountpb
 
 import (
+	commonpb "code-traefik/demo/pkg/proto/commonpb"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -21,9 +25,11 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// GetBalanceReq 查询用户账户余额请求
 type GetBalanceReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 目标用户唯一标识（如 U1001）
+	UserId        string `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -65,13 +71,19 @@ func (x *GetBalanceReq) GetUserId() string {
 	return ""
 }
 
+// GetBalanceRsp 查询用户账户余额响应
 type GetBalanceRsp struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"` // 0=成功, 2001=用户不存在
-	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
-	UserId        string                 `protobuf:"bytes,3,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	UserName      string                 `protobuf:"bytes,4,opt,name=user_name,json=userName,proto3" json:"user_name,omitempty"`
-	BalanceCents  int64                  `protobuf:"varint,5,opt,name=balance_cents,json=balanceCents,proto3" json:"balance_cents,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 业务状态码：0=成功，2001=用户不存在
+	Code int32 `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	// 响应描述信息
+	Message string `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	// 用户唯一标识
+	UserId string `protobuf:"bytes,3,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	// 用户展示昵称
+	UserName string `protobuf:"bytes,4,opt,name=user_name,json=userName,proto3" json:"user_name,omitempty"`
+	// 账户当前可用余额（单位：分）
+	BalanceCents  int64 `protobuf:"varint,5,opt,name=balance_cents,json=balanceCents,proto3" json:"balance_cents,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -141,11 +153,15 @@ func (x *GetBalanceRsp) GetBalanceCents() int64 {
 	return 0
 }
 
+// DeductBalanceReq 扣减账户余额请求
 type DeductBalanceReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	AmountCents   int64                  `protobuf:"varint,2,opt,name=amount_cents,json=amountCents,proto3" json:"amount_cents,omitempty"` // 扣减金额 (分)
-	BizOrderId    string                 `protobuf:"bytes,3,opt,name=biz_order_id,json=bizOrderId,proto3" json:"biz_order_id,omitempty"`   // 业务订单关联号
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 用户唯一标识
+	UserId string `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	// 本次扣减金额（单位：分，必须大于 0）
+	AmountCents int64 `protobuf:"varint,2,opt,name=amount_cents,json=amountCents,proto3" json:"amount_cents,omitempty"`
+	// 关联业务订单号（用于幂等防重与对账）
+	BizOrderId    string `protobuf:"bytes,3,opt,name=biz_order_id,json=bizOrderId,proto3" json:"biz_order_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -201,15 +217,21 @@ func (x *DeductBalanceReq) GetBizOrderId() string {
 	return ""
 }
 
+// DeductBalanceRsp 扣减账户余额响应
 type DeductBalanceRsp struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	Code             int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"` // 0=成功, 2002=余额不足
-	Message          string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
-	UserId           string                 `protobuf:"bytes,3,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	RemainingBalance int64                  `protobuf:"varint,4,opt,name=remaining_balance,json=remainingBalance,proto3" json:"remaining_balance,omitempty"` // 扣减后剩余余额
-	TxSerialNo       string                 `protobuf:"bytes,5,opt,name=tx_serial_no,json=txSerialNo,proto3" json:"tx_serial_no,omitempty"`                  // 交易记账流水号
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 业务状态码：0=成功，2002=余额不足
+	Code int32 `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	// 响应描述信息
+	Message string `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	// 用户唯一标识
+	UserId string `protobuf:"bytes,3,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	// 扣减后的最新剩余余额（单位：分）
+	RemainingBalance int64 `protobuf:"varint,4,opt,name=remaining_balance,json=remainingBalance,proto3" json:"remaining_balance,omitempty"`
+	// 账户中心生成的记账流水号
+	TxSerialNo    string `protobuf:"bytes,5,opt,name=tx_serial_no,json=txSerialNo,proto3" json:"tx_serial_no,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *DeductBalanceRsp) Reset() {
@@ -277,12 +299,17 @@ func (x *DeductBalanceRsp) GetTxSerialNo() string {
 	return ""
 }
 
+// RefundBalanceReq 退还账户余额请求
 type RefundBalanceReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	AmountCents   int64                  `protobuf:"varint,2,opt,name=amount_cents,json=amountCents,proto3" json:"amount_cents,omitempty"`
-	BizOrderId    string                 `protobuf:"bytes,3,opt,name=biz_order_id,json=bizOrderId,proto3" json:"biz_order_id,omitempty"`
-	Reason        string                 `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 用户唯一标识
+	UserId string `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	// 退还金额（单位：分）
+	AmountCents int64 `protobuf:"varint,2,opt,name=amount_cents,json=amountCents,proto3" json:"amount_cents,omitempty"`
+	// 原关联业务订单号
+	BizOrderId string `protobuf:"bytes,3,opt,name=biz_order_id,json=bizOrderId,proto3" json:"biz_order_id,omitempty"`
+	// 退款原因描述
+	Reason        string `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -345,13 +372,19 @@ func (x *RefundBalanceReq) GetReason() string {
 	return ""
 }
 
+// RefundBalanceRsp 退还账户余额响应
 type RefundBalanceRsp struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	Code           int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
-	Message        string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
-	UserId         string                 `protobuf:"bytes,3,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	CurrentBalance int64                  `protobuf:"varint,4,opt,name=current_balance,json=currentBalance,proto3" json:"current_balance,omitempty"`
-	RefundSerialNo string                 `protobuf:"bytes,5,opt,name=refund_serial_no,json=refundSerialNo,proto3" json:"refund_serial_no,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 业务状态码：0=成功
+	Code int32 `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	// 响应描述信息
+	Message string `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	// 用户唯一标识
+	UserId string `protobuf:"bytes,3,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	// 退款入账后的最新账户余额（单位：分）
+	CurrentBalance int64 `protobuf:"varint,4,opt,name=current_balance,json=currentBalance,proto3" json:"current_balance,omitempty"`
+	// 退款记账流水号
+	RefundSerialNo string `protobuf:"bytes,5,opt,name=refund_serial_no,json=refundSerialNo,proto3" json:"refund_serial_no,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -421,10 +454,20 @@ func (x *RefundBalanceRsp) GetRefundSerialNo() string {
 	return ""
 }
 
+// DepositBalanceReq 账户充值请求
 type DepositBalanceReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	AmountCents   int64                  `protobuf:"varint,2,opt,name=amount_cents,json=amountCents,proto3" json:"amount_cents,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 用户唯一标识
+	UserId string `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	// 充值金额（单位：分）
+	AmountCents int64 `protobuf:"varint,2,opt,name=amount_cents,json=amountCents,proto3" json:"amount_cents,omitempty"`
+	// 旧版人工操作备注字段
+	// @deprecated: 请改用统一审计扩展头 audit_meta 传递操作人及链路追踪信息
+	//
+	// Deprecated: Marked as deprecated in demo/proto/account.proto.
+	LegacyOperatorNote string `protobuf:"bytes,3,opt,name=legacy_operator_note,json=legacyOperatorNote,proto3" json:"legacy_operator_note,omitempty"`
+	// 统一全链路审计扩展头
+	AuditMeta     *commonpb.TraceAuditMeta `protobuf:"bytes,4,opt,name=audit_meta,json=auditMeta,proto3" json:"audit_meta,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -473,11 +516,30 @@ func (x *DepositBalanceReq) GetAmountCents() int64 {
 	return 0
 }
 
+// Deprecated: Marked as deprecated in demo/proto/account.proto.
+func (x *DepositBalanceReq) GetLegacyOperatorNote() string {
+	if x != nil {
+		return x.LegacyOperatorNote
+	}
+	return ""
+}
+
+func (x *DepositBalanceReq) GetAuditMeta() *commonpb.TraceAuditMeta {
+	if x != nil {
+		return x.AuditMeta
+	}
+	return nil
+}
+
+// DepositBalanceRsp 账户充值响应
 type DepositBalanceRsp struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	Code           int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
-	Message        string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
-	CurrentBalance int64                  `protobuf:"varint,3,opt,name=current_balance,json=currentBalance,proto3" json:"current_balance,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 业务状态码：0=成功
+	Code int32 `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	// 响应描述信息
+	Message string `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	// 充值入账后的最新账户余额（单位：分）
+	CurrentBalance int64 `protobuf:"varint,3,opt,name=current_balance,json=currentBalance,proto3" json:"current_balance,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -533,11 +595,95 @@ func (x *DepositBalanceRsp) GetCurrentBalance() int64 {
 	return 0
 }
 
+// AccountSettlementSnapshot 账户对账结算快照结构
+// 用于演示跨业务模块（demo.account vs demo.inventory）的 AST 重复结构体识别与公共库上浮建议
+// @deprecated: 与 InventorySettlementSnapshot 结构体 100% 重复，将在下个版本统一抽取上浮至 demo.common
+type AccountSettlementSnapshot struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 关联订单流水号
+	OrderId string `protobuf:"bytes,1,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
+	// 关联用户唯一标识
+	UserId string `protobuf:"bytes,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	// 结算金额（单位：分）
+	AmountCents int64 `protobuf:"varint,3,opt,name=amount_cents,json=amountCents,proto3" json:"amount_cents,omitempty"`
+	// 对账批次凭证号
+	SettlementSerialNo string `protobuf:"bytes,4,opt,name=settlement_serial_no,json=settlementSerialNo,proto3" json:"settlement_serial_no,omitempty"`
+	// 结算完成时间戳（Unix 秒级）
+	SettledAtUnix int64 `protobuf:"varint,5,opt,name=settled_at_unix,json=settledAtUnix,proto3" json:"settled_at_unix,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AccountSettlementSnapshot) Reset() {
+	*x = AccountSettlementSnapshot{}
+	mi := &file_demo_proto_account_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AccountSettlementSnapshot) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AccountSettlementSnapshot) ProtoMessage() {}
+
+func (x *AccountSettlementSnapshot) ProtoReflect() protoreflect.Message {
+	mi := &file_demo_proto_account_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AccountSettlementSnapshot.ProtoReflect.Descriptor instead.
+func (*AccountSettlementSnapshot) Descriptor() ([]byte, []int) {
+	return file_demo_proto_account_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *AccountSettlementSnapshot) GetOrderId() string {
+	if x != nil {
+		return x.OrderId
+	}
+	return ""
+}
+
+func (x *AccountSettlementSnapshot) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+func (x *AccountSettlementSnapshot) GetAmountCents() int64 {
+	if x != nil {
+		return x.AmountCents
+	}
+	return 0
+}
+
+func (x *AccountSettlementSnapshot) GetSettlementSerialNo() string {
+	if x != nil {
+		return x.SettlementSerialNo
+	}
+	return ""
+}
+
+func (x *AccountSettlementSnapshot) GetSettledAtUnix() int64 {
+	if x != nil {
+		return x.SettledAtUnix
+	}
+	return 0
+}
+
 var File_demo_proto_account_proto protoreflect.FileDescriptor
 
 const file_demo_proto_account_proto_rawDesc = "" +
 	"\n" +
-	"\x18demo/proto/account.proto\x12\fdemo.account\"(\n" +
+	"\x18demo/proto/account.proto\x12\fdemo.account\x1a\x17demo/proto/common.proto\"(\n" +
 	"\rGetBalanceReq\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\tR\x06userId\"\x98\x01\n" +
 	"\rGetBalanceRsp\x12\x12\n" +
@@ -569,14 +715,23 @@ const file_demo_proto_account_proto_rawDesc = "" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x17\n" +
 	"\auser_id\x18\x03 \x01(\tR\x06userId\x12'\n" +
 	"\x0fcurrent_balance\x18\x04 \x01(\x03R\x0ecurrentBalance\x12(\n" +
-	"\x10refund_serial_no\x18\x05 \x01(\tR\x0erefundSerialNo\"O\n" +
+	"\x10refund_serial_no\x18\x05 \x01(\tR\x0erefundSerialNo\"\xc1\x01\n" +
 	"\x11DepositBalanceReq\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\tR\x06userId\x12!\n" +
-	"\famount_cents\x18\x02 \x01(\x03R\vamountCents\"j\n" +
+	"\famount_cents\x18\x02 \x01(\x03R\vamountCents\x124\n" +
+	"\x14legacy_operator_note\x18\x03 \x01(\tB\x02\x18\x01R\x12legacyOperatorNote\x12:\n" +
+	"\n" +
+	"audit_meta\x18\x04 \x01(\v2\x1b.demo.common.TraceAuditMetaR\tauditMeta\"j\n" +
 	"\x11DepositBalanceRsp\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12'\n" +
-	"\x0fcurrent_balance\x18\x03 \x01(\x03R\x0ecurrentBalance2\xce\x02\n" +
+	"\x0fcurrent_balance\x18\x03 \x01(\x03R\x0ecurrentBalance\"\xcc\x01\n" +
+	"\x19AccountSettlementSnapshot\x12\x19\n" +
+	"\border_id\x18\x01 \x01(\tR\aorderId\x12\x17\n" +
+	"\auser_id\x18\x02 \x01(\tR\x06userId\x12!\n" +
+	"\famount_cents\x18\x03 \x01(\x03R\vamountCents\x120\n" +
+	"\x14settlement_serial_no\x18\x04 \x01(\tR\x12settlementSerialNo\x12&\n" +
+	"\x0fsettled_at_unix\x18\x05 \x01(\x03R\rsettledAtUnix2\xce\x02\n" +
 	"\x0eAccountService\x12F\n" +
 	"\n" +
 	"GetBalance\x12\x1b.demo.account.GetBalanceReq\x1a\x1b.demo.account.GetBalanceRsp\x12O\n" +
@@ -596,31 +751,34 @@ func file_demo_proto_account_proto_rawDescGZIP() []byte {
 	return file_demo_proto_account_proto_rawDescData
 }
 
-var file_demo_proto_account_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_demo_proto_account_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_demo_proto_account_proto_goTypes = []any{
-	(*GetBalanceReq)(nil),     // 0: demo.account.GetBalanceReq
-	(*GetBalanceRsp)(nil),     // 1: demo.account.GetBalanceRsp
-	(*DeductBalanceReq)(nil),  // 2: demo.account.DeductBalanceReq
-	(*DeductBalanceRsp)(nil),  // 3: demo.account.DeductBalanceRsp
-	(*RefundBalanceReq)(nil),  // 4: demo.account.RefundBalanceReq
-	(*RefundBalanceRsp)(nil),  // 5: demo.account.RefundBalanceRsp
-	(*DepositBalanceReq)(nil), // 6: demo.account.DepositBalanceReq
-	(*DepositBalanceRsp)(nil), // 7: demo.account.DepositBalanceRsp
+	(*GetBalanceReq)(nil),             // 0: demo.account.GetBalanceReq
+	(*GetBalanceRsp)(nil),             // 1: demo.account.GetBalanceRsp
+	(*DeductBalanceReq)(nil),          // 2: demo.account.DeductBalanceReq
+	(*DeductBalanceRsp)(nil),          // 3: demo.account.DeductBalanceRsp
+	(*RefundBalanceReq)(nil),          // 4: demo.account.RefundBalanceReq
+	(*RefundBalanceRsp)(nil),          // 5: demo.account.RefundBalanceRsp
+	(*DepositBalanceReq)(nil),         // 6: demo.account.DepositBalanceReq
+	(*DepositBalanceRsp)(nil),         // 7: demo.account.DepositBalanceRsp
+	(*AccountSettlementSnapshot)(nil), // 8: demo.account.AccountSettlementSnapshot
+	(*commonpb.TraceAuditMeta)(nil),   // 9: demo.common.TraceAuditMeta
 }
 var file_demo_proto_account_proto_depIdxs = []int32{
-	0, // 0: demo.account.AccountService.GetBalance:input_type -> demo.account.GetBalanceReq
-	2, // 1: demo.account.AccountService.DeductBalance:input_type -> demo.account.DeductBalanceReq
-	4, // 2: demo.account.AccountService.RefundBalance:input_type -> demo.account.RefundBalanceReq
-	6, // 3: demo.account.AccountService.DepositBalance:input_type -> demo.account.DepositBalanceReq
-	1, // 4: demo.account.AccountService.GetBalance:output_type -> demo.account.GetBalanceRsp
-	3, // 5: demo.account.AccountService.DeductBalance:output_type -> demo.account.DeductBalanceRsp
-	5, // 6: demo.account.AccountService.RefundBalance:output_type -> demo.account.RefundBalanceRsp
-	7, // 7: demo.account.AccountService.DepositBalance:output_type -> demo.account.DepositBalanceRsp
-	4, // [4:8] is the sub-list for method output_type
-	0, // [0:4] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	9, // 0: demo.account.DepositBalanceReq.audit_meta:type_name -> demo.common.TraceAuditMeta
+	0, // 1: demo.account.AccountService.GetBalance:input_type -> demo.account.GetBalanceReq
+	2, // 2: demo.account.AccountService.DeductBalance:input_type -> demo.account.DeductBalanceReq
+	4, // 3: demo.account.AccountService.RefundBalance:input_type -> demo.account.RefundBalanceReq
+	6, // 4: demo.account.AccountService.DepositBalance:input_type -> demo.account.DepositBalanceReq
+	1, // 5: demo.account.AccountService.GetBalance:output_type -> demo.account.GetBalanceRsp
+	3, // 6: demo.account.AccountService.DeductBalance:output_type -> demo.account.DeductBalanceRsp
+	5, // 7: demo.account.AccountService.RefundBalance:output_type -> demo.account.RefundBalanceRsp
+	7, // 8: demo.account.AccountService.DepositBalance:output_type -> demo.account.DepositBalanceRsp
+	5, // [5:9] is the sub-list for method output_type
+	1, // [1:5] is the sub-list for method input_type
+	1, // [1:1] is the sub-list for extension type_name
+	1, // [1:1] is the sub-list for extension extendee
+	0, // [0:1] is the sub-list for field type_name
 }
 
 func init() { file_demo_proto_account_proto_init() }
@@ -634,7 +792,7 @@ func file_demo_proto_account_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_demo_proto_account_proto_rawDesc), len(file_demo_proto_account_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

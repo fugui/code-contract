@@ -80,14 +80,28 @@ func main() {
 	// 清理目标测试/开发库既有架构与流量数据
 	cleanupSQL := `
 TRUNCATE TABLE
+	traefik_notifications,
+	traefik_mr_check_runs,
+	traefik_check_violations,
+	traefik_check_reports,
+	traefik_proto_doc_symbols,
+	traefik_proto_file_versions,
+	traefik_proto_files,
+	traefik_git_proto_bundles,
+	traefik_git_repos,
+	traefik_golden_suite_items,
+	traefik_golden_suites,
 	traefik_topology_layouts,
 	traefik_module_dependencies,
 	traefik_module_services,
+	traefik_service_contracts,
 	traefik_modules,
 	traefik_functional_groups,
 	traefik_subsystems,
 	traefik_arch_processes,
 	traefik_arch_process_groups,
+	traefik_proto_operations,
+	traefik_proto_schemas,
 	traefik_traffic_records,
 	traefik_recording_sessions
 RESTART IDENTITY CASCADE;`
@@ -136,17 +150,20 @@ RESTART IDENTITY CASCADE;`
 		log.Fatalf("写入标准进程失败: %v", err)
 	}
 
-	// 2. 创建子系统
+	// 2. 创建子系统（公共底座 sub_1 设为 L1，业务子系统设为 L2，遵循 L2 >= L1 单向依赖层级规范）
 	subsystems := make([]models.Subsystem, 0, *subsystemsCount)
 	for s := 1; s <= *subsystemsCount; s++ {
 		name := fmt.Sprintf("核心业务子系统-%02d", s)
+		layerLevel := 2
 		if s == 1 {
 			name = "公共底座子系统-01"
+			layerLevel = 1
 		}
 		uid := ownerID
 		subsystems = append(subsystems, models.Subsystem{
 			Code:        fmt.Sprintf("SUB_%02d", s),
 			Name:        name,
+			LayerLevel:  layerLevel,
 			OwnerID:     &uid,
 			Description: "SC-11 大规模拓扑测试子系统",
 			CreatedBy:   ownerID,
@@ -288,6 +305,10 @@ RESTART IDENTITY CASCADE;`
 			}
 			dstIdx := (srcIdx + offset) % totalModules
 			if srcIdx == dstIdx {
+				continue
+			}
+			// 禁止 L1 公共底座反向依赖 L2 业务子系统
+			if srcIdx < modsPerSub && dstIdx >= modsPerSub {
 				continue
 			}
 			srcMod := modulesList[srcIdx]

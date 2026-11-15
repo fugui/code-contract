@@ -1,45 +1,83 @@
 syntax = "proto3";
 
+// 统一支付通道公共接口契约 (BASE_LIB 多实现契约: demo.payment.PaymentService)
+// @owner: payment-team
 package demo.payment;
 option go_package = "code-traefik/demo/pkg/proto/paymentpb";
+
+import "demo/proto/common.proto";
 
 // 统一支付通道接口契约 (LIB 多实现契约名: demo.payment.PaymentService)
 // 各业务实例可发布自定义运行期服务名（如 demo.payment.ALIPAY_PaymentService / demo.payment.WECHAT_PaymentService），
 // 或通过共享同名模式运行，并共用同一份契约解码定义。
+// @owner: payment-team
 service PaymentService {
-  // 渠道支付授权扣款
+  // 渠道支付授权扣款：按商户订单金额向指定第三方支付路由发起同步鉴权扣款
+  // @owner: payment-team
+  // @error_code 4101 ERR_PAY_INVALID_PARAM 支付参数非法或金额越界（<=0）
+  // @error_code 4102 ERR_PAY_INSUFFICIENT_QUOTA 商户渠道单笔风控限额超限
+  // @error_code 4103 ERR_PAY_CHANNEL_REJECTED 第三方支付渠道网关拒绝授权（如余额不足/风控拦截）
   rpc AuthorizePay(AuthorizePayReq) returns (AuthorizePayRsp);
-  // 渠道原路退款补偿
+
+  // 渠道原路退款补偿：根据原渠道支付流水号执行全额或部分原路退回
+  // @owner: payment-team
+  // @error_code 4104 ERR_PAY_TX_NOT_FOUND 原支付流水记录不存在
+  // @error_code 4105 ERR_PAY_ALREADY_REFUNDED 该笔支付流水已完成全额退款，禁止重复补偿
   rpc RefundPay(RefundPayReq) returns (RefundPayRsp);
 }
 
+// AuthorizePayReq 渠道支付授权请求
 message AuthorizePayReq {
+  // 平台全局订单号
   string order_id = 1;
+  // 买家用户唯一标识
   string user_id = 2;
+  // 待支付金额（单位：分，必须大于 0）
   int64 amount_cents = 3;
-  string channel = 4; // ALIPAY, WECHAT
+  // 支付渠道文本编码（兼容旧版客户端：ALIPAY / WECHAT）
+  string channel = 4;
+  // 强类型支付渠道枚举（推荐新接入方使用，替代自由文本 channel）
+  demo.common.PaymentChannelEnum channel_enum = 5;
 }
 
+// AuthorizePayRsp 渠道支付授权响应
 message AuthorizePayRsp {
-  int32 code = 1;           // 0=成功, 4101=支付参数非法, 4103=渠道拒绝
+  // 业务状态码：0=授权成功，4101=参数非法，4102=限额超限，4103=渠道拒绝
+  int32 code = 1;
+  // 响应描述信息
   string message = 2;
+  // 平台全局订单号
   string order_id = 3;
+  // 实际承接本次交易的支付渠道编码
   string channel = 4;
-  string channel_tx_no = 5; // 渠道支付流水号 (如 ALIPAY-TX-... / WECHAT-TX-...)
+  // 第三方渠道支付流水号（如 ALIPAY-TX-... / WECHAT-TX-...）
+  string channel_tx_no = 5;
+  // 渠道扣款完成时间戳（Unix 秒级）
   int64 paid_at_unix = 6;
 }
 
+// RefundPayReq 渠道原路退款补偿请求
 message RefundPayReq {
+  // 原平台全局订单号
   string order_id = 1;
+  // 原第三方渠道支付流水号
   string channel_tx_no = 2;
+  // 本次退回金额（单位：分）
   int64 amount_cents = 3;
+  // 退款原因说明（如 SAGA_ROLLBACK / USER_CANCEL）
   string reason = 4;
 }
 
+// RefundPayRsp 渠道原路退款补偿响应
 message RefundPayRsp {
-  int32 code = 1; // 0=成功, 4102=原支付记录不存在
+  // 业务状态码：0=退款受理成功，4104=原支付流水不存在，4105=重复退款
+  int32 code = 1;
+  // 响应描述信息
   string message = 2;
+  // 原平台全局订单号
   string order_id = 3;
+  // 执行退款的支付渠道编码
   string channel = 4;
+  // 渠道退款流水号
   string refund_tx_no = 5;
 }

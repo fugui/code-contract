@@ -1,68 +1,143 @@
 syntax = "proto3";
 
+// 账户资产领域服务契约 (BUSINESS: demo.account.AccountService)
+// @owner: asset-account-team
 package demo.account;
 option go_package = "code-traefik/demo/pkg/proto/accountpb";
 
+import "demo/proto/common.proto";
+
 // 账户资产服务契约 (Service: demo.account.AccountService)
+// @owner: asset-account-team
 service AccountService {
   // 查询用户账户信息与可用余额
+  // @owner: asset-account-team
+  // @error_code 2001 ERR_ACCOUNT_USER_NOT_FOUND 目标资金账户不存在
   rpc GetBalance(GetBalanceReq) returns (GetBalanceRsp);
-  // 扣减账户余额
+
+  // 扣减账户余额（用于下单支付环节原子扣款）
+  // @owner: asset-account-team
+  // @error_code 2001 ERR_ACCOUNT_USER_NOT_FOUND 目标资金账户不存在
+  // @error_code 2002 ERR_ACCOUNT_BALANCE_INSUFFICIENT 账户可用余额不足，无法完成扣款
+  // @error_code 2003 ERR_ACCOUNT_FROZEN 账户处于风控冻结状态
   rpc DeductBalance(DeductBalanceReq) returns (DeductBalanceRsp);
-  // 退还/增加账户余额
+
+  // 退还/增加账户余额（用于下单失败补偿与取消订单逆向退费）
+  // @owner: asset-account-team
+  // @error_code 2001 ERR_ACCOUNT_USER_NOT_FOUND 目标资金账户不存在
   rpc RefundBalance(RefundBalanceReq) returns (RefundBalanceRsp);
-  // 充值/资金增加
+
+  // 账户充值/资金转入
+  // @owner: asset-account-team
+  // @error_code 2001 ERR_ACCOUNT_USER_NOT_FOUND 目标资金账户不存在
   rpc DepositBalance(DepositBalanceReq) returns (DepositBalanceRsp);
 }
 
+// GetBalanceReq 查询用户账户余额请求
 message GetBalanceReq {
+  // 目标用户唯一标识（如 U1001）
   string user_id = 1;
 }
 
+// GetBalanceRsp 查询用户账户余额响应
 message GetBalanceRsp {
-  int32 code = 1;              // 0=成功, 2001=用户不存在
+  // 业务状态码：0=成功，2001=用户不存在
+  int32 code = 1;
+  // 响应描述信息
   string message = 2;
+  // 用户唯一标识
   string user_id = 3;
+  // 用户展示昵称
   string user_name = 4;
+  // 账户当前可用余额（单位：分）
   int64 balance_cents = 5;
 }
 
+// DeductBalanceReq 扣减账户余额请求
 message DeductBalanceReq {
+  // 用户唯一标识
   string user_id = 1;
-  int64 amount_cents = 2;      // 扣减金额 (分)
-  string biz_order_id = 3;     // 业务订单关联号
-}
-
-message DeductBalanceRsp {
-  int32 code = 1;              // 0=成功, 2002=余额不足
-  string message = 2;
-  string user_id = 3;
-  int64 remaining_balance = 4; // 扣减后剩余余额
-  string tx_serial_no = 5;     // 交易记账流水号
-}
-
-message RefundBalanceReq {
-  string user_id = 1;
+  // 本次扣减金额（单位：分，必须大于 0）
   int64 amount_cents = 2;
+  // 关联业务订单号（用于幂等防重与对账）
   string biz_order_id = 3;
+}
+
+// DeductBalanceRsp 扣减账户余额响应
+message DeductBalanceRsp {
+  // 业务状态码：0=成功，2002=余额不足
+  int32 code = 1;
+  // 响应描述信息
+  string message = 2;
+  // 用户唯一标识
+  string user_id = 3;
+  // 扣减后的最新剩余余额（单位：分）
+  int64 remaining_balance = 4;
+  // 账户中心生成的记账流水号
+  string tx_serial_no = 5;
+}
+
+// RefundBalanceReq 退还账户余额请求
+message RefundBalanceReq {
+  // 用户唯一标识
+  string user_id = 1;
+  // 退还金额（单位：分）
+  int64 amount_cents = 2;
+  // 原关联业务订单号
+  string biz_order_id = 3;
+  // 退款原因描述
   string reason = 4;
 }
 
+// RefundBalanceRsp 退还账户余额响应
 message RefundBalanceRsp {
+  // 业务状态码：0=成功
   int32 code = 1;
+  // 响应描述信息
   string message = 2;
+  // 用户唯一标识
   string user_id = 3;
+  // 退款入账后的最新账户余额（单位：分）
   int64 current_balance = 4;
+  // 退款记账流水号
   string refund_serial_no = 5;
 }
 
+// DepositBalanceReq 账户充值请求
 message DepositBalanceReq {
+  // 用户唯一标识
   string user_id = 1;
+  // 充值金额（单位：分）
   int64 amount_cents = 2;
+  // 旧版人工操作备注字段
+  // @deprecated: 请改用统一审计扩展头 audit_meta 传递操作人及链路追踪信息
+  string legacy_operator_note = 3 [deprecated = true];
+  // 统一全链路审计扩展头
+  demo.common.TraceAuditMeta audit_meta = 4;
 }
 
+// DepositBalanceRsp 账户充值响应
 message DepositBalanceRsp {
+  // 业务状态码：0=成功
   int32 code = 1;
+  // 响应描述信息
   string message = 2;
+  // 充值入账后的最新账户余额（单位：分）
   int64 current_balance = 3;
+}
+
+// AccountSettlementSnapshot 账户对账结算快照结构
+// 用于演示跨业务模块（demo.account vs demo.inventory）的 AST 重复结构体识别与公共库上浮建议
+// @deprecated: 与 InventorySettlementSnapshot 结构体 100% 重复，将在下个版本统一抽取上浮至 demo.common
+message AccountSettlementSnapshot {
+  // 关联订单流水号
+  string order_id = 1;
+  // 关联用户唯一标识
+  string user_id = 2;
+  // 结算金额（单位：分）
+  int64 amount_cents = 3;
+  // 对账批次凭证号
+  string settlement_serial_no = 4;
+  // 结算完成时间戳（Unix 秒级）
+  int64 settled_at_unix = 5;
 }

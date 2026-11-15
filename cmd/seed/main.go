@@ -4,10 +4,10 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"os"
 
 	"code-traefik/config"
 	"code-traefik/internal/server/decoder"
+	"code-traefik/internal/server/topology"
 	"code-traefik/models"
 	"code-traefik/pkg/version"
 
@@ -21,7 +21,7 @@ func main() {
 	flag.Parse()
 
 	log.Println("==========================================================")
-	log.Println(" 开始清除 Traefik 数据并根据 Demo 进程拓扑重构数据...")
+	log.Println(" 开始清除 Traefik 数据并根据 Demo 进程拓扑与 Proto 治理基线重构数据...")
 	log.Println("==========================================================")
 
 	// 1. 加载配置
@@ -39,7 +39,7 @@ func main() {
 	}
 
 	log.Println("==========================================================")
-	log.Println(" 全部 Demo 进程与架构数据重构完成！")
+	log.Println(" 全部 Demo 进程、架构拓扑与 Proto 全生命周期治理数据重构完成！")
 	log.Println("==========================================================")
 }
 
@@ -62,10 +62,21 @@ func createFunctionalGroup(db *gorm.DB, fg *models.FunctionalGroup) error {
 }
 
 func seedDemoData(db *gorm.DB, demoPbPath string) error {
-	// 3. 清理所有 traefik_* 业务数据表 (保留平台公共 users/departments/sys_audit_logs 与系统配置)
-	log.Println("[1/7] 清空历史 traefik_* 业务数据表...")
+	// 3. 清理所有 traefik_* 业务数据表 (保留平台公共 users/departments/sys_audit_logs 与 traefik_settings)
+	log.Println("[1/9] 清空历史 traefik_* 业务数据表...")
 	truncateSQL := `
 		TRUNCATE TABLE
+			traefik_notifications,
+			traefik_mr_check_runs,
+			traefik_check_violations,
+			traefik_check_reports,
+			traefik_vocabulary_terms,
+			traefik_check_rules,
+			traefik_proto_doc_symbols,
+			traefik_proto_file_versions,
+			traefik_proto_files,
+			traefik_git_proto_bundles,
+			traefik_git_repos,
 			traefik_golden_suite_items,
 			traefik_golden_suites,
 			traefik_topology_layouts,
@@ -92,7 +103,7 @@ func seedDemoData(db *gorm.DB, demoPbPath string) error {
 	}
 
 	// 4. 重建默认公共 Agent (demo-local-agent)
-	log.Println("[2/7] 重建默认本地 Agent...")
+	log.Println("[2/9] 重建默认本地 Agent...")
 	agent := models.Agent{
 		Name:            "demo-local-agent",
 		Endpoint:        "http://127.0.0.1:9091",
@@ -111,11 +122,12 @@ func seedDemoData(db *gorm.DB, demoPbPath string) error {
 	}
 	log.Printf("  • 已创建 Agent [%s] (ID: %d)", agent.Name, agent.ID)
 
-	// 5. 重建子系统与功能组 (Subsystems & FunctionalGroups)
-	log.Println("[3/7] 重建子系统与功能组...")
+	// 5. 重建子系统与功能组 (含 M22 ADR-18 架构层级水位 LayerLevel)
+	log.Println("[3/9] 重建子系统与功能组（含架构分层水位）...")
 	subsysEcommerce := models.Subsystem{
 		Code:        "ECOMMERCE",
 		Name:        "电商交易微服务系统",
+		LayerLevel:  2,
 		Description: "基于 CROS RPC 协议构建的高并发电商分布式微服务集群（含交易中枢、账户资产、仓储履约与多渠道支付 LIB 契约）",
 		CreatedBy:   1,
 	}
@@ -126,6 +138,7 @@ func seedDemoData(db *gorm.DB, demoPbPath string) error {
 	subsysClient := models.Subsystem{
 		Code:        "CLIENT",
 		Name:        "客户端交互子系统",
+		LayerLevel:  4,
 		Description: "包含 TUI 交互式控制台终端与压力测试流量发生器",
 		CreatedBy:   1,
 	}
@@ -196,7 +209,7 @@ func seedDemoData(db *gorm.DB, demoPbPath string) error {
 	log.Printf("  • 已创建 2 个子系统与 5 个功能组")
 
 	// 6. 重建标准架构物理进程组与蓝图 (ArchProcessGroups & ArchProcesses)
-	log.Println("[4/7] 重建标准架构物理进程组与进程蓝图 (ADR-09, M10)...")
+	log.Println("[4/9] 重建标准架构物理进程组与进程蓝图 (ADR-09, M10)...")
 	apgGateway := models.ArchProcessGroup{
 		Code:        "GROUP_GATEWAY",
 		Name:        "网关与交易中枢组",
@@ -322,15 +335,16 @@ func seedDemoData(db *gorm.DB, demoPbPath string) error {
 
 	log.Printf("  • 已创建 3 个架构物理进程组与 6 个标准架构进程蓝图")
 
-	// 7. 重建功能模块并绑定至标准架构进程 (Modules with ArchProcessID)
-	log.Println("[5/7] 重建功能模块并绑定所属架构进程...")
+	// 7. 重建功能模块（L1 基础契约库 -> L2 领域服务/实现 -> L3 交易中枢网关 -> L4 终端客户端）
+	log.Println("[5/9] 重建功能模块、服务契约与依赖拓扑并执行层级单调性与无环验证...")
 	modOrder := models.Module{
 		SubsystemID:   subsysEcommerce.ID,
 		GroupID:       fgTrade.ID,
 		ArchProcessID: &apSutOrder.ID,
+		LayerLevel:    3,
 		Code:          "ORDER_CORE",
 		Name:          "订单交易核心模块",
-		Description:   "负责订单生命周期、两阶段预占与状态流转",
+		Description:   "负责订单生命周期、两阶段预占与状态流转（L3 编排网关层）",
 		CreatedBy:     1,
 	}
 	if err := mustCreate(db, "创建模块 ORDER_CORE", &modOrder); err != nil {
@@ -341,9 +355,10 @@ func seedDemoData(db *gorm.DB, demoPbPath string) error {
 		SubsystemID:   subsysEcommerce.ID,
 		GroupID:       fgAsset.ID,
 		ArchProcessID: &apBackendAccount.ID,
+		LayerLevel:    2,
 		Code:          "ACCOUNT_CORE",
 		Name:          "账户资产核心模块",
-		Description:   "资金账本与扣减补偿服务",
+		Description:   "资金账本与扣减补偿服务（L2 领域核心层）",
 		CreatedBy:     1,
 	}
 	if err := mustCreate(db, "创建模块 ACCOUNT_CORE", &modAccount); err != nil {
@@ -354,9 +369,10 @@ func seedDemoData(db *gorm.DB, demoPbPath string) error {
 		SubsystemID:   subsysEcommerce.ID,
 		GroupID:       fgInventory.ID,
 		ArchProcessID: &apBackendInventory.ID,
+		LayerLevel:    2,
 		Code:          "INVENTORY_CORE",
 		Name:          "仓储库存履约模块",
-		Description:   "库存两阶段预占与释放管理",
+		Description:   "库存两阶段预占与释放管理（L2 领域核心层）",
 		CreatedBy:     1,
 	}
 	if err := mustCreate(db, "创建模块 INVENTORY_CORE", &modInventory); err != nil {
@@ -367,9 +383,10 @@ func seedDemoData(db *gorm.DB, demoPbPath string) error {
 		SubsystemID:   subsysClient.ID,
 		GroupID:       fgCli.ID,
 		ArchProcessID: &apClientTui.ID,
+		LayerLevel:    4,
 		Code:          "CLIENT_TUI",
 		Name:          "客户端交互终端模块",
-		Description:   "TUI 控制台客户端与录制触发入口",
+		Description:   "TUI 控制台客户端与录制触发入口（L4 终端接入层）",
 		CreatedBy:     1,
 	}
 	if err := mustCreate(db, "创建模块 CLIENT_TUI", &modClient); err != nil {
@@ -380,9 +397,10 @@ func seedDemoData(db *gorm.DB, demoPbPath string) error {
 		SubsystemID: subsysEcommerce.ID,
 		GroupID:     fgPayment.ID,
 		ModuleKind:  models.ModuleKindContractLib,
+		LayerLevel:  1,
 		Code:        "LIB_PAYMENT_CONTRACT",
 		Name:        "统一支付通道接口契约库",
-		Description: "ADR-16 v2.0 示例接口模块（CONTRACT_LIB，不绑定宿主进程，仅承载统一 .pb 服务契约）",
+		Description: "ADR-16 v2.0 示例接口模块（CONTRACT_LIB，L1 基础契约层，仅承载统一 .pb 服务契约）",
 		CreatedBy:   1,
 	}
 	if err := mustCreate(db, "创建模块 LIB_PAYMENT_CONTRACT", &modLibPayment); err != nil {
@@ -394,9 +412,10 @@ func seedDemoData(db *gorm.DB, demoPbPath string) error {
 		GroupID:       fgPayment.ID,
 		ArchProcessID: &apBackendPayAlipay.ID,
 		ModuleKind:    models.ModuleKindBusiness,
+		LayerLevel:    2,
 		Code:          "PAYMENT_ALIPAY",
 		Name:          "支付宝渠道支付模块",
-		Description:   "支付 LIB 契约的支付宝业务实现（发布自定义服务名 demo.payment.ALIPAY_PaymentService）",
+		Description:   "支付 LIB 契约的支付宝业务实现（L2，发布自定义服务名 demo.payment.ALIPAY_PaymentService）",
 		CreatedBy:     1,
 	}
 	if err := mustCreate(db, "创建模块 PAYMENT_ALIPAY", &modPayAlipay); err != nil {
@@ -408,13 +427,24 @@ func seedDemoData(db *gorm.DB, demoPbPath string) error {
 		GroupID:       fgPayment.ID,
 		ArchProcessID: &apBackendPayWechat.ID,
 		ModuleKind:    models.ModuleKindBusiness,
+		LayerLevel:    2,
 		Code:          "PAYMENT_WECHAT",
 		Name:          "微信渠道支付模块",
-		Description:   "支付 LIB 契约的微信支付业务实现（发布自定义服务名 demo.payment.WECHAT_PaymentService）",
+		Description:   "支付 LIB 契约的微信支付业务实现（L2，发布自定义服务名 demo.payment.WECHAT_PaymentService）",
 		CreatedBy:     1,
 	}
 	if err := mustCreate(db, "创建模块 PAYMENT_WECHAT", &modPayWechat); err != nil {
 		return err
+	}
+
+	modMap := map[string]models.Module{
+		"ORDER_CORE":           modOrder,
+		"ACCOUNT_CORE":         modAccount,
+		"INVENTORY_CORE":       modInventory,
+		"CLIENT_TUI":           modClient,
+		"LIB_PAYMENT_CONTRACT": modLibPayment,
+		"PAYMENT_ALIPAY":       modPayAlipay,
+		"PAYMENT_WECHAT":       modPayWechat,
 	}
 
 	// 7.0 多实现接口契约定义 (ServiceContract)
@@ -552,38 +582,11 @@ func seedDemoData(db *gorm.DB, demoPbPath string) error {
 		return err
 	}
 
-	log.Printf("  • 已创建 7 个功能模块（含 1 个 CONTRACT_LIB + 2 个自定义实现实例）、1 个多实现契约、5 个服务供给契约及 5 项服务调用依赖")
-
-	// 8. 导入并激活 Protobuf 描述集 (demo.pb)
-	log.Println("[6/7] 导入并激活 Protobuf 描述集 (demo.pb)...")
-	rawBytes, err := os.ReadFile(demoPbPath)
-	if err != nil {
-		return fmt.Errorf("读取 Protobuf 描述集 %s 失败: %w", demoPbPath, err)
+	if err := topology.ValidateAllTopologyLayerAndCycleConstraints(db); err != nil {
+		return fmt.Errorf("拓扑分层水位或无环不变式校验未通过: %w", err)
 	}
 
-	decoderReg, err := decoder.NewRegistry(db)
-	if err != nil {
-		return fmt.Errorf("初始化 Protobuf 解码注册中心失败: %w", err)
-	}
-
-	schema, ops, _, err := decoderReg.UploadSchema(decoder.UploadSchemaInput{
-		Name:         "demo-ecommerce",
-		Category:     models.ProtoCategoryBusiness,
-		VersionTag:   "v1.0.0",
-		FileName:     "demo.pb",
-		RawBytes:     rawBytes,
-		Description:  "CROS RPC 6进程微服务电商交易与多渠道支付接口描述集",
-		AutoActivate: true,
-		OperatorID:   1,
-	})
-	if err != nil {
-		return fmt.Errorf("上传并激活 Protobuf 描述集失败: %w", err)
-	}
-	log.Printf("  • 已导入描述集 [%s] v%d (已激活，共解析生成 %d 个 ProtoOperation 接口契约)",
-		schema.Name, schema.Version, len(ops))
-
-	// 9. 为本地 Agent 挂载全部 6 个物理业务进程 (traefik_processes)
-	log.Println("[7/7] 为本地 Agent 挂载 6 个 Demo 物理业务进程 (traefik_processes)...")
+	// 8. 为本地 Agent 挂载全部 6 个物理业务进程 (traefik_processes)
 	procs := []models.Process{
 		{
 			AgentID:             agent.ID,
@@ -667,6 +670,13 @@ func seedDemoData(db *gorm.DB, demoPbPath string) error {
 	if err := db.Model(&agent).Update("mounts_revision", 1).Error; err != nil {
 		return fmt.Errorf("更新 Agent mounts_revision 失败: %w", err)
 	}
-	log.Printf("  • 已为 Agent [%s] 成功挂载 %d 个业务物理进程实例", agent.Name, len(procs))
-	return nil
+	log.Printf("  • 已创建 7 个功能模块（L1~L4 分层合法）、5 个服务契约、5 项调用依赖及 %d 个物理挂载进程", len(procs))
+
+	// 9. 初始化解码注册中心并构建 Proto 全生命周期治理、文档符号、黄金回归基线、静态巡检与门禁通知数据
+	decoderReg, err := decoder.NewRegistry(db)
+	if err != nil {
+		return fmt.Errorf("初始化 Protobuf 解码注册中心失败: %w", err)
+	}
+
+	return seedGovernanceAndLifecycleData(db, decoderReg, demoPbPath, modMap, apSutOrder.ID)
 }

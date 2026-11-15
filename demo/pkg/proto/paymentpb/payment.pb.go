@@ -4,9 +4,13 @@
 // 	protoc        v3.21.12
 // source: demo/proto/payment.proto
 
+// 统一支付通道公共接口契约 (BASE_LIB 多实现契约: demo.payment.PaymentService)
+// @owner: payment-team
+
 package paymentpb
 
 import (
+	commonpb "code-traefik/demo/pkg/proto/commonpb"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -21,12 +25,19 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// AuthorizePayReq 渠道支付授权请求
 type AuthorizePayReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	OrderId       string                 `protobuf:"bytes,1,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
-	UserId        string                 `protobuf:"bytes,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	AmountCents   int64                  `protobuf:"varint,3,opt,name=amount_cents,json=amountCents,proto3" json:"amount_cents,omitempty"`
-	Channel       string                 `protobuf:"bytes,4,opt,name=channel,proto3" json:"channel,omitempty"` // ALIPAY, WECHAT
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 平台全局订单号
+	OrderId string `protobuf:"bytes,1,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
+	// 买家用户唯一标识
+	UserId string `protobuf:"bytes,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	// 待支付金额（单位：分，必须大于 0）
+	AmountCents int64 `protobuf:"varint,3,opt,name=amount_cents,json=amountCents,proto3" json:"amount_cents,omitempty"`
+	// 支付渠道文本编码（兼容旧版客户端：ALIPAY / WECHAT）
+	Channel string `protobuf:"bytes,4,opt,name=channel,proto3" json:"channel,omitempty"`
+	// 强类型支付渠道枚举（推荐新接入方使用，替代自由文本 channel）
+	ChannelEnum   commonpb.PaymentChannelEnum `protobuf:"varint,5,opt,name=channel_enum,json=channelEnum,proto3,enum=demo.common.PaymentChannelEnum" json:"channel_enum,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -89,14 +100,28 @@ func (x *AuthorizePayReq) GetChannel() string {
 	return ""
 }
 
+func (x *AuthorizePayReq) GetChannelEnum() commonpb.PaymentChannelEnum {
+	if x != nil {
+		return x.ChannelEnum
+	}
+	return commonpb.PaymentChannelEnum(0)
+}
+
+// AuthorizePayRsp 渠道支付授权响应
 type AuthorizePayRsp struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"` // 0=成功, 4101=支付参数非法, 4103=渠道拒绝
-	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
-	OrderId       string                 `protobuf:"bytes,3,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
-	Channel       string                 `protobuf:"bytes,4,opt,name=channel,proto3" json:"channel,omitempty"`
-	ChannelTxNo   string                 `protobuf:"bytes,5,opt,name=channel_tx_no,json=channelTxNo,proto3" json:"channel_tx_no,omitempty"` // 渠道支付流水号 (如 ALIPAY-TX-... / WECHAT-TX-...)
-	PaidAtUnix    int64                  `protobuf:"varint,6,opt,name=paid_at_unix,json=paidAtUnix,proto3" json:"paid_at_unix,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 业务状态码：0=授权成功，4101=参数非法，4102=限额超限，4103=渠道拒绝
+	Code int32 `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	// 响应描述信息
+	Message string `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	// 平台全局订单号
+	OrderId string `protobuf:"bytes,3,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
+	// 实际承接本次交易的支付渠道编码
+	Channel string `protobuf:"bytes,4,opt,name=channel,proto3" json:"channel,omitempty"`
+	// 第三方渠道支付流水号（如 ALIPAY-TX-... / WECHAT-TX-...）
+	ChannelTxNo string `protobuf:"bytes,5,opt,name=channel_tx_no,json=channelTxNo,proto3" json:"channel_tx_no,omitempty"`
+	// 渠道扣款完成时间戳（Unix 秒级）
+	PaidAtUnix    int64 `protobuf:"varint,6,opt,name=paid_at_unix,json=paidAtUnix,proto3" json:"paid_at_unix,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -173,12 +198,17 @@ func (x *AuthorizePayRsp) GetPaidAtUnix() int64 {
 	return 0
 }
 
+// RefundPayReq 渠道原路退款补偿请求
 type RefundPayReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	OrderId       string                 `protobuf:"bytes,1,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
-	ChannelTxNo   string                 `protobuf:"bytes,2,opt,name=channel_tx_no,json=channelTxNo,proto3" json:"channel_tx_no,omitempty"`
-	AmountCents   int64                  `protobuf:"varint,3,opt,name=amount_cents,json=amountCents,proto3" json:"amount_cents,omitempty"`
-	Reason        string                 `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 原平台全局订单号
+	OrderId string `protobuf:"bytes,1,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
+	// 原第三方渠道支付流水号
+	ChannelTxNo string `protobuf:"bytes,2,opt,name=channel_tx_no,json=channelTxNo,proto3" json:"channel_tx_no,omitempty"`
+	// 本次退回金额（单位：分）
+	AmountCents int64 `protobuf:"varint,3,opt,name=amount_cents,json=amountCents,proto3" json:"amount_cents,omitempty"`
+	// 退款原因说明（如 SAGA_ROLLBACK / USER_CANCEL）
+	Reason        string `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -241,13 +271,19 @@ func (x *RefundPayReq) GetReason() string {
 	return ""
 }
 
+// RefundPayRsp 渠道原路退款补偿响应
 type RefundPayRsp struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"` // 0=成功, 4102=原支付记录不存在
-	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
-	OrderId       string                 `protobuf:"bytes,3,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
-	Channel       string                 `protobuf:"bytes,4,opt,name=channel,proto3" json:"channel,omitempty"`
-	RefundTxNo    string                 `protobuf:"bytes,5,opt,name=refund_tx_no,json=refundTxNo,proto3" json:"refund_tx_no,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 业务状态码：0=退款受理成功，4104=原支付流水不存在，4105=重复退款
+	Code int32 `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	// 响应描述信息
+	Message string `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	// 原平台全局订单号
+	OrderId string `protobuf:"bytes,3,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
+	// 执行退款的支付渠道编码
+	Channel string `protobuf:"bytes,4,opt,name=channel,proto3" json:"channel,omitempty"`
+	// 渠道退款流水号
+	RefundTxNo    string `protobuf:"bytes,5,opt,name=refund_tx_no,json=refundTxNo,proto3" json:"refund_tx_no,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -321,12 +357,13 @@ var File_demo_proto_payment_proto protoreflect.FileDescriptor
 
 const file_demo_proto_payment_proto_rawDesc = "" +
 	"\n" +
-	"\x18demo/proto/payment.proto\x12\fdemo.payment\"\x82\x01\n" +
+	"\x18demo/proto/payment.proto\x12\fdemo.payment\x1a\x17demo/proto/common.proto\"\xc6\x01\n" +
 	"\x0fAuthorizePayReq\x12\x19\n" +
 	"\border_id\x18\x01 \x01(\tR\aorderId\x12\x17\n" +
 	"\auser_id\x18\x02 \x01(\tR\x06userId\x12!\n" +
 	"\famount_cents\x18\x03 \x01(\x03R\vamountCents\x12\x18\n" +
-	"\achannel\x18\x04 \x01(\tR\achannel\"\xba\x01\n" +
+	"\achannel\x18\x04 \x01(\tR\achannel\x12B\n" +
+	"\fchannel_enum\x18\x05 \x01(\x0e2\x1f.demo.common.PaymentChannelEnumR\vchannelEnum\"\xba\x01\n" +
 	"\x0fAuthorizePayRsp\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x19\n" +
@@ -365,21 +402,23 @@ func file_demo_proto_payment_proto_rawDescGZIP() []byte {
 
 var file_demo_proto_payment_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_demo_proto_payment_proto_goTypes = []any{
-	(*AuthorizePayReq)(nil), // 0: demo.payment.AuthorizePayReq
-	(*AuthorizePayRsp)(nil), // 1: demo.payment.AuthorizePayRsp
-	(*RefundPayReq)(nil),    // 2: demo.payment.RefundPayReq
-	(*RefundPayRsp)(nil),    // 3: demo.payment.RefundPayRsp
+	(*AuthorizePayReq)(nil),          // 0: demo.payment.AuthorizePayReq
+	(*AuthorizePayRsp)(nil),          // 1: demo.payment.AuthorizePayRsp
+	(*RefundPayReq)(nil),             // 2: demo.payment.RefundPayReq
+	(*RefundPayRsp)(nil),             // 3: demo.payment.RefundPayRsp
+	(commonpb.PaymentChannelEnum)(0), // 4: demo.common.PaymentChannelEnum
 }
 var file_demo_proto_payment_proto_depIdxs = []int32{
-	0, // 0: demo.payment.PaymentService.AuthorizePay:input_type -> demo.payment.AuthorizePayReq
-	2, // 1: demo.payment.PaymentService.RefundPay:input_type -> demo.payment.RefundPayReq
-	1, // 2: demo.payment.PaymentService.AuthorizePay:output_type -> demo.payment.AuthorizePayRsp
-	3, // 3: demo.payment.PaymentService.RefundPay:output_type -> demo.payment.RefundPayRsp
-	2, // [2:4] is the sub-list for method output_type
-	0, // [0:2] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	4, // 0: demo.payment.AuthorizePayReq.channel_enum:type_name -> demo.common.PaymentChannelEnum
+	0, // 1: demo.payment.PaymentService.AuthorizePay:input_type -> demo.payment.AuthorizePayReq
+	2, // 2: demo.payment.PaymentService.RefundPay:input_type -> demo.payment.RefundPayReq
+	1, // 3: demo.payment.PaymentService.AuthorizePay:output_type -> demo.payment.AuthorizePayRsp
+	3, // 4: demo.payment.PaymentService.RefundPay:output_type -> demo.payment.RefundPayRsp
+	3, // [3:5] is the sub-list for method output_type
+	1, // [1:3] is the sub-list for method input_type
+	1, // [1:1] is the sub-list for extension type_name
+	1, // [1:1] is the sub-list for extension extendee
+	0, // [0:1] is the sub-list for field type_name
 }
 
 func init() { file_demo_proto_payment_proto_init() }

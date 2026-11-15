@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+// 电商核心领域公共基础类型与枚举字典契约 (BASE_LIB: demo.common)
+// @owner: platform-arch-team
+package demo.common;
+option go_package = "code-traefik/demo/pkg/proto/commonpb";
+
+// 订单交易终态枚举字典
+// @owner: platform-arch-team
+enum OrderStatusEnum {
+  // 未指定状态（proto3 零值占位，业务响应禁止返回此值）
+  ORDER_STATUS_ENUM_UNSPECIFIED = 0;
+  // 下单成功：库存已确认扣减、资金扣款与渠道授权全部完成
+  ORDER_STATUS_ENUM_SUCCESS = 1;
+  // 库存不足失败：预占锁库阶段即拒绝下单
+  ORDER_STATUS_ENUM_FAILED_STOCK = 2;
+  // 余额不足失败：账户扣款失败，已自动触发库存释放补偿
+  ORDER_STATUS_ENUM_FAILED_BALANCE = 3;
+  // 支付渠道拒绝失败：第三方支付鉴权未通过，已执行账户退款与释库双补偿
+  ORDER_STATUS_ENUM_FAILED_PAYMENT = 4;
+  // 订单已取消：用户主动取消且已完成逆向退费与库存归还
+  ORDER_STATUS_ENUM_CANCELLED = 5;
+}
+
+// 支付渠道路由枚举字典
+// @owner: payment-team
+enum PaymentChannelEnum {
+  // 未指定支付渠道
+  PAYMENT_CHANNEL_ENUM_UNSPECIFIED = 0;
+  // 支付宝直连收银台通道
+  PAYMENT_CHANNEL_ENUM_ALIPAY = 1;
+  // 微信支付直连收银台通道
+  PAYMENT_CHANNEL_ENUM_WECHAT = 2;
+  // 银联老代扣通道
+  // @deprecated: 银联老直连网关通道已于 V2 下线，请统一切换至 ALIPAY 或 WECHAT 聚合路由
+  PAYMENT_CHANNEL_ENUM_UNIONPAY = 3 [deprecated = true];
+}
+
+// 全链路审计与追踪公共扩展头
+// @owner: platform-arch-team
+message TraceAuditMeta {
+  // 全链路追踪 TraceID（与 CROS RPC 报文头 CorrelationID 保持对齐）
+  string trace_id = 1;
+  // 发起方应用模块编码（如 ORDER_CORE / CLIENT_TUI）
+  string caller_module = 2;
+  // 请求发起时间戳（Unix 秒级）
+  int64 timestamp_unix = 3;
+  // 部署可用区标识（如 cn-east-1a）
+  string region_code = 4;
+}

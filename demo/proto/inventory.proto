@@ -1,66 +1,135 @@
 syntax = "proto3";
 
+// 库存履约领域服务契约 (BUSINESS: demo.inventory.InventoryService)
+// @owner: inventory-fulfillment-team
 package demo.inventory;
 option go_package = "code-traefik/demo/pkg/proto/inventorypb";
 
+import "demo/proto/common.proto";
+
 // 库存履约服务契约 (Service: demo.inventory.InventoryService)
+// @owner: inventory-fulfillment-team
 service InventoryService {
-  // 查询 SKU 详情及可售库存
+  // 查询 SKU 详情及实时可售库存
+  // @owner: inventory-fulfillment-team
+  // @error_code 3001 ERR_SKU_NOT_FOUND 商品 SKU 不存在或已下架
   rpc GetItemStock(GetItemStockReq) returns (GetItemStockRsp);
-  // 阶段 1：预占/锁定库存
+
+  // 阶段 1：预占/锁定库存（TCC Try 阶段）
+  // @owner: inventory-fulfillment-team
+  // @error_code 3001 ERR_SKU_NOT_FOUND 商品 SKU 不存在或已下架
+  // @error_code 3002 ERR_STOCK_INSUFFICIENT 商品可用库存不足，拒绝锁定
   rpc LockStock(LockStockReq) returns (LockStockRsp);
-  // 阶段 2A：确认扣减库存（订单支付成功）
+
+  // 阶段 2A：确认扣减库存（订单支付成功，TCC Confirm 阶段）
+  // @owner: inventory-fulfillment-team
+  // @error_code 3003 ERR_LOCK_TOKEN_INVALID 库存锁定凭证无效或已过期释放
   rpc ConfirmStock(ConfirmStockReq) returns (ConfirmStockRsp);
-  // 阶段 2B：释放预占库存（支付失败或取消补偿）
+
+  // 阶段 2B：释放预占库存（支付失败或取消订单补偿，TCC Cancel 阶段）
+  // @owner: inventory-fulfillment-team
+  // @error_code 3003 ERR_LOCK_TOKEN_INVALID 库存锁定凭证无效或已重复释放
   rpc ReleaseStock(ReleaseStockReq) returns (ReleaseStockRsp);
 }
 
+// GetItemStockReq 查询 SKU 库存请求
 message GetItemStockReq {
+  // 商品标准 SKU 编码（如 SKU-PHONE-01）
   string sku_id = 1;
 }
 
+// GetItemStockRsp 查询 SKU 库存响应
 message GetItemStockRsp {
-  int32 code = 1;              // 0=成功, 3001=商品不存在
+  // 业务状态码：0=成功，3001=商品不存在
+  int32 code = 1;
+  // 响应描述信息
   string message = 2;
+  // 商品标准 SKU 编码
   string sku_id = 3;
+  // 商品展示名称
   string sku_name = 4;
-  int64 unit_price_cents = 5;  // 单价 (分)
-  int32 total_stock = 6;       // 总物理库存
-  int32 locked_stock = 7;      // 当前已预占锁定量
-  int32 available_stock = 8;   // 可用量 = total - locked
+  // 商品销售单价（单位：分）
+  int64 unit_price_cents = 5;
+  // 仓库总物理库存件数
+  int32 total_stock = 6;
+  // 当前已预占锁定的库存件数
+  int32 locked_stock = 7;
+  // 实时可售库存可用量（available_stock = total_stock - locked_stock）
+  int32 available_stock = 8;
 }
 
+// LockStockReq 预占锁定库存请求
 message LockStockReq {
+  // 商品标准 SKU 编码
   string sku_id = 1;
-  int32 quantity = 2;          // 锁定件数
-  string biz_order_id = 3;     // 关联订单号
+  // 请求锁定的购买件数
+  int32 quantity = 2;
+  // 关联业务订单号
+  string biz_order_id = 3;
+  // 全链路追踪与调用方审计扩展头
+  demo.common.TraceAuditMeta audit_meta = 4;
 }
 
+// LockStockRsp 预占锁定库存响应
 message LockStockRsp {
-  int32 code = 1;              // 0=成功, 3002=库存不足
+  // 业务状态码：0=锁定成功，3002=可用库存不足
+  int32 code = 1;
+  // 响应描述信息
   string message = 2;
-  string lock_id = 3;          // 锁定授权凭证
+  // 全局唯一锁定授权凭证 ID
+  string lock_id = 3;
+  // 实际锁定成功件数
   int32 locked_quantity = 4;
 }
 
+// ConfirmStockReq 确认实扣库存请求
 message ConfirmStockReq {
+  // 库存锁定授权凭证 ID
   string lock_id = 1;
+  // 关联业务订单号
   string biz_order_id = 2;
 }
 
+// ConfirmStockRsp 确认实扣库存响应
 message ConfirmStockRsp {
+  // 业务状态码：0=确认扣减成功
   int32 code = 1;
+  // 响应描述信息
   string message = 2;
+  // 扣减后剩余总物理库存
   int32 remaining_stock = 3;
 }
 
+// ReleaseStockReq 释放预占库存请求
 message ReleaseStockReq {
+  // 库存锁定授权凭证 ID
   string lock_id = 1;
+  // 释放补偿原因说明（如 PAYMENT_FAILED / ORDER_CANCELLED）
   string reason = 2;
 }
 
+// ReleaseStockRsp 释放预占库存响应
 message ReleaseStockRsp {
+  // 业务状态码：0=释放成功
   int32 code = 1;
+  // 响应描述信息
   string message = 2;
+  // 释放回补后的最新可售库存
   int32 restored_stock = 3;
+}
+
+// InventorySettlementSnapshot 库存履约对账结算快照结构
+// 与 AccountSettlementSnapshot 结构语义高度重叠，用于静态巡检 AST 相似度检测演示
+// @deprecated: 与 AccountSettlementSnapshot 结构体 100% 重复，将在下个版本统一抽取上浮至 demo.common
+message InventorySettlementSnapshot {
+  // 关联订单流水号
+  string order_id = 1;
+  // 关联用户唯一标识
+  string user_id = 2;
+  // 结算金额（单位：分）
+  int64 amount_cents = 3;
+  // 对账批次凭证号
+  string settlement_serial_no = 4;
+  // 结算完成时间戳（Unix 秒级）
+  int64 settled_at_unix = 5;
 }

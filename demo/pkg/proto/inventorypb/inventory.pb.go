@@ -4,9 +4,13 @@
 // 	protoc        v3.21.12
 // source: demo/proto/inventory.proto
 
+// 库存履约领域服务契约 (BUSINESS: demo.inventory.InventoryService)
+// @owner: inventory-fulfillment-team
+
 package inventorypb
 
 import (
+	commonpb "code-traefik/demo/pkg/proto/commonpb"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -21,9 +25,11 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// GetItemStockReq 查询 SKU 库存请求
 type GetItemStockReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SkuId         string                 `protobuf:"bytes,1,opt,name=sku_id,json=skuId,proto3" json:"sku_id,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 商品标准 SKU 编码（如 SKU-PHONE-01）
+	SkuId         string `protobuf:"bytes,1,opt,name=sku_id,json=skuId,proto3" json:"sku_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -65,16 +71,25 @@ func (x *GetItemStockReq) GetSkuId() string {
 	return ""
 }
 
+// GetItemStockRsp 查询 SKU 库存响应
 type GetItemStockRsp struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	Code           int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"` // 0=成功, 3001=商品不存在
-	Message        string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
-	SkuId          string                 `protobuf:"bytes,3,opt,name=sku_id,json=skuId,proto3" json:"sku_id,omitempty"`
-	SkuName        string                 `protobuf:"bytes,4,opt,name=sku_name,json=skuName,proto3" json:"sku_name,omitempty"`
-	UnitPriceCents int64                  `protobuf:"varint,5,opt,name=unit_price_cents,json=unitPriceCents,proto3" json:"unit_price_cents,omitempty"` // 单价 (分)
-	TotalStock     int32                  `protobuf:"varint,6,opt,name=total_stock,json=totalStock,proto3" json:"total_stock,omitempty"`               // 总物理库存
-	LockedStock    int32                  `protobuf:"varint,7,opt,name=locked_stock,json=lockedStock,proto3" json:"locked_stock,omitempty"`            // 当前已预占锁定量
-	AvailableStock int32                  `protobuf:"varint,8,opt,name=available_stock,json=availableStock,proto3" json:"available_stock,omitempty"`   // 可用量 = total - locked
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 业务状态码：0=成功，3001=商品不存在
+	Code int32 `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	// 响应描述信息
+	Message string `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	// 商品标准 SKU 编码
+	SkuId string `protobuf:"bytes,3,opt,name=sku_id,json=skuId,proto3" json:"sku_id,omitempty"`
+	// 商品展示名称
+	SkuName string `protobuf:"bytes,4,opt,name=sku_name,json=skuName,proto3" json:"sku_name,omitempty"`
+	// 商品销售单价（单位：分）
+	UnitPriceCents int64 `protobuf:"varint,5,opt,name=unit_price_cents,json=unitPriceCents,proto3" json:"unit_price_cents,omitempty"`
+	// 仓库总物理库存件数
+	TotalStock int32 `protobuf:"varint,6,opt,name=total_stock,json=totalStock,proto3" json:"total_stock,omitempty"`
+	// 当前已预占锁定的库存件数
+	LockedStock int32 `protobuf:"varint,7,opt,name=locked_stock,json=lockedStock,proto3" json:"locked_stock,omitempty"`
+	// 实时可售库存可用量（available_stock = total_stock - locked_stock）
+	AvailableStock int32 `protobuf:"varint,8,opt,name=available_stock,json=availableStock,proto3" json:"available_stock,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -165,11 +180,17 @@ func (x *GetItemStockRsp) GetAvailableStock() int32 {
 	return 0
 }
 
+// LockStockReq 预占锁定库存请求
 type LockStockReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SkuId         string                 `protobuf:"bytes,1,opt,name=sku_id,json=skuId,proto3" json:"sku_id,omitempty"`
-	Quantity      int32                  `protobuf:"varint,2,opt,name=quantity,proto3" json:"quantity,omitempty"`                        // 锁定件数
-	BizOrderId    string                 `protobuf:"bytes,3,opt,name=biz_order_id,json=bizOrderId,proto3" json:"biz_order_id,omitempty"` // 关联订单号
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 商品标准 SKU 编码
+	SkuId string `protobuf:"bytes,1,opt,name=sku_id,json=skuId,proto3" json:"sku_id,omitempty"`
+	// 请求锁定的购买件数
+	Quantity int32 `protobuf:"varint,2,opt,name=quantity,proto3" json:"quantity,omitempty"`
+	// 关联业务订单号
+	BizOrderId string `protobuf:"bytes,3,opt,name=biz_order_id,json=bizOrderId,proto3" json:"biz_order_id,omitempty"`
+	// 全链路追踪与调用方审计扩展头
+	AuditMeta     *commonpb.TraceAuditMeta `protobuf:"bytes,4,opt,name=audit_meta,json=auditMeta,proto3" json:"audit_meta,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -225,12 +246,24 @@ func (x *LockStockReq) GetBizOrderId() string {
 	return ""
 }
 
+func (x *LockStockReq) GetAuditMeta() *commonpb.TraceAuditMeta {
+	if x != nil {
+		return x.AuditMeta
+	}
+	return nil
+}
+
+// LockStockRsp 预占锁定库存响应
 type LockStockRsp struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	Code           int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"` // 0=成功, 3002=库存不足
-	Message        string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
-	LockId         string                 `protobuf:"bytes,3,opt,name=lock_id,json=lockId,proto3" json:"lock_id,omitempty"` // 锁定授权凭证
-	LockedQuantity int32                  `protobuf:"varint,4,opt,name=locked_quantity,json=lockedQuantity,proto3" json:"locked_quantity,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 业务状态码：0=锁定成功，3002=可用库存不足
+	Code int32 `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	// 响应描述信息
+	Message string `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	// 全局唯一锁定授权凭证 ID
+	LockId string `protobuf:"bytes,3,opt,name=lock_id,json=lockId,proto3" json:"lock_id,omitempty"`
+	// 实际锁定成功件数
+	LockedQuantity int32 `protobuf:"varint,4,opt,name=locked_quantity,json=lockedQuantity,proto3" json:"locked_quantity,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -293,10 +326,13 @@ func (x *LockStockRsp) GetLockedQuantity() int32 {
 	return 0
 }
 
+// ConfirmStockReq 确认实扣库存请求
 type ConfirmStockReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	LockId        string                 `protobuf:"bytes,1,opt,name=lock_id,json=lockId,proto3" json:"lock_id,omitempty"`
-	BizOrderId    string                 `protobuf:"bytes,2,opt,name=biz_order_id,json=bizOrderId,proto3" json:"biz_order_id,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 库存锁定授权凭证 ID
+	LockId string `protobuf:"bytes,1,opt,name=lock_id,json=lockId,proto3" json:"lock_id,omitempty"`
+	// 关联业务订单号
+	BizOrderId    string `protobuf:"bytes,2,opt,name=biz_order_id,json=bizOrderId,proto3" json:"biz_order_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -345,11 +381,15 @@ func (x *ConfirmStockReq) GetBizOrderId() string {
 	return ""
 }
 
+// ConfirmStockRsp 确认实扣库存响应
 type ConfirmStockRsp struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	Code           int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
-	Message        string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
-	RemainingStock int32                  `protobuf:"varint,3,opt,name=remaining_stock,json=remainingStock,proto3" json:"remaining_stock,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 业务状态码：0=确认扣减成功
+	Code int32 `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	// 响应描述信息
+	Message string `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	// 扣减后剩余总物理库存
+	RemainingStock int32 `protobuf:"varint,3,opt,name=remaining_stock,json=remainingStock,proto3" json:"remaining_stock,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -405,10 +445,13 @@ func (x *ConfirmStockRsp) GetRemainingStock() int32 {
 	return 0
 }
 
+// ReleaseStockReq 释放预占库存请求
 type ReleaseStockReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	LockId        string                 `protobuf:"bytes,1,opt,name=lock_id,json=lockId,proto3" json:"lock_id,omitempty"`
-	Reason        string                 `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 库存锁定授权凭证 ID
+	LockId string `protobuf:"bytes,1,opt,name=lock_id,json=lockId,proto3" json:"lock_id,omitempty"`
+	// 释放补偿原因说明（如 PAYMENT_FAILED / ORDER_CANCELLED）
+	Reason        string `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -457,11 +500,15 @@ func (x *ReleaseStockReq) GetReason() string {
 	return ""
 }
 
+// ReleaseStockRsp 释放预占库存响应
 type ReleaseStockRsp struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
-	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
-	RestoredStock int32                  `protobuf:"varint,3,opt,name=restored_stock,json=restoredStock,proto3" json:"restored_stock,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 业务状态码：0=释放成功
+	Code int32 `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	// 响应描述信息
+	Message string `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	// 释放回补后的最新可售库存
+	RestoredStock int32 `protobuf:"varint,3,opt,name=restored_stock,json=restoredStock,proto3" json:"restored_stock,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -517,11 +564,95 @@ func (x *ReleaseStockRsp) GetRestoredStock() int32 {
 	return 0
 }
 
+// InventorySettlementSnapshot 库存履约对账结算快照结构
+// 与 AccountSettlementSnapshot 结构语义高度重叠，用于静态巡检 AST 相似度检测演示
+// @deprecated: 与 AccountSettlementSnapshot 结构体 100% 重复，将在下个版本统一抽取上浮至 demo.common
+type InventorySettlementSnapshot struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 关联订单流水号
+	OrderId string `protobuf:"bytes,1,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
+	// 关联用户唯一标识
+	UserId string `protobuf:"bytes,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	// 结算金额（单位：分）
+	AmountCents int64 `protobuf:"varint,3,opt,name=amount_cents,json=amountCents,proto3" json:"amount_cents,omitempty"`
+	// 对账批次凭证号
+	SettlementSerialNo string `protobuf:"bytes,4,opt,name=settlement_serial_no,json=settlementSerialNo,proto3" json:"settlement_serial_no,omitempty"`
+	// 结算完成时间戳（Unix 秒级）
+	SettledAtUnix int64 `protobuf:"varint,5,opt,name=settled_at_unix,json=settledAtUnix,proto3" json:"settled_at_unix,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InventorySettlementSnapshot) Reset() {
+	*x = InventorySettlementSnapshot{}
+	mi := &file_demo_proto_inventory_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InventorySettlementSnapshot) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InventorySettlementSnapshot) ProtoMessage() {}
+
+func (x *InventorySettlementSnapshot) ProtoReflect() protoreflect.Message {
+	mi := &file_demo_proto_inventory_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InventorySettlementSnapshot.ProtoReflect.Descriptor instead.
+func (*InventorySettlementSnapshot) Descriptor() ([]byte, []int) {
+	return file_demo_proto_inventory_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *InventorySettlementSnapshot) GetOrderId() string {
+	if x != nil {
+		return x.OrderId
+	}
+	return ""
+}
+
+func (x *InventorySettlementSnapshot) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+func (x *InventorySettlementSnapshot) GetAmountCents() int64 {
+	if x != nil {
+		return x.AmountCents
+	}
+	return 0
+}
+
+func (x *InventorySettlementSnapshot) GetSettlementSerialNo() string {
+	if x != nil {
+		return x.SettlementSerialNo
+	}
+	return ""
+}
+
+func (x *InventorySettlementSnapshot) GetSettledAtUnix() int64 {
+	if x != nil {
+		return x.SettledAtUnix
+	}
+	return 0
+}
+
 var File_demo_proto_inventory_proto protoreflect.FileDescriptor
 
 const file_demo_proto_inventory_proto_rawDesc = "" +
 	"\n" +
-	"\x1ademo/proto/inventory.proto\x12\x0edemo.inventory\"(\n" +
+	"\x1ademo/proto/inventory.proto\x12\x0edemo.inventory\x1a\x17demo/proto/common.proto\"(\n" +
 	"\x0fGetItemStockReq\x12\x15\n" +
 	"\x06sku_id\x18\x01 \x01(\tR\x05skuId\"\x88\x02\n" +
 	"\x0fGetItemStockRsp\x12\x12\n" +
@@ -533,12 +664,14 @@ const file_demo_proto_inventory_proto_rawDesc = "" +
 	"\vtotal_stock\x18\x06 \x01(\x05R\n" +
 	"totalStock\x12!\n" +
 	"\flocked_stock\x18\a \x01(\x05R\vlockedStock\x12'\n" +
-	"\x0favailable_stock\x18\b \x01(\x05R\x0eavailableStock\"c\n" +
+	"\x0favailable_stock\x18\b \x01(\x05R\x0eavailableStock\"\x9f\x01\n" +
 	"\fLockStockReq\x12\x15\n" +
 	"\x06sku_id\x18\x01 \x01(\tR\x05skuId\x12\x1a\n" +
 	"\bquantity\x18\x02 \x01(\x05R\bquantity\x12 \n" +
 	"\fbiz_order_id\x18\x03 \x01(\tR\n" +
-	"bizOrderId\"~\n" +
+	"bizOrderId\x12:\n" +
+	"\n" +
+	"audit_meta\x18\x04 \x01(\v2\x1b.demo.common.TraceAuditMetaR\tauditMeta\"~\n" +
 	"\fLockStockRsp\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x17\n" +
@@ -558,7 +691,13 @@ const file_demo_proto_inventory_proto_rawDesc = "" +
 	"\x0fReleaseStockRsp\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12%\n" +
-	"\x0erestored_stock\x18\x03 \x01(\x05R\rrestoredStock2\xd1\x02\n" +
+	"\x0erestored_stock\x18\x03 \x01(\x05R\rrestoredStock\"\xce\x01\n" +
+	"\x1bInventorySettlementSnapshot\x12\x19\n" +
+	"\border_id\x18\x01 \x01(\tR\aorderId\x12\x17\n" +
+	"\auser_id\x18\x02 \x01(\tR\x06userId\x12!\n" +
+	"\famount_cents\x18\x03 \x01(\x03R\vamountCents\x120\n" +
+	"\x14settlement_serial_no\x18\x04 \x01(\tR\x12settlementSerialNo\x12&\n" +
+	"\x0fsettled_at_unix\x18\x05 \x01(\x03R\rsettledAtUnix2\xd1\x02\n" +
 	"\x10InventoryService\x12P\n" +
 	"\fGetItemStock\x12\x1f.demo.inventory.GetItemStockReq\x1a\x1f.demo.inventory.GetItemStockRsp\x12G\n" +
 	"\tLockStock\x12\x1c.demo.inventory.LockStockReq\x1a\x1c.demo.inventory.LockStockRsp\x12P\n" +
@@ -577,31 +716,34 @@ func file_demo_proto_inventory_proto_rawDescGZIP() []byte {
 	return file_demo_proto_inventory_proto_rawDescData
 }
 
-var file_demo_proto_inventory_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_demo_proto_inventory_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_demo_proto_inventory_proto_goTypes = []any{
-	(*GetItemStockReq)(nil), // 0: demo.inventory.GetItemStockReq
-	(*GetItemStockRsp)(nil), // 1: demo.inventory.GetItemStockRsp
-	(*LockStockReq)(nil),    // 2: demo.inventory.LockStockReq
-	(*LockStockRsp)(nil),    // 3: demo.inventory.LockStockRsp
-	(*ConfirmStockReq)(nil), // 4: demo.inventory.ConfirmStockReq
-	(*ConfirmStockRsp)(nil), // 5: demo.inventory.ConfirmStockRsp
-	(*ReleaseStockReq)(nil), // 6: demo.inventory.ReleaseStockReq
-	(*ReleaseStockRsp)(nil), // 7: demo.inventory.ReleaseStockRsp
+	(*GetItemStockReq)(nil),             // 0: demo.inventory.GetItemStockReq
+	(*GetItemStockRsp)(nil),             // 1: demo.inventory.GetItemStockRsp
+	(*LockStockReq)(nil),                // 2: demo.inventory.LockStockReq
+	(*LockStockRsp)(nil),                // 3: demo.inventory.LockStockRsp
+	(*ConfirmStockReq)(nil),             // 4: demo.inventory.ConfirmStockReq
+	(*ConfirmStockRsp)(nil),             // 5: demo.inventory.ConfirmStockRsp
+	(*ReleaseStockReq)(nil),             // 6: demo.inventory.ReleaseStockReq
+	(*ReleaseStockRsp)(nil),             // 7: demo.inventory.ReleaseStockRsp
+	(*InventorySettlementSnapshot)(nil), // 8: demo.inventory.InventorySettlementSnapshot
+	(*commonpb.TraceAuditMeta)(nil),     // 9: demo.common.TraceAuditMeta
 }
 var file_demo_proto_inventory_proto_depIdxs = []int32{
-	0, // 0: demo.inventory.InventoryService.GetItemStock:input_type -> demo.inventory.GetItemStockReq
-	2, // 1: demo.inventory.InventoryService.LockStock:input_type -> demo.inventory.LockStockReq
-	4, // 2: demo.inventory.InventoryService.ConfirmStock:input_type -> demo.inventory.ConfirmStockReq
-	6, // 3: demo.inventory.InventoryService.ReleaseStock:input_type -> demo.inventory.ReleaseStockReq
-	1, // 4: demo.inventory.InventoryService.GetItemStock:output_type -> demo.inventory.GetItemStockRsp
-	3, // 5: demo.inventory.InventoryService.LockStock:output_type -> demo.inventory.LockStockRsp
-	5, // 6: demo.inventory.InventoryService.ConfirmStock:output_type -> demo.inventory.ConfirmStockRsp
-	7, // 7: demo.inventory.InventoryService.ReleaseStock:output_type -> demo.inventory.ReleaseStockRsp
-	4, // [4:8] is the sub-list for method output_type
-	0, // [0:4] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	9, // 0: demo.inventory.LockStockReq.audit_meta:type_name -> demo.common.TraceAuditMeta
+	0, // 1: demo.inventory.InventoryService.GetItemStock:input_type -> demo.inventory.GetItemStockReq
+	2, // 2: demo.inventory.InventoryService.LockStock:input_type -> demo.inventory.LockStockReq
+	4, // 3: demo.inventory.InventoryService.ConfirmStock:input_type -> demo.inventory.ConfirmStockReq
+	6, // 4: demo.inventory.InventoryService.ReleaseStock:input_type -> demo.inventory.ReleaseStockReq
+	1, // 5: demo.inventory.InventoryService.GetItemStock:output_type -> demo.inventory.GetItemStockRsp
+	3, // 6: demo.inventory.InventoryService.LockStock:output_type -> demo.inventory.LockStockRsp
+	5, // 7: demo.inventory.InventoryService.ConfirmStock:output_type -> demo.inventory.ConfirmStockRsp
+	7, // 8: demo.inventory.InventoryService.ReleaseStock:output_type -> demo.inventory.ReleaseStockRsp
+	5, // [5:9] is the sub-list for method output_type
+	1, // [1:5] is the sub-list for method input_type
+	1, // [1:1] is the sub-list for extension type_name
+	1, // [1:1] is the sub-list for extension extendee
+	0, // [0:1] is the sub-list for field type_name
 }
 
 func init() { file_demo_proto_inventory_proto_init() }
@@ -615,7 +757,7 @@ func file_demo_proto_inventory_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_demo_proto_inventory_proto_rawDesc), len(file_demo_proto_inventory_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -4,9 +4,15 @@
 // 	protoc        v3.21.12
 // source: demo/proto/order.proto
 
+// 订单交易中枢聚合网关服务契约 (GATEWAY: demo.order.OrderService)
+// 依赖基础契约库 demo.common 与多实现支付契约 demo.payment
+// @owner: trade-order-team
+
 package orderpb
 
 import (
+	commonpb "code-traefik/demo/pkg/proto/commonpb"
+	paymentpb "code-traefik/demo/pkg/proto/paymentpb"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -21,10 +27,13 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// CompositeQuoteReq 下单前复合行情询价请求
 type CompositeQuoteReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	SkuId         string                 `protobuf:"bytes,2,opt,name=sku_id,json=skuId,proto3" json:"sku_id,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 下单用户唯一标识（如 U1001）
+	UserId string `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	// 目标商品 SKU 编码（如 SKU-PHONE-01）
+	SkuId         string `protobuf:"bytes,2,opt,name=sku_id,json=skuId,proto3" json:"sku_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -73,16 +82,25 @@ func (x *CompositeQuoteReq) GetSkuId() string {
 	return ""
 }
 
+// CompositeQuoteRsp 下单前复合行情询价响应
 type CompositeQuoteRsp struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	Code           int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"` // 0=成功, 其它=错误码
-	Message        string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
-	UserId         string                 `protobuf:"bytes,3,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	BalanceCents   int64                  `protobuf:"varint,4,opt,name=balance_cents,json=balanceCents,proto3" json:"balance_cents,omitempty"` // 用户当前可用余额 (分)
-	SkuId          string                 `protobuf:"bytes,5,opt,name=sku_id,json=skuId,proto3" json:"sku_id,omitempty"`
-	SkuName        string                 `protobuf:"bytes,6,opt,name=sku_name,json=skuName,proto3" json:"sku_name,omitempty"`
-	UnitPriceCents int64                  `protobuf:"varint,7,opt,name=unit_price_cents,json=unitPriceCents,proto3" json:"unit_price_cents,omitempty"` // 商品单价 (分)
-	AvailableStock int32                  `protobuf:"varint,8,opt,name=available_stock,json=availableStock,proto3" json:"available_stock,omitempty"`   // 当前剩余可售库存
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 业务状态码：0=成功，其它=下游校验或参数错误
+	Code int32 `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	// 响应描述信息
+	Message string `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	// 用户唯一标识
+	UserId string `protobuf:"bytes,3,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	// 用户当前可用余额（单位：分）
+	BalanceCents int64 `protobuf:"varint,4,opt,name=balance_cents,json=balanceCents,proto3" json:"balance_cents,omitempty"`
+	// 商品标准 SKU 编码
+	SkuId string `protobuf:"bytes,5,opt,name=sku_id,json=skuId,proto3" json:"sku_id,omitempty"`
+	// 商品名称
+	SkuName string `protobuf:"bytes,6,opt,name=sku_name,json=skuName,proto3" json:"sku_name,omitempty"`
+	// 商品实时单价（单位：分）
+	UnitPriceCents int64 `protobuf:"varint,7,opt,name=unit_price_cents,json=unitPriceCents,proto3" json:"unit_price_cents,omitempty"`
+	// 仓库实时剩余可售库存
+	AvailableStock int32 `protobuf:"varint,8,opt,name=available_stock,json=availableStock,proto3" json:"available_stock,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -173,13 +191,19 @@ func (x *CompositeQuoteRsp) GetAvailableStock() int32 {
 	return 0
 }
 
+// CreateOrderReq 创建交易订单请求
 type CreateOrderReq struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	UserId         string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	SkuId          string                 `protobuf:"bytes,2,opt,name=sku_id,json=skuId,proto3" json:"sku_id,omitempty"`
-	Quantity       int32                  `protobuf:"varint,3,opt,name=quantity,proto3" json:"quantity,omitempty"`                                    // 购买数量
-	ClientOrderRef string                 `protobuf:"bytes,4,opt,name=client_order_ref,json=clientOrderRef,proto3" json:"client_order_ref,omitempty"` // 客户端防重幂等号
-	PaymentChannel string                 `protobuf:"bytes,5,opt,name=payment_channel,json=paymentChannel,proto3" json:"payment_channel,omitempty"`   // 可选支付渠道: ALIPAY(默认) / WECHAT
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 下单用户唯一标识
+	UserId string `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	// 目标商品 SKU 编码
+	SkuId string `protobuf:"bytes,2,opt,name=sku_id,json=skuId,proto3" json:"sku_id,omitempty"`
+	// 购买数量（需大于 0）
+	Quantity int32 `protobuf:"varint,3,opt,name=quantity,proto3" json:"quantity,omitempty"`
+	// 客户端幂等防重流水号
+	ClientOrderRef string `protobuf:"bytes,4,opt,name=client_order_ref,json=clientOrderRef,proto3" json:"client_order_ref,omitempty"`
+	// 指定外部支付路由渠道：ALIPAY（默认） / WECHAT
+	PaymentChannel string `protobuf:"bytes,5,opt,name=payment_channel,json=paymentChannel,proto3" json:"payment_channel,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -249,18 +273,31 @@ func (x *CreateOrderReq) GetPaymentChannel() string {
 	return ""
 }
 
+// CreateOrderRsp 创建交易订单响应
 type CreateOrderRsp struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	Code             int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
-	Message          string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
-	OrderId          string                 `protobuf:"bytes,3,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
-	TotalAmountCents int64                  `protobuf:"varint,4,opt,name=total_amount_cents,json=totalAmountCents,proto3" json:"total_amount_cents,omitempty"`
-	Status           string                 `protobuf:"bytes,5,opt,name=status,proto3" json:"status,omitempty"` // SUCCESS, FAILED_STOCK, FAILED_BALANCE, FAILED_PAYMENT
-	CreatedAtUnix    int64                  `protobuf:"varint,6,opt,name=created_at_unix,json=createdAtUnix,proto3" json:"created_at_unix,omitempty"`
-	PaymentChannel   string                 `protobuf:"bytes,7,opt,name=payment_channel,json=paymentChannel,proto3" json:"payment_channel,omitempty"` // 实际路由处理的支付渠道
-	PaymentTxNo      string                 `protobuf:"bytes,8,opt,name=payment_tx_no,json=paymentTxNo,proto3" json:"payment_tx_no,omitempty"`        // 支付渠道返回流水号
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 业务状态码：0=交易成功，非 0=下单拒绝并已完成对应回滚补偿
+	Code int32 `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	// 响应描述信息
+	Message string `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	// 订单中心生成的全局唯一订单号
+	OrderId string `protobuf:"bytes,3,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
+	// 订单成交总金额（单位：分）
+	TotalAmountCents int64 `protobuf:"varint,4,opt,name=total_amount_cents,json=totalAmountCents,proto3" json:"total_amount_cents,omitempty"`
+	// 订单终态字符串（SUCCESS / FAILED_STOCK / FAILED_BALANCE / FAILED_PAYMENT）
+	Status string `protobuf:"bytes,5,opt,name=status,proto3" json:"status,omitempty"`
+	// 订单创建时间戳（Unix 秒级）
+	CreatedAtUnix int64 `protobuf:"varint,6,opt,name=created_at_unix,json=createdAtUnix,proto3" json:"created_at_unix,omitempty"`
+	// 实际路由承接本次交易的支付渠道
+	PaymentChannel string `protobuf:"bytes,7,opt,name=payment_channel,json=paymentChannel,proto3" json:"payment_channel,omitempty"`
+	// 支付渠道返回的外部交易流水号
+	PaymentTxNo string `protobuf:"bytes,8,opt,name=payment_tx_no,json=paymentTxNo,proto3" json:"payment_tx_no,omitempty"`
+	// 强类型订单终态枚举（引用公共契约库 demo.common.OrderStatusEnum）
+	StatusEnum commonpb.OrderStatusEnum `protobuf:"varint,9,opt,name=status_enum,json=statusEnum,proto3,enum=demo.common.OrderStatusEnum" json:"status_enum,omitempty"`
+	// 全链路追踪与审计扩展头
+	AuditMeta     *commonpb.TraceAuditMeta `protobuf:"bytes,10,opt,name=audit_meta,json=auditMeta,proto3" json:"audit_meta,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CreateOrderRsp) Reset() {
@@ -349,9 +386,25 @@ func (x *CreateOrderRsp) GetPaymentTxNo() string {
 	return ""
 }
 
+func (x *CreateOrderRsp) GetStatusEnum() commonpb.OrderStatusEnum {
+	if x != nil {
+		return x.StatusEnum
+	}
+	return commonpb.OrderStatusEnum(0)
+}
+
+func (x *CreateOrderRsp) GetAuditMeta() *commonpb.TraceAuditMeta {
+	if x != nil {
+		return x.AuditMeta
+	}
+	return nil
+}
+
+// OrderDetailReq 查询订单详情请求
 type OrderDetailReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	OrderId       string                 `protobuf:"bytes,1,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 目标订单号
+	OrderId       string `protobuf:"bytes,1,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -393,21 +446,37 @@ func (x *OrderDetailReq) GetOrderId() string {
 	return ""
 }
 
+// OrderDetailRsp 查询订单详情响应
 type OrderDetailRsp struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	Code             int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
-	Message          string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
-	OrderId          string                 `protobuf:"bytes,3,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
-	UserId           string                 `protobuf:"bytes,4,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	SkuId            string                 `protobuf:"bytes,5,opt,name=sku_id,json=skuId,proto3" json:"sku_id,omitempty"`
-	Quantity         int32                  `protobuf:"varint,6,opt,name=quantity,proto3" json:"quantity,omitempty"`
-	TotalAmountCents int64                  `protobuf:"varint,7,opt,name=total_amount_cents,json=totalAmountCents,proto3" json:"total_amount_cents,omitempty"`
-	Status           string                 `protobuf:"bytes,8,opt,name=status,proto3" json:"status,omitempty"`
-	CreatedAtUnix    int64                  `protobuf:"varint,9,opt,name=created_at_unix,json=createdAtUnix,proto3" json:"created_at_unix,omitempty"`
-	PaymentChannel   string                 `protobuf:"bytes,10,opt,name=payment_channel,json=paymentChannel,proto3" json:"payment_channel,omitempty"`
-	PaymentTxNo      string                 `protobuf:"bytes,11,opt,name=payment_tx_no,json=paymentTxNo,proto3" json:"payment_tx_no,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 业务状态码：0=成功，1006=订单不存在
+	Code int32 `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	// 响应描述信息
+	Message string `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	// 全局唯一订单号
+	OrderId string `protobuf:"bytes,3,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
+	// 买家用户唯一标识
+	UserId string `protobuf:"bytes,4,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	// 商品标准 SKU 编码
+	SkuId string `protobuf:"bytes,5,opt,name=sku_id,json=skuId,proto3" json:"sku_id,omitempty"`
+	// 购买件数
+	Quantity int32 `protobuf:"varint,6,opt,name=quantity,proto3" json:"quantity,omitempty"`
+	// 订单总金额（单位：分）
+	TotalAmountCents int64 `protobuf:"varint,7,opt,name=total_amount_cents,json=totalAmountCents,proto3" json:"total_amount_cents,omitempty"`
+	// 订单状态字符串
+	Status string `protobuf:"bytes,8,opt,name=status,proto3" json:"status,omitempty"`
+	// 订单创建时间戳（Unix 秒级）
+	CreatedAtUnix int64 `protobuf:"varint,9,opt,name=created_at_unix,json=createdAtUnix,proto3" json:"created_at_unix,omitempty"`
+	// 支付渠道编码
+	PaymentChannel string `protobuf:"bytes,10,opt,name=payment_channel,json=paymentChannel,proto3" json:"payment_channel,omitempty"`
+	// 外部支付流水号
+	PaymentTxNo string `protobuf:"bytes,11,opt,name=payment_tx_no,json=paymentTxNo,proto3" json:"payment_tx_no,omitempty"`
+	// 强类型订单状态枚举
+	StatusEnum commonpb.OrderStatusEnum `protobuf:"varint,12,opt,name=status_enum,json=statusEnum,proto3,enum=demo.common.OrderStatusEnum" json:"status_enum,omitempty"`
+	// 关联支付渠道最近一次授权回执详情（跨包复用 demo.payment.AuthorizePayRsp）
+	LastPaymentReceipt *paymentpb.AuthorizePayRsp `protobuf:"bytes,13,opt,name=last_payment_receipt,json=lastPaymentReceipt,proto3" json:"last_payment_receipt,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *OrderDetailRsp) Reset() {
@@ -517,10 +586,27 @@ func (x *OrderDetailRsp) GetPaymentTxNo() string {
 	return ""
 }
 
+func (x *OrderDetailRsp) GetStatusEnum() commonpb.OrderStatusEnum {
+	if x != nil {
+		return x.StatusEnum
+	}
+	return commonpb.OrderStatusEnum(0)
+}
+
+func (x *OrderDetailRsp) GetLastPaymentReceipt() *paymentpb.AuthorizePayRsp {
+	if x != nil {
+		return x.LastPaymentReceipt
+	}
+	return nil
+}
+
+// CancelOrderReq 取消订单请求
 type CancelOrderReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	OrderId       string                 `protobuf:"bytes,1,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
-	Reason        string                 `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 待取消订单号
+	OrderId string `protobuf:"bytes,1,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
+	// 取消原因描述
+	Reason        string `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -569,15 +655,21 @@ func (x *CancelOrderReq) GetReason() string {
 	return ""
 }
 
+// CancelOrderRsp 取消订单响应
 type CancelOrderRsp struct {
-	state               protoimpl.MessageState `protogen:"open.v1"`
-	Code                int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
-	Message             string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
-	OrderId             string                 `protobuf:"bytes,3,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
-	RefundedAmountCents int64                  `protobuf:"varint,4,opt,name=refunded_amount_cents,json=refundedAmountCents,proto3" json:"refunded_amount_cents,omitempty"`
-	ReleasedStock       int32                  `protobuf:"varint,5,opt,name=released_stock,json=releasedStock,proto3" json:"released_stock,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 业务状态码：0=取消并补偿成功
+	Code int32 `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	// 响应描述信息
+	Message string `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	// 目标订单号
+	OrderId string `protobuf:"bytes,3,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
+	// 本次逆向退回的总金额（单位：分）
+	RefundedAmountCents int64 `protobuf:"varint,4,opt,name=refunded_amount_cents,json=refundedAmountCents,proto3" json:"refunded_amount_cents,omitempty"`
+	// 本次逆向归还的库存件数
+	ReleasedStock int32 `protobuf:"varint,5,opt,name=released_stock,json=releasedStock,proto3" json:"released_stock,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CancelOrderRsp) Reset() {
@@ -650,7 +742,7 @@ var File_demo_proto_order_proto protoreflect.FileDescriptor
 const file_demo_proto_order_proto_rawDesc = "" +
 	"\n" +
 	"\x16demo/proto/order.proto\x12\n" +
-	"demo.order\"C\n" +
+	"demo.order\x1a\x17demo/proto/common.proto\x1a\x18demo/proto/payment.proto\"C\n" +
 	"\x11CompositeQuoteReq\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x15\n" +
 	"\x06sku_id\x18\x02 \x01(\tR\x05skuId\"\x84\x02\n" +
@@ -668,7 +760,7 @@ const file_demo_proto_order_proto_rawDesc = "" +
 	"\x06sku_id\x18\x02 \x01(\tR\x05skuId\x12\x1a\n" +
 	"\bquantity\x18\x03 \x01(\x05R\bquantity\x12(\n" +
 	"\x10client_order_ref\x18\x04 \x01(\tR\x0eclientOrderRef\x12'\n" +
-	"\x0fpayment_channel\x18\x05 \x01(\tR\x0epaymentChannel\"\x94\x02\n" +
+	"\x0fpayment_channel\x18\x05 \x01(\tR\x0epaymentChannel\"\x8f\x03\n" +
 	"\x0eCreateOrderRsp\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x19\n" +
@@ -677,9 +769,14 @@ const file_demo_proto_order_proto_rawDesc = "" +
 	"\x06status\x18\x05 \x01(\tR\x06status\x12&\n" +
 	"\x0fcreated_at_unix\x18\x06 \x01(\x03R\rcreatedAtUnix\x12'\n" +
 	"\x0fpayment_channel\x18\a \x01(\tR\x0epaymentChannel\x12\"\n" +
-	"\rpayment_tx_no\x18\b \x01(\tR\vpaymentTxNo\"+\n" +
+	"\rpayment_tx_no\x18\b \x01(\tR\vpaymentTxNo\x12=\n" +
+	"\vstatus_enum\x18\t \x01(\x0e2\x1c.demo.common.OrderStatusEnumR\n" +
+	"statusEnum\x12:\n" +
+	"\n" +
+	"audit_meta\x18\n" +
+	" \x01(\v2\x1b.demo.common.TraceAuditMetaR\tauditMeta\"+\n" +
 	"\x0eOrderDetailReq\x12\x19\n" +
-	"\border_id\x18\x01 \x01(\tR\aorderId\"\xe0\x02\n" +
+	"\border_id\x18\x01 \x01(\tR\aorderId\"\xf0\x03\n" +
 	"\x0eOrderDetailRsp\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x19\n" +
@@ -692,7 +789,10 @@ const file_demo_proto_order_proto_rawDesc = "" +
 	"\x0fcreated_at_unix\x18\t \x01(\x03R\rcreatedAtUnix\x12'\n" +
 	"\x0fpayment_channel\x18\n" +
 	" \x01(\tR\x0epaymentChannel\x12\"\n" +
-	"\rpayment_tx_no\x18\v \x01(\tR\vpaymentTxNo\"C\n" +
+	"\rpayment_tx_no\x18\v \x01(\tR\vpaymentTxNo\x12=\n" +
+	"\vstatus_enum\x18\f \x01(\x0e2\x1c.demo.common.OrderStatusEnumR\n" +
+	"statusEnum\x12O\n" +
+	"\x14last_payment_receipt\x18\r \x01(\v2\x1d.demo.payment.AuthorizePayRspR\x12lastPaymentReceipt\"C\n" +
 	"\x0eCancelOrderReq\x12\x19\n" +
 	"\border_id\x18\x01 \x01(\tR\aorderId\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\"\xb4\x01\n" +
@@ -722,29 +822,36 @@ func file_demo_proto_order_proto_rawDescGZIP() []byte {
 
 var file_demo_proto_order_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_demo_proto_order_proto_goTypes = []any{
-	(*CompositeQuoteReq)(nil), // 0: demo.order.CompositeQuoteReq
-	(*CompositeQuoteRsp)(nil), // 1: demo.order.CompositeQuoteRsp
-	(*CreateOrderReq)(nil),    // 2: demo.order.CreateOrderReq
-	(*CreateOrderRsp)(nil),    // 3: demo.order.CreateOrderRsp
-	(*OrderDetailReq)(nil),    // 4: demo.order.OrderDetailReq
-	(*OrderDetailRsp)(nil),    // 5: demo.order.OrderDetailRsp
-	(*CancelOrderReq)(nil),    // 6: demo.order.CancelOrderReq
-	(*CancelOrderRsp)(nil),    // 7: demo.order.CancelOrderRsp
+	(*CompositeQuoteReq)(nil),         // 0: demo.order.CompositeQuoteReq
+	(*CompositeQuoteRsp)(nil),         // 1: demo.order.CompositeQuoteRsp
+	(*CreateOrderReq)(nil),            // 2: demo.order.CreateOrderReq
+	(*CreateOrderRsp)(nil),            // 3: demo.order.CreateOrderRsp
+	(*OrderDetailReq)(nil),            // 4: demo.order.OrderDetailReq
+	(*OrderDetailRsp)(nil),            // 5: demo.order.OrderDetailRsp
+	(*CancelOrderReq)(nil),            // 6: demo.order.CancelOrderReq
+	(*CancelOrderRsp)(nil),            // 7: demo.order.CancelOrderRsp
+	(commonpb.OrderStatusEnum)(0),     // 8: demo.common.OrderStatusEnum
+	(*commonpb.TraceAuditMeta)(nil),   // 9: demo.common.TraceAuditMeta
+	(*paymentpb.AuthorizePayRsp)(nil), // 10: demo.payment.AuthorizePayRsp
 }
 var file_demo_proto_order_proto_depIdxs = []int32{
-	0, // 0: demo.order.OrderService.GetCompositeQuote:input_type -> demo.order.CompositeQuoteReq
-	2, // 1: demo.order.OrderService.CreateOrder:input_type -> demo.order.CreateOrderReq
-	4, // 2: demo.order.OrderService.GetOrderDetail:input_type -> demo.order.OrderDetailReq
-	6, // 3: demo.order.OrderService.CancelOrder:input_type -> demo.order.CancelOrderReq
-	1, // 4: demo.order.OrderService.GetCompositeQuote:output_type -> demo.order.CompositeQuoteRsp
-	3, // 5: demo.order.OrderService.CreateOrder:output_type -> demo.order.CreateOrderRsp
-	5, // 6: demo.order.OrderService.GetOrderDetail:output_type -> demo.order.OrderDetailRsp
-	7, // 7: demo.order.OrderService.CancelOrder:output_type -> demo.order.CancelOrderRsp
-	4, // [4:8] is the sub-list for method output_type
-	0, // [0:4] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	8,  // 0: demo.order.CreateOrderRsp.status_enum:type_name -> demo.common.OrderStatusEnum
+	9,  // 1: demo.order.CreateOrderRsp.audit_meta:type_name -> demo.common.TraceAuditMeta
+	8,  // 2: demo.order.OrderDetailRsp.status_enum:type_name -> demo.common.OrderStatusEnum
+	10, // 3: demo.order.OrderDetailRsp.last_payment_receipt:type_name -> demo.payment.AuthorizePayRsp
+	0,  // 4: demo.order.OrderService.GetCompositeQuote:input_type -> demo.order.CompositeQuoteReq
+	2,  // 5: demo.order.OrderService.CreateOrder:input_type -> demo.order.CreateOrderReq
+	4,  // 6: demo.order.OrderService.GetOrderDetail:input_type -> demo.order.OrderDetailReq
+	6,  // 7: demo.order.OrderService.CancelOrder:input_type -> demo.order.CancelOrderReq
+	1,  // 8: demo.order.OrderService.GetCompositeQuote:output_type -> demo.order.CompositeQuoteRsp
+	3,  // 9: demo.order.OrderService.CreateOrder:output_type -> demo.order.CreateOrderRsp
+	5,  // 10: demo.order.OrderService.GetOrderDetail:output_type -> demo.order.OrderDetailRsp
+	7,  // 11: demo.order.OrderService.CancelOrder:output_type -> demo.order.CancelOrderRsp
+	8,  // [8:12] is the sub-list for method output_type
+	4,  // [4:8] is the sub-list for method input_type
+	4,  // [4:4] is the sub-list for extension type_name
+	4,  // [4:4] is the sub-list for extension extendee
+	0,  // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_demo_proto_order_proto_init() }

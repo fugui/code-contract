@@ -6,12 +6,16 @@ BIN_DIR := bin
 
 all: build
 
-# 重新生成 Protobuf 代码与二进制描述集
+# 重新生成 Protobuf 代码与二进制描述集（保留源码注释与位置元数据供全生命周期文档解析）
 proto:
 	@echo "Compiling Protobuf definitions and descriptor set..."
 	cd .. && protoc --go_out=. --go_opt=module=code-traefik \
-		--descriptor_set_out=demo/demo.pb --include_imports \
-		demo/proto/order.proto demo/proto/account.proto demo/proto/inventory.proto demo/proto/payment.proto
+		--descriptor_set_out=demo/demo.pb --include_imports --include_source_info \
+		demo/proto/common.proto \
+		demo/proto/order.proto \
+		demo/proto/account.proto \
+		demo/proto/inventory.proto \
+		demo/proto/payment.proto
 
 # 编译微服务组件与 Agent 二进制产物
 build: proto

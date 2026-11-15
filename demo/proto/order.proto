@@ -1,82 +1,163 @@
 syntax = "proto3";
 
+// 订单交易中枢聚合网关服务契约 (GATEWAY: demo.order.OrderService)
+// 依赖基础契约库 demo.common 与多实现支付契约 demo.payment
+// @owner: trade-order-team
 package demo.order;
 option go_package = "code-traefik/demo/pkg/proto/orderpb";
 
+import "demo/proto/common.proto";
+import "demo/proto/payment.proto";
+
 // 订单综合服务契约 (Service: demo.order.OrderService)
+// 承担电商下单全链路 Saga/TCC 编排职责：并发聚合账户资产与库存行情、协调锁库扣款与动态支付渠道路由
+// @owner: trade-order-team
 service OrderService {
-  // 综合聚合查询：同时查询用户资产与商品实时库存行情
+  // 综合聚合查询：并发查询用户资金账户余额与商品实时可售库存行情
+  // @owner: trade-order-team
+  // @error_code 1001 ERR_ORDER_INVALID_ARG 用户或 SKU 标识不能为空
+  // @error_code 1002 ERR_ORDER_QUOTE_DOWNSTREAM 下游账户或库存服务查询失败
   rpc GetCompositeQuote(CompositeQuoteReq) returns (CompositeQuoteRsp);
-  // 提交订单（触发分布式编排：预占库存 -> 扣减余额 -> 确认库存）
+
+  // 提交订单：触发分布式 Saga 编排（预占库存 -> 扣减余额 -> 支付渠道授权 -> 确认库存）
+  // @owner: trade-order-team
+  // @error_code 1003 ERR_ORDER_STOCK_LOCK_FAILED 库存预占锁定失败（可用库存不足）
+  // @error_code 1004 ERR_ORDER_BALANCE_DEBIT_FAILED 账户余额扣减失败（自动触发释放库存补偿）
+  // @error_code 1005 ERR_ORDER_PAYMENT_REJECTED 支付渠道拒绝授权（自动触发退还余额 + 释放库存双补偿）
   rpc CreateOrder(CreateOrderReq) returns (CreateOrderRsp);
-  // 查询订单状态及履约明细
+
+  // 查询订单详情及履约支付凭证明细
+  // @owner: trade-order-team
+  // @error_code 1006 ERR_ORDER_NOT_FOUND 目标订单号不存在
   rpc GetOrderDetail(OrderDetailReq) returns (OrderDetailRsp);
-  // 取消订单（触发补偿回滚：退回余额 -> 释放库存）
+
+  // 取消订单：对已成交订单执行全链路逆向补偿（支付原路退款 -> 退还账户余额 -> 释放还原库存）
+  // @owner: trade-order-team
+  // @error_code 1006 ERR_ORDER_NOT_FOUND 目标订单号不存在
+  // @error_code 1007 ERR_ORDER_CANCEL_NOT_ALLOWED 当前订单状态不允许取消（仅 SUCCESS 状态可取消）
   rpc CancelOrder(CancelOrderReq) returns (CancelOrderRsp);
 }
 
+// CompositeQuoteReq 下单前复合行情询价请求
 message CompositeQuoteReq {
+  // 下单用户唯一标识（如 U1001）
   string user_id = 1;
+  // 目标商品 SKU 编码（如 SKU-PHONE-01）
   string sku_id = 2;
 }
 
+// CompositeQuoteRsp 下单前复合行情询价响应
 message CompositeQuoteRsp {
-  int32 code = 1;              // 0=成功, 其它=错误码
+  // 业务状态码：0=成功，其它=下游校验或参数错误
+  int32 code = 1;
+  // 响应描述信息
   string message = 2;
+  // 用户唯一标识
   string user_id = 3;
-  int64 balance_cents = 4;     // 用户当前可用余额 (分)
+  // 用户当前可用余额（单位：分）
+  int64 balance_cents = 4;
+  // 商品标准 SKU 编码
   string sku_id = 5;
+  // 商品名称
   string sku_name = 6;
-  int64 unit_price_cents = 7;  // 商品单价 (分)
-  int32 available_stock = 8;   // 当前剩余可售库存
+  // 商品实时单价（单位：分）
+  int64 unit_price_cents = 7;
+  // 仓库实时剩余可售库存
+  int32 available_stock = 8;
 }
 
+// CreateOrderReq 创建交易订单请求
 message CreateOrderReq {
+  // 下单用户唯一标识
   string user_id = 1;
+  // 目标商品 SKU 编码
   string sku_id = 2;
-  int32 quantity = 3;          // 购买数量
-  string client_order_ref = 4; // 客户端防重幂等号
-  string payment_channel = 5;  // 可选支付渠道: ALIPAY(默认) / WECHAT
+  // 购买数量（需大于 0）
+  int32 quantity = 3;
+  // 客户端幂等防重流水号
+  string client_order_ref = 4;
+  // 指定外部支付路由渠道：ALIPAY（默认） / WECHAT
+  string payment_channel = 5;
 }
 
+// CreateOrderRsp 创建交易订单响应
 message CreateOrderRsp {
+  // 业务状态码：0=交易成功，非 0=下单拒绝并已完成对应回滚补偿
   int32 code = 1;
+  // 响应描述信息
   string message = 2;
+  // 订单中心生成的全局唯一订单号
   string order_id = 3;
+  // 订单成交总金额（单位：分）
   int64 total_amount_cents = 4;
-  string status = 5;           // SUCCESS, FAILED_STOCK, FAILED_BALANCE, FAILED_PAYMENT
+  // 订单终态字符串（SUCCESS / FAILED_STOCK / FAILED_BALANCE / FAILED_PAYMENT）
+  string status = 5;
+  // 订单创建时间戳（Unix 秒级）
   int64 created_at_unix = 6;
-  string payment_channel = 7;  // 实际路由处理的支付渠道
-  string payment_tx_no = 8;    // 支付渠道返回流水号
+  // 实际路由承接本次交易的支付渠道
+  string payment_channel = 7;
+  // 支付渠道返回的外部交易流水号
+  string payment_tx_no = 8;
+  // 强类型订单终态枚举（引用公共契约库 demo.common.OrderStatusEnum）
+  demo.common.OrderStatusEnum status_enum = 9;
+  // 全链路追踪与审计扩展头
+  demo.common.TraceAuditMeta audit_meta = 10;
 }
 
+// OrderDetailReq 查询订单详情请求
 message OrderDetailReq {
+  // 目标订单号
   string order_id = 1;
 }
 
+// OrderDetailRsp 查询订单详情响应
 message OrderDetailRsp {
+  // 业务状态码：0=成功，1006=订单不存在
   int32 code = 1;
+  // 响应描述信息
   string message = 2;
+  // 全局唯一订单号
   string order_id = 3;
+  // 买家用户唯一标识
   string user_id = 4;
+  // 商品标准 SKU 编码
   string sku_id = 5;
+  // 购买件数
   int32 quantity = 6;
+  // 订单总金额（单位：分）
   int64 total_amount_cents = 7;
+  // 订单状态字符串
   string status = 8;
+  // 订单创建时间戳（Unix 秒级）
   int64 created_at_unix = 9;
+  // 支付渠道编码
   string payment_channel = 10;
+  // 外部支付流水号
   string payment_tx_no = 11;
+  // 强类型订单状态枚举
+  demo.common.OrderStatusEnum status_enum = 12;
+  // 关联支付渠道最近一次授权回执详情（跨包复用 demo.payment.AuthorizePayRsp）
+  demo.payment.AuthorizePayRsp last_payment_receipt = 13;
 }
 
+// CancelOrderReq 取消订单请求
 message CancelOrderReq {
+  // 待取消订单号
   string order_id = 1;
+  // 取消原因描述
   string reason = 2;
 }
 
+// CancelOrderRsp 取消订单响应
 message CancelOrderRsp {
+  // 业务状态码：0=取消并补偿成功
   int32 code = 1;
+  // 响应描述信息
   string message = 2;
+  // 目标订单号
   string order_id = 3;
+  // 本次逆向退回的总金额（单位：分）
   int64 refunded_amount_cents = 4;
+  // 本次逆向归还的库存件数
   int32 released_stock = 5;
 }
