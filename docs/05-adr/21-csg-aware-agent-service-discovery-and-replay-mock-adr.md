@@ -1,9 +1,9 @@
 # ADR-21：CSG 感知型 Agent 服务发现与重放期 CSG 控制面 Mock 设计
 
 - **文档编号**：`21-csg-aware-agent-service-discovery-and-replay-mock-adr.md`
-- **文档版本**：v1.5.0
-- **日期**：2026-11-16
-- **状态**：📋 提议中 (Proposed — 已合入源码级反馈 `Q-P1`~`Q-P10`、运行环境/寻址反馈 `Q-E1`~`Q-E3`、业务语义反馈 `Q-B1`~`Q-B3` 及重放边界反馈 `Q-F1`~`Q-F4`；待澄清 [§14 开放问题](#14-开放问题与源码澄清台账) 中剩余 🔴 阻塞项 `Q-P5b` / `Q-E3b` 后进入正式评审)
+- **文档版本**：v1.6.0
+- **日期**：2026-11-17
+- **状态**：📋 提议中 (Proposed — 已合入源码级反馈 `Q-P1`~`Q-P10`（含 `Q-P5b` 闭环）、运行环境/寻址反馈 `Q-E1`~`Q-E3`、业务语义反馈 `Q-B1`~`Q-B3` 及重放边界反馈 `Q-F1`~`Q-F4`；待澄清 [§14 开放问题](#14-开放问题与源码澄清台账) 中剩余 🔴 现场核验阻塞项 `Q-E3b` 后进入正式评审)
 - **关联特性**：`F-02`（物理进程蓝图与模块服务契约）、`F-05`（实测调用拓扑还原与一致性验证）、`F-08`（进程树选择与存量连接诊断）、`F-09` / `F-11`（Agent 采集与出站透明代理）、`F-12`（重放编排与零外泄门禁）、`F-13`（Agent 零 `.pb` Mock 匹配）
 - **关联设计**：[`02-data-plane-and-cros-rpc-engine.md`](../02-design/02-data-plane-and-cros-rpc-engine.md)、[`03-architecture-elements-and-topology.md`](../02-design/03-architecture-elements-and-topology.md)、[`05-database-schema.md`](../02-design/05-database-schema.md)、[`06-agent-observability-and-self-healing-design.md`](../02-design/06-agent-observability-and-self-healing-design.md)
 - **关联 ADR**：[`ADR-02`](./02-ebpf-hook-and-dual-subsystem-adr.md)（eBPF 钩子与零 `.pb` Mock）、[`ADR-03`](./03-control-plane-state-recovery-and-lease-reconciliation.md)（租约对账与孤儿探针防御）、[`ADR-09`](./09-arch-process-ssot-and-ebpf-premount-standby-adr.md)（进程 SSOT 与预挂载待命）、[`ADR-11`](./11-single-process-bidirectional-capture-and-recording-ux-adr.md)（单进程全出站透明代理）、[`ADR-16`](./16-multi-implementation-service-contract-adr.md)（多实现服务契约与 `dst_tag` 隔离）
@@ -20,6 +20,7 @@
 | v1.3.0 | 2026-11-16 | **合入运行环境与控制面寻址反馈（闭环 `Q-E1`/`Q-E2`，深度剖析 `Q-E3` 并派生 `Q-E3b`）**：1. 确认 **`H-4`**：`userId` 为部署配置产品用户 ID（`ullUserId`，与 Linux UID、`OsNodeID` 无关），现网为单宿主机单栈单 `DophiServer` 形态（`10.29.109.146:31805` 服务同机 40+ 业务进程），§6.4 `locate.go` 增补 `DophiServer` 进程特征匹配、`[31800, 31900]` 端口区间及 `user_id` 提取；2. 确认 **`H-2`**：现网为单机裸机无容器部署，`Instance.ProcID` 即发布进程 OS PID（`getpid()`），与 `ProcScanner` 同命名空间直接匹配；§6.3 `MergeWithProcs` 增加本机 IP 归属守卫以防跨板 LDC 实例 PID 碰撞，§10/§12 显式列入容器化 PID/NetNS 跨命名空间风险与 Non-Goal；3. 剖析 **`Q-E3`**：证实 `"csg_server"` 为 DDM 域套接字路径（`{DDM_CTRL_FILE_PATH}/csg_server`，非 DNS/环境变量/共享内存），且 `CSG_ClientInit`/`CSG_SvrInit` 丢弃地址参数（坐实 §11.2 否决理由）；但现网 `10.29.109.146` 不存在 `csg_server`，而由 `DophiServer` 同时持有 `31805` TCP 与 `dlink_default_domain`/`mesh_server` UDS；4. 精确界定 `H-3` 影响边界（**G1 主动 TCP 只读发现不依赖业务进程走 TCP，仍完全可行**；仅 G2/G3 依赖拦截通道），将 D6 演进为「**`/proc/<pid>/fd` + `net/tcp` + `net/unix` 通道探测 + TCP 主路径 + UDS 快速失败诊断 `CSG_CHANNEL_UDS_UNSUPPORTED`**」，并在 §11.6 明确**否决宿主机全局接管 UDS**（防冲击同机 40+ 非纳管进程及非 CSG DDM 流量），指明若现场核验 `Q-E3b` 证实业务 PID 走 UDS 则需另立 ADR 评估单进程 mount-ns 单套接字 bind + dlink 复用代理或 uprobe 方案 |
 | v1.4.0 | 2026-11-16 | **合入业务语义反馈（闭环 `Q-B1`~`Q-B3`，重定义并确认 `H-1`，派生 `Q-B1b`）**：1. **闭环 `Q-B1`（`H-1` 重定义并确认）**：基于 `CrosService.cpp:70-76`、`simpo_codegen_rpc_cpp.c:600-608`、`cros_rpccore.ph:1297/1305` 与 10 组现网样本，证实 CSG `ServiceName[64]` 与 CROS `ascServiceName[64]` 使用**同一个 64B 运行期字符串**（CSG 场景 `{ClassName[:31]}-{svrName[:31]}`，最大 63B；非 CSG 场景 `{svrName}`）；`Name32` 默认全零，仅用于老版本 LDC 截断兼容；**真正差异在线网 64B 名与 `.pb` `{package}.{service}` 之间**（存在缺包名、任意 `svrName` 变体、31B 截断及 `-<inst>-<pid>` 后缀）。据此解锁 D3 直接将 CROS `ascServiceName` 入池，废除 §5.1 盲目反推规则 3，提出 P5 演进 `A-07` 并将 `decoder.Registry.ServiceAliases` 推广至独占 `ModuleService`（新增可选 `proto_service_name`），派生 `Q-B1b` 核实 `-2-76060` 跨重启漂移；2. **闭环 `Q-B2`**：确认 CSG（仅 `CsgSvr`/`CsgClient` 注册中心）**不是** ADR-16「调度中心 X」（X 为 CROS RPC 上的业务调度进程），`impl_key` 与 CSG 字段零映射，保留 ADR-16 Non-Goal 3/5 与 `Non-Goal 11`，新增 §5.5 说明与 ADR-16 双模式的正交兼容；3. **闭环 `Q-B3`**：将冷启动预置拆为「协议内置（`CsgSvr`/`CsgClient`/`csg_agt`/`csg_db`）」与「站点配置（SSOT + 现网快照 + `DophiServer`/`DDMService`/`EventServer`/`ProcessServer` 等部署配置，不硬编码进协议层）」，禁止使用 `Name32` 兜底查询 |
 | v1.5.0 | 2026-11-16 | **合入重放边界反馈（闭环 `Q-F1`~`Q-F4`）与重启期 eBPF 竞态修复**：1. **闭环 `Q-F1`**：依据 `csg_client.c:1786, 1273`、`csg_customer.c:788` 确认业务进程将订阅结果与连接缓存在进程内内存表 `g_stCsgLocalSubSvcTbl`（不按次重 `SUB`），故「断链重连而不重启进程」无法切换下游路由，确认「Agent 先就绪 `MOCK_SERVER` ➔ 用户/脚本重启被测进程」可接受且为 v1 唯一标准编排。同时结合现网代码（`cros_probe.c:509`、`pkg/ebpf/manager.go:848-870`、`http_server.go:611`）解决重启期 `execve() → connect(CSG)` 毫秒级竞态，在 D7 / §6.8 / §9 P4 增补 `cros_sched_exec` 内核预纳管、`proc_exec_ringbuf` 精准确认、`MODE_REPLAY` 重启保持与 `CSG_CONN_BYPASSED_MOCK` 反绕过检测，并新增 Teardown 有界退出等待（`wait_exit_on_teardown_ms`）与恢复重启提示（`CSG_RESTORE_RESTART_REQUIRED`）；2. **闭环 `Q-F2`**：依据 `csgs_data_adapt.c:766`、`csgs_dlink_adapt.c:277, 326` 确认真实 CSG 对未注册服务名恒返回 `SvcInstCount = 0, Rst = 0` 的正常 `SUB_ACK`（非零 `Rst` 仅用于内部错误，不用作 `FAULT`），收敛 `MockCSGServer` 移除 `CSGMissPolicy`/`FAULT` 分支，保留 `csg_sub_miss` 统计引导补录；3. **闭环 `Q-F3`**：依据 `csg_server.c:561`、`cros_rpctcp.c:1001` 确认业务进程无额外端口区间校验且 CROS TCP 监听端已设 `SO_REUSEADDR`（不同于 `csgServerCheckPort` 未设 `SO_REUSEADDR`），固定返回 `ProcessSpec.ListenPort` 可行；约束 `MockCSGServer` 校验 `FixedBindPort ∈ [PortMin, PortMax]` 并执行只读活跃 `LISTEN` 冲突检测，冲突时返回 `uiRst != 0, usPort = 0`（`CSG_BIND_PORT_CONFLICT`），严禁静默换端口；4. **闭环 `Q-F4`**：确认 v1 范围内无必须使用 `REGISTER` 才能覆盖的目标场景，不可重启进程在 v1 中不做 `MOCK_SERVER` 重放，同步修订 §11.1 与 §12 Non-Goal 6 |
+| v1.6.0 | 2026-11-17 | **合入 `Q-P5b` 源码核实结论（否决无条件 `H-6`，精确收敛 `dophi_mesh://` 边界）**：1. **否决无条件 `RewriteMeshToTCP`（`H-6` ❌）**：依据 `csg_client.c:1219-1225, 1762`、`csg_customer.c:303, 450, 1058-1070` 确认 `SubTransType` 由订阅方本端地址决定（`dophi_mesh://` 仅置 `MESH(4)`、`tcp://` 仅置 `TCP(1)`），且 `csgSvcInstInfoAddLocal` 按 `(acServiceName, ucTransType)` 精确匹配；对 `dophi_mesh://` 订阅方返回 `tcp://` 会报 `"Get sub node unsuccess"` 静默丢弃实例；仅当本端已置 `TCP(1)`（`tcp://` 测试环境消费 `dophi_mesh://` 快照）时方可改写并走标准 `connect()`（`cros_rpcaddrmgnt.c:968-1013`、`cros_rpctcp.c:1788-1791`）；2. **澄清 `csgServerCheckPort` 与 mesh 监听分离**：依据 `csg_server.c:510-596`、`mesh_sock.c:31, 478, 1811-1815`、`mesh_vpi_unix.c:71-110` 确认 `csgServerCheckPort` 只是 `AF_INET` TCP + `AF_UNIX` 抽象 socket 两级空闲探测（探测完立即 `close`），纯 `dophi_mesh://` 进程**不**起 `AF_INET SOCK_STREAM` 监听（板内走 `AF_UNIX SOCK_DGRAM` 抽象套接字、跨节点走 `g_stMeshTransAdaptHook` UDX）；3. **工程落地收敛**：① D4 / §5.3 / §6.3 将 `WEAK` 端口匹配收窄为仅限 `tcp://`，并补充 G1 对无 TCP `LISTEN` 的本地 `dophi_mesh://` `ProcID` 兜底识别（标注 `CSGDataPlane = MESH_VPI_UDX`）；② D6 / §5.4 / §6.7 / §6.8 改为 `MockCSGServer` 必须校验 `SUB` `SubTransType`，遇 `MESH`-only 订阅方立即快速失败报 `CSG_DATAPLANE_MESH_UNSUPPORTED`（禁止盲目改写）；③ `ParseBindAddrAck` 兼容 `TransTCP(1)` 与 `TransMesh(4)`，Mock 简化 `GET_BIND_ADDR` 为配置池校验 |
 
 ---
 
@@ -63,7 +64,7 @@ ProcessMonitorSpec = { ProcessID, ListenPort, CmdPattern, Downstreams[{IP, Port,
 | 重放 (`REPLAY_MOCK`) | 同上 | **透传到真实 CSG** | 命中 Mock 端点或载荷含 `CSE.TCP` → 切断真实下游，由 `ScopedMockMatcher` 应答；`MOCK_MISS` 时保持静默 |
 
 > [!NOTE]
-> `cgroup/connect4` 仅过滤 `AF_INET`（`cros_probe.c:201`），且只作用于**挂载之后新建**的 TCP 连接：`AF_UNIX` 域套接字连接与早于挂载建立的 CSG 长连接均不会进入 `EgressProxy`。这与 `A-01`（录制 / 重放前可接受重启）的前提一致；若目标业务进程通过 `AF_UNIX` 访问 CSG，则属于 `H-3` 覆盖边界之外（见 §3 与 D6）。
+> `cgroup/connect4` 仅过滤 `AF_INET`（`cros_probe.c:201`），且只作用于**挂载之后新建**的 TCP 连接：`AF_UNIX` 域套接字、共享内存与 UDX（含 `dophi_mesh://` VPI 传输，见 `H-6` 与 §5.4）以及早于挂载建立的 CSG 长连接均不会进入 `EgressProxy`。这与 `A-01`（录制 / 重放前可接受重启）的前提一致；若目标业务进程控制面走 `AF_UNIX`（`H-3`）或数据面运行于纯 `dophi_mesh://` 模式（`H-6`），均超出 v1 `AF_INET` 拦截与 TCP 注入边界（见 §3 与 D6）。
 
 ### 1.2 问题陈述
 
@@ -106,9 +107,9 @@ ProcessMonitorSpec = { ProcessID, ListenPort, CmdPattern, Downstreams[{IP, Port,
 | **D1** | 协议层落位 | 新增 `pkg/csgproto`（纯编解码 + 只读客户端，无状态），供 `pkg/csgdiscovery` 与 `pkg/csgmock` 共用 | 拆分 | 避免 `csgmock → csgdiscovery` 的业务耦合；编解码可单独 Fuzz |
 | **D2** | CSG Server 地址 | 按「单宿主机默认 0 或 1 个控制面端点（保留多端点切片扩展余量）」建模：① `--csg-addr` / `CONTRACT_AGENT_CSG_ADDR` 显式配置（推荐）；② 观测纳管进程 `ScanProcessEstablishedSockets` 对端 ∈ `[31800, 31900]`；③ 本机 LISTEN 表 `[31800, 31900]` 匹配 `DophiServer` / `csg_server` / `DDMService` 后握手确认，并记录命中 `userId = port - 31800`；只读探查本地 DDM UDS 路径存在性用于诊断。**禁止**对远端地址盲扫 | 收紧 + v1.3 修正 | 实测确认宿主机由 `DophiServer` 监听 `31800+userId` 服务单机单栈（Q-E1）；优先观测存量连接天然规避双网卡问题 |
 | **D3** | 服务名来源 | 取并集：① 被动观测 dlink `SUB` / `PUB`（主）；② CROS 数据面 `ascServiceName` 直接入池（`Q-B1` 已证实与 CSG `ServiceName` 完全同构，无需反推）；③ Server 下发的 SSOT 运行期发布名（含别名）；④ 两层冷启动预置（协议内置 `CsgSvr`/`CsgClient`/`csg_agt`/`csg_db` + 站点配置 `DophiServer`/`DDMService`/`EventServer`/`ProcessServer` 与现网快照）。**禁止**使用 `Name32` 查询 | 调整 + v1.4 解锁 | `SUB` 必须提供 64B 服务名；`Q-B1` 证实 CSG 与 CROS `ascServiceName` 同一；`Q-B3` 分离协议内置与站点配置 |
-| **D4** | 拓扑关联 | 被动观测 `PUB` 精确绑定（最高）> `ProcID == PID` 强匹配（已确认 H-2，叠加非本机 IP 守卫防 LDC 跨板碰撞）> 本机 IP + 端口弱匹配；只保留内存 TTL 缓存，不落 Agent 磁盘 | 补充 + v1.3 守卫 | 裸机同命名空间下 `ProcID == getpid()`（Q-E2）；加本机 IP 守卫避免跨板同步实例撞 PID |
+| **D4** | 拓扑关联 | 被动观测 `PUB` 精确绑定（最高）> `ProcID == PID` 强匹配（已确认 H-2，叠加非本机 IP 守卫防 LDC 跨板碰撞；支持为无 TCP `LISTEN` 的本地 `dophi_mesh://` `ProcID` 补充 `/proc/<pid>` 信息并标注 `MESH_VPI_UDX`）> 本机 IP + 端口弱匹配（**仅限 `tcp://`**）；只保留内存 TTL 缓存，不落 Agent 磁盘 | 补充 + v1.3 守卫 + v1.6 收敛 | 裸机同命名空间下 `ProcID == getpid()`（Q-E2）；`Q-P5b` 证实 `dophi_mesh://` 进程不起 TCP `LISTEN`（`csgServerCheckPort` 只是空闲探测），不可按端口弱匹配 |
 | **D5** | Agent 访问真实 CSG 的边界 | **只读白名单**：`REGISTER` / `CLIENT_ID` / `SUB` / `UNSUB` / `UNREGISTER`；每轮 `SUB` 后立即 `UNSUB`，退出时发 `UNREGISTER`；单长连接（内核 TCP keepalive 2s 保活）、令牌桶限速（默认 20 QPS）、指数退避重连（1s → 60s）。运行期代码路径**禁止** `PUB` / `UNPUB` / `GET_BIND_ADDR` / `FREE_BIND_ADDR` | 新增 | 避免改动生产注册中心状态与端口游标；立即 `UNSUB` 避免 LDC 分级数据库残留订阅 |
-| **D6** | 重放期 CSG 处置 | 新增 `csg_strategy ∈ {PASSTHROUGH(默认), MOCK_SERVER}`，实施「**通道探测 + TCP 主路径 + UDS 快速失败**」：① 启动/重启后经 `/proc/<pid>/fd` ∩ `net/{tcp,unix}` 探测目标 PID 真实控制面通道；② TCP 通道：`EgressProxy` 在 `REPLAY_MOCK` 下按原始目的∈CSG 集合（或首包 `DLNK` 嗅探）将新建连接交给进程内 `MockCSGServer.ServeConn`，`SUB_ACK` 回放录制期快照（未命中恒返回 `SvcInstCount = 0, Rst = 0`，不返回非零 `Rst` 或 `FAULT`，`Q-F2`）并默认开启 `RewriteMeshToTCP`（§5.4），`GET_BIND_ADDR` 校验在 `[PortMin, PortMax]` 内固定返回 `ProcessSpec.ListenPort`（活跃 `LISTEN` 冲突时返回 `uiRst != 0, usPort = 0` 且不静默换端口，`Q-F3`），本地吞掉 `PUB`/`UNPUB` 并支持 `SESSION_ID_GET (6)`；③ 若探得业务 PID 仅走 `AF_UNIX`（`dlink_default_domain` / `mesh_server` / `csg_server`），v1 **禁止**宿主机全局接管 UDS（§11.6），直接快速失败报诊断 `CSG_CHANNEL_UDS_UNSUPPORTED`（不傻等超时或静默外泄真实 CSG） | 重做 + v1.3 通道守卫 + v1.5 语义收口 | `connect4` 仅钩取 `AF_INET`（`cros_probe.c:201`）；宿主机直接覆盖 UDS 会冲击同机 40+ 非纳管进程及非 CSG DDM 流量；`Q-F2`/`Q-F3` 已与 DOPRA 服务端源码对齐；若 `Q-E3b` 证实业务走 UDS 则另立 ADR 评估单进程隔离方案 |
+| **D6** | 重放期 CSG 处置 | 新增 `csg_strategy ∈ {PASSTHROUGH(默认), MOCK_SERVER}`，实施「**控制面通道 + 数据面传输双探测与快速失败**」：① 启动/重启后经 `/proc/<pid>/fd` ∩ `net/{tcp,unix}` 探测控制面通道（若仅走 `AF_UNIX` 则禁止宿主机全局接管并快速失败报 `CSG_CHANNEL_UDS_UNSUPPORTED`）；② 控制面 TCP 通道：`EgressProxy` 在 `REPLAY_MOCK` 下按原始目的∈CSG 集合（或首包 `DLNK` 嗅探）将新建连接交给进程内 `MockCSGServer.ServeConn`；**`SUB` 必须校验 `SubTransType`**（`Q-P5b`）：仅当订阅方置位 `TCP(1)` 时返回 `tcp://` 实例（允许 `RewriteMeshToTCP` 改写跨模式历史 `dophi_mesh://` 快照），若订阅方**仅置位 `MESH(4)`** 则严禁改写为 `tcp://`（会被 `csgSvcInstInfoAddLocal` 静默丢弃），立即快速失败报 `CSG_DATAPLANE_MESH_UNSUPPORTED`；未命中恒返回 `SvcInstCount = 0, Rst = 0`（`Q-F2`）；`GET_BIND_ADDR` 校验在 `[PortMin, PortMax]` 内固定返回 `ProcessSpec.ListenPort`（活跃 TCP `LISTEN` 冲突返回 `uiRst != 0, usPort = 0` 且不换端口，`Q-F3`），本地吞掉 `PUB`/`UNPUB` 并支持 `SESSION_ID_GET (6)` | 重做 + v1.3/v1.5/v1.6 收口 | `connect4` 仅钩取 `AF_INET`；`Q-P5b` 证实 `dophi_mesh://` 订阅丢弃 `tcp://` 且 `MESH_Listen` 走抽象 UDS/UDX；v1 仅支持已切为 `tcp://` 的测试进程，纯 mesh 数据面需另立 ADR |
 | **D7** | `MOCK_SERVER` 生效时机 | 两阶段「**先挂载 Mock ➔ 零竞态捕获重启 ➔ 校验注册后注入**」：`Q-F1`/`Q-F4` 已确认本地 `g_stCsgLocalSubSvcTbl` 缓存使“不重启仅重连”无法刷新下游且重启被测进程可接受。① `Prepare` 阶段跳过 `WAITING_PROC`/`NEED_RECONNECT` 拦截，提前挂载 `cros_probe`（`MODE_REPLAY`）与 `MockCSGServer` 返回 `WAITING_RESTART`；② 用户/脚本在 `restart_wait_ms` 内重启被测进程，内核 `cros_sched_exec` + `proc_exec_ringbuf` 在 `execve() → connect(CSG)` 毫秒级窗口内预纳管新 PID（`Mode = MODE_REPLAY`），`AwaitRestart` 校验 `MockCSGServer` 已收到新 PID 的 `REGISTER`（无直连真实 CSG 旁路）且监听端口就绪后再开始注入；③ `Teardown` 保持 Mock 存活直至注入结束及可选 `wait_exit_on_teardown_ms`（脚本场景等业务进程先退出），随后断开 Mock 并模拟 `csgServerLinkFaultProc` 清理，若进程仍驻留则提示 `CSG_RESTORE_RESTART_REQUIRED` 引导重启恢复接入真实 CSG；不可重启进程在 v1 中不做 `MOCK_SERVER` 重放 | 新增 + v1.5 零竞态重启 | `connect4` 只作用于新建连接；`connect(CSG)` 发生在 `bind()/listen()` 之前，依赖原有 2s 端口巡检会漏掉重启首连；`PUB` 被吞且 `g_stCsgLocalSubSvcTbl` 驻留内存决定恢复须重启 |
 | **D8** | 重放编排位置 | `internal/agent/server/csg_replay.go`：在 `handleExecuteReplay` 中执行 `Prepare`，并在重放完成、取消、`purge`、主控失联超过 5 分钟、`SIGTERM` 五个出口执行 `Teardown` | 上移 | 遵守分层；与租约、探针卫生（红线 4）统一收口 |
 | **D9** | 上报与持久化 | 拉取：Server 调用增强后的 `GET /agent/v1/processes/discover`；推送：新增信封事件 `EventCSGObservation = 0x08`，由 Server 合并写入 `contract_recording_sessions.csg_snapshots`（`jsonb`） | 新增 | 沿用 ADR-16 `endpoint_snapshots` 的“录制期快照固化”模式，不新增表 |
@@ -125,7 +126,7 @@ ProcessMonitorSpec = { ProcessID, ListenPort, CmdPattern, Downstreams[{IP, Port,
 | **H-3** | ⏳ 待现场 PID 实证 | 目标业务进程经 **IPv4 TCP (`31800+userId`)** 访问 CSG，而非仅经 UDS（`dlink_default_domain` / `mesh_server` / `csg_server`） | **G1 主动 TCP 只读发现仍可用**（`DophiServer` 监听 `31800+userId`）；但 `cros_connect4` 无法拦截 `AF_UNIX`，基于 `EgressProxy` 的 G2 被动观测与 G3 `MOCK_SERVER` 将触发 `CSG_CHANNEL_UDS_UNSUPPORTED` 并需另立 ADR 评估单进程 UDS/uprobe 方案 | Q-E3 / Q-E3b |
 | **H-4** | ✅ **已确认（当前单机单栈）** | 一台宿主机对应 1 个 `userId`、1 套 `DophiServer`/DDM 栈、1 个 CSG 控制面端口（`port = 31800 + userId`，`userId` 为部署配置产品用户 ID `ullUserId`） | （当前未见单机多 `userId` 共存；`Config.CSGAddrs` 仍保留切片以兼容未来多栈扩展） | Q-E1（已闭环） |
 | **H-5** | ✅ **已确认** | 服务端应答恒为 `usType = REPLY (1)` 且原样回显 `uiCorrID`（`ddm_dlink_msg.c:667-712`） | — | Q-P1（已闭环） |
-| **H-6** | ⏳ 待确认 | 当 `SUB_ACK` 返回 `tcp://ipv4:IP:PORT`（或由 `MockCSGServer` 将 `dophi_mesh://ipv4:IP:PORT` 改写为 `tcp://ipv4:IP:PORT`）时，CROS RPC 客户端会使用标准 TCP `connect()` 发起数据面连接 | 若客户端强制校验 `dophi_mesh://` 前缀且走共享内存 `MESH_Connect`，则需补充 uprobe 或配置级协议切换 | Q-P5b |
+| **H-6** | ❌ **已否决（原无条件降级不成立）** | 原假设：`MockCSGServer` 将 `SUB_ACK` 从 `dophi_mesh://ipv4:IP:PORT` 改写为 `tcp://ipv4:IP:PORT` 后，mesh 客户端可直接降级走标准 TCP `connect()` 且可注入 TCP 端口 | **源码实证反驳**：① `csgFillSubTransType`（`csg_client.c:1219-1225`）按本端地址置位，`dophi_mesh://` 客户端仅置 `MESH(4)`，`csgSvcInstInfoAddLocal`（`csg_customer.c:1058-1070`）按 `(acServiceName, ucTransType)` 匹配，返回 `tcp://` 会报 `"Get sub node unsuccess"` 静默丢弃实例；② `csgServerCheckPort`（`csg_server.c:567-596`）只是两级空闲探测，纯 `dophi_mesh://` 进程走 `MESH_Listen`（抽象 `AF_UNIX SOCK_DGRAM` + UDX `g_stMeshTransAdaptHook`），**不**起 `AF_INET` TCP 监听。<br>**修正边界**：v1 数据面录制与 `MOCK_SERVER` 重放仅支持已切换为 **`tcp://` 传输**的测试环境（`RewriteMeshToTCP` 仅对 `SubTransType` 含 `TCP(1)` 的订阅生效）；纯 `dophi_mesh://` 进程在 G1 仍可发现关联，在 G3 快速失败报 `CSG_DATAPLANE_MESH_UNSUPPORTED`（原生采集/重放另立数据面扩展 ADR） | Q-P5b（已闭环） |
 
 ---
 
@@ -271,7 +272,9 @@ ProcessMonitorSpec = { ProcessID, ListenPort, CmdPattern, Downstreams[{IP, Port,
 6     BUTT      上界哨兵（不用）
 ```
 
-> **关键约束**：服务端 `csgSvcInstAddrTansTypeParse`（`csgs_client_mgnt.c:588-599`）按实例地址中是否包含 `"tcp"` 或 `"dophi_mesh"` 子串匹配对应掩码位；未置位则返回 0 个实例。默认同时置 `TCP(1)` 和 `MESH(4)`。
+> **关键约束**（`Q-P5` / `Q-P5b`）：
+> - **业务进程填充机制**（`csgFillSubTransType` `csg_client.c:1219-1225`、`csg_client.c:1762`）：位掩码由**订阅方本端地址 `pcLocalAddr`** 决定，本端为 `dophi_mesh://` 时仅置 `MESH(4)`，为 `tcp://` 时仅置 `TCP(1)`。且 `csgSvcInstInfoAddLocal`（`csg_customer.c:1058-1070`）在入表阶段通过 `csgSubSvcNodeGetBySubName`（`csg_customer.c:450`）按 `(acServiceName, ucTransType)`（`csg_customer.c:303`）精确匹配，**传输类型不匹配的实例将被静默丢弃（`"Get sub node unsuccess"`）**。
+> - **服务端过滤与 Agent 只读发现**：服务端 `csgSvcInstAddrTansTypeParse`（`csgs_client_mgnt.c:588-599`）按实例地址子串匹配掩码位（`csgs_client_mgnt.c:610-646` 亦用于过滤 `NOTIFY` 推送）。Agent 只读发现客户端（对齐 `csg-go-client`）默认同时置位 `TCP(1)` 和 `MESH(4)` 以观测全量实例。
 
 **应答体**（`CSG_SUB_SVC_ACK_MSG_S` + N × `CSG_SERVICE_INST_INFO_S`）：
 
@@ -345,8 +348,8 @@ ProcessMonitorSpec = { ProcessID, ListenPort, CmdPattern, Downstreams[{IP, Port,
 
 | 传输类型 | 服务端发布格式 (`SvcInstAddr`) | 客户端连接格式 | 对应 `SubTransType` 位 | 数据面传输与可拦截性 |
 | :--- | :--- | :--- | :--- | :--- |
-| **MESH**（线上默认） | `dophi_mesh://ipv4:IP:PORT`<br>（如 `dophi_mesh://ipv4:10.29.92.80:2002`） | `dophi_mesh://peer:ipv4:ip:port[:local:ipv4:ip:port]` | MESH（索引 4） | ⚠️ 调 `MESH_Connect`（`mesh_sock.c:295`，共享内存 IPC），**不经过内核 TCP `connect()`**；重放期需经 `MockCSGServer` 改写为 `tcp://` 或补充钩子（见 §5.4） |
-| **TCP** | `tcp://ipv4:IP:PORT[:svr_inst_id]`<br>（如 `tcp://ipv4:127.0.0.1:18500:1`） | `tcp://peer:ipv4:ip:port:svr_inst_id[:local:...]` | TCP（索引 1） | ✅ 标准 IPv4 TCP `connect()`，直接被 `cros_connect4` 拦截 |
+| **MESH**（线上默认） | `dophi_mesh://ipv4:IP:PORT`<br>（如 `dophi_mesh://ipv4:10.29.92.80:2002`） | `dophi_mesh://peer:ipv4:ip:port[:local:ipv4:ip:port]` | MESH（索引 4） | ⛔ 服务端 `MESH_Listen`（`mesh_sock.c:478`）走板内 `AF_UNIX SOCK_DGRAM` 抽象套接字（`mesh_vpi_unix.c:71-110`）+ 跨节点 UDX `g_stMeshTransAdaptHook`（`mesh_sock.c:31, 1811-1815`）；客户端调 `MESH_Connect` 且仅置 `MESH(4)`（会丢弃 `tcp://` 应答，`Q-P5b`），**不经过 `AF_INET` TCP**（详见 §5.4） |
+| **TCP** | `tcp://ipv4:IP:PORT[:svr_inst_id]`<br>（如 `tcp://ipv4:127.0.0.1:18500:1`） | `tcp://peer:ipv4:ip:port:svr_inst_id[:local:...]` | TCP（索引 1） | ✅ 监听走 `rpcTcpSocketAddrBind`（`cros_rpctcp.c:1001`），出站走 `rpcTcpInvokeCreate` 标准 `AF_INET` `connect()`（`cros_rpctcp.c:1788-1791`），直接被 `cros_connect4` 拦截与 `ReplayExecutor` 注入 |
 | **DOMAIN** | `unix:///var/run/sock` | — | DOMAIN（索引 5） | ❌ 超出红线 2（仅 IPv4 TCP） |
 
 **服务名构造与线网同一性**（`CrosService.cpp:70-76`、`simpo_codegen_rpc_cpp.c:600-608`、`cros_rpccore.ph:1297, 1305`，`Q-B1` 已确认）：
@@ -430,8 +433,10 @@ ProcessMonitorSpec = { ProcessID, ListenPort, CmdPattern, Downstreams[{IP, Port,
 
 ```text
 1. 在 [usBeginPort, usEndPort]（默认 [32768, 49151]）内从 usNextPortNum 顺序递增，
-   对每个候选端口依次检查 TCP SOCK_STREAM bind()（⚠️ csgServerCheckPort 未设 SO_REUSEADDR，
-   csg_server.c:561）与 MESH/UDS 抽象 Unix Domain Socket bind() 可用性，
+   通过 csgServerCheckPort（csg_server.c:567-596）执行两级端口池空闲占用探测：
+   ① AF_INET SOCK_STREAM bind() 后立即 close()（未设 SO_REUSEADDR）；
+   ② csgServerCheckPortIsvalid（csg_server.c:510）以 AF_UNIX SOCK_DGRAM 抽象套接字探测；
+   （注：该探测仅确认端口号空闲，不代表 MESH 进程自身会起 TCP 监听，Q-P5b）
    可用则插入 HASH 表（CSG_ADDR_HASH_LEN = 32）并推进游标；遍历一圈无可用端口则返回 VOS_ERR（usPort=0）
 2. 无论成功或失败，始终分配并发送 sizeof(CSG_GET_BIND_ADDR_ACK_MSG_S) = 128 字节应答：
    - stMeshCfg.ucFamily = RPC_SOCK_FAMILY_AFNET (0)
@@ -447,10 +452,10 @@ ProcessMonitorSpec = { ProcessID, ListenPort, CmdPattern, Downstreams[{IP, Port,
 > - **Go 实现规则**：解析小端 CSG Server 的 128B 应答时，`body[24:28]` 必须按反转字节 `net.IPv4(body[27], body[26], body[25], body[24])` 解读（或与连接对端 IP 自动比对校准）；`MockCSGServer` 在小端环境构造 128B 应答时同样须按小端序写入 `body[24:28]`。
 
 > [!NOTE]
-> **固定返回 `ProcessSpec.ListenPort` 可行性与 `SO_REUSEADDR`（Q-F3 源码已确认）**：
+> **固定返回 `ProcessSpec.ListenPort` 可行性与 `SO_REUSEADDR`（Q-F3 / Q-P5b 源码已确认）**：
 > - 业务进程对 `GET_BIND_ADDR` 返回端口**无额外区间校验**，直接信任 CSG 分配结果；
-> - CROS TCP 数据面监听函数 `rpcTcpSocketAddrBind()`（`cros_rpctcp.c:1001`）已设置 `SO_REUSEADDR`（区别于服务端 `csgServerCheckPort()` 未设 `SO_REUSEADDR`），因此被测进程重启后重新绑定原 `ListenPort` 可免疫旧连接 `TIME_WAIT` 阻塞；
-> - 但 `MockCSGServer` 仍须校验配置区间 `[PortMin, PortMax]` 覆盖 `ProcessSpec.ListenPort`，并在检测到活跃 `LISTEN` 端口冲突时返回非零 `uiRst` 报错（**严禁静默换端口**，避免破坏 `ReplayExecutor` 注入目标端口、`FindPIDByPortAndCmd` 与录制拓扑一致性）。
+> - **仅 TCP 传输模式**下业务进程才会调用 `rpcTcpSocketAddrBind()`（`cros_rpctcp.c:1001`，已设置 `SO_REUSEADDR`）起 `AF_INET SOCK_STREAM` 监听，重启后重新绑定原 `ListenPort` 可免疫旧连接 `TIME_WAIT` 阻塞（纯 `dophi_mesh://` 进程走 `MESH_Listen` 抽象 UDS / UDX，不起 TCP 监听）；
+> - `MockCSGServer` 无需复刻 `csgServerCheckPort` 的两级内核探测，只需校验配置区间 `[PortMin, PortMax]` 覆盖 `ProcessSpec.ListenPort`、无内部/活跃 TCP `LISTEN` 端口冲突（冲突时返回非零 `uiRst` 报错，**严禁静默换端口**，避免破坏 `ReplayExecutor` 注入目标端口与录制拓扑一致性）。
 
 **关于 128B full 与 8B compact 格式（Q-P6 源码核实）**：
 
@@ -615,31 +620,33 @@ function roundTrip(sub, wantAck, payload):
 
 ### 5.3 端口关联
 
-服务启动时通过 `GET_BIND_ADDR` 申请监听端口，`bind()` 后以 `PUB` 发布，`Instance.Addr` 携带该端口。Agent 的关联方式：
+服务启动时通过 `GET_BIND_ADDR` 申请监听端口，以 `PUB` 发布后 `Instance.Addr` 携带该端口。Agent 的关联方式：
 
-- 解析 `SUB_ACK` 中的 `Instance.Addr`（兼容 `dophi_mesh://ipv4:IP:PORT` 与 `tcp://ipv4:IP:PORT[:svr_inst_id]`），与本机 `DiscoveredProcess.ListenPort` 比较（仅当实例 IP 属于本机网卡地址集合）；
+- 解析 `SUB_ACK` 中的 `Instance.Addr`（兼容 `dophi_mesh://ipv4:IP:PORT` 与 `tcp://ipv4:IP:PORT[:svr_inst_id]`）：仅当 **`inst.Transport == "tcp"`** 且实例 IP 属于本机网卡地址集合时，方可与 `DiscoveredProcess.ListenPort` 做 `WEAK` 端口匹配；`Q-P5b` 已证实纯 `dophi_mesh://` 进程不起 `AF_INET` TCP 监听（`csgServerCheckPort` 只是空闲探测），因此 `mesh` 实例仅依托 `OBSERVED_PUB`（`EXACT`）与 `ProcID == PID`（`STRONG`，配合 `/proc/<pid>` 补充识别无 TCP 监听的进程）完成关联；
 - 被动观测业务进程 `GET_BIND_ADDR` 应答与后续 `PUB`，直接得到“进程 → 端口 → 服务名”；
 - ⛔ **不**主动发送 `GET_BIND_ADDR` 探测分配行为（D5）。
 
-### 5.4 `dophi_mesh://` 共享内存数据面与内核 eBPF 拦截的矛盾及化解方案（Q-P5 新增）
+### 5.4 `dophi_mesh://` 数据面与内核 eBPF 边界（`Q-P5` / `Q-P5b` 已闭环，否决 `H-6`）
 
-根据 DOPRA 源码核实（`cros_rpcaddrmgnt.c:33, 331`、`mesh_sock.c:295, 414`、`cros_rpcmesh.c:1342`）：
+根据 DOPRA 源码完整链路核实（`csg_client.c:1219-1225, 1762`、`csg_customer.c:303, 450, 1058-1070`、`cros_rpcaddrmgnt.c:968-1013`、`cros_rpctcp.c:1788-1791, 2422, 2747`、`csg_server.c:510-596`、`mesh_sock.c:31, 446, 478, 509, 1811-1815`、`mesh_vpi_unix.c:71-110`）：
 
-1. **矛盾根因**：线上 CSG Server 默认配置 `ucProtocol = RPC_TRANSPORT_MESH (4)`，发布的实例地址以 `dophi_mesh://ipv4:IP:PORT` 为主。当客户端按 `dophi_mesh://` 发起数据面连接时，调用的是 `MESH_Connect(iWorkFd, &stAddr)`，内部经 `g_stMeshShmComAdaptHook` 走**共享内存 IPC**，**不经过内核 `AF_INET` TCP 协议栈**，因此现有的 `cgroup/connect4` (`cros_connect4`) 无法拦截同机共享内存通道。
-2. **重放期化解方案 — 控制面协议降级改写（`RewriteMeshToTCP`）**：
-   - `MockCSGServer` 提供 `RewriteMeshToTCP` 选项（默认开启）：在构造 `SUB_ACK`（及 `NOTIFY`）时，调用 `csgproto.RewriteMeshAddrToTCP` 将快照中的 `dophi_mesh://ipv4:IP:PORT` 改写为 `tcp://ipv4:IP:PORT`。
-   - **双重收益**：① 引导 CROS RPC 客户端切回标准 TCP 传输层发起内核 `connect(IP:PORT)`，从而 100% 落入现有 `cros_connect4` ➔ `EgressProxy` ➔ `ScopedMockMatcher` 零外泄拦截链路；② **原始 `IP:PORT` 保持不变**，ADR-16 多实现契约依赖的 `Downstreams → dst_tag` 映射完全不受影响。
-   - **前置确认项（`Q-P5b`）**：需在 CROS RPC 客户端源码中核实，当业务进程发起 `SUB` 时 `SubTransType` 掩码是否允许接收 `tcp://ipv4:` 实例，以及 `g_stMeshTransAdaptHook` 在跨节点或共享内存不可用时是否本身就回退到内核 TCP。
-3. **录制期处理策略**：
-   - 若测试环境中业务进程已走 TCP（或通过 `CSG_SVR_CFG_CMD_SET_PROTOCOL = RPC_TRANSPORT_TCP` / `EgressProxy` 控制面改写切至 TCP），现有 eBPF 数据面可直接录制；
-   - 若目标环境必须在录制期原位采集 `MESH_Connect` 共享内存流量，则属于数据面采集介质扩展，需另立 ADR 通过 uprobe 挂载 `MESH_Connect` / `MESH_Send` / `MESH_Recv` 实现（超出本 ADR 控制面范围，见 §12 Non-Goal 5）。
+1. **`H-6` 否决原因（无条件控制面改写不可行）**：
+   - **出站侧类型强校验丢弃**：`csgFillSubTransType` 依据**订阅方本端地址 `pcLocalAddr`** 置位（`dophi_mesh://` 仅置 `MESH(4)`，`tcp://` 仅置 `TCP(1)`）。订阅节点创建时固定登记 `ucTransType`；`SUB_ACK` 回包经 `csgSvcInstInfoAddLocal` 调用 `csgSubSvcNodeGetBySubName(acServiceName, csgAddrTypeGet(acSvcInstAddr))` 按 `(服务名, 传输类型)` 精确查表。因此**对 `dophi_mesh://` 订阅方强行返回 `tcp://ipv4:IP:PORT` 会报错 `"Get sub node unsuccess"`（`VOS_ERRNO_INVAL`）并静默丢弃实例，根本不会建连**；
+   - **入站/出站均非 `AF_INET` TCP**：`csgServerCheckPort` 对 `AF_INET SOCK_STREAM` 的 `bind()` 完立即 `close()`，只是端口池占用探测；真实 `dophi_mesh://` 服务侧走 `MESH_Listen`（板内为 `AF_UNIX SOCK_DGRAM` 抽象套接字 `MESH_VpiUnixCtrlBind`，跨节点为 `g_stMeshTransAdaptHook` 注册的 UDX），客户端走 `MESH_Connect`（共享内存 / VPI / UDX），**均不经过内核 `AF_INET` TCP 栈**，既无法被 `cros_connect4` 拦截也无法接受 `ReplayExecutor` 的 TCP 注入。
+2. **双态收敛方案（以业务进程实连传输类型为界）**：
+   - **态 A — `TCP` 模式（v1 完全支持：`tcp://ipv4:...`，`SubTransType[TransTCP] == 1`）**：
+     - 业务进程通过 `rpcTcpSocketAddrBind` 监听 `AF_INET` TCP，通过 `RPC_ResolveClientAddr` → `rpcTcpInvokeCreate` 发起标准 `AF_INET SOCK_STREAM connect()`，`cros_connect4` + `EgressProxy` + `ReplayExecutor` 全链路生效；
+     - **受控 `RewriteMeshToTCP`**：仅当业务进程本身已配置为 `tcp://`（即 `SUB` 请求已置位 `TCP(1)`）、但重放所消费的录制/发现快照源自 `dophi_mesh://` 环境时，`MockCSGServer` 才允许将快照中的 `dophi_mesh://ipv4:IP:PORT` 改写为 `tcp://ipv4:IP:PORT`，并完整保留原始 `IP:PORT` 以兼容 ADR-16 `dst_tag`。
+   - **态 B — 纯 `MESH` 模式（v1 仅支持 G1 发现，G2/G3 快速失败）**：
+     - **G1 只读发现仍可用**：Agent 通过 TCP `31800+userId` 只读 `SUB` 获取全量 `dophi_mesh://` 实例后，依靠 `ProcID == PID`（`H-2`）关联宿主机进程并标注 `CSGDataPlane = "MESH_VPI_UDX"`；
+     - **G3 `MOCK_SERVER` 显式阻断**：`MockCSGServer` 收到 `SubTransType` 仅置位 `MESH(4)`（`TCP(1) == 0`）的 `SUB` 请求时，**严禁**改写返回 `tcp://`，立即触发快速失败诊断 **`CSG_DATAPLANE_MESH_UNSUPPORTED`**，提示将测试环境被测进程配置切换为 `tcp://` 传输后再启用录制/重放；若未来必须原位采集或重放 `dophi_mesh://` 流量，须另立独立 ADR（评估 `uprobe` 挂载 `MESH_Listen`/`MESH_Connect`/`MESH_Send`/`MESH_Recv` 或 VPI/UDX 用户态代理，见 §12 Non-Goal 5）。
 
 ### 5.5 CSG 与 ADR-16「调度中心 X」及多实现契约的边界（`Q-B2` 已闭环）
 
 1. **组件正交（调度中心 X ≠ CSG）**：CSG 源码仅暴露 `CsgSvr` / `CsgClient`（`csg_comm.ph:23-24`），仅提供实例注册、查询与端口分配（`PUB`/`UNPUB`/`SUB`/`UNSUB`/`GET_BIND_ADDR`/`FREE_BIND_ADDR`），协议中不存在任何业务调度规则、路由策略或 `impl_key` 字段，订阅只返回实例列表（`N × 248B`）。ADR-16 中的**「调度中心 X」是运行在 CROS RPC 之上的业务调度进程，X 自身亦作为 CSG 的普通客户端使用 CSG**。
 2. **`impl_key` 与 CSG 字段零映射**：`impl_key` 仅作为 ADR-16 SSOT 的逻辑实现身份；CSG `ServiceName[64]` 为运行期 64B 发布名字符串，`Name32[32]` 为 LDC 老版本 32B 截断兼容字段（默认全零），二者均不承载 `impl_key`。因此 **ADR-16 Non-Goal 3 / Non-Goal 5 与 `Non-Goal 11` 保持不变**，无需同步修订。
 3. **与 ADR-16 双模式重放的正交协同**：
-   - **形态一（同名共享实现，`is_custom_service_name = false`）**：`PB` / `PC` / `PD` 向 CSG `PUB` 同一个 `ServiceName`，`MergeWithProcs` 依托 `ProcID == PID` 与本机端口分别归属各自物理进程；重放期 `MockCSGServer` 回放快照中的原始 `IP:Port`（仅 `RewriteMeshToTCP` 改写传输头，见 D6 / §5.4），完整保留 `dst_tag` 映射，确保 `ScopedMockMatcher` 按 `service:operation@dst_tag` 精确隔离；
+   - **形态一（同名共享实现，`is_custom_service_name = false`）**：`PB` / `PC` / `PD` 向 CSG `PUB` 同一个 `ServiceName`，`MergeWithProcs` 依托 `ProcID == PID` 与本机端口分别归属各自物理进程；重放期 `MockCSGServer` 在 `TCP` 模式订阅下回放快照中的原始 `IP:Port`（仅对跨模式 `dophi_mesh://` 快照由 `RewriteMeshToTCP` 改写为 `tcp://ipv4:`，保留原始 `IP:Port`；见 D6 / §5.4），完整保留 `dst_tag` 映射，确保 `ScopedMockMatcher` 按 `service:operation@dst_tag` 精确隔离；
    - **形态二（自定义运行期发布名，`is_custom_service_name = true`）**：如 `SMCLService-CSC` 与 `SMCLService-RPC` 均映射至契约 `smcl.SMCLService`，各自以独立 64B `ServiceName` 在 CSG 中发布/订阅，天然无歧义。
 
 ---
@@ -658,7 +665,7 @@ function roundTrip(sub, wantAck, payload):
 
 ### 6.2 `pkg/csgproto` — 编解码与只读客户端
 
-- 公开 API：`EncodeHead` / `DecodeHead` / `ReadFrame` / `IsDlinkPrefix`、`ParseInstance` / `EncodeInstance`、`ParseSvcChangeNotify` / `EncodeSvcChangeNotify`（224B `NOTIFY`）、`EncodeSubReq` / `DecodeSubReq`、`ParseSubAck` / `EncodeSubAck`、`EncodeSessionIDAck`、`ParseInstAddr` / `RewriteMeshAddrToTCP`、`ParseBindAddrAck`、`Dial(ClientConfig) (*Client, error)`、`(*Client).Sub` / `Unsub` / `Close`（内部发送 `UNREGISTER 0xFF02`）。
+- 公开 API：`EncodeHead` / `DecodeHead` / `ReadFrame` / `IsDlinkPrefix`、`ParseInstance` / `EncodeInstance`、`ParseSvcChangeNotify` / `EncodeSvcChangeNotify`（224B `NOTIFY`）、`EncodeSubReq` / `DecodeSubReq`、`ParseSubAck` / `EncodeSubAck`、`EncodeSessionIDAck`、`ParseInstAddr` / `RewriteMeshAddrToTCP`、`ParseBindAddrAck`（P1 实施时允许 `enProtocol ∈ {TransTCP(1), TransMesh(4)}` 并记录 `Protocol` 字段）、`Dial(ClientConfig) (*Client, error)`、`(*Client).Sub` / `Unsub` / `Close`（内部发送 `UNREGISTER 0xFF02`）。
 - **`Client` 不提供** `Pub` / `Unpub` / `GetBindAddr` / `FreeBindAddr` 方法；`MockCSGServer` 构造对应**应答**时使用独立的编码函数。
 - `ClientConfig.ProcID` 由调用方传入（Agent 自身 PID），不在库内硬编码 `os.Getpid()`。
 - 必须提供 `FuzzDecodeHead` / `FuzzParseSubAck` / `FuzzParseSvcChangeNotify`，覆盖畸形帧不 panic、不超额分配内存。
@@ -716,7 +723,9 @@ func (m *Manager) Stop()
 **`MergeWithProcs` 算法**：
 
 ```text
-输入: procs（ProcScanner），insts（缓存中未过期的实例），localIPs（net.Interfaces 全部 IPv4 + 127.0.0.1）
+输入: procs（ProcScanner 扫描到的 TCP LISTEN 进程），insts（缓存中未过期实例），localIPs（net.Interfaces 全部 IPv4 + 127.0.0.1）
+// 补充：对本地 mesh 实例（!isRemoteIP && inst.ProcID > 0），若其 PID 不在 procs 中（Q-P5b 证实纯 dophi_mesh:// 进程不起 TCP LISTEN），
+// 只读补全 /proc/<ProcID>/{cmdline,exe} 构造 listen_port=0 条目并入 procs，确保 G1 仍能发现纯 mesh 进程
 for each proc in procs:
     matches = {}
     for each inst in insts:
@@ -724,12 +733,13 @@ for each proc in procs:
         if isRemoteIP:
             continue // 跨板/远端实例不参与本机 PID 强/弱匹配，防 LDC 同步引起跨主机 PID 碰撞
         level = NONE
-        if inst.Source == OBSERVED_PUB && inst.ObservedPID == proc.PID:   level = EXACT
-        elif inst.ProcID == proc.PID:                                    level = STRONG   // H-2 已确认（裸机同 NS）
-        elif inst.Transport ∈ {tcp, mesh} && inst.Port == proc.ListenPort:
-                                                                         level = WEAK     // mesh 同样绑定 TCP 监听端口（csgServerCheckPort）
-        if level != NONE: matches[inst.ServiceName] = max(matches[...], level)            // 按服务名去重取最高级
+        if inst.Source == OBSERVED_PUB && inst.ObservedPID == proc.PID:         level = EXACT
+        elif inst.ProcID == proc.PID:                                          level = STRONG   // H-2 已确认（裸机同 NS）
+        elif inst.Transport == "tcp" && proc.ListenPort > 0 && inst.Port == proc.ListenPort:
+                                                                               level = WEAK     // Q-P5b: 仅 tcp:// 起 AF_INET LISTEN，mesh 不可按端口弱匹配
+        if level != NONE: matches[inst.ServiceName] = max(matches[...], level)                  // 按服务名去重取最高级
     proc.CSGServices = sortByLevelDesc(matches)
+    proc.CSGDataPlane = 若 proc.ListenPort == 0 && 存在 mesh 服务则标 "MESH_VPI_UDX"；若存在 tcp LISTEN 则标 "TCP"
     proc.CSGSubscriptions = 被动观测到的该 PID 的 SUB 名称及解析结果（无观测则为空，不做推测）
 ```
 
@@ -775,9 +785,10 @@ for each proc in procs:
     "cmdline": "...",
     "exe_name": "...",
     "csg_channel": "TCP_318XX",
+    "csg_dataplane": "TCP",
     "csg_services": [{
       "service_name": "HelloService-HelloService",
-      "instance_addr": "dophi_mesh://ipv4:10.29.92.80:16001",
+      "instance_addr": "tcp://ipv4:10.29.92.80:16001",
       "proc_id": 1234,
       "os_node_id": 100,
       "version": 1,
@@ -834,7 +845,8 @@ type DiscoveredProcess struct {
     ListenPort       uint16             `json:"listen_port"`
     Cmdline          string             `json:"cmdline"`
     ExeName          string             `json:"exe_name"`
-    CSGChannel       string             `json:"csg_channel,omitempty"` // TCP_318XX | UDS_DDM | DUAL | UNKNOWN
+    CSGChannel       string             `json:"csg_channel,omitempty"`    // 控制面: TCP_318XX | UDS_DDM | DUAL | UNKNOWN
+    CSGDataPlane     string             `json:"csg_dataplane,omitempty"`  // 数据面: TCP | MESH_VPI_UDX | UNKNOWN（Q-P5b）
     CSGServices      []CSGServiceInfo   `json:"csg_services,omitempty"`
     CSGSubscriptions []CSGSubscription  `json:"csg_subscriptions,omitempty"`
 }
@@ -907,7 +919,7 @@ type ExecuteReplayReq struct {
     // ... 现有字段 ...
     CSGStrategy           CSGReplayStrategy `json:"csg_strategy,omitempty"`             // 空值等价于 PASSTHROUGH
     CSGSnapshot           []CSGResolution   `json:"csg_snapshot,omitempty"`             // 来源：录制会话 csg_snapshots
-    CSGRewriteToTCP       *bool             `json:"csg_rewrite_to_tcp,omitempty"`       // nil 或 true 时将 dophi_mesh:// 改写为 tcp://（§5.4）
+    CSGRewriteToTCP       *bool             `json:"csg_rewrite_to_tcp,omitempty"`       // nil 或 true 时仅对 SubTransType 含 TCP(1) 的订阅将 dophi_mesh:// 快照改写为 tcp://（§5.4）
     CSGBindPort           uint16            `json:"csg_bind_port,omitempty"`            // Mock GET_BIND_ADDR 固定返回值，默认 ProcessSpec.ListenPort
     CSGPortMin            uint16            `json:"csg_port_min,omitempty"`             // 可选端口区间下限（非零时须覆盖 CSGBindPort，Q-F3）
     CSGPortMax            uint16            `json:"csg_port_max,omitempty"`             // 可选端口区间上限（非零时须覆盖 CSGBindPort，Q-F3）
@@ -924,15 +936,17 @@ type ExecuteReplayReq struct {
 ```go
 type Config struct {
     Snapshot            []agentproto.CSGResolution           // 服务名 → 实例地址
-    RewriteMeshToTCP    bool                                 // 默认 true：将 dophi_mesh://ipv4:IP:PORT 改写为 tcp://ipv4:IP:PORT（§5.4）
+    RewriteMeshToTCP    bool                                 // 默认 true：仅当 SUB 的 SubTransType 含 TCP(1) 时将 dophi_mesh://ipv4:IP:PORT 改写为 tcp://ipv4:IP:PORT（§5.4）
     FixedBindPort       uint16                               // >0 时 GET_BIND_ADDR 固定返回该端口（重放默认，须落入 [PortMin, PortMax]）
     PortMin             uint16                               // 端口池下限；若非零须 <= FixedBindPort
     PortMax             uint16                               // 端口池上限；若非零须 >= FixedBindPort
     BindAddrMode        string                               // "full"(默认，128B 与源码一致) | "compact"(8B 兼容)
+    BindProtocol        uint32                               // TransTCP(1) 或 TransMesh(4，默认 TransMesh 与 csgs_dlink_adapt 一致，可按测试环境配置)
     ServerIP            string                               // full 模式填入 stMeshCfg.uiIpv4（小端主机按小端序写入）
     LittleEndianHost    bool                                 // 默认 true（x86_64 / arm64 LE）：控制 uiIpv4 与 uiSessionId 字节序
     NoDuplicated        bool                                 // 仿真 NO_DUPLICATED_SERVICE
     PortConflictChecker func(port uint16, reqPID uint32) error // 可选：只读检测 /proc/net/tcp 活跃 LISTEN 冲突（零外部依赖，Q-F3）
+    OnMeshOnlySub       func(origPID uint32, svcName string) // 可选回调：收到仅置位 MESH(4) 的 SUB 时立即通知编排器快速失败
 }
 
 type Server struct { /* cfg, snapshot index, sessions, portTable, sessionIDGen(100), counters */ }
@@ -940,7 +954,7 @@ type Server struct { /* cfg, snapshot index, sessions, portTable, sessionIDGen(1
 func New(cfg Config) (*Server, error) // 校验 FixedBindPort ∈ [PortMin, PortMax]（全 0 时自动收敛为 [FixedBindPort, FixedBindPort]）
 func (s *Server) ServeConn(ctx context.Context, conn net.Conn, origPID uint32) // EgressProxy 分流入口；defer 触发断链自动清理
 func (s *Server) ListenAndServe(ctx context.Context, addr string) (string, error) // 仅测试 / 本地调试，强制 127.0.0.1（Go net.Listen 默认设 SO_REUSEADDR）
-func (s *Server) Stats() Stats      // RegisterCount / SubHit / SubMiss / SubMissNames / PubSwallowed / SessionIDCount / BindAddrConflictCount / ByPID
+func (s *Server) Stats() Stats      // RegisterCount / SubHit / SubMiss / SubMissNames / MeshOnlySubCount / PubSwallowed / SessionIDCount / BindAddrConflictCount / ByPID
 func (s *Server) RegisteredPIDs() []uint32
 ```
 
@@ -951,12 +965,12 @@ func (s *Server) RegisteredPIDs() []uint32
 | `REGISTER (0xFF00)` | 返回 `REGISTER_ACK (0xFF01)`：`ret=0`，`UUID` 自增；记录 `origPID` 已完成握手（D7 就绪信号） |
 | `UNREGISTER (0xFF02)` | 返回 `UNREGISTER_ACK (0xFF03)`：`ret=0`（8B） |
 | `CLIENT_ID (1)` | 返回 `CLIENT_ID_ACK (1001)`：`rst=0`，`ClientID` 自增（16B） |
-| `SUB (3)` | 按快照查找（单帧最多 128 个实例）：命中则返回快照实例（若 `RewriteMeshToTCP=true` 则改写为 `tcp://ipv4:IP:PORT`，保留原 `IP:PORT`）；**未命中恒返回 `SvcInstCount = 0, SubLen = 0, Rst = 0` 正常 `SUB_ACK` 并记录 `SubMissNames`（严禁返回非零 `Rst` 或 `FAULT`，`Q-F2`）**；**不**校验 `ClientID` / `SubTransType` |
+| `SUB (3)` | **必须解析并校验 `SubTransType` 掩码（`Q-P5b`）**：① 若 `mask[TransTCP] == 0 && mask[TransMesh] != 0`（纯 `dophi_mesh://` 订阅方），**严禁**改写返回 `tcp://`（客户端会报 `"Get sub node unsuccess"` 静默丢弃），递增 `MeshOnlySubCount` 并触发 `OnMeshOnlySub` 通知编排器立即报 `CSG_DATAPLANE_MESH_UNSUPPORTED` 快速失败；② 若 `mask[TransTCP] != 0`：按快照查找（单帧最多 128 个实例），命中时若 `RewriteMeshToTCP=true` 将快照中 `dophi_mesh://ipv4:IP:PORT` 改写为 `tcp://ipv4:IP:PORT`（保留原 `IP:PORT`）；未命中恒返回 `SvcInstCount = 0, SubLen = 0, Rst = 0` 正常 `SUB_ACK` 并记录 `SubMissNames`（严禁返回非零 `Rst` 或 `FAULT`，`Q-F2`）；不强制校验 `ClientID` |
 | `UNSUB (5)` | 返回 `UNSUB_ACK (1005)`：`rst=0`（8B） |
 | `PUB (2)` | 本地记录后返回 `PUB_ACK (1002)`：`rst=0`，**不**向任何真实注册中心转发（解决 P3②）；`NoDuplicated` 下同名重复返回非 0 |
 | `UNPUB (4)` | 删除本地记录，返回 `UNPUB_ACK (1004)`：`rst=0`（8B） |
 | `SESSION_ID_GET (6)` | 返回 `SESSION_ID_ACK (1006)`：8B `{uiSessionId(从 100 起单调递增，按 LittleEndianHost 写入), uiRst=0}`（防止 Frpc 业务初始化失败，Q-P8） |
-| `GET_BIND_ADDR (7)` | `FixedBindPort > 0` 时：① 已于 `New` 校验落入 `[PortMin, PortMax]`；② 调用 `PortConflictChecker` 只读核查无异源活跃 `LISTEN` 占用（`TIME_WAIT` 由监听端 `SO_REUSEADDR` 免疫，不视作冲突）；若被残留进程占用则**严禁静默换端口**，递增 `BindAddrConflictCount` 并按 128B `"full"` 返回 `uiRst = 1 (VOS_ERR), usPort = 0`（`Q-P6`/`Q-F3`）；未冲突则固定返回 `FixedBindPort`（`FixedBindPort == 0` 的纯客户端/测试模式在 `[PortMin, PortMax]` 顺序分配并回绕） |
+| `GET_BIND_ADDR (7)` | 无需复刻 `csgServerCheckPort` 的两级内核 `bind()+close()` 探测（`Q-P5b`）：`FixedBindPort > 0` 时：① 已于 `New` 校验落入 `[PortMin, PortMax]`；② 调用 `PortConflictChecker` 只读核查无异源活跃 TCP `LISTEN` 占用（`TIME_WAIT` 由监听端 `SO_REUSEADDR` 免疫，不视作冲突）；若被残留进程占用则**严禁静默换端口**，递增 `BindAddrConflictCount` 并按 128B `"full"` 返回 `uiRst = 1 (VOS_ERR), usPort = 0`（`Q-P6`/`Q-F3`）；未冲突则固定返回 `FixedBindPort`（`FixedBindPort == 0` 模式在 `[PortMin, PortMax]` 顺序分配并回绕） |
 | `FREE_BIND_ADDR (8)` | 释放端口，始终返回 `FREE_PORT_ACK (1008)`：`rst=0`（8B） |
 | TCP 连接断开 (`defer`) | 模拟 `csgServerLinkFaultProc`（Q-P7）：清理该连接的全部本地 `PUB` / `SUB` 记录并回收其申请的端口 |
 
@@ -1001,9 +1015,13 @@ sequenceDiagram
     Biz-->>Ebpf: execve() 触发 cros_sched_exec 零竞态写入 target_pids_map(MODE_REPLAY)
     Biz->>Px: connect(CSG) 经 connect4 重定向（先于 bind/listen）
     Px->>Mk: ServeConn
-    Biz->>Mk: REGISTER / CLIENT_ID / GET_BIND_ADDR / PUB / SUB / SESSION_ID_GET
-    Mk-->>Biz: 固定返回 ListenPort（冲突报错不换端口）；SUB 未命中返 0 实例；mesh→tcp
-    Orc->>Orc: 就绪判定：Mock 收到新 PID REGISTER + 无直连真实 CSG 旁路 + ListenPort 就绪
+    Biz->>Mk: REGISTER / CLIENT_ID / GET_BIND_ADDR / PUB / SUB(SubTransType) / SESSION_ID_GET
+    alt SubTransType 仅置位 MESH(4)（未启 TCP）
+        Mk-->>Orc: OnMeshOnlySub → 触发快速失败 CSG_DATAPLANE_MESH_UNSUPPORTED
+    else SubTransType 含 TCP(1)
+        Mk-->>Biz: 固定返回 ListenPort（冲突报错）；SUB 返回 tcp:// 实例（未命中返 0 实例）
+        Orc->>Orc: 就绪判定：Mock 收到新 PID REGISTER + 无旁路直连 + ListenPort 在 TCP LISTEN
+    end
     Orc->>Ag: 开始注入 IngressItems（沿用现有 ReplayExecutor）
     Ag->>Orc: 完成 / 取消 / purge / 失联 5min / SIGTERM
     Note over Orc: 若正常完成且配 wait_exit_on_teardown_ms>0，可先等业务进程退出（避免关闭期发现链中断）
@@ -1018,7 +1036,9 @@ sequenceDiagram
   1. **解除前置拦截并提前挂载**：`MOCK_SERVER` 下跳过 `handleExecuteReplay` 原有的 `409 WAITING_PROC` 与 `NEED_RECONNECT` 立即阻断，先调用 `Prepare`（若 `ebpfMgr` 尚未挂载则先 `attachLocked()` 并写入 `MODE_REPLAY`），再返回 `202 WAITING_RESTART`；
   2. **`cros_sched_exec` 零竞态预纳管**：将 `cros_probe.c:509` 空桩升级为真实捕获——在 `WAITING_RESTART` 窗口期向 `pending_replay_comm_map` 写入预期可执行文件名 `comm`（取自旧 PID `/proc/<oldPID>/comm` 或 `CmdPattern`），`cros_sched_exec` 在 `execve()` 返回用户态前**内核态同步**将新 PID 以 `Mode = MODE_REPLAY` 写入 `target_pids_map`；同时通过 `proc_exec_ringbuf` 唤醒 Go 在 `<1ms` 内校验 `/proc/<newPID>/cmdline` 是否匹配 `CmdPattern`（不要求此时已 `LISTEN`）以确认纳管或剔除同名误命中；同步修复 `manager.go:870` `checkProcessesRestart` 硬编码 `Mode: 0`（改为继承当前会话的 `MODE_REPLAY`/`MODE_RECORDING`）；
   3. **反绕过与端口冲突诊断**：`AwaitRestart` 必须同时确认「`MockCSGServer` 已记录到 `newPID` 的 `REGISTER`」且「`/proc/<newPID>/fd` ∩ `net/tcp` 不存在未经 `EgressProxy` 直连真实 CSG 的 socket」。若新进程仍漏过拦截直连了真实 CSG，立即报错 `CSG_CONN_BYPASSED_MOCK` 并 `Teardown`；若 `GET_BIND_ADDR` 检测到残留监听占用了 `ListenPort`（`Stats().BindAddrConflictCount > 0`），立即返回 `CSG_BIND_PORT_CONFLICT`。
-- **通道探测与 UDS 快速失败**：在 `MOCK_SERVER` 就绪等待期间（或被测进程已处于运行态时），编排器持续通过 `/proc/<pid>/fd` ∩ `/proc/<pid>/net/{tcp,unix}` 探测目标 PID 的真实控制面通道。若观测到目标进程已连接到 `AF_UNIX` 域套接字（`dlink_default_domain` / `mesh_server` / `csg_server`）且未出现经 `EgressProxy` 接管的 TCP `31800~31900` 握手，立即退出等待、执行 `Teardown` 释放租约并返回诊断错误 `CSG_CHANNEL_UDS_UNSUPPORTED`（附带实际探测到的 UDS 路径），避免空等 120s 后才报 `RESTART_TIMEOUT` 或让流量静默打向真实 `DophiServer`。
+- **通道与数据面传输双探测快速失败（`Q-E3` / `Q-P5b`）**：
+  - **控制面 UDS 快速失败**：在 `MOCK_SERVER` 就绪等待期间（或被测进程已处于运行态时），编排器持续通过 `/proc/<pid>/fd` ∩ `/proc/<pid>/net/{tcp,unix}` 探测目标 PID 的真实控制面通道。若观测到目标进程已连接到 `AF_UNIX` 域套接字（`dlink_default_domain` / `mesh_server` / `csg_server`）且未出现经 `EgressProxy` 接管的 TCP `31800~31900` 握手，立即退出等待、执行 `Teardown` 释放租约并返回诊断错误 `CSG_CHANNEL_UDS_UNSUPPORTED`（附带实际探测到的 UDS 路径），避免空等 120s 后才报 `RESTART_TIMEOUT` 或让流量静默打向真实 `DophiServer`。
+  - **数据面 `dophi_mesh://` 快速失败**：若 `MockCSGServer` 收到 `SubTransType` 仅置位 `MESH(4)`（`TCP(1) == 0`）的 `SUB` 请求（`Stats().MeshOnlySubCount > 0`），或新进程完成 `REGISTER` 后在 `/proc/<newPID>/net/unix` 持有多条 `@MeshEpoll_*` / 抽象 `AF_UNIX SOCK_DGRAM` 监听套接字却始终未在 `/proc/<newPID>/net/tcp` 打开 `ProcessSpec.ListenPort`，编排器立即退出等待并 `Teardown`，返回诊断错误 `CSG_DATAPLANE_MESH_UNSUPPORTED`（提示切为 `tcp://` 模式后重试），**绝不**将 `tcp://` 硬塞给 `MESH`-only 订阅方引发 `"Get sub node unsuccess"` 静默丢弃。
 - **旧进程未重启诊断**：若挂载前即存在直连真实 CSG 的进程（`CSG_CONN_PREEXISTING`），`Q-F1`/`Q-F4` 已确认不重启无法刷新 `g_stCsgLocalSubSvcTbl` 且严禁 `REGISTER` 兜底；若窗口内未完成重启，超时后释放租约、执行 `Teardown`，任务状态为 `ERROR`，`error_message = RESTART_TIMEOUT`。
 - **Teardown 顺序与恢复重启语义（`Q-F1`）**：
   - 正常注入期间保持 `MockCSGServer` 持续在线；若自动化脚本通过 `wait_exit_on_teardown_ms > 0` 声明“由脚本负责停进程”，正常完成后先等待最多 `wait_exit_on_teardown_ms` 至目标 PID 退出，再回收 `MockCSGServer`（避免业务进程停机 `UNPUB`/`UNREGISTER` 阶段发现链报错）；对交互式长驻进程与异常出口（`cancel` / `purge` / 主控失联 5 分钟 / `SIGTERM`），`Teardown` 不阻塞等进程退出，立即释放租约与清理内核映射。
@@ -1069,10 +1089,10 @@ sequenceDiagram
 
 | 阶段 | 内容 | 验收标准 |
 | :--- | :--- | :--- |
-| **P1 协议层与测试替身** | `pkg/csgproto` 全量编解码 + 只读客户端；`pkg/csgmock` 完整支持 10 种消息（含 `UNREGISTER`、`SESSION_ID_GET`、`NOTIFY` 构造与 `RewriteMeshToTCP`）；使用探针脚本在环境 A/B 抓取 `pkg/csgproto/testdata/golden_*.hex` | 编解码与客户端单测 + Fuzz；golden 夹具逐字节一致；`deps_test` 覆盖新包；`make test` 全绿 |
-| **P2 只读发现** | `pkg/csgdiscovery`、`--csg-addr`、`--csg-seed-names`（两层冷启动预置）、CROS `ascServiceName` 直接入池、地址发现与通道探测策略 1~4（含 `DophiServer` / `[31800, 31900]` / `userId`）、`/processes/discover` 增强、`/csg/status` | 基于 `MockCSGServer` 的集成测试：只读子类型断言、两层冷启动（协议内置 vs 站点配置且零 `Name32` 查询）、退避降级、`MergeWithProcs` 匹配（含跨板 IP 归属守卫）与去重、UDS/TCP 通道探测单测；真实环境 A/B 手工验收 `SUB → UNSUB` 成功 |
+| **P1 协议层与测试替身** | `pkg/csgproto` 全量编解码 + 只读客户端（`ParseBindAddrAck` 兼容 `TransTCP(1)`/`TransMesh(4)`）；`pkg/csgmock` 完整支持 10 种消息（含 `UNREGISTER`、`SESSION_ID_GET`、`NOTIFY` 构造、**`SUB` `SubTransType` 掩码校验**与受控 `RewriteMeshToTCP`）；使用探针脚本在环境 A/B 抓取 `pkg/csgproto/testdata/golden_*.hex` | 编解码与客户端单测 + Fuzz；Mock `MESH`-only `SUB` 触发 `OnMeshOnlySub` 而不误发 `tcp://`、`TCP(1)` 订阅下 `RewriteMeshToTCP` 正常改写；golden 夹具逐字节一致；`deps_test` 覆盖新包；`make test` 全绿 |
+| **P2 只读发现** | `pkg/csgdiscovery`、`--csg-addr`、`--csg-seed-names`（两层冷启动预置）、CROS `ascServiceName` 直接入池、地址发现与通道探测策略 1~4（含 `DophiServer` / `[31800, 31900]` / `userId`）、`/processes/discover` 增强（含 `CSGDataPlane` 标注与无 TCP `LISTEN` 的本地 `dophi_mesh://` `ProcID` 补充）、`/csg/status` | 基于 `MockCSGServer` 的集成测试：只读子类型断言、两层冷启动（协议内置 vs 站点配置且零 `Name32` 查询）、退避降级、`MergeWithProcs` 匹配（`WEAK` 仅限 `tcp://`、含跨板 IP 归属守卫及纯 mesh 进程 `ProcID` 识别）与去重、UDS/TCP 通道探测单测；真实环境 A/B 手工验收 `SUB → UNSUB` 成功 |
 | **P3 被动观测与录制快照** | `csgproto.Observer`、`EgressProxy` 旁路钩子、`EventCSGObservation`、Server `csg_snapshots` 列与合并逻辑、前端展示 | 中继字节零修改（逐字节比对）；观测器畸形输入不 panic；`testdb` 迁移与合并单测；端到端：重启被测进程后录制会话含快照 |
-| **P4 重放 `MOCK_SERVER`** | `csg_replay.go` 两阶段编排（提前 Pre-arm + `cros_sched_exec`/`proc_exec_ringbuf` 零竞态捕获重启 PID + 修复 `manager.go:870` `Mode` 硬编码 + `CSG_CONN_BYPASSED_MOCK` / `CSG_CHANNEL_UDS_UNSUPPORTED` 诊断 + `wait_exit_on_teardown_ms` / `CSG_RESTORE_RESTART_REQUIRED`）、`MockCSGServer`（`SUB` 未命中恒返 0 实例/`Rst=0`、`GET_BIND_ADDR` 区间校验与只读 `LISTEN` 冲突拒换端口）、`EgressProxy` 分流、`ExecuteReplayReq` 扩展、`contract_replay_tasks.csg_strategy`、能力探测与前端开关 | 单测与集成：五个出口 `Teardown` 幂等、超时释放租约、Mock 零出站、`RewriteMeshToTCP` 端到端、`SUB` 未命中返 `SvcInstCount=0, Rst=0`、`FixedBindPort` 越界/冲突拒换端口、`cros_sched_exec` 重启捕获（先 `connect(CSG)` 后 `listen()`）、UDS 快速失败；无 CSG 的 `PRIVATE` 环境用 SIT 素材重放 `PASS` |
+| **P4 重放 `MOCK_SERVER`** | `csg_replay.go` 两阶段编排（提前 Pre-arm + `cros_sched_exec`/`proc_exec_ringbuf` 零竞态捕获重启 PID + 修复 `manager.go:870` `Mode` 硬编码 + `CSG_CONN_BYPASSED_MOCK` / `CSG_CHANNEL_UDS_UNSUPPORTED` / `CSG_DATAPLANE_MESH_UNSUPPORTED` 双探测快速失败 + `wait_exit_on_teardown_ms` / `CSG_RESTORE_RESTART_REQUIRED`）、`MockCSGServer`（`SUB` 未命中恒返 0 实例/`Rst=0`、`GET_BIND_ADDR` 区间校验与只读 TCP `LISTEN` 冲突拒换端口）、`EgressProxy` 分流、`ExecuteReplayReq` 扩展、`contract_replay_tasks.csg_strategy`、能力探测与前端开关 | 单测与集成：五个出口 `Teardown` 幂等、超时释放租约、Mock 零出站、纯 `MESH` 订阅与 `@MeshEpoll_*` 无 TCP 监听快速失败（`CSG_DATAPLANE_MESH_UNSUPPORTED`）、`TCP` 订阅消费 `dophi_mesh://` 历史快照端到端、`SUB` 未命中返 `SvcInstCount=0, Rst=0`、`FixedBindPort` 越界/冲突拒换端口、`cros_sched_exec` 重启捕获（先 `connect(CSG)` 后 `listen()`）、UDS 快速失败；无 CSG 的 `PRIVATE` 环境用 `tcp://` 进程重放 `PASS` |
 | **P5 SSOT 对账、解码绑定与动态端点（G4）** | §5.1 名称匹配、演进 `A-07`、新增 `ModuleService.proto_service_name` 并扩展 `decoder.Registry.ServiceAliases` / `ListClaimableProtoServices`、差异三态与 `.pb` 31B 前缀候选提示、一键采纳、`DownstreamEndpoint.ServiceName` 解析与 `ComputeArmedDigest` 兼容 | 独占运行期名（如 `CMReadService-CMReadService` / `EquipmentDataCollectTrafficServ-...`）通过 `ServiceAliases` 按 `.pb` 成功解码单测；前端 Vitest；摘要兼容性单测（字段为空时摘要不变）；`SC-xx` 新验收场景 |
 
 > 每个阶段均须满足 `make test && make lint && make build && make clean` 零警告。接受本 ADR 后，同步修订 `01-features/01-feature-matrix.md`（演进 `A-07`、新增特性条目与 `SC` 场景）、`AGENTS.md`（红线 1 & 2）、`02-design/02` / `03`（对齐 `^[A-Za-z0-9._-]{1,63}$`） / `05` / `06`、`03-api/01`、`04-tasks/01-roadmap.md` 及 M28 作战卡。
@@ -1083,7 +1103,7 @@ sequenceDiagram
 
 | 风险 | 影响 | 缓解 |
 | :--- | :--- | :--- |
-| **`dophi_mesh://` 数据面走共享内存 `MESH_Connect`（Q-P5）** | 同机 `dophi_mesh://` 调用不经过内核 TCP `connect4` | 重放期 `MockCSGServer` 默认启用 `RewriteMeshToTCP` 将 `dophi_mesh://ipv4:IP:PORT` 降级改写为 `tcp://ipv4:IP:PORT`（§5.4）；P1 前通过 `Q-P5b` 确认客户端兼容性 |
+| **`dophi_mesh://` 数据面走 VPI/UDX/共享内存且订阅方严格校验传输类型（`Q-P5` / `Q-P5b`，`H-6` ❌）** | 纯 `dophi_mesh://` 进程监听走抽象 `AF_UNIX SOCK_DGRAM` / 跨节点 UDX（不起 TCP `LISTEN`）、出站走 `MESH_Connect` 且 `csgSvcInstInfoAddLocal` 会丢弃强塞的 `tcp://` 实例（`"Get sub node unsuccess"`），v1 `AF_INET` 引擎无法直接拦截/注入 | ① G1 仍通过只读 TCP `SUB` + `ProcID == PID` 完整发现并标注 `CSGDataPlane = MESH_VPI_UDX`；② G2/G3 要求测试环境切为 `tcp://` 传输（此时 `RewriteMeshToTCP` 兼容历史 `dophi_mesh://` 快照）；③ `MockCSGServer` 检测纯 `MESH(4)` 订阅立即报 `CSG_DATAPLANE_MESH_UNSUPPORTED` 快速失败；原生 mesh 采集/重放另立独立 ADR（`uprobe` / VPI-UDX 代理） |
 | 业务进程经 UDS 访问 CSG（H-3 不成立） | G1 主动 TCP 只读发现**仍可用**（`DophiServer` 监听 `31800+userId`）；基于 `EgressProxy` 的 G2 被动观测与 G3 `MOCK_SERVER` 无法经 `cros_connect4`（`AF_INET`）拦截 | ① D6 通道探测发现 UDS 连接时立即快速失败报 `CSG_CHANNEL_UDS_UNSUPPORTED`，严禁宿主机全局接管 UDS（§11.6）；② 经 `Q-E3b` 现场核验后，若确认业务进程走 UDS 则另立 ADR 评估单进程 mount-ns 单套接字代理或 `uprobe`/`LD_PRELOAD` |
 | 运行期 64B 名与 `.pb` `{package}.{service}` 解耦导致存量独占契约解码未命中（`Q-B1`） | CSG 线网名（如 `CMReadService-CMReadService`、`EquipmentDataCollectTrafficServ-...`）缺包名且存在 31B 截断，仅靠 `.pb` 点分名无法直接解码 | P5 演进 `A-07` 并为独占 `ModuleService` 增加可选 `proto_service_name` 写入 `decoder.Registry.ServiceAliases`；UI 仅对左段做前缀候选提示并由人工确认绑定（禁止盲目反推包名） |
 | 带运行期实例/PID 后缀的服务名（如 `SSPMonitorService-SSPMonitorService-2-76060`）跨重启漂移（`Q-B1b`） | 若重启后 PID 变更导致服务名后缀变化，静态字面量匹配、CSG 快照或 `ScopedMockMatcher` 可能未命中 | 进程关联仍优先由被动 `OBSERVED_PUB` + `ProcID == PID` 保证；P5 前通过 `Q-B1b` 确认跨重启后缀是否变化及上游 `SubName` 构造方式，再定稿前缀/模式支持 |
@@ -1115,7 +1135,7 @@ sequenceDiagram
 
 ### 11.3 Mock 返回 `127.0.0.1:{mockPort}` 并为每个下游分配 Mock 端口（否决）
 
-会破坏按原始目的 `IP:Port` 映射的 `dst_tag`（ADR-16），增加端口管理复杂度；而回放原始 `IP:Port`（配合 `RewriteMeshToTCP` 仅改写协议前缀为 `tcp://ipv4:`）已能由全出站重定向与 `CSE.TCP` 守卫兜底。
+会破坏按原始目的 `IP:Port` 映射的 `dst_tag`（ADR-16），增加端口管理复杂度；而回放快照中原始 `IP:Port`（在 `tcp://` 订阅模式下可由 `RewriteMeshToTCP` 仅将 `dophi_mesh://` 改写为 `tcp://ipv4:`）已能由全出站重定向与 `CSE.TCP` 守卫兜底。
 
 ### 11.4 eBPF 篡改 dlink 报文 / 新增 CSG 专用 `connect4` 规则（否决）
 
@@ -1141,7 +1161,7 @@ sequenceDiagram
 2. **不替代 CROS RPC 数据面 Mock**：数据面应答仍由 `ScopedMockMatcher` + `Healer` 处理。
 3. **不做 CSG 协议多版本自动协商**：只兼容 128B full（源码标准）与 8B compact 两种 `GET_BIND_ADDR` 应答。
 4. **不向任何真实 CSG 执行写操作**（`PUB` / `UNPUB` / `GET_BIND_ADDR` / `FREE_BIND_ADDR`），包括否决的 `REGISTER` 策略。
-5. **不在本 ADR 内采集或拦截共享内存（`MESH_Connect`）与 `AF_UNIX` 控制面/数据面通道**：`cros_connect4` 仅处理 `AF_INET`（`cros_probe.c:201`）；数据面重放期通过 `RewriteMeshToTCP` 引导客户端回退至 IPv4 TCP（§5.4）；若需原位采集共享内存 IPC 或拦截 UDS 控制面（单进程 mount-ns 复用代理 / uprobe），均另立 ADR 实现。
+5. **不在本 ADR 内采集或拦截 `dophi_mesh://`（`MESH_Listen` 抽象 `AF_UNIX SOCK_DGRAM` / 跨节点 UDX、`MESH_Connect` 共享内存）与 `AF_UNIX` 控制面通道**：`cros_connect4` 仅处理 `AF_INET`（`cros_probe.c:201`）；`Q-P5b` 已否决 `H-6`，`RewriteMeshToTCP` 仅用于 `tcp://` 订阅方跨模式消费 `dophi_mesh://` 快照，不能将纯 `dophi_mesh://` 进程强行切为 TCP；原位采集/重放 `dophi_mesh://` 或拦截 UDS 控制面均另立独立 ADR 实现。
 6. **不热切换已建立的 dlink 会话，也不支持“不重启进程仅重连”**：`Q-F1`/`Q-F4` 已确认业务进程将订阅表缓存在本地内存 `g_stCsgLocalSubSvcTbl` 中且不可重启场景不做 `REGISTER` 注入，因此 `MOCK_SERVER` 仅覆盖「先就绪 Mock ➔ 再重启被测进程」的标准流程；无法重启的进程在 v1 中不做 `MOCK_SERVER` 重放。
 7. **不修改 CSG Server 行为**，也不修改业务进程配置或宿主机全局文件（包括宿主机 UDS 路径，见 §11.6）。
 8. **不自动改写架构 SSOT**：发现结果只作为建议。
@@ -2036,9 +2056,9 @@ func TestCStringAndSubAckInconsistentLen(t *testing.T) {
 
 ## 14. 开放问题与源码澄清台账
 
-> 标记说明：✅ **已闭环**（已由 DOPRA DDM 源码或现网采集核实并合入 v1.2.0 / v1.3.0 / v1.4.0）；🔴 **阻塞级**（决定关键假设或核心机制是否成立，进入评审前必须确认）；🟡 **设计澄清**（影响 P2~P5 细节，可在进入对应阶段前补充）。
+> 标记说明：✅ **已闭环**（已由 DOPRA DDM 源码或现网采集核实并合入 v1.2.0 ~ v1.6.0）；🔴 **阻塞级**（决定关键假设或核心机制是否成立，进入评审前必须确认）；🟡 **设计澄清**（影响 P2~P5 细节，可在进入对应阶段前补充）。
 
-### 14.1 协议规范（`Q-P`：`Q-P1`~`Q-P10` 已闭环，派生 `Q-P5b` 待确认）
+### 14.1 协议规范（`Q-P`：`Q-P1`~`Q-P10` 及 `Q-P5b` 已全部闭环）
 
 | 编号 | 状态 | 问题与源码核实结论 / 待补充信息 |
 | :--- | :--- | :--- |
@@ -2047,7 +2067,7 @@ func TestCStringAndSubAckInconsistentLen(t *testing.T) {
 | **Q-P3** | ✅ 已闭环 | **单帧上限与分帧**（`ddm_dlink.ph:33`、`csgs_dlink_adapt.c`）：`DDM_DLINK_MAX_MSG_BUFF = 32000`，单次 `SUB_ACK` 最多返回 `(32000-16)/248 = 128` 个实例，填满即停，无分帧协议（§4.6）。 |
 | **Q-P4** | ✅ 已闭环 | **`NOTIFY` 推送与心跳**（`ddm_dlink.c:1277-1294`、`csg_comm.ph:91, 108-118`、`ddm_dlink_ip.c:135-155`）：① `NOTIFY` 为 `usType=2, usSubType=1, uiCorrID=0xFFFFFFFF`，载荷为 224B `CSG_SVC_CHANGE_MSG_S`（无 `Name32`，且 `uiOsNodeId(24)` 在 `uiProcId(28)` 之前）；首次 `SUB` 已含全量实例，重放不依赖 `NOTIFY`；② 无应用层 PING/PONG，采用内核 TCP keepalive（`idle=2s, intvl=1s, cnt=3`），Agent 空闲 30s 不会断连（§4.1、§4.14）。 |
 | **Q-P5** | ✅ 已闭环 | **`dophi_mesh://` 地址格式与共享内存数据面**（`cros_rpcaddrmgnt.c:33, 331, 577`、`mesh_sock.c:295, 414`、`cros_rpcmesh.c:1342`）：① 线上以 `dophi_mesh://ipv4:IP:PORT` 为主，TCP 为 `tcp://ipv4:IP:PORT[:svr_inst_id]`；② `dophi_mesh://` 数据面调用 `MESH_Connect`（共享内存 IPC），**不经过内核 TCP `connect()`**。已在 §5.4 提出重放期 `RewriteMeshToTCP` 降级改写方案，并派生下方 `Q-P5b`。 |
-| **Q-P5b** | 🔴 **新增** | **CROS RPC 客户端对 `SUB_ACK` 返回 `tcp://ipv4:` 的兼容性及 `g_stMeshTransAdaptHook` 行为（`H-6`）**：请继续查阅 CROS RPC 客户端源码（`cros_rpc` / `csgc_dlink_adapt.c` / `mesh_sock.c`）确认：① 业务进程调用 `SUB` 时，`SubTransType` 掩码是只置位了 `MESH(4)` 还是同时置位了 `TCP(1)`？当 `MockCSGServer` 在 `SUB_ACK` 中将实例地址从 `dophi_mesh://ipv4:IP:PORT` 改写为 `tcp://ipv4:IP:PORT` 时，客户端是否会接受该实例并走标准 TCP `connect()`？② 若客户端在服务端侧监听了 `dophi_mesh://ipv4:IP:PORT`，为什么 `csgServerCheckPort` 会检查 `AF_INET SOCK_STREAM` TCP 端口？被测服务进程自身是否同时监听了该 TCP 端口（或跨节点 `g_stMeshTransAdaptHook` 底层走的就是 TCP）？ |
+| **Q-P5b** | ✅ 已闭环 | **CROS RPC 客户端对 `SUB_ACK` 返回 `tcp://ipv4:` 的兼容性及 `dophi_mesh://` 监听机理（`H-6` ❌ 已否决）**：① **掩码与入表校验**（`csg_client.c:1219-1225, 1762`、`csg_comm.ph:46-54`、`csg_customer.c:303, 450, 1058-1070`）：`csgFillSubTransType` 由订阅方本端地址 `pcLocalAddr` 填充（`dophi_mesh://` 仅置 `MESH(4)`、`tcp://` 仅置 `TCP(1)`）；入表时 `csgSvcInstInfoAddLocal` 按 `(acServiceName, ucTransType)` 匹配，对 `dophi_mesh://` 订阅方返回 `tcp://` 会报 `"Get sub node unsuccess"` 静默丢弃；仅当本端地址为 `tcp://` 时才接受 `tcp://` 并通过 `RPC_ResolveClientAddr` → `rpcTcpInvokeCreate` 走标准 `AF_INET connect()`（`cros_rpcaddrmgnt.c:968-1013`、`cros_rpctcp.c:1788-1791, 2422, 2747`）。② **端口探测与 mesh 监听**（`csg_server.c:510-596`、`csgs_dlink_adapt.c:543`、`mesh_sock.c:31, 446, 478, 509, 1811-1815`、`mesh_vpi_unix.c:71-110`）：`csgServerCheckPort` 的 `AF_INET SOCK_STREAM` `bind()+close()` 仅是端口池空闲占用探测；纯 `dophi_mesh://` 进程走 `MESH_Listen`（板内 `AF_UNIX SOCK_DGRAM` 抽象套接字 + 跨节点 UDX `g_stMeshTransAdaptHook`），**不**起 `AF_INET` TCP 监听。已据此否决 `H-6`，收窄 D4 `WEAK` 匹配至 `tcp://` 并补充 G1 对无 TCP 监听 `dophi_mesh://` `ProcID` 识别；收口 D6 / §5.4 / §6.7 / §6.8 要求 `MockCSGServer` 校验 `SubTransType` 并在纯 `MESH` 模式下快速失败报 `CSG_DATAPLANE_MESH_UNSUPPORTED`，同时简化 `GET_BIND_ADDR` Mock 为端口池校验。 |
 | **Q-P6** | ✅ 已闭环 | **`GET_BIND_ADDR` 应答长度与失败码**（`csgs_dlink_adapt.c:538-582`）：源码在所有分支下均固定返回 128B full 格式；端口池耗尽时 `uiRst = VOS_HTONL(VOS_ERR), usPort = 0`（`CSG_FREE_BIND_ADDR_ACK_MSG_S` 才是 8B）。`MockCSGServer` 默认改用 128B `"full"` 模式（§4.11、§6.7）。 |
 | **Q-P7** | ✅ 已闭环 | **断链清理语义**（`csg_server.c:266-293`、`csgs_data_adapt.c:991-1045`）：TCP 断链即触发全自动清理（`SUB`、`PUB`、`NOTIFY` 下线通知、LDC 同步、端口回收、节点销毁）。`MockCSGServer` 在 `ServeConn` 退出时模拟相同清理（§6.7）。 |
 | **Q-P8** | ✅ 已闭环 | **`SESSION_ID_GET (usSubType = 6)`**（`csg_server.c:306-352`、`csg_comm.ph:230-241`、`csgs_dlink_adapt.c:501-528`）：子类型 `6` 在服务端正式分发表中，请求 80B（同 `SUB`），应答 `1006` 为 8B `{uiSessionId(4B, 起始 100 单调递增，源码未调 VOS_HTONL 呈主机序), uiRst(4B, 0)}`。已纳入 §4.13 与 `MockCSGServer` 必选处理（§6.7）。 |
