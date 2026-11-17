@@ -1,9 +1,9 @@
 # ADR-21：CSG 感知型 Agent 服务发现与重放期 CSG 控制面 Mock 设计
 
 - **文档编号**：`21-csg-aware-agent-service-discovery-and-replay-mock-adr.md`
-- **文档版本**：v1.6.0
+- **文档版本**：v1.7.0
 - **日期**：2026-11-17
-- **状态**：📋 提议中 (Proposed — 已合入源码级反馈 `Q-P1`~`Q-P10`（含 `Q-P5b` 闭环）、运行环境/寻址反馈 `Q-E1`~`Q-E3`、业务语义反馈 `Q-B1`~`Q-B3` 及重放边界反馈 `Q-F1`~`Q-F4`；待澄清 [§14 开放问题](#14-开放问题与源码澄清台账) 中剩余 🔴 现场核验阻塞项 `Q-E3b` 后进入正式评审)
+- **状态**：📋 提议中 (Proposed — 已合入源码级反馈 `Q-P1`~`Q-P10`（含 `Q-P5b`）、运行环境/寻址反馈 `Q-E1`~`Q-E3`（含 `Q-E3b` 源码双栈及 `uiLinkID` 结论）、业务语义反馈 `Q-B1`~`Q-B3`（含 `Q-B1b` 闭环）及重放边界反馈 `Q-F1`~`Q-F4`；仅余 [§14.2 `Q-E3b` 现场只读实机核验](#142-运行环境与拓扑q-e)（确认业务进程链接 C++ TCP 栈或 DOPRA C UDS 栈）后进入正式评审)
 - **关联特性**：`F-02`（物理进程蓝图与模块服务契约）、`F-05`（实测调用拓扑还原与一致性验证）、`F-08`（进程树选择与存量连接诊断）、`F-09` / `F-11`（Agent 采集与出站透明代理）、`F-12`（重放编排与零外泄门禁）、`F-13`（Agent 零 `.pb` Mock 匹配）
 - **关联设计**：[`02-data-plane-and-cros-rpc-engine.md`](../02-design/02-data-plane-and-cros-rpc-engine.md)、[`03-architecture-elements-and-topology.md`](../02-design/03-architecture-elements-and-topology.md)、[`05-database-schema.md`](../02-design/05-database-schema.md)、[`06-agent-observability-and-self-healing-design.md`](../02-design/06-agent-observability-and-self-healing-design.md)
 - **关联 ADR**：[`ADR-02`](./02-ebpf-hook-and-dual-subsystem-adr.md)（eBPF 钩子与零 `.pb` Mock）、[`ADR-03`](./03-control-plane-state-recovery-and-lease-reconciliation.md)（租约对账与孤儿探针防御）、[`ADR-09`](./09-arch-process-ssot-and-ebpf-premount-standby-adr.md)（进程 SSOT 与预挂载待命）、[`ADR-11`](./11-single-process-bidirectional-capture-and-recording-ux-adr.md)（单进程全出站透明代理）、[`ADR-16`](./16-multi-implementation-service-contract-adr.md)（多实现服务契约与 `dst_tag` 隔离）
@@ -21,6 +21,7 @@
 | v1.4.0 | 2026-11-16 | **合入业务语义反馈（闭环 `Q-B1`~`Q-B3`，重定义并确认 `H-1`，派生 `Q-B1b`）**：1. **闭环 `Q-B1`（`H-1` 重定义并确认）**：基于 `CrosService.cpp:70-76`、`simpo_codegen_rpc_cpp.c:600-608`、`cros_rpccore.ph:1297/1305` 与 10 组现网样本，证实 CSG `ServiceName[64]` 与 CROS `ascServiceName[64]` 使用**同一个 64B 运行期字符串**（CSG 场景 `{ClassName[:31]}-{svrName[:31]}`，最大 63B；非 CSG 场景 `{svrName}`）；`Name32` 默认全零，仅用于老版本 LDC 截断兼容；**真正差异在线网 64B 名与 `.pb` `{package}.{service}` 之间**（存在缺包名、任意 `svrName` 变体、31B 截断及 `-<inst>-<pid>` 后缀）。据此解锁 D3 直接将 CROS `ascServiceName` 入池，废除 §5.1 盲目反推规则 3，提出 P5 演进 `A-07` 并将 `decoder.Registry.ServiceAliases` 推广至独占 `ModuleService`（新增可选 `proto_service_name`），派生 `Q-B1b` 核实 `-2-76060` 跨重启漂移；2. **闭环 `Q-B2`**：确认 CSG（仅 `CsgSvr`/`CsgClient` 注册中心）**不是** ADR-16「调度中心 X」（X 为 CROS RPC 上的业务调度进程），`impl_key` 与 CSG 字段零映射，保留 ADR-16 Non-Goal 3/5 与 `Non-Goal 11`，新增 §5.5 说明与 ADR-16 双模式的正交兼容；3. **闭环 `Q-B3`**：将冷启动预置拆为「协议内置（`CsgSvr`/`CsgClient`/`csg_agt`/`csg_db`）」与「站点配置（SSOT + 现网快照 + `DophiServer`/`DDMService`/`EventServer`/`ProcessServer` 等部署配置，不硬编码进协议层）」，禁止使用 `Name32` 兜底查询 |
 | v1.5.0 | 2026-11-16 | **合入重放边界反馈（闭环 `Q-F1`~`Q-F4`）与重启期 eBPF 竞态修复**：1. **闭环 `Q-F1`**：依据 `csg_client.c:1786, 1273`、`csg_customer.c:788` 确认业务进程将订阅结果与连接缓存在进程内内存表 `g_stCsgLocalSubSvcTbl`（不按次重 `SUB`），故「断链重连而不重启进程」无法切换下游路由，确认「Agent 先就绪 `MOCK_SERVER` ➔ 用户/脚本重启被测进程」可接受且为 v1 唯一标准编排。同时结合现网代码（`cros_probe.c:509`、`pkg/ebpf/manager.go:848-870`、`http_server.go:611`）解决重启期 `execve() → connect(CSG)` 毫秒级竞态，在 D7 / §6.8 / §9 P4 增补 `cros_sched_exec` 内核预纳管、`proc_exec_ringbuf` 精准确认、`MODE_REPLAY` 重启保持与 `CSG_CONN_BYPASSED_MOCK` 反绕过检测，并新增 Teardown 有界退出等待（`wait_exit_on_teardown_ms`）与恢复重启提示（`CSG_RESTORE_RESTART_REQUIRED`）；2. **闭环 `Q-F2`**：依据 `csgs_data_adapt.c:766`、`csgs_dlink_adapt.c:277, 326` 确认真实 CSG 对未注册服务名恒返回 `SvcInstCount = 0, Rst = 0` 的正常 `SUB_ACK`（非零 `Rst` 仅用于内部错误，不用作 `FAULT`），收敛 `MockCSGServer` 移除 `CSGMissPolicy`/`FAULT` 分支，保留 `csg_sub_miss` 统计引导补录；3. **闭环 `Q-F3`**：依据 `csg_server.c:561`、`cros_rpctcp.c:1001` 确认业务进程无额外端口区间校验且 CROS TCP 监听端已设 `SO_REUSEADDR`（不同于 `csgServerCheckPort` 未设 `SO_REUSEADDR`），固定返回 `ProcessSpec.ListenPort` 可行；约束 `MockCSGServer` 校验 `FixedBindPort ∈ [PortMin, PortMax]` 并执行只读活跃 `LISTEN` 冲突检测，冲突时返回 `uiRst != 0, usPort = 0`（`CSG_BIND_PORT_CONFLICT`），严禁静默换端口；4. **闭环 `Q-F4`**：确认 v1 范围内无必须使用 `REGISTER` 才能覆盖的目标场景，不可重启进程在 v1 中不做 `MOCK_SERVER` 重放，同步修订 §11.1 与 §12 Non-Goal 6 |
 | v1.6.0 | 2026-11-17 | **合入 `Q-P5b` 源码核实结论（否决无条件 `H-6`，精确收敛 `dophi_mesh://` 边界）**：1. **否决无条件 `RewriteMeshToTCP`（`H-6` ❌）**：依据 `csg_client.c:1219-1225, 1762`、`csg_customer.c:303, 450, 1058-1070` 确认 `SubTransType` 由订阅方本端地址决定（`dophi_mesh://` 仅置 `MESH(4)`、`tcp://` 仅置 `TCP(1)`），且 `csgSvcInstInfoAddLocal` 按 `(acServiceName, ucTransType)` 精确匹配；对 `dophi_mesh://` 订阅方返回 `tcp://` 会报 `"Get sub node unsuccess"` 静默丢弃实例；仅当本端已置 `TCP(1)`（`tcp://` 测试环境消费 `dophi_mesh://` 快照）时方可改写并走标准 `connect()`（`cros_rpcaddrmgnt.c:968-1013`、`cros_rpctcp.c:1788-1791`）；2. **澄清 `csgServerCheckPort` 与 mesh 监听分离**：依据 `csg_server.c:510-596`、`mesh_sock.c:31, 478, 1811-1815`、`mesh_vpi_unix.c:71-110` 确认 `csgServerCheckPort` 只是 `AF_INET` TCP + `AF_UNIX` 抽象 socket 两级空闲探测（探测完立即 `close`），纯 `dophi_mesh://` 进程**不**起 `AF_INET SOCK_STREAM` 监听（板内走 `AF_UNIX SOCK_DGRAM` 抽象套接字、跨节点走 `g_stMeshTransAdaptHook` UDX）；3. **工程落地收敛**：① D4 / §5.3 / §6.3 将 `WEAK` 端口匹配收窄为仅限 `tcp://`，并补充 G1 对无 TCP `LISTEN` 的本地 `dophi_mesh://` `ProcID` 兜底识别（标注 `CSGDataPlane = MESH_VPI_UDX`）；② D6 / §5.4 / §6.7 / §6.8 改为 `MockCSGServer` 必须校验 `SUB` `SubTransType`，遇 `MESH`-only 订阅方立即快速失败报 `CSG_DATAPLANE_MESH_UNSUPPORTED`（禁止盲目改写）；③ `ParseBindAddrAck` 兼容 `TransTCP(1)` 与 `TransMesh(4)`，Mock 简化 `GET_BIND_ADDR` 为配置池校验 |
+| v1.7.0 | 2026-11-17 | **合入 `add-2.md` 源码核实结论（闭环 `Q-B1b`，澄清 `Q-E3b` 双客户端栈与 `uiLinkID` 结构，收敛现场实机核验清单）**：1. **闭环 `Q-B1b`**：依据 `csg_client.c:73, 116`、`csgs_dlink_adapt.c:53`、`csgs_pubsub.c:141, 186`、`csgs_client_mgnt.c:436`、`MockService.proto:1` 确认：① `-76060` 类后缀为启动期 OS PID 快照，重启必变；② CSG 服务端/客户端均为 `strcmp` 精确匹配、无前缀订阅语义；③ 短名（`DophiServer`/`RDS`）与 `.pb` `package` 声明均不可反推是否走 CROS/CSG。据此在 §5.1 / §6.7 / §9 / §10 落地「精确全名优先 + 尾部 `-<pid>` 模板兜底（`^(.+-\d+)-(\d+)$`）+ `SUB_ACK` 回显请求 `subName`（兼容 `strcmp`）」及 P5 `ModuleService` PID 后缀归一化模式；2. **澄清 `Q-E3b` 源码部分**：确认 DOPRA CSG C 客户端（`csg_client.c:1445, 1457, 1486`、`ddm_cfg.ph:38`）固定走 UDS 且无 TCP 切换开关（`DDM_CROS_ROUTER_MODE` 非 CSG 开关），`31800+userId` TCP 属另一套 C++ 栈（`RpcCfgParser`），具体业务进程走哪条路须现场 `ldd`/`strings`/`ss` 实核（`Q-E3b` 保留为现场核验阻塞项）；3. **修正 `uiLinkID` 帧头语义**：依据 `vos_dlink_adapt.h:67`、`ddm_dlink.ph:280`、`csg_client.c:1457` 澄清 `uiLinkID` 高 16 位为 `(prio<<8 | serviceID)`（CSG=`0x020A`）、低 16 位为可变 `bitmap index`（`0x020A0000` 仅为 `index=0` 默认值），修正 §4.2 / §6.2 / §6.7 / §11.6 / §13.1 按 `(uiLinkID >> 16) & 0xFF == 10` 识别 CSG 并原样回显 `uiLinkID` |
 
 ---
 
@@ -123,7 +124,7 @@ ProcessMonitorSpec = { ProcessID, ListenPort, CmdPattern, Downstreams[{IP, Port,
 | :--- | :--- | :--- | :--- | :--- |
 | **H-1** | ✅ **已确认（重定义）** | **线网同一性**：CSG `ServiceName[64]` / `SubName[64]` 与 CROS 数据面 `ascServiceName[64]` 使用**同一个 64 字节运行期字符串**（`CrosService::ServiceInfoSet` + `RPC_SEND_REQ_HEAD_COPY`），`Name32` 仅为 LDC 兼容截断字段（默认全零）；**真正差异在于线网 64B 名 ⇄ `.pb` `{package}.{service}` 之间**（缺包名、任意 `svrName`、31B 截断与 `-<inst>-<pid>` 后缀） | D3 直接启用 CROS `ascServiceName`；§5.1 废除自动反推规则 3，改为 P5 演进 `A-07` 并推广 `ModuleService.proto_service_name` 显式映射 | Q-B1（已闭环；派生 `Q-B1b`） |
 | **H-2** | ✅ **已确认** | 现网为单机裸机部署，无容器嵌套命名空间；`Instance.ProcID` 即发布进程通过 `getpid()` 填入的宿主机 OS PID（`csg_client.c:116, 1596`），与 `ProcScanner` 同命名空间可直接匹配 | （若未来容器化，需在 §10/§12 列为独立约束：`NSpid` 与 netns 映射） | Q-E2（已闭环） |
-| **H-3** | ⏳ 待现场 PID 实证 | 目标业务进程经 **IPv4 TCP (`31800+userId`)** 访问 CSG，而非仅经 UDS（`dlink_default_domain` / `mesh_server` / `csg_server`） | **G1 主动 TCP 只读发现仍可用**（`DophiServer` 监听 `31800+userId`）；但 `cros_connect4` 无法拦截 `AF_UNIX`，基于 `EgressProxy` 的 G2 被动观测与 G3 `MOCK_SERVER` 将触发 `CSG_CHANNEL_UDS_UNSUPPORTED` 并需另立 ADR 评估单进程 UDS/uprobe 方案 | Q-E3 / Q-E3b |
+| **H-3** | ⏳ 源码双栈已澄清；待现场实核 | 目标业务进程实际链接走 **IPv4 TCP (`31800+userId` C++ `RpcCfgParser` 栈)** 的客户端实现，而非仅走 **UDS (`dlink_default_domain` DOPRA C 客户端，无 TCP 开关)** | **G1 主动 TCP 只读发现仍可用**（`DophiServer` 监听 `31800+userId`）；若现场 `ldd`/`strings`/`ss` 证实业务进程链接 DOPRA C 客户端走 `AF_UNIX`，则 `cros_connect4` 无法拦截，G2 被动观测与 G3 `MOCK_SERVER` 将触发 `CSG_CHANNEL_UDS_UNSUPPORTED` 并需另立 ADR（拟 ADR-22 单进程 mount-ns + `uiLinkID` 复用代理） | Q-E3 / Q-E3b（源码已澄清，待现场实测） |
 | **H-4** | ✅ **已确认（当前单机单栈）** | 一台宿主机对应 1 个 `userId`、1 套 `DophiServer`/DDM 栈、1 个 CSG 控制面端口（`port = 31800 + userId`，`userId` 为部署配置产品用户 ID `ullUserId`） | （当前未见单机多 `userId` 共存；`Config.CSGAddrs` 仍保留切片以兼容未来多栈扩展） | Q-E1（已闭环） |
 | **H-5** | ✅ **已确认** | 服务端应答恒为 `usType = REPLY (1)` 且原样回显 `uiCorrID`（`ddm_dlink_msg.c:667-712`） | — | Q-P1（已闭环） |
 | **H-6** | ❌ **已否决（原无条件降级不成立）** | 原假设：`MockCSGServer` 将 `SUB_ACK` 从 `dophi_mesh://ipv4:IP:PORT` 改写为 `tcp://ipv4:IP:PORT` 后，mesh 客户端可直接降级走标准 TCP `connect()` 且可注入 TCP 端口 | **源码实证反驳**：① `csgFillSubTransType`（`csg_client.c:1219-1225`）按本端地址置位，`dophi_mesh://` 客户端仅置 `MESH(4)`，`csgSvcInstInfoAddLocal`（`csg_customer.c:1058-1070`）按 `(acServiceName, ucTransType)` 匹配，返回 `tcp://` 会报 `"Get sub node unsuccess"` 静默丢弃实例；② `csgServerCheckPort`（`csg_server.c:567-596`）只是两级空闲探测，纯 `dophi_mesh://` 进程走 `MESH_Listen`（抽象 `AF_UNIX SOCK_DGRAM` + UDX `g_stMeshTransAdaptHook`），**不**起 `AF_INET` TCP 监听。<br>**修正边界**：v1 数据面录制与 `MOCK_SERVER` 重放仅支持已切换为 **`tcp://` 传输**的测试环境（`RewriteMeshToTCP` 仅对 `SubTransType` 含 `TCP(1)` 的订阅生效）；纯 `dophi_mesh://` 进程在 G1 仍可发现关联，在 G3 快速失败报 `CSG_DATAPLANE_MESH_UNSUPPORTED`（原生采集/重放另立数据面扩展 ADR） | Q-P5b（已闭环） |
@@ -161,15 +162,17 @@ ProcessMonitorSpec = { ProcessID, ListenPort, CmdPattern, Downstreams[{IP, Port,
 8      2      usSize         UINT16     消息体大小（不含本头，上限 DDM_DLINK_MAX_MSG_BUFF = 32000）
 10     2      usSubType      UINT16     子类型（见 §4.3）
 12     4      uiCorrID       UINT32     关联 ID（REQ/REPLY 严格配对；NOTIFY 固定为 0xFFFFFFFF）
-16     4      uiLinkID       UINT32     链路 ID，固定 0x020A0000
-                                        (prio=LOW(2)<<24 | serviceID=CSG(10)<<16 | index=0)
+16     4      uiLinkID       UINT32     链路复用 ID：高 16 位 (prio<<8 | serviceID)（CSG 默认 0x020A：
+                                        prio=LOW(2), serviceID=CSG(10)）；低 16 位为 dlink bitmap index
+                                        （Go 示例 index=0 即 0x020A0000；实际 C 栈报文低 16 位可变，见下）
 20     4      uiReserved     UINT32     保留，8 字节对齐填充
 24     8      ullTimeStamp   UINT64     时间戳（实现中置零可用）
 ```
 
-**编解码规则**（已由 `ddm_dlink_msg.c:667-712` 与 `ddm_dlink.ph:33` 确认）：
+**编解码规则**（已由 `ddm_dlink_msg.c:667-712`、`ddm_dlink.ph:33, 280`、`vos_dlink_adapt.h:67`、`csg_client.c:1457` 确认）：
 
-- 请求帧 `usType = 0 (REQ)`，应答帧恒为 `usType = 1 (REPLY)` 且原样回显请求 `uiCorrID` 与 `uiLinkID`。
+- 请求帧 `usType = 0 (REQ)`，应答帧恒为 `usType = 1 (REPLY)` 且原样回显请求 `uiCorrID` 与 `uiLinkID`（不得把应答 `uiLinkID` 强行覆写为 `0x020A0000`）。
+- **`uiLinkID` 多路复用语义（`Q-E3b` 源码核实）**：`DDM_DLINK_MAKE_LINKID` 构造为 `(prio<<24) | (serviceID<<16) | bitmapIndex`。`dlink_default_domain` 等 dlink 通道可在框架层承载多个子系统；CSG C 客户端创建通道时使用 `uiServiceID = DDM_LINK_BASE_SERVICE_CSG (10)`、`iConnectPrio = DDM_LINK_BASE_PRIORITY_LOW (2)`（高 16 位 `0x020A`），低 16 位 `index` 可随通道变化（`0x020A0000` 仅是 Go 客户端 `index=0` 的固定编码，CSG 模块本身不把 `0x020A0000` 当作硬编码过滤值）。因此观测器与未来 UDS 复用分流应按 `(uiLinkID >> 16) & 0xFF == 10` 识别 CSG 子系统帧。
 - `usSize` 为载荷字节数（不含 32B 头），服务端分配上限为 `DDM_DLINK_MAX_MSG_BUFF = 32000`（无多帧分页协议）。
 - **解码校验**（防御畸形帧）：`uiMagic == 0x444C4E4B`、`usMsgHeadLen == 32`、`usSize ≤ 32000`，任一不满足即断开连接。
 - **`NOTIFY` 帧**：`usType = 2 (NOTIFY)`，`uiCorrID = 0xFFFFFFFF`（`DDM_DLINK_INVALID_CORRID`），`usSubType = 1`（`CSG_NOTIFY_MSG_PUB_UPDATE`），载荷为 224B `CSG_SVC_CHANGE_MSG_S`（见 §4.14）。客户端在等待 `REPLY` 期间收到 `NOTIFY` 必须跳过或异步回调，不得当作应答。
@@ -602,13 +605,18 @@ function roundTrip(sub, wantAck, payload):
 3. **Server 侧双层对齐与 `A-07` 演进方案（零破坏兼容，P5 实施）**：
    - **修订 `A-07` 契约定位**：将 `ModuleService.service_name` 明确为「**运行期实际发布的 64B 线网服务名**」（与 CSG `ServiceName` / CROS `ascServiceName` 字符串严格一致，现有正则 `^[A-Za-z0-9._-]{1,63}$` 已原生兼容 `-` 与 63B 截断上限），解除「`ascServiceName` 恒等于 `.pb` `{package}.{serviceName}`」的旧假设（`ascOperation == Method` 保持不变）。
    - **推广 `decoder.Registry.ServiceAliases` 至独占契约**：ADR-16 v2.0 已为多实现契约（`ContractID != nil`）建立 `ModuleService.service_name`（运行期名，如 `SMCLService-CSC`）→ `ServiceContract.service_name`（`.pb` `{package}.{service}`，如 `smcl.SMCLService`）的解码别名映射；P5 为独占服务（`ContractID == nil`）增补可选列 `contract_module_services.proto_service_name varchar(128) NOT NULL DEFAULT ''`（为空时默认回退 `service_name`，保持既有 `{package}.{service}` 存量数据零迁移兼容），由 `decoder.Registry.Reload()` 将 `proto_service_name != '' && proto_service_name != service_name` 一并注入 `ServiceAliases`，确保 `CMReadService-CMReadService`、`EquipmentDataCollectTrafficServ-EquipmentDataCollectTrafficServ` 等均能按 `.pb` 解码与 Diff。
-   - **动态实例/PID 后缀待确认（`Q-B1b`）**：同一模块的固定多运行期变体（如 `WRPGetServiceA-WRP_GET_LR` / `_UR`）可按各自唯一 `service_name` 登记并共享同一个 `proto_service_name`；而带 `-2-76060` 类实例/PID 后缀的服务若重启后 PID 变更，静态字面量会漂移（进程关联仍优先靠被动 `OBSERVED_PUB` + `ProcID == PID`），是否需引入前缀模式待 `Q-B1b` 核实后在 P5 定稿。
+   - **动态实例/PID 后缀归一化机制（`Q-B1b` 已闭环）**：
+     - **实证结论**（`csg_client.c:73, 116`、`csgs_dlink_adapt.c:53`、`csgs_pubsub.c:141, 186`、`csgs_client_mgnt.c:436`）：① `-76060` 类后缀来自客户端启动期 `getpid()` 快照（`uiSysProcId`），**重启后 OS PID 必定变更**；② CSG 服务端与客户端均使用 **`strcmp` 精确匹配**，不存在前缀或通配订阅语义；③ `DophiServer`、`RDS` 等短名及 `.pb` `package` 声明均**不是**是否走 CROS 直连或 CSG 订阅的判别依据（现网 `dophi_mesh://` 与直连 `tcp://ip:port:instId` 同机并存，见 `CROS_RPC完整机制分析报告.md:850`、`MockService.proto:1`）。
+     - **分层应对策略**（区分 Agent 主动发现 / 重放 Mock / Server SSOT）：
+       1. **Agent `csgdiscovery`（主动发现真实 CSG）**：因真实 CSG Server 为 `strcmp` 精确匹配，主动 `SUB` 必须继续使用运行期观测到的完整 64B 名称（不得截断去后缀后去查真实 CSG）；
+       2. **`MockCSGServer` 快照查找（`pkg/csgmock`，P1/P4）**：录制时在 `csg_snapshots` 保存完整原始 `ServiceName`；索引构建时采用「**精确全名优先（`routes[subName]`）➔ 尾部 OS PID 归一化模板兜底（`normRoutes[stripPIDSuffix(subName)]`，仅匹配 `^(.+-\d+)-(\d+)$` 如 `SSPMonitorService-SSPMonitorService-2-{pid}`，以免误合并 `SMCLService-CSC`/`-RPC` 等业务变体）**」，并在模板兜底命中构造 `SUB_ACK` 时将返回实例的 `ServiceName` **覆写为调用方请求的精确 `subName`**，确保通过客户端本地 `strcmp` 校验（若 SUT 自身作为被测服务端以新 PID 启动导致入站 `RawReq` 头中 `ascServiceName` 仍为旧 PID 后缀，可在 `ReplayExecutor` 对已开启 PID 归一化标识的进程按需自愈替换该后缀）；
+       3. **Server SSOT / `Decoder`（P5）**：固定多运行期变体（如 `WRPGetServiceA-WRP_GET_LR` / `_UR`）按各自 `service_name` 登记并共享同一 `proto_service_name`；带运行期 PID 后缀的服务可在 `ModuleService` 登记模板前缀（如 `SSPMonitorService-SSPMonitorService-2-{pid}`），在 `decoder.Registry` 与拓扑对账中按 `^<prefix>-[0-9]+$` 归并，避免每次重启生成新 `CSG_UNMAPPED` 与 `UNCOVERED` 告警。
 
 | 优先级 | Server 侧对账 / 归因规则 | 示例 |
 | :--- | :--- | :--- |
 | 1 | 与 `ModuleService.service_name`（运行期发布名）精确相等 | `CMReadService-CMReadService`、`SMCLService-CSC`、`DophiServer` |
 | 2 | 与独占/多实现 `.pb` 全名或 `ModuleService.proto_service_name` 精确相等（兼容非 CSG 点分发布） | `pkg.HelloService` |
-| 3 | 人工维护的运行期别名集合（`ModuleService.csg_service_names[]`） | `WRPGetServiceA-WRP_GET_UR` 等扩展变体 |
+| 3 | 运行期 PID 后缀模板匹配（仅对显式声明 `{pid}` 模板的服务：`^(.+-\d+)-\d+$`）与人工维护别名集（`csg_service_names[]`） | `SSPMonitorService-SSPMonitorService-2-81234` ⇄ `SSPMonitorService-SSPMonitorService-2-{pid}`；`WRPGetServiceA-WRP_GET_UR` |
 | — | 均未命中 | 标记 `CSG_UNMAPPED`；UI 可取首个 `-` 前左段（`len == 31` 时前缀匹配已加载 `.pb` `ProtoService[:31]`）给出**候选建议**，须人工确认后写回 SSOT |
 
 ### 5.2 ProcID 关联（`H-2` 已确认）
@@ -665,7 +673,7 @@ function roundTrip(sub, wantAck, payload):
 
 ### 6.2 `pkg/csgproto` — 编解码与只读客户端
 
-- 公开 API：`EncodeHead` / `DecodeHead` / `ReadFrame` / `IsDlinkPrefix`、`ParseInstance` / `EncodeInstance`、`ParseSvcChangeNotify` / `EncodeSvcChangeNotify`（224B `NOTIFY`）、`EncodeSubReq` / `DecodeSubReq`、`ParseSubAck` / `EncodeSubAck`、`EncodeSessionIDAck`、`ParseInstAddr` / `RewriteMeshAddrToTCP`、`ParseBindAddrAck`（P1 实施时允许 `enProtocol ∈ {TransTCP(1), TransMesh(4)}` 并记录 `Protocol` 字段）、`Dial(ClientConfig) (*Client, error)`、`(*Client).Sub` / `Unsub` / `Close`（内部发送 `UNREGISTER 0xFF02`）。
+- 公开 API：`EncodeHead` / `DecodeHead` / `ReadFrame` / `IsDlinkPrefix`、`ParseInstance` / `EncodeInstance`、`ParseSvcChangeNotify` / `EncodeSvcChangeNotify`（224B `NOTIFY`）、`EncodeSubReq` / `DecodeSubReq`、`ParseSubAck` / `EncodeSubAck`、`EncodeSessionIDAck`、`ParseInstAddr` / `RewriteMeshAddrToTCP`、`ParseBindAddrAck`（P1 实施时允许 `enProtocol ∈ {TransTCP(1), TransMesh(4)}` 并记录 `Protocol` 字段）、`Dial(ClientConfig) (*Client, error)`、`(*Client).Sub` / `Unsub` / `Close`（内部发送 `UNREGISTER 0xFF02`）。P1 实施 `EncodeHeadWithLinkID` 与 `IsCSGLinkID(linkID uint32) bool`（`(linkID >> 16) & 0xFF == 10`），确保 `MockCSGServer` 原样回显请求 `LinkID` 且 `Observer` 不漏过非零 `bitmap index` 帧（`Q-E3b`）。
 - **`Client` 不提供** `Pub` / `Unpub` / `GetBindAddr` / `FreeBindAddr` 方法；`MockCSGServer` 构造对应**应答**时使用独立的编码函数。
 - `ClientConfig.ProcID` 由调用方传入（Agent 自身 PID），不在库内硬编码 `os.Getpid()`。
 - 必须提供 `FuzzDecodeHead` / `FuzzParseSubAck` / `FuzzParseSvcChangeNotify`，覆盖畸形帧不 panic、不超额分配内存。
@@ -958,14 +966,14 @@ func (s *Server) Stats() Stats      // RegisterCount / SubHit / SubMiss / SubMis
 func (s *Server) RegisteredPIDs() []uint32
 ```
 
-**消息处理**（应答一律回显请求 `CorrID` 与 `LinkID`，`usType = REPLY`）：
+**消息处理**（应答一律按 `EncodeHeadWithLinkID` 原样回显请求 `CorrID` 与 `LinkID`，`usType = REPLY`；对非 `DDM_LINK_BASE_SERVICE_CSG` 的帧仅记录或透传，不强制要求 `LinkID == 0x020A0000`）：
 
 | 请求 (`usSubType`) | 处理（对齐 `csgServerMsgProc` 分发表，`csg_server.c:306-352`） |
 | :--- | :--- |
 | `REGISTER (0xFF00)` | 返回 `REGISTER_ACK (0xFF01)`：`ret=0`，`UUID` 自增；记录 `origPID` 已完成握手（D7 就绪信号） |
 | `UNREGISTER (0xFF02)` | 返回 `UNREGISTER_ACK (0xFF03)`：`ret=0`（8B） |
 | `CLIENT_ID (1)` | 返回 `CLIENT_ID_ACK (1001)`：`rst=0`，`ClientID` 自增（16B） |
-| `SUB (3)` | **必须解析并校验 `SubTransType` 掩码（`Q-P5b`）**：① 若 `mask[TransTCP] == 0 && mask[TransMesh] != 0`（纯 `dophi_mesh://` 订阅方），**严禁**改写返回 `tcp://`（客户端会报 `"Get sub node unsuccess"` 静默丢弃），递增 `MeshOnlySubCount` 并触发 `OnMeshOnlySub` 通知编排器立即报 `CSG_DATAPLANE_MESH_UNSUPPORTED` 快速失败；② 若 `mask[TransTCP] != 0`：按快照查找（单帧最多 128 个实例），命中时若 `RewriteMeshToTCP=true` 将快照中 `dophi_mesh://ipv4:IP:PORT` 改写为 `tcp://ipv4:IP:PORT`（保留原 `IP:PORT`）；未命中恒返回 `SvcInstCount = 0, SubLen = 0, Rst = 0` 正常 `SUB_ACK` 并记录 `SubMissNames`（严禁返回非零 `Rst` 或 `FAULT`，`Q-F2`）；不强制校验 `ClientID` |
+| `SUB (3)` | **必须解析并校验 `SubTransType` 掩码（`Q-P5b`）**：① 若 `mask[TransTCP] == 0 && mask[TransMesh] != 0`（纯 `dophi_mesh://` 订阅方），**严禁**改写返回 `tcp://`（客户端会报 `"Get sub node unsuccess"` 静默丢弃），递增 `MeshOnlySubCount` 并触发 `OnMeshOnlySub` 通知编排器立即报 `CSG_DATAPLANE_MESH_UNSUPPORTED` 快速失败；② 若 `mask[TransTCP] != 0`：按「精确全名优先 ➔ `^(.+-\d+)-(\d+)$` PID 归一化模板兜底（`Q-B1b`）」查找快照（单帧最多 128 个实例），命中时若 `RewriteMeshToTCP=true` 将快照中 `dophi_mesh://ipv4:IP:PORT` 改写为 `tcp://ipv4:IP:PORT`（保留原 `IP:PORT`），且**将返回实例的 `ServiceName` 覆写为调用方请求的精确 `subName`（兼容 `strcmp` 校验）**；未命中恒返回 `SvcInstCount = 0, SubLen = 0, Rst = 0` 正常 `SUB_ACK` 并记录 `SubMissNames`（严禁返回非零 `Rst` 或 `FAULT`，`Q-F2`）；不强制校验 `ClientID` |
 | `UNSUB (5)` | 返回 `UNSUB_ACK (1005)`：`rst=0`（8B） |
 | `PUB (2)` | 本地记录后返回 `PUB_ACK (1002)`：`rst=0`，**不**向任何真实注册中心转发（解决 P3②）；`NoDuplicated` 下同名重复返回非 0 |
 | `UNPUB (4)` | 删除本地记录，返回 `UNPUB_ACK (1004)`：`rst=0`（8B） |
@@ -1089,11 +1097,11 @@ sequenceDiagram
 
 | 阶段 | 内容 | 验收标准 |
 | :--- | :--- | :--- |
-| **P1 协议层与测试替身** | `pkg/csgproto` 全量编解码 + 只读客户端（`ParseBindAddrAck` 兼容 `TransTCP(1)`/`TransMesh(4)`）；`pkg/csgmock` 完整支持 10 种消息（含 `UNREGISTER`、`SESSION_ID_GET`、`NOTIFY` 构造、**`SUB` `SubTransType` 掩码校验**与受控 `RewriteMeshToTCP`）；使用探针脚本在环境 A/B 抓取 `pkg/csgproto/testdata/golden_*.hex` | 编解码与客户端单测 + Fuzz；Mock `MESH`-only `SUB` 触发 `OnMeshOnlySub` 而不误发 `tcp://`、`TCP(1)` 订阅下 `RewriteMeshToTCP` 正常改写；golden 夹具逐字节一致；`deps_test` 覆盖新包；`make test` 全绿 |
+| **P1 协议层与测试替身** | `pkg/csgproto` 全量编解码 + 只读客户端（`ParseBindAddrAck` 兼容 `TransTCP(1)`/`TransMesh(4)`；支持 `IsCSGLinkID` `(LinkID>>16)&0xFF == 10` 与 `EncodeHeadWithLinkID`）；`pkg/csgmock` 完整支持 10 种消息（含 `UNREGISTER`、`SESSION_ID_GET`、`NOTIFY` 构造、`SUB` `SubTransType` 掩码校验、PID 后缀模板兜底 + `ServiceName` 回显与受控 `RewriteMeshToTCP`）；使用探针脚本在环境 A/B 抓取 `pkg/csgproto/testdata/golden_*.hex` | 编解码与客户端单测 + Fuzz；Mock 原样回显非零 `index` `LinkID`、`MESH`-only `SUB` 触发 `OnMeshOnlySub` 而不误发 `tcp://`、`TCP(1)` 订阅下 `RewriteMeshToTCP` 与 PID 模板兜底回显 `subName` 通过；golden 夹具逐字节一致；`deps_test` 覆盖新包；`make test` 全绿 |
 | **P2 只读发现** | `pkg/csgdiscovery`、`--csg-addr`、`--csg-seed-names`（两层冷启动预置）、CROS `ascServiceName` 直接入池、地址发现与通道探测策略 1~4（含 `DophiServer` / `[31800, 31900]` / `userId`）、`/processes/discover` 增强（含 `CSGDataPlane` 标注与无 TCP `LISTEN` 的本地 `dophi_mesh://` `ProcID` 补充）、`/csg/status` | 基于 `MockCSGServer` 的集成测试：只读子类型断言、两层冷启动（协议内置 vs 站点配置且零 `Name32` 查询）、退避降级、`MergeWithProcs` 匹配（`WEAK` 仅限 `tcp://`、含跨板 IP 归属守卫及纯 mesh 进程 `ProcID` 识别）与去重、UDS/TCP 通道探测单测；真实环境 A/B 手工验收 `SUB → UNSUB` 成功 |
 | **P3 被动观测与录制快照** | `csgproto.Observer`、`EgressProxy` 旁路钩子、`EventCSGObservation`、Server `csg_snapshots` 列与合并逻辑、前端展示 | 中继字节零修改（逐字节比对）；观测器畸形输入不 panic；`testdb` 迁移与合并单测；端到端：重启被测进程后录制会话含快照 |
 | **P4 重放 `MOCK_SERVER`** | `csg_replay.go` 两阶段编排（提前 Pre-arm + `cros_sched_exec`/`proc_exec_ringbuf` 零竞态捕获重启 PID + 修复 `manager.go:870` `Mode` 硬编码 + `CSG_CONN_BYPASSED_MOCK` / `CSG_CHANNEL_UDS_UNSUPPORTED` / `CSG_DATAPLANE_MESH_UNSUPPORTED` 双探测快速失败 + `wait_exit_on_teardown_ms` / `CSG_RESTORE_RESTART_REQUIRED`）、`MockCSGServer`（`SUB` 未命中恒返 0 实例/`Rst=0`、`GET_BIND_ADDR` 区间校验与只读 TCP `LISTEN` 冲突拒换端口）、`EgressProxy` 分流、`ExecuteReplayReq` 扩展、`contract_replay_tasks.csg_strategy`、能力探测与前端开关 | 单测与集成：五个出口 `Teardown` 幂等、超时释放租约、Mock 零出站、纯 `MESH` 订阅与 `@MeshEpoll_*` 无 TCP 监听快速失败（`CSG_DATAPLANE_MESH_UNSUPPORTED`）、`TCP` 订阅消费 `dophi_mesh://` 历史快照端到端、`SUB` 未命中返 `SvcInstCount=0, Rst=0`、`FixedBindPort` 越界/冲突拒换端口、`cros_sched_exec` 重启捕获（先 `connect(CSG)` 后 `listen()`）、UDS 快速失败；无 CSG 的 `PRIVATE` 环境用 `tcp://` 进程重放 `PASS` |
-| **P5 SSOT 对账、解码绑定与动态端点（G4）** | §5.1 名称匹配、演进 `A-07`、新增 `ModuleService.proto_service_name` 并扩展 `decoder.Registry.ServiceAliases` / `ListClaimableProtoServices`、差异三态与 `.pb` 31B 前缀候选提示、一键采纳、`DownstreamEndpoint.ServiceName` 解析与 `ComputeArmedDigest` 兼容 | 独占运行期名（如 `CMReadService-CMReadService` / `EquipmentDataCollectTrafficServ-...`）通过 `ServiceAliases` 按 `.pb` 成功解码单测；前端 Vitest；摘要兼容性单测（字段为空时摘要不变）；`SC-xx` 新验收场景 |
+| **P5 SSOT 对账、解码绑定与动态端点（G4）** | §5.1 名称匹配（含 `SSPMonitorService-SSPMonitorService-2-{pid}` PID 后缀归一化模板与入站 `ascServiceName` 按需自愈）、演进 `A-07`、新增 `ModuleService.proto_service_name` 并扩展 `decoder.Registry.ServiceAliases` / `ListClaimableProtoServices`、差异三态与 `.pb` 31B 前缀候选提示、一键采纳、`DownstreamEndpoint.ServiceName` 解析与 `ComputeArmedDigest` 兼容 | 独占运行期名（如 `CMReadService-CMReadService` / `EquipmentDataCollectTrafficServ-...` / PID 模板服务）通过 `ServiceAliases` 按 `.pb` 成功解码单测；前端 Vitest；摘要兼容性单测（字段为空时摘要不变）；`SC-xx` 新验收场景 |
 
 > 每个阶段均须满足 `make test && make lint && make build && make clean` 零警告。接受本 ADR 后，同步修订 `01-features/01-feature-matrix.md`（演进 `A-07`、新增特性条目与 `SC` 场景）、`AGENTS.md`（红线 1 & 2）、`02-design/02` / `03`（对齐 `^[A-Za-z0-9._-]{1,63}$`） / `05` / `06`、`03-api/01`、`04-tasks/01-roadmap.md` 及 M28 作战卡。
 
@@ -1106,7 +1114,7 @@ sequenceDiagram
 | **`dophi_mesh://` 数据面走 VPI/UDX/共享内存且订阅方严格校验传输类型（`Q-P5` / `Q-P5b`，`H-6` ❌）** | 纯 `dophi_mesh://` 进程监听走抽象 `AF_UNIX SOCK_DGRAM` / 跨节点 UDX（不起 TCP `LISTEN`）、出站走 `MESH_Connect` 且 `csgSvcInstInfoAddLocal` 会丢弃强塞的 `tcp://` 实例（`"Get sub node unsuccess"`），v1 `AF_INET` 引擎无法直接拦截/注入 | ① G1 仍通过只读 TCP `SUB` + `ProcID == PID` 完整发现并标注 `CSGDataPlane = MESH_VPI_UDX`；② G2/G3 要求测试环境切为 `tcp://` 传输（此时 `RewriteMeshToTCP` 兼容历史 `dophi_mesh://` 快照）；③ `MockCSGServer` 检测纯 `MESH(4)` 订阅立即报 `CSG_DATAPLANE_MESH_UNSUPPORTED` 快速失败；原生 mesh 采集/重放另立独立 ADR（`uprobe` / VPI-UDX 代理） |
 | 业务进程经 UDS 访问 CSG（H-3 不成立） | G1 主动 TCP 只读发现**仍可用**（`DophiServer` 监听 `31800+userId`）；基于 `EgressProxy` 的 G2 被动观测与 G3 `MOCK_SERVER` 无法经 `cros_connect4`（`AF_INET`）拦截 | ① D6 通道探测发现 UDS 连接时立即快速失败报 `CSG_CHANNEL_UDS_UNSUPPORTED`，严禁宿主机全局接管 UDS（§11.6）；② 经 `Q-E3b` 现场核验后，若确认业务进程走 UDS 则另立 ADR 评估单进程 mount-ns 单套接字代理或 `uprobe`/`LD_PRELOAD` |
 | 运行期 64B 名与 `.pb` `{package}.{service}` 解耦导致存量独占契约解码未命中（`Q-B1`） | CSG 线网名（如 `CMReadService-CMReadService`、`EquipmentDataCollectTrafficServ-...`）缺包名且存在 31B 截断，仅靠 `.pb` 点分名无法直接解码 | P5 演进 `A-07` 并为独占 `ModuleService` 增加可选 `proto_service_name` 写入 `decoder.Registry.ServiceAliases`；UI 仅对左段做前缀候选提示并由人工确认绑定（禁止盲目反推包名） |
-| 带运行期实例/PID 后缀的服务名（如 `SSPMonitorService-SSPMonitorService-2-76060`）跨重启漂移（`Q-B1b`） | 若重启后 PID 变更导致服务名后缀变化，静态字面量匹配、CSG 快照或 `ScopedMockMatcher` 可能未命中 | 进程关联仍优先由被动 `OBSERVED_PUB` + `ProcID == PID` 保证；P5 前通过 `Q-B1b` 确认跨重启后缀是否变化及上游 `SubName` 构造方式，再定稿前缀/模式支持 |
+| 带运行期实例/PID 后缀的服务名（如 `SSPMonitorService-SSPMonitorService-2-76060`）跨重启漂移（`Q-B1b` 已闭环） | `csg_client.c:73, 116` 启动捕获 `getpid()` 写入 `uiSysProcId`，重启后 PID 变更且 CSG 为 `strcmp` 精确匹配（`csgs_pubsub.c:141`），旧字面量快照与静态 `ModuleService` 必然失配 | ① `MockCSGServer` 按「精确全名优先 ➔ `^(.+-\d+)-(\d+)$` 模板兜底并覆写响应 `ServiceName = subName`」匹配；② `csgdiscovery` 仍以完整 64B 名查询真实 CSG；③ P5 `ModuleService` 支持显式 `{pid}` 后缀模板并在 `decoder`/`ReplayExecutor` 按需归一化与自愈 |
 | 跨板 LDC 同步与未来容器化导致 PID 冲突 / 命名空间隔离（H-2 已确认裸机无容器） | ① LDC 同步他板实例若凑巧同 PID 会误匹配；② 未来容器化后 `getpid()` 与 `cros_probe.c:211` 宿主 PID 不一致 | ① `MergeWithProcs` 在 `STRONG` 匹配前校验本机 IP 归属；② 容器化 `NSpid` 与 netns 映射列为 Non-Goal 9，观测 `PUB`（NAT 真实 PID）优先 |
 | Agent 主动 `SUB` 触发 LDC 跨板同步（Q-P10） | 跨板 LDC 数据库短暂记录 Agent 订阅 | 每次 `SUB` 后立即 `UNSUB`，退出时发 `UNREGISTER`；默认未配 `--csg-addr` 且未命中自动发现时不主动连接 |
 | 小端主机 `uiIpv4` 双重 `VOS_HTONL` 与 `uiSessionId` 主机序（Q-P2 / Q-P8） | IP 字节反转或 SessionID 解析不一致 | `ParseBindAddrAck` 与 `EncodeSessionIDAck` 显式支持 `littleEndian` 参数（x86_64 / arm64 LE 默认开启），并支持与连接对端 IP 自动比对校准 |
@@ -1150,8 +1158,8 @@ sequenceDiagram
 `Q-E3` 披露现网主机 `10.29.109.146` 上并不存在 `{dir}/csg_server` 套接字，而 `dlink_default_domain`、`ddm_sub_monitor`、`mesh_server` 正由平台守护进程 `DophiServer` 持有并同时服务同机 40+ 业务进程。若由 `MockCSGServer` 直接在宿主机路径 `unlink` 并重新绑定同名域套接字：
 
 1. **破坏同机非纳管进程**：宿主机全局套接字替换会导致同机其他 40+ 生产进程全部连入 `MockCSGServer`，引发比“反向污染”更严重的全局控制面故障（与 §11.2 否决 `/etc/hosts` 同理）；
-2. **协议复用冲突**：`dlink_default_domain` / `mesh_server` 属于 DDM 基础设施复用通道，可能同时承载非 CSG 子系统（`uiLinkID != LinkIDCSG`）或 mesh 通信控制帧，直接单协议接管会破坏非 CSG 调用；
-3. **仅允许单进程隔离演进**：若 `Q-E3b` 现场核验确认同机业务 PID 确走 UDS，则必须在独立 ADR（拟 ADR-22）中采用**单进程隔离**方案——例如在重启被测进程时通过独立 mount namespace 仅对目标套接字文件执行单文件 `mount --bind` 并配套按 `uiLinkID` 透传非 CSG 帧的 UDS 复用代理（注意抽象套接字 `@MeshEpoll_*` 随 network namespace 隔离而非 mount namespace），或评估 `uprobe` / `LD_PRELOAD`。
+2. **协议复用冲突**：`dlink_default_domain` / `mesh_server` 属于 DDM 基础设施复用通道（`Q-E3b` 已证实 `uiLinkID` 为框架级多路复用识别字段，见 `vos_dlink_adapt.h:67`、`ddm_dlink.ph:280`），同一 socket 可承载非 CSG 子系统帧，直接单协议接管会破坏非 CSG 调用；
+3. **仅允许单进程隔离演进**：若 `Q-E3b` 现场核验确认同机业务 PID 链接 DOPRA C 客户端走 UDS，则必须在独立 ADR（拟 ADR-22）中采用**单进程隔离**方案——例如在重启被测进程时通过独立 mount namespace 仅对目标套接字文件执行单文件 `mount --bind` 并配套按 `(uiLinkID >> 16) & 0xFF == 10`（`DDM_LINK_BASE_SERVICE_CSG`）识别 CSG、透传非 CSG 帧的 UDS 复用代理（注意抽象套接字 `@MeshEpoll_*` 随 network namespace 隔离而非 mount namespace），或评估 `uprobe` / `LD_PRELOAD`。
 
 ---
 
@@ -1180,7 +1188,7 @@ DlinkMagic     = 0x444C4E4B // "DLNK"
 DlinkHeadLen   = 32
 DlinkMaxBody   = 32000      // DDM_DLINK_MAX_MSG_BUFF (ddm_dlink.ph:33)
 DlinkInvalidID = 0xFFFFFFFF // DDM_DLINK_INVALID_CORRID (NOTIFY 帧固定 CorrID)
-LinkIDCSG      = 0x020A0000 // prio=LOW(2)<<24 | serviceID=CSG(10)<<16
+LinkIDCSG      = 0x020A0000 // Go 示例 index=0 默认值；高16位 prio=LOW(2)<<8 | serviceID=CSG(10)=0x020A，按 (LinkID>>16)&0xFF==10 识别 CSG
 
 // usType
 MsgTypeReq = 0; MsgTypeReply = 1; MsgTypeNotify = 2; MsgTypeFault = 3
@@ -2056,7 +2064,7 @@ func TestCStringAndSubAckInconsistentLen(t *testing.T) {
 
 ## 14. 开放问题与源码澄清台账
 
-> 标记说明：✅ **已闭环**（已由 DOPRA DDM 源码或现网采集核实并合入 v1.2.0 ~ v1.6.0）；🔴 **阻塞级**（决定关键假设或核心机制是否成立，进入评审前必须确认）；🟡 **设计澄清**（影响 P2~P5 细节，可在进入对应阶段前补充）。
+> 标记说明：✅ **已闭环**（已由 DOPRA DDM 源码或现网采集核实并合入 v1.2.0 ~ v1.7.0）；🟡 **源码已澄清 / 🔴 现场待核**（源码结论已定，待目标业务机执行只读现场采集确认具体部署）；🔴 **阻塞级**（决定关键假设或核心机制是否成立，进入评审前必须确认）。
 
 ### 14.1 协议规范（`Q-P`：`Q-P1`~`Q-P10` 及 `Q-P5b` 已全部闭环）
 
@@ -2074,21 +2082,21 @@ func TestCStringAndSubAckInconsistentLen(t *testing.T) {
 | **Q-P9** | ✅ 已闭环 | **黄金夹具采集路径**：使用 `csg-go-client/tools/probe_*.py` 对环境 A（`192.4.4.48:31805`）/ 环境 B（`10.29.92.80:31806`）抓取原始 hex，存入 `pkg/csgproto/testdata/golden_*.hex`（列入 §9 P1 交付物）。 |
 | **Q-P10** | ✅ 已闭环 | **Agent 主动连接对生产 CSG 的影响**（`csgs_client_mgnt.c:22, 345-353`）：`ullClientIdSeed` 为 `uint64` 单调递增不会耗尽，无“零发布客户端”告警，断链自动清理；但 `SUB` 会触发 `csgLdcAddSubInfoCmd` 跨板同步，故 Agent 每次 `SUB` 后立即 `UNSUB`，退出时发 `UNREGISTER`（D5）。 |
 
-### 14.2 运行环境与拓扑（`Q-E`：`Q-E1`/`Q-E2`/`Q-E3` 已合入，派生 `Q-E3b` 待现场核验）
+### 14.2 运行环境与拓扑（`Q-E`：`Q-E1`~`Q-E3` 已合入；`Q-E3b` 源码已澄清，待现场实机核验）
 
 | 编号 | 状态 | 问题与核实结论 / 待现场补充信息 |
 | :--- | :--- | :--- |
 | **Q-E1** | ✅ 已闭环 | **`userId` 与单机多 CSG（`H-4` 已确认）**：① `userId` 为 DDM/RPC 部署配置中的“产品用户 ID”（`ddm_auth.c:1241` `ullUserId`），非 Linux UID 尾号或环境槽位号，亦独立于 `OsNodeID`（默认 0）；C++ 栈由 `RpcCfgParser::GetCsgServerPort()` 按 `31800 + userId` 计算端口。② 现网为「一宿主机一 `userId` 一套 `DophiServer`/DDM 栈」标准形态（实测 `10.29.109.146:31805` 由 `DophiServer` 监听并承载同机 40+ 业务进程；环境 A `:31805`、环境 B `:31806`）。单机多 `userId` 技术上可行但未在现网出现，Agent 按“0 或 1 个控制面端点”建模（`locate.go` 增补 `DophiServer` 特征与 `[31800, 31900]` 范围并记录 `userId`）。 |
 | **Q-E2** | ✅ 已闭环 | **部署形态与 PID 命名空间（`H-2` 已确认）**：① 现网为单机裸机部署，无容器化（`process_report.md` 实测 `10.29.109.146` 上 1896 个进程均直跑宿主机，无 docker/containerd/kubelet 与嵌套命名空间），Agent、业务进程与 `DophiServer` 同宿主机、同 PID/网络命名空间。② `Instance.ProcID` 即发布进程 OS PID（`csg_client.c:116, 1596-1597` 填充 `getpid()`），可与 `ProcScanner` 直接匹配。已在 §6.3 增加跨板 IP 归属守卫防 LDC 同步 PID 碰撞，并将未来容器化 `NSpid`/netns 映射列入 §10/§12 Non-Goal 9。 |
 | **Q-E3** | ✅ 源码与主机已澄清 | **`"csg_server"` 解析机制与双通道现状（派生 `Q-E3b`）**：① **源码默认通道**：C 栈 `CSG_ClientInit` / `CSG_SvrInit`（`csg_client.c:1481-1494`、`csg_server.c:456-459`）均通过 `(VOS_VOID)pcCsgSvrAddr;` 丢弃首参，恒定绑定 `"csg_server"`（`csg_comm.ph:35`、`DDM_LINK_BASE_FAMILY_DOMAIN`），由 `DDM_GetDomainSockPathCfg`（`ddm_cfg.c:745`）拼接为 `{DDM_CTRL_FILE_PATH}/csg_server`（默认 `/var/run/`，现网覆写为 `/dev/shm/ltusr/ddm/`，读自 `DDM_CFG_FILE_DIR` 下的 DDM JSON 配置），**非** DNS、环境变量或共享内存；TCP/mesh 地址串由部署配置下发（`ddm_dlink_ip.c:27-35`、`RpcCfgParser`）。已据此前置加强 §11.2 否决证据，并在 §11.6 明确否决宿主机全局接管 UDS。② **现网主机矛盾**：`10.29.109.146` 上**不存在** `csg_server` 域套接字（Python 客户端连 `{dir}/csg_server` 报 `VOS_ERRNO_INVAL(22)`）；而 `DophiServer` 同时持有 `31805` TCP 与 `dlink_default_domain`、`ddm_sub_monitor`、`mesh_server` UDS（业务进程持有 `@MeshEpoll_*` 抽象数据报套接字）。据此已将 `H-3` 影响边界精确解耦（G1 不受影响，D6 增加 `CSG_CHANNEL_UDS_UNSUPPORTED` 快速失败），实际业务 PID 通道待下方 `Q-E3b` 定稿。 |
-| **Q-E3b** | 🔴 **新增** | **目标业务进程（PID 级）实连 CSG 通道现场核验（定稿 `H-3` 与 D6）**：请在目标业务机抽查 2~3 个典型业务进程（如 `CMSF` / `EDCManagerImpl` / `SIMDSF`）执行以下只读采集并回填输出：<br>`ss -tlpn \| grep -E '318[0-9][0-9]'`<br>`ss -xlpn \| grep -E 'csg_server\|dlink_default_domain\|mesh_server'`<br>`ls -l /proc/<业务PID>/fd \| grep socket`<br>`ss -tpn \| grep <业务PID>; ss -xp \| grep <业务PID>`<br>需同时确认：① 同机业务进程连 CSG 究竟是走 `dlink_default_domain`/`mesh_server`（UDS），还是 C++ `RpcCfgParser` 走 `127.0.0.1:31800+userId` / `<业务IP>:31800+userId`（TCP）？② 若走 `dlink_default_domain`，该套接字是否复用了非 CSG 子系统（`uiLinkID != 0x020A0000`）消息？③ 能否通过测试环境配置将同机业务进程控制面切为 TCP `31800+userId`？ |
+| **Q-E3b** | 🟡 源码已澄清 / 🔴 现场待核 | **目标业务进程（PID 级）双客户端栈源码结论与现场实机核验（定稿 `H-3` 与 D6）**：<br>① **源码结论（`add-2.md` 已核清）**：DOPRA **CSG C 客户端**固定走 `dlink_default_domain` UDS（`csg_client.c:1445, 1457, 1486`、`vos_dlink_adapt.h:96`、`ddm_linkbase.ph:41`），**无**配置开关可切为 TCP（`DDM_CROS_ROUTER_MODE` `ddm_cfg.ph:38` 是 CROS router 开关，非 CSG 传输开关）；而 `31800+userId` TCP 属于另一套 **C++ CSG 客户端栈**（`RpcCfgParser`）。<br>② **`uiLinkID` 多路复用（`add-2.md` 已核清）**：`dlink_default_domain` 同一 socket 承载多子系统是 dlink 框架正常行为，`uiLinkID` 按 `(prio<<24 \| serviceID<<16 \| bitmapIndex)` 编址（`vos_dlink_adapt.h:67`、`ddm_dlink.ph:280`）；CSG 使用 `serviceID = DDM_LINK_BASE_SERVICE_CSG (10)` 且未过滤低 16 位 `index`（`0x020A0000` 仅是 Go 客户端 `index=0` 示例值），已修正 §4.2 / §6.2 / §6.7 / §11.6 按 `(uiLinkID >> 16) & 0xFF == 10` 识别并原样回显。<br>③ **🔴 剩余现场只读核验**（确认 `CMSF` / `EDCManagerImpl` / `SIMDSF` 实际链接 C++ TCP 栈还是 DOPRA C UDS 栈）：<br>`pgrep -a -f 'CMSF\|EDCManagerImpl\|SIMDSF'`<br>`ss -tlpn \| grep -E '318[0-9][0-9]'; ss -xlpn \| grep -E 'csg_server\|dlink_default_domain\|mesh_server'`<br>`ls -l /proc/<PID>/fd \| grep socket; ss -tpn \| grep "pid=<PID>,"; ss -xp \| grep "pid=<PID>,"`<br>`ldd /proc/<PID>/exe 2>/dev/null \| grep -Ei 'csg\|rpc\|dopra\|dophi\|mesh'`<br>`strings /proc/<PID>/exe \| grep -Ei 'csg_server\|dlink_default_domain\|31800\|RpcCfgParser' \| head -50` |
 
-### 14.3 业务语义（`Q-B`：`Q-B1`~`Q-B3` 已闭环，派生 `Q-B1b` 待确认）
+### 14.3 业务语义（`Q-B`：`Q-B1`~`Q-B3` 及 `Q-B1b` 已全部闭环）
 
 | 编号 | 状态 | 问题与源码核实结论 / 待补充信息 |
 | :--- | :--- | :--- |
 | **Q-B1** | ✅ 已闭环 | **CSG `ServiceName`、CROS `ascServiceName` 与 `.pb` 服务名对照（`H-1` 已重定义并确认，派生 `Q-B1b`）**：① **源码与现网实证**：`cros_rpccore.h:27`、`csg_comm.ph:28-29, 116-147`、`cros_rpccore.ph:1297/1305`、`CrosService.cpp:70-76`、`simpo_codegen_rpc_cpp.c:600-608` 证实：CSG `ServiceName[64]` / `SubName[64]` 与 CROS `ascServiceName[64]` 使用**完全相同的 64B 运行期字符串**（CSG 开启时为 `{ClassName[:31]}-{svrName[:31]}`，最大 63B；非 CSG 时为 `{svrName}`）。② **`Name32` 真实语义**：`csg_client.c:276-303` 不写 `acService32byteName`（默认全零），仅 `csgs_data_adapt.c:276-292` 在老版本 LDC 兼容路径做 32B 截断拷贝，非业务身份。③ **真正差异在线网 64B 名 ⇄ `.pb` `{package}.{service}`**：10 组现网样本（`CMReadService-CMReadService`、`SMCLService-CSC`/`-RPC`、`SSPMonitorService-SSPMonitorService-2-76060`、`EquipmentDataCollectTrafficServ-EquipmentDataCollectTrafficServ`、`WRPGetServiceA-WRP_GET_LR`/`_UR`、`DophiServer`、`RDS`）表明存在缺包名、任意 `svrName`、31B 截断与运行期后缀，不能从 CSG 名反推 `.pb` 包名。已据此解锁 D3 直接将 CROS `ascServiceName` 入池，废除 §5.1 原规则 3，并在 §5.1/§7.2/§9 P5 明确演进 `A-07` 与推广 `ModuleService.proto_service_name`。 |
-| **Q-B1b** | 🟡 **新增** | **带运行期 PID 后缀服务名（如 `SSPMonitorService-SSPMonitorService-2-76060`）跨重启稳定性（不阻塞 P1~P4，P5 前确认）**：① 该类服务重启后，`-76060` 是否会随新 OS PID 动态变化（如变为 `-2-81234`）？② 若动态变化，上游调用方是如何构造目标 `SubName` 的（前缀订阅、调度服务下发还是静态配置）？③ 现网非 CSG 短名（如 `DophiServer`、`RDS`）是否走 CROS 数据面且其 `.pb` 是否声明了 `package`？ |
+| **Q-B1b** | ✅ 已闭环 | **带运行期 PID 后缀服务名（如 `SSPMonitorService-SSPMonitorService-2-76060`）跨重启稳定性与短名边界**：① **PID 后缀必变**（`csg_client.c:73, 116`、`csgs_dlink_adapt.c:53`）：`-76060` 来自启动期 `getpid()` 捕获的 `uiSysProcId` / `uiRealProcId`，重启后必定更新。② **精确匹配语义**（`csgs_pubsub.c:141, 186`、`csgs_client_mgnt.c:436`）：CSG 服务端与客户端均使用 `strcmp` 精确匹配，无前缀/通配订阅能力。③ **短名与 `.pb` `package` 边界**（`CROS_RPC完整机制分析报告.md:850`、`MockService.proto:1`）：现网 `dophi_mesh://` 与直连 `tcp://ip:port:instId` 同机并存，`DophiServer`/`RDS` 短名与 `.pb` 是否声明 `package` 均不可反推运行期是否走 CSG/CROS。已在 §5.1 / §6.7 / §9 / §10 落地：`csgdiscovery` 对真实 CSG 保持精确 64B 名查询；`MockCSGServer` 采用「精确全名优先 ➔ `^(.+-\d+)-(\d+)$` 尾部 PID 模板兜底并回显调用方 `subName`」；P5 `ModuleService` 支持显式 `{pid}` 模板并在 `decoder`/`ReplayExecutor` 按需归一化与自愈。 |
 | **Q-B2** | ✅ 已闭环 | **CSG 与 ADR-16「调度中心 X」关系（保留 ADR-16 Non-Goal 3 / 5）**：① `csg_comm.ph:23-24` 证实 CSG 自身仅暴露 `CsgSvr`/`CsgClient`，协议只承担实例注册/发现（`PUB`/`UNPUB`/`SUB`/`UNSUB`/`GET_BIND_ADDR`/`FREE_BIND_ADDR`），无业务调度语义、无 `impl_key`，`SUB` 返回 `N × 248B` 列表后选址由调用方自决。② **ADR-16 中的 X 不是 CSG**，而是运行在 CROS RPC 之上的业务调度进程（X 自身也是 CSG 普通客户端）。③ `impl_key` 与 CSG `ServiceName[64]` / `Name32[32]` 均无映射。已新增 §5.5 与更新顶部「演进关系」，明确 ADR-16 Non-Goal 3 / 5 与 `Non-Goal 11` 第 ③④ 条无需修订。 |
 | **Q-B3** | ✅ 已闭环 | **录制期未知服务名两层冷启动策略**：① **协议/平台内置（Layer 1）**：`CsgSvr`、`CsgClient`、`csg_agt`、`csg_db`（在 `pkg/csgdiscovery` 预置，不硬编码进 `pkg/csgproto`）。② **站点/业务配置（Layer 2）**：SSOT 已登记 `ModuleService.service_name` + 现网快照 + 站点部署配置（`--csg-seed-names` / `CONTRACT_AGENT_CSG_SEED_NAMES`，纳入现网常见 `DophiServer`、`DDMService`、`EventServer`、`ProcessServer` 等，不硬编码进协议层）。③ 严禁以 `Name32` 兜底查询，冷启动统一使用 64B `ServiceName` / `SubName`（已更新 D3 与 §6.3）。 |
 
