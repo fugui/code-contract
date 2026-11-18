@@ -14,6 +14,8 @@ import (
 	"code-contract/demo/pkg/crosframe"
 	"code-contract/demo/pkg/proto/orderpb"
 	"code-contract/pkg/crosrpc"
+	"code-contract/pkg/csgdlink"
+	"code-contract/pkg/rpcmon"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
@@ -32,17 +34,34 @@ const (
 )
 
 type TUIClient struct {
-	targetAddr string
-	client     *crosframe.Client
-	traceSeq   uint64
-	lastOrder  string
+	targetAddr  string
+	csgAddr     string
+	serviceName string
+	client      *crosframe.Client
+	traceSeq    uint64
+	lastOrder   string
 }
 
 func NewTUIClient(targetAddr string) *TUIClient {
+	return NewTUIClientWithCSG("", "demo.order.OrderService", targetAddr)
+}
+
+func NewTUIClientWithCSG(csgAddr, serviceName, fallbackAddr string) *TUIClient {
+	if strings.TrimSpace(serviceName) == "" {
+		serviceName = "demo.order.OrderService"
+	}
+	var cli *crosframe.Client
+	if strings.TrimSpace(csgAddr) != "" {
+		cli = crosframe.NewCSGClient(csgAddr, serviceName, fallbackAddr, 4*time.Second)
+	} else {
+		cli = crosframe.NewClient(fallbackAddr, 4*time.Second)
+	}
 	return &TUIClient{
-		targetAddr: targetAddr,
-		client:     crosframe.NewClient(targetAddr, 4*time.Second),
-		traceSeq:   uint64(time.Now().Unix()),
+		targetAddr:  fallbackAddr,
+		csgAddr:     strings.TrimSpace(csgAddr),
+		serviceName: serviceName,
+		client:      cli,
+		traceSeq:    uint64(time.Now().Unix()),
 	}
 }
 
@@ -71,9 +90,17 @@ func (t *TUIClient) drawBanner(lastLatency time.Duration, isConnected bool) {
 		latStr = fmt.Sprintf("%sRTT: %.2f ms%s", colorYellow, float64(lastLatency.Microseconds())/1000.0, colorReset)
 	}
 
+	targetLabel := t.client.ResolvedAddr()
+	if targetLabel == "" {
+		targetLabel = t.targetAddr
+	}
+	if t.csgAddr != "" {
+		targetLabel = fmt.Sprintf("CSG(%s)->%s", t.csgAddr, targetLabel)
+	}
+
 	fmt.Printf("%s┌────────────────────────────────────────────────────────────────────────────────────────┐%s\n", colorCyan, colorReset)
 	fmt.Printf("%s│%s %sCROS RPC Benchmark Client [TUI]%s  Target: %s  %s  %s %s│%s\n",
-		colorCyan, colorReset, colorBold, colorReset, t.targetAddr, statusStr, latStr, colorCyan, colorReset)
+		colorCyan, colorReset, colorBold, colorReset, targetLabel, statusStr, latStr, colorCyan, colorReset)
 	fmt.Printf("%s├────────────────────────────────────────────────────────────────────────────────────────┤%s\n", colorCyan, colorReset)
 }
 
@@ -88,6 +115,9 @@ func (t *TUIClient) drawMenu() {
 	fmt.Printf("   %s[7]%s 自定义参数提交订单          (Custom User, SKU, Qty & Payment Channel)\n", colorBlue, colorReset)
 	fmt.Printf("   %s[8]%s 并发压力录制流量注入 (Burst) (连续发送 10 笔 ALIPAY/WECHAT 混合订单)\n", colorYellow, colorReset)
 	fmt.Printf("   %s[9]%s 双渠道支付分发验证 (LIB)    (依次走 ALIPAY 与 WECHAT 实例下单对比)\n", colorGreen, colorReset)
+	if t.csgAddr != "" {
+		fmt.Printf("   %s[s]%s 查询 CSG 实时拓扑目录       (RPCMonitorService: 服务实例与订阅明细)\n", colorCyan, colorReset)
+	}
 	fmt.Printf("   %s[q]%s 退出客户端                  (Quit)\n", colorGray, colorReset)
 	fmt.Printf("%s──────────────────────────────────────────────────────────────────────────────────────────%s\n", colorCyan, colorReset)
 }
@@ -146,6 +176,8 @@ func (t *TUIClient) inspectPacket(pkt *crosrpc.ParsedPacket, rawPayload []byte, 
 }
 
 func (t *TUIClient) Run() {
+	defer func() { _ = t.client.Close() }()
+
 	scanner := bufio.NewScanner(os.Stdin)
 	var lastLatency time.Duration
 	var lastPkt *crosrpc.ParsedPacket
@@ -168,7 +200,11 @@ func (t *TUIClient) Run() {
 			fmt.Printf("%s──────────────────────────────────────────────────────────────────────────────────────────%s\n", colorCyan, colorReset)
 		}
 
-		fmt.Print(colorBold + " 请输入指令序号 [1-9 / q]: " + colorReset)
+		prompt := " 请输入指令序号 [1-9 / q]: "
+		if t.csgAddr != "" {
+			prompt = " 请输入指令序号 [1-9 / s / q]: "
+		}
+		fmt.Print(colorBold + prompt + colorReset)
 		if !scanner.Scan() {
 			break
 		}
@@ -186,7 +222,7 @@ func (t *TUIClient) Run() {
 		case "1":
 			// 查询综合行情
 			reqBytes, _ := proto.Marshal(&orderpb.CompositeQuoteReq{UserId: "Alice", SkuId: "SKU-101"})
-			pkt, rspBytes, err := t.client.Invoke(ctx, "demo.order.OrderService", "GetCompositeQuote", t.nextTrace(), reqBytes)
+			pkt, rspBytes, err := t.client.Invoke(ctx, t.serviceName, "GetCompositeQuote", t.nextTrace(), reqBytes)
 			lastLatency = time.Since(start)
 			lastPkt = pkt
 			lastPayload = rspBytes
@@ -210,7 +246,7 @@ func (t *TUIClient) Run() {
 				Quantity:       1,
 				PaymentChannel: "ALIPAY",
 			})
-			pkt, rspBytes, err := t.client.Invoke(ctx, "demo.order.OrderService", "CreateOrder", t.nextTrace(), reqBytes)
+			pkt, rspBytes, err := t.client.Invoke(ctx, t.serviceName, "CreateOrder", t.nextTrace(), reqBytes)
 			lastLatency = time.Since(start)
 			lastPkt = pkt
 			lastPayload = rspBytes
@@ -232,7 +268,7 @@ func (t *TUIClient) Run() {
 		case "3":
 			// 购买超额库存
 			reqBytes, _ := proto.Marshal(&orderpb.CreateOrderReq{UserId: "Alice", SkuId: "SKU-102", Quantity: 99})
-			pkt, rspBytes, err := t.client.Invoke(ctx, "demo.order.OrderService", "CreateOrder", t.nextTrace(), reqBytes)
+			pkt, rspBytes, err := t.client.Invoke(ctx, t.serviceName, "CreateOrder", t.nextTrace(), reqBytes)
 			lastLatency = time.Since(start)
 			lastPkt = pkt
 			lastPayload = rspBytes
@@ -248,7 +284,7 @@ func (t *TUIClient) Run() {
 		case "4":
 			// 购买触发余额不足并回滚
 			reqBytes, _ := proto.Marshal(&orderpb.CreateOrderReq{UserId: "Bob", SkuId: "SKU-101", Quantity: 1})
-			pkt, rspBytes, err := t.client.Invoke(ctx, "demo.order.OrderService", "CreateOrder", t.nextTrace(), reqBytes)
+			pkt, rspBytes, err := t.client.Invoke(ctx, t.serviceName, "CreateOrder", t.nextTrace(), reqBytes)
 			lastLatency = time.Since(start)
 			lastPkt = pkt
 			lastPayload = rspBytes
@@ -268,7 +304,7 @@ func (t *TUIClient) Run() {
 				lastPkt = nil
 			} else {
 				reqBytes, _ := proto.Marshal(&orderpb.OrderDetailReq{OrderId: t.lastOrder})
-				pkt, rspBytes, err := t.client.Invoke(ctx, "demo.order.OrderService", "GetOrderDetail", t.nextTrace(), reqBytes)
+				pkt, rspBytes, err := t.client.Invoke(ctx, t.serviceName, "GetOrderDetail", t.nextTrace(), reqBytes)
 				lastLatency = time.Since(start)
 				lastPkt = pkt
 				lastPayload = rspBytes
@@ -290,7 +326,7 @@ func (t *TUIClient) Run() {
 				lastPkt = nil
 			} else {
 				reqBytes, _ := proto.Marshal(&orderpb.CancelOrderReq{OrderId: t.lastOrder, Reason: "TUI用户主动退单"})
-				pkt, rspBytes, err := t.client.Invoke(ctx, "demo.order.OrderService", "CancelOrder", t.nextTrace(), reqBytes)
+				pkt, rspBytes, err := t.client.Invoke(ctx, t.serviceName, "CancelOrder", t.nextTrace(), reqBytes)
 				lastLatency = time.Since(start)
 				lastPkt = pkt
 				lastPayload = rspBytes
@@ -353,7 +389,7 @@ func (t *TUIClient) Run() {
 				Quantity:       int32(qty),
 				PaymentChannel: payChannel,
 			})
-			pkt, rspBytes, err := t.client.Invoke(ctx, "demo.order.OrderService", "CreateOrder", t.nextTrace(), reqBytes)
+			pkt, rspBytes, err := t.client.Invoke(ctx, t.serviceName, "CreateOrder", t.nextTrace(), reqBytes)
 			lastLatency = time.Since(start)
 			lastPkt = pkt
 			lastPayload = rspBytes
@@ -399,7 +435,7 @@ func (t *TUIClient) Run() {
 						Quantity:       1,
 						PaymentChannel: ch,
 					})
-					_, rBytes, err := t.client.Invoke(subCtx, "demo.order.OrderService", "CreateOrder", t.nextTrace(), reqB)
+					_, rBytes, err := t.client.Invoke(subCtx, t.serviceName, "CreateOrder", t.nextTrace(), reqB)
 					mu.Lock()
 					defer mu.Unlock()
 					if err == nil {
@@ -434,7 +470,7 @@ func (t *TUIClient) Run() {
 					Quantity:       1,
 					PaymentChannel: ch,
 				})
-				pkt, rBytes, err := t.client.Invoke(ctx, "demo.order.OrderService", "CreateOrder", t.nextTrace(), reqB)
+				pkt, rBytes, err := t.client.Invoke(ctx, t.serviceName, "CreateOrder", t.nextTrace(), reqB)
 				if err != nil {
 					sb.WriteString(fmt.Sprintf("  • [%s] 调用失败: %v\n", ch, err))
 					continue
@@ -452,10 +488,53 @@ func (t *TUIClient) Run() {
 			lastLatency = time.Since(start)
 			lastMsg = strings.TrimRight(sb.String(), "\n")
 
+		case "s", "S":
+			lastPkt = nil
+			lastPayload = nil
+			if t.csgAddr == "" {
+				lastMsg = colorYellow + "当前运行在直连静态模式 (--csg 为空)，未连接 CSG 控制面。" + colorReset
+			} else {
+				summary, err := t.fetchCSGTopologySummary(ctx)
+				lastLatency = time.Since(start)
+				if err != nil {
+					lastMsg = colorRed + "查询 CSG 拓扑失败: " + err.Error() + colorReset
+				} else {
+					lastMsg = summary
+				}
+			}
+
 		default:
-			lastMsg = colorRed + "未知指令序号，请输入 1-9 或 q 退出！" + colorReset
+			lastMsg = colorRed + "未知指令序号，请输入 1-9 / s 或 q 退出！" + colorReset
 			lastPkt = nil
 		}
 		cancel()
 	}
+}
+
+func (t *TUIClient) fetchCSGTopologySummary(ctx context.Context) (string, error) {
+	monAddr, err := csgdlink.ResolveServiceTCP(t.csgAddr, rpcmon.ServiceName, 3*time.Second)
+	if err != nil {
+		return "", fmt.Errorf("未在 CSG (%s) 发现 %s TCP 实例: %w", t.csgAddr, rpcmon.ServiceName, err)
+	}
+
+	backend, err := rpcmon.NewCrosTCP(monAddr, 3*time.Second)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = backend.Close() }()
+
+	rep, err := rpcmon.Fetch(ctx, backend, "all")
+	if err != nil {
+		return "", err
+	}
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("  %s✓ CSG 实时服务目录 (Monitor=%s)%s: Servers=%d Clients=%d\n",
+		colorGreen, monAddr, colorReset, rep.ServerNum, rep.ClientNum))
+	for _, s := range rep.Servers {
+		sb.WriteString(fmt.Sprintf("    [PUB] %-36s %-26s (%s pid=%d)\n", s.ServerName, s.ServerAddr, s.ProcName, s.Pid))
+	}
+	for _, c := range rep.Clients {
+		sb.WriteString(fmt.Sprintf("    [SUB] %-36s <- %s (pid=%d addr=%s)\n", c.ServerName, c.ProcName, c.Pid, c.ClientAddr))
+	}
+	return strings.TrimRight(sb.String(), "\n"), nil
 }

@@ -1,17 +1,16 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # 脚本名称: start.sh
-# 功能描述: 在 Tmux 中以分屏布局启动运行 demo 微服务集群、Agent 与交互客户端
-# 布局结构 (左侧 3 框 + 右侧 2 框):
+# 功能描述: 在 Tmux 中以分屏布局启动运行 CSG 控制面、demo 微服务集群、Agent 与交互客户端
+# 布局结构 (左侧 4 框 + 右侧 4 框):
 #   ┌───────────────────────────┬───────────────────────────┐
-#   │      backend-account      │         sut-order         │
-#   │   (左上: 资产服务 :9002)   │   (右上: 订单核心网关 :9001)│
+#   │   backend-account (:9002) │ csgserver (:31806/:31901) │
 #   ├───────────────────────────┼───────────────────────────┤
-#   │     backend-inventory     │                           │
-#   │   (左中: 库存服务 :9003)   │       client (TUI)        │
-#   ├───────────────────────────┤   (右下: 交互客户端控制台) │
-#   │    code-contract-agent     │                           │
-#   │   (左下: 数据面 Agent :9091)│                           │
+#   │  backend-inventory (:9003)│    sut-order (:9001)      │
+#   ├───────────────────────────┼───────────────────────────┤
+#   │  payment ALIPAY (:9004)   │ code-contract-agent(:9091)│
+#   ├───────────────────────────┼───────────────────────────┤
+#   │  payment WECHAT (:9005)   │       client (TUI)        │
 #   └───────────────────────────┴───────────────────────────┘
 # ==============================================================================
 
@@ -27,6 +26,8 @@ done
 DEMO_DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
 BIN_DIR="$DEMO_DIR/bin"
 SESSION_NAME="demo-cros"
+CSG_ADDR="${DEMO_CSG_ADDR:-127.0.0.1:31806}"
+CSG_MON_ADDR="${DEMO_CSG_MONITOR_ADDR:-127.0.0.1:31901}"
 
 # 颜色高亮定义
 GREEN="\033[0;32m"
@@ -55,10 +56,11 @@ show_help() {
     echo "使用方式: $0 [选项]"
     echo ""
     echo "选项:"
-    echo "  (无参数)      默认模式：按需编译并启动 Tmux 分屏会话 (左侧 3 进程 + 右侧 2 进程)"
+    echo "  (无参数)      默认模式：按需编译并启动 CSG 控制面 + 微服务集群 + Agent + TUI Tmux 会话"
     echo "  --build, -b   强制重新编译全部可执行二进制组件后启动"
-    echo "  --stop, -s    停止运行中的 Tmux 会话并彻底清理释放端口 (9001, 9002, 9003, 9091)"
+    echo "  --stop, -s    停止运行中的 Tmux 会话并彻底清理释放端口 (9001~9005, 9091, 31806, 31901)"
     echo "  --no-client   启动后台微服务与 Agent，右下格保留终端交互环境而不自动运行 client"
+    echo "  --no-csg      禁用 CSG 控制面，退化为静态端口直连模式"
     echo "  --help, -h    显示帮助信息"
     echo ""
 }
@@ -67,6 +69,7 @@ show_help() {
 FORCE_BUILD=false
 DO_STOP=false
 LAUNCH_CLIENT=true
+USE_CSG=true
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -82,6 +85,10 @@ while [[ $# -gt 0 ]]; do
             LAUNCH_CLIENT=false
             shift
             ;;
+        --no-csg)
+            USE_CSG=false
+            shift
+            ;;
         --help|-h)
             show_help
             exit 0
@@ -95,8 +102,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 cleanup_ports() {
-    log_info "检查并释放占用端口 (9001, 9002, 9003, 9004, 9005, 9091)..."
-    for port in 9001 9002 9003 9004 9005 9091; do
+    log_info "检查并释放占用端口 (9001, 9002, 9003, 9004, 9005, 9091, 31806, 31901)..."
+    for port in 9001 9002 9003 9004 9005 9091 31806 31901; do
         if command -v fuser &>/dev/null; then
             fuser -k -n tcp "${port}" 2>/dev/null || true
         elif command -v lsof &>/dev/null; then
@@ -130,6 +137,7 @@ done
 # 第一步: 二进制编译 (支持按需编译与强制重新编译)
 # ==============================================================================
 BIN_TARGETS=(
+    "$BIN_DIR/csgserver"
     "$BIN_DIR/backend-account"
     "$BIN_DIR/backend-inventory"
     "$BIN_DIR/backend-payment"
@@ -151,7 +159,7 @@ else
 fi
 
 if [ "$NEED_BUILD" = true ]; then
-    log_info "正在编译 demo 微服务与 Agent 二进制组件 (make -C $DEMO_DIR build)..."
+    log_info "正在编译 demo 微服务、csgserver 与 Agent 二进制组件 (make -C $DEMO_DIR build)..."
     make -C "$DEMO_DIR" build
     log_success "二进制产物编译完成！"
 else
@@ -159,7 +167,7 @@ else
 fi
 
 # ==============================================================================
-# 第二步: 配置与启动 Tmux 分屏会话 (左侧 3 框 + 右侧 2 框)
+# 第二步: 配置与启动 Tmux 分屏会话
 # ==============================================================================
 log_info "正在配置 Tmux 分屏会话: $SESSION_NAME ..."
 
@@ -193,12 +201,21 @@ if [ -z "$PANE_L_TOP" ]; then
     exit 1
 fi
 
-# 2. 从左侧向右水平切分 (对半左右开窗)，创建【右侧上框】: sut-order
-PANE_R_TOP=$(tmux split-window -h -P -F '#{pane_id}' -t "$PANE_L_TOP" -c "$DEMO_DIR")
+# 2. 从左侧向右水平切分 (对半左右开窗)
+PANE_R_START=$(tmux split-window -h -P -F '#{pane_id}' -t "$PANE_L_TOP" -c "$DEMO_DIR")
 
-# 3. 将右侧垂直切分为 3 框: sut-order / code-contract-agent / client
-PANE_R_MID=$(tmux split-window -v -l '70%' -P -F '#{pane_id}' -t "$PANE_R_TOP" -c "$DEMO_DIR")
-PANE_R_BOT=$(tmux split-window -v -l '62%' -P -F '#{pane_id}' -t "$PANE_R_MID" -c "$DEMO_DIR")
+# 3. 切分右侧窗格
+if [ "$USE_CSG" = true ]; then
+    PANE_R_CSG="$PANE_R_START"
+    PANE_R_TOP=$(tmux split-window -v -l '80%' -P -F '#{pane_id}' -t "$PANE_R_CSG" -c "$DEMO_DIR")
+    PANE_R_MID=$(tmux split-window -v -l '74%' -P -F '#{pane_id}' -t "$PANE_R_TOP" -c "$DEMO_DIR")
+    PANE_R_BOT=$(tmux split-window -v -l '64%' -P -F '#{pane_id}' -t "$PANE_R_MID" -c "$DEMO_DIR")
+else
+    PANE_R_CSG=""
+    PANE_R_TOP="$PANE_R_START"
+    PANE_R_MID=$(tmux split-window -v -l '70%' -P -F '#{pane_id}' -t "$PANE_R_TOP" -c "$DEMO_DIR")
+    PANE_R_BOT=$(tmux split-window -v -l '62%' -P -F '#{pane_id}' -t "$PANE_R_MID" -c "$DEMO_DIR")
+fi
 
 # 4. 将左侧垂直切分为 4 框: account / inventory / payment-alipay / payment-wechat
 PANE_L_MID1=$(tmux split-window -v -l '75%' -P -F '#{pane_id}' -t "$PANE_L_TOP" -c "$DEMO_DIR")
@@ -214,8 +231,11 @@ tmux select-pane -t "$PANE_L_TOP"  -T "左上1: backend-account (资产服务 :9
 tmux select-pane -t "$PANE_L_MID1" -T "左上2: backend-inventory (库存服务 :9003)"
 tmux select-pane -t "$PANE_L_MID2" -T "左下1: backend-payment ALIPAY (:9004)"
 tmux select-pane -t "$PANE_L_BOT"  -T "左下2: backend-payment WECHAT (:9005)"
-tmux select-pane -t "$PANE_R_TOP"  -T "右上: sut-order (订单核心网关 :9001)"
-tmux select-pane -t "$PANE_R_MID"  -T "右中: code-contract-agent (治理 Agent :9091)"
+if [ -n "$PANE_R_CSG" ]; then
+    tmux select-pane -t "$PANE_R_CSG" -T "右上1: csgserver (CSG dlink :31806 / Monitor :31901)"
+fi
+tmux select-pane -t "$PANE_R_TOP"  -T "右中上: sut-order (订单核心网关 :9001)"
+tmux select-pane -t "$PANE_R_MID"  -T "右中下: code-contract-agent (治理 Agent :9091)"
 tmux select-pane -t "$PANE_R_BOT"  -T "右下: client (TUI 交互控制台)"
 
 # ==============================================================================
@@ -223,21 +243,36 @@ tmux select-pane -t "$PANE_R_BOT"  -T "右下: client (TUI 交互控制台)"
 # ==============================================================================
 log_info "正在向各窗格分发启动指令..."
 
-# 1. 启动账户、库存及双渠道支付实例 (:9002/:9003/:9004/:9005)
-tmux send-keys -t "$PANE_L_TOP"  "./bin/backend-account --addr=127.0.0.1:9002" C-m
-tmux send-keys -t "$PANE_L_MID1" "./bin/backend-inventory --addr=127.0.0.1:9003" C-m
-tmux send-keys -t "$PANE_L_MID2" "./bin/backend-payment --addr=127.0.0.1:9004 --channel=ALIPAY" C-m
-tmux send-keys -t "$PANE_L_BOT"  "./bin/backend-payment --addr=127.0.0.1:9005 --channel=WECHAT" C-m
+if [ "$USE_CSG" = true ]; then
+    # 0. 启动 CSG 控制面与 RPCMonitorService
+    tmux send-keys -t "$PANE_R_CSG" "./bin/csgserver --addr=$CSG_ADDR --monitor=$CSG_MON_ADDR" C-m
 
-# 2. 启动数据面 code-contract-agent (:9091) - 使用提权启动器确保具备 eBPF 内核特权
-tmux send-keys -t "$PANE_R_MID" "./start-agent.sh --listen=127.0.0.1:9091" C-m
+    # 1. 启动账户、库存及双渠道支付实例并向 CSG 注册 PUB
+    tmux send-keys -t "$PANE_L_TOP"  "sleep 0.4 && ./bin/backend-account --addr=127.0.0.1:9002 --csg=$CSG_ADDR" C-m
+    tmux send-keys -t "$PANE_L_MID1" "sleep 0.4 && ./bin/backend-inventory --addr=127.0.0.1:9003 --csg=$CSG_ADDR" C-m
+    tmux send-keys -t "$PANE_L_MID2" "sleep 0.4 && ./bin/backend-payment --addr=127.0.0.1:9004 --channel=ALIPAY --csg=$CSG_ADDR" C-m
+    tmux send-keys -t "$PANE_L_BOT"  "sleep 0.4 && ./bin/backend-payment --addr=127.0.0.1:9005 --channel=WECHAT --csg=$CSG_ADDR" C-m
 
-# 3. 启动订单网关核心 (:9001) - 稍候 0.2 秒确保下游端口已就绪
-tmux send-keys -t "$PANE_R_TOP" "sleep 0.2 && ./bin/sut-order --addr=127.0.0.1:9001 --account-addr=127.0.0.1:9002 --inventory-addr=127.0.0.1:9003 --payment-alipay-addr=127.0.0.1:9004 --payment-wechat-addr=127.0.0.1:9005" C-m
+    # 2. 启动数据面 code-contract-agent (:9091) - 自动通过 /proc/net/tcp 与 dlink 发现 CSG 及监控端点
+    tmux send-keys -t "$PANE_R_MID" "sleep 0.6 && ./start-agent.sh --listen=127.0.0.1:9091" C-m
 
-# 4. 启动交互客户端 (如果开启)
-if [ "$LAUNCH_CLIENT" = true ]; then
-    tmux send-keys -t "$PANE_R_BOT" "sleep 0.6 && ./bin/client --addr=127.0.0.1:9001" C-m
+    # 3. 启动订单网关核心 (:9001) - 自动 PUB OrderService 并经 CSG SUB 解析下游
+    tmux send-keys -t "$PANE_R_TOP" "sleep 0.8 && ./bin/sut-order --addr=127.0.0.1:9001 --csg=$CSG_ADDR" C-m
+
+    # 4. 启动交互客户端 (经 CSG SUB 发现 OrderService)
+    if [ "$LAUNCH_CLIENT" = true ]; then
+        tmux send-keys -t "$PANE_R_BOT" "sleep 1.1 && ./bin/client --csg=$CSG_ADDR --addr=127.0.0.1:9001" C-m
+    fi
+else
+    tmux send-keys -t "$PANE_L_TOP"  "./bin/backend-account --addr=127.0.0.1:9002 --csg=''" C-m
+    tmux send-keys -t "$PANE_L_MID1" "./bin/backend-inventory --addr=127.0.0.1:9003 --csg=''" C-m
+    tmux send-keys -t "$PANE_L_MID2" "./bin/backend-payment --addr=127.0.0.1:9004 --channel=ALIPAY --csg=''" C-m
+    tmux send-keys -t "$PANE_L_BOT"  "./bin/backend-payment --addr=127.0.0.1:9005 --channel=WECHAT --csg=''" C-m
+    tmux send-keys -t "$PANE_R_MID" "./start-agent.sh --listen=127.0.0.1:9091" C-m
+    tmux send-keys -t "$PANE_R_TOP" "sleep 0.2 && ./bin/sut-order --addr=127.0.0.1:9001 --csg='' --account-addr=127.0.0.1:9002 --inventory-addr=127.0.0.1:9003 --payment-alipay-addr=127.0.0.1:9004 --payment-wechat-addr=127.0.0.1:9005" C-m
+    if [ "$LAUNCH_CLIENT" = true ]; then
+        tmux send-keys -t "$PANE_R_BOT" "sleep 0.6 && ./bin/client --csg='' --addr=127.0.0.1:9001" C-m
+    fi
 fi
 
 # 将输入光标焦点默认置于右下格 (client 交互终端)
@@ -251,7 +286,6 @@ log_success "Demo 集群 Tmux 分屏会话配置并启动完成！"
 if [ -n "${TMUX:-}" ]; then
     tmux switch-client -t "$SESSION_NAME"
 else
-    # 检查是否处于具备完整交互能力的终端 (避免在非交互脚本或 dumb 终端中报错)
     if [ -t 0 ] && [ -t 1 ] && [ "${TERM:-}" != "dumb" ] && [ -n "${TERM:-}" ]; then
         tmux attach-session -t "$SESSION_NAME"
     else

@@ -658,7 +658,19 @@ func (s *AgentServer) handleExecuteReplay(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	estConns, needRec, _ := s.procScanner.DiagnoseEstablishedConns(pid, req.ProcessSpec.Downstreams)
+	var proxyPort uint16
+	if s.ebpfMgr != nil && s.ebpfMgr.EgressProxy() != nil {
+		proxyPort = s.ebpfMgr.EgressProxy().ProxyPort()
+	}
+	csgAddr := s.resolveEffectiveCSGAddr(req.CSGAddr)
+	if csgAddr == "" {
+		csgAddr = s.resolveEffectiveCSGAddr(req.ProcessSpec.CSGAddr)
+	}
+	var csgPort uint16
+	if _, p, ok := csg.ParseCSGAddr(csgAddr); ok {
+		csgPort = p
+	}
+	estConns, needRec, _ := s.procScanner.DiagnoseEstablishedConns(pid, req.ProcessSpec.Downstreams, effectivePort, proxyPort, csgPort)
 	if needRec {
 		s.finishCSGSim(simCtrl, 0)
 		s.replayExec.CloseMockListener()
@@ -693,7 +705,7 @@ func (s *AgentServer) handleExecuteReplay(w http.ResponseWriter, r *http.Request
 		s.replayExec.SetTargetDialOverride("")
 	}
 	if simOut != nil && simOut.MockCSGServer != nil && s.ebpfMgr != nil && s.ebpfMgr.EgressProxy() != nil {
-		csgIPStr, csgPortU16, hasCSGAddr := csg.ParseCSGAddr(s.resolveEffectiveCSGAddr(req.CSGAddr))
+		csgIPStr, csgPortU16, hasCSGAddr := csg.ParseCSGAddr(csgAddr)
 		mockCSG := simOut.MockCSGServer
 		s.ebpfMgr.EgressProxy().SetCSGHandler(
 			func(origIP net.IP, origPort uint16) bool {
@@ -743,7 +755,22 @@ func (s *AgentServer) handleExecuteReplay(w http.ResponseWriter, r *http.Request
 		}
 	}
 	if s.ebpfMgr != nil {
-		s.ebpfMgr.SetReplayMock(req.TaskID, matcher, req.ProcessSpec.Downstreams)
+		mockEndpoints := append([]agentproto.DownstreamEndpoint(nil), req.ProcessSpec.Downstreams...)
+		for _, snap := range req.CSGSnapshots {
+			if snap.HostIP != "" && snap.Port > 0 {
+				mockEndpoints = append(mockEndpoints, agentproto.DownstreamEndpoint{
+					IP:   snap.HostIP,
+					Port: snap.Port,
+				})
+			}
+		}
+		if s.replayExec != nil && s.replayExec.MockPort() > 0 {
+			mockEndpoints = append(mockEndpoints, agentproto.DownstreamEndpoint{
+				IP:   "127.0.0.1",
+				Port: s.replayExec.MockPort(),
+			})
+		}
+		s.ebpfMgr.SetReplayMock(req.TaskID, matcher, mockEndpoints)
 	}
 
 	// 异步执行重放 (与 EgressProxy 共享同一 matcher 实例，退出时幂等卸载 CSG 桩并释放 REPLAY 租约)

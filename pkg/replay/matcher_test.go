@@ -91,6 +91,26 @@ func TestScopedMockMatcher_DstTagIsolation(t *testing.T) {
 	if len(resD.ResponseFrames) != 0 {
 		t.Errorf("expected 0 response frames on MOCK_MISS, got %d", len(resD.ResponseFrames))
 	}
+
+	// 4. 若将某端口显式登记为 PUB_STUB 本地 Stub 端点（如 127.0.0.1:18999），允许回退命中带 DstTag 的规则
+	matcher.RegisterScopedDownstreamRule(101, agentproto.MockRuleDownstream{
+		ReqPacket:  reqB,
+		RspPackets: [][]byte{rspB},
+		DstTag:     "proc_b",
+	})
+	matcher.SetActiveRecordID(101)
+	if missCheck, err := matcher.MatchAndHealWithDst(liveReqD, "10.0.0.4:9001"); err != nil || missCheck.Result != MatchMiss {
+		t.Fatalf("expected unregistered 10.0.0.4:9001 to stay MatchMiss, got %+v err=%v", missCheck, err)
+	}
+	matcher.AddStubEndpoint("127.0.0.1:18999")
+	liveReqStub := buildTestReqPacket(994, "demo.v1.OrderProcessor", "ProcessOrder", crosrpc.ReqTypeSync, traceBuff, 2000, []byte(`{"order_id":"001"}`))
+	resStub, err := matcher.MatchAndHealWithDst(liveReqStub, "127.0.0.1:18999")
+	if err != nil {
+		t.Fatalf("MatchAndHealWithDst for Stub failed: %v", err)
+	}
+	if resStub.Result != MatchHitScoped {
+		t.Errorf("expected stub endpoint to match tagged rule (MatchHitScoped), got %v", resStub.Result)
+	}
 }
 
 // TestScopedMockMatcher_DstTagFallbackToUntagged 验证未携带 DstTag 的存量独占 Mock 规则平滑回退，保持向后兼容 (M20)

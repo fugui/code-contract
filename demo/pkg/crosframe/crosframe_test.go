@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"code-contract/pkg/crosrpc"
+	"code-contract/pkg/csgmock"
 )
 
 func TestBuildPacketValidation(t *testing.T) {
@@ -101,5 +102,67 @@ func TestServerAndClientEndToEnd(t *testing.T) {
 	}
 	if rspPkt.Trace == nil || rspPkt.Trace.TraceID != 0x9999 {
 		t.Fatalf("Expected trace 0x9999, got %+v", rspPkt.Trace)
+	}
+}
+
+func TestCSGServerAndClient_PubSubFailoverAndCleanup(t *testing.T) {
+	mockCSG := csgmock.NewMockCSGServer("127.0.0.1:0")
+	if err := mockCSG.Start(); err != nil {
+		t.Fatalf("mockCSG.Start failed: %v", err)
+	}
+	defer mockCSG.Close()
+
+	svcName := "demo.test.EchoCSGService"
+
+	srvA := NewServer("127.0.0.1:0", "CSGEchoA")
+	srvA.SetCSGAddr(mockCSG.Addr())
+	srvA.Register(svcName, "Echo", func(ctx context.Context, packet *crosrpc.ParsedPacket, reqPayload []byte) (uint32, []byte, error) {
+		return 0, append([]byte("A:"), reqPayload...), nil
+	})
+	if err := srvA.Start(); err != nil {
+		t.Fatalf("srvA.Start failed: %v", err)
+	}
+
+	cli := NewCSGClient(mockCSG.Addr(), svcName, "", 2*time.Second)
+
+	snap1 := mockCSG.Snapshot()
+	if snap1.ServerNum() != 1 || snap1.ClientNum() != 1 {
+		t.Fatalf("expected 1 server and 1 client subscription in CSG, got servers=%d clients=%d", snap1.ServerNum(), snap1.ClientNum())
+	}
+
+	_, rspA, err := cli.Invoke(context.Background(), svcName, "Echo", nil, []byte("hello"))
+	if err != nil {
+		t.Fatalf("cli.Invoke srvA failed: %v", err)
+	}
+	if string(rspA) != "A:hello" {
+		t.Fatalf("expected A:hello, got %q", string(rspA))
+	}
+
+	// Simulate backend A going offline and backend B taking over on a new port
+	_ = srvA.Stop()
+	srvB := NewServer("127.0.0.1:0", "CSGEchoB")
+	srvB.SetCSGAddr(mockCSG.Addr())
+	srvB.Register(svcName, "Echo", func(ctx context.Context, packet *crosrpc.ParsedPacket, reqPayload []byte) (uint32, []byte, error) {
+		return 0, append([]byte("B:"), reqPayload...), nil
+	})
+	if err := srvB.Start(); err != nil {
+		t.Fatalf("srvB.Start failed: %v", err)
+	}
+	defer func() { _ = srvB.Stop() }()
+
+	_, rspB, err := cli.Invoke(context.Background(), svcName, "Echo", nil, []byte("failover"))
+	if err != nil {
+		t.Fatalf("cli.Invoke failover to srvB failed: %v", err)
+	}
+	if string(rspB) != "B:failover" {
+		t.Fatalf("expected B:failover after CSG re-resolve, got %q", string(rspB))
+	}
+
+	_ = cli.Close()
+	_ = srvB.Stop()
+
+	snap2 := mockCSG.Snapshot()
+	if snap2.ServerNum() != 0 || snap2.ClientNum() != 0 {
+		t.Fatalf("expected 0 servers and 0 clients after Stop/Close, got servers=%d clients=%d", snap2.ServerNum(), snap2.ClientNum())
 	}
 }

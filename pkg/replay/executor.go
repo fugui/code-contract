@@ -187,6 +187,10 @@ func (e *ReplayExecutor) ExecuteWithMatcher(ctx context.Context, req agentproto.
 		e.mockPort = uint16(mockLn.Addr().(*net.TCPAddr).Port)
 		e.mu.Unlock()
 	}
+	matcher.AddStubEndpoint(mockLn.Addr().String())
+	if port := e.MockPort(); port > 0 {
+		matcher.AddStubEndpoint(net.JoinHostPort("127.0.0.1", strconv.Itoa(int(port))))
+	}
 	defer func() {
 		_ = mockLn.Close()
 		e.mu.Lock()

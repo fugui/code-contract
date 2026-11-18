@@ -49,9 +49,13 @@ func DiscoverAndFuse(ctx context.Context, cfg DiscovererConfig) (*agentproto.CSG
 
 	var monRep *rpcmon.Report
 	var monErr error
+	monitorAddr := strings.TrimSpace(cfg.MonitorAddr)
+	if monitorAddr == "" && strings.TrimSpace(cfg.ProbeBin) == "" && csgAddr != "" {
+		monitorAddr = resolveMonitorAddrViaDlink(ctx, csgAddr, cfg.SubTimeout)
+	}
 	switch {
-	case strings.TrimSpace(cfg.MonitorAddr) != "":
-		backend, err := rpcmon.NewCrosTCP(cfg.MonitorAddr, cfg.SubTimeout)
+	case monitorAddr != "":
+		backend, err := rpcmon.NewCrosTCP(monitorAddr, cfg.SubTimeout)
 		if err != nil {
 			monErr = err
 		} else {
@@ -88,6 +92,24 @@ func DiscoverAndFuse(ctx context.Context, cfg DiscovererConfig) (*agentproto.CSG
 		cp := p
 		if csgAddr != "" && cp.CSGEndpoint == "" {
 			cp.CSGEndpoint = csgAddr
+		}
+		if existing, ok := procByPID[cp.PID]; ok {
+			if existing.ExeName == "" && cp.ExeName != "" {
+				existing.ExeName = cp.ExeName
+			}
+			if existing.ListenPort == 0 && cp.ListenPort > 0 {
+				existing.ListenPort = cp.ListenPort
+			}
+			if existing.CSGEndpoint == "" && cp.CSGEndpoint != "" {
+				existing.CSGEndpoint = cp.CSGEndpoint
+			}
+			for _, sn := range cp.ServiceNames {
+				existing.ServiceNames = appendUniqueString(existing.ServiceNames, sn)
+			}
+			for _, tr := range cp.Transports {
+				existing.Transports = appendUniqueString(existing.Transports, tr)
+			}
+			continue
 		}
 		procByPID[cp.PID] = &cp
 		procOrder = append(procOrder, cp.PID)
@@ -206,6 +228,20 @@ func DiscoverAndFuse(ctx context.Context, cfg DiscovererConfig) (*agentproto.CSG
 		fused = append(fused, *procByPID[pid])
 	}
 	return report, fused, nil
+}
+
+func resolveMonitorAddrViaDlink(ctx context.Context, csgAddr string, timeout time.Duration) string {
+	if ctx.Err() != nil || strings.TrimSpace(csgAddr) == "" {
+		return ""
+	}
+	if timeout <= 0 || timeout > 2*time.Second {
+		timeout = 2 * time.Second
+	}
+	hp, err := csgdlink.ResolveServiceTCP(csgAddr, rpcmon.ServiceName, timeout)
+	if err != nil {
+		return ""
+	}
+	return hp
 }
 
 func locateForConfig(cfg DiscovererConfig) []agentproto.CSGEndpointInfo {

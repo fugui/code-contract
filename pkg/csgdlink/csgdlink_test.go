@@ -203,3 +203,12 @@ func TestDlinkObserver_NonIntrusiveSubAckCapture(t *testing.T) {
 		t.Fatalf("instance mismatch: %+v", ev.Instances[0])
 	}
 }
+
+func TestResolveServiceTCP_Validation(t *testing.T) {
+	if _, err := csgdlink.ResolveServiceTCP("", "DemoSvc", time.Second); err == nil {
+		t.Fatal("expected error for empty csgAddr")
+	}
+	if _, err := csgdlink.ResolveServiceTCP("127.0.0.1:31806", "", time.Second); err == nil {
+		t.Fatal("expected error for empty serviceName")
+	}
+}

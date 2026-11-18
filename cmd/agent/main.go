@@ -126,18 +126,19 @@ func main() {
 	defaultAllowIPs := resolveDefaultAllowIPs()
 
 	var (
-		listenAddr  = flag.String("listen", "0.0.0.0:9091", "Agent 监听地址 (IP:Port)")
-		allowIPsStr = flag.String("allow-ips", defaultAllowIPs, "允许访问的主控 IP/CIDR 白名单 (逗号分隔)")
-		claimCode   = flag.String("claim-code", "", "预设认领码 (留空自动生成一次性认领码)")
-		claimFile   = flag.String("claim-code-file", "", "认领码保存路径 (如 /var/run/code-contract/claim.token)")
-		maxBufferMB = flag.Int64("max-buffer-mb", 64, "单个活跃会话有界缓冲上限 (MB)")
-		procRoot    = flag.String("proc-root", "/proc", "宿主机 procfs 挂载路径")
-		showVersion = flag.Bool("version", false, "显示版本信息并退出")
-		doctor      = flag.Bool("doctor", false, "执行环境与内核特权就绪体检诊断并退出")
-		check       = flag.Bool("check", false, "执行环境与内核特权就绪体检诊断并退出 (等同于 --doctor)")
-		requireCaps = flag.Bool("require-caps", false, "是否强制要求必须具备 eBPF 内核特权，若缺少则拒绝启动")
-		csgAddr     = flag.String("csg-addr", os.Getenv("CONTRACT_AGENT_CSG_ADDR"), "可选预设 CSG 控制面端点 (<ip>:<port>，支持逗号分隔)")
-		csgProbeBin = flag.String("csg-probe-bin", os.Getenv("CONTRACT_AGENT_CSG_PROBE_BIN"), "可选真机只读 rpcmon_probe 二进制白名单路径")
+		listenAddr     = flag.String("listen", "0.0.0.0:9091", "Agent 监听地址 (IP:Port)")
+		allowIPsStr    = flag.String("allow-ips", defaultAllowIPs, "允许访问的主控 IP/CIDR 白名单 (逗号分隔)")
+		claimCode      = flag.String("claim-code", "", "预设认领码 (留空自动生成一次性认领码)")
+		claimFile      = flag.String("claim-code-file", "", "认领码保存路径 (如 /var/run/code-contract/claim.token)")
+		maxBufferMB    = flag.Int64("max-buffer-mb", 64, "单个活跃会话有界缓冲上限 (MB)")
+		procRoot       = flag.String("proc-root", "/proc", "宿主机 procfs 挂载路径")
+		showVersion    = flag.Bool("version", false, "显示版本信息并退出")
+		doctor         = flag.Bool("doctor", false, "执行环境与内核特权就绪体检诊断并退出")
+		check          = flag.Bool("check", false, "执行环境与内核特权就绪体检诊断并退出 (等同于 --doctor)")
+		requireCaps    = flag.Bool("require-caps", false, "是否强制要求必须具备 eBPF 内核特权，若缺少则拒绝启动")
+		csgAddr        = flag.String("csg-addr", os.Getenv("CONTRACT_AGENT_CSG_ADDR"), "可选预设 CSG 控制面端点 (<ip>:<port>，支持逗号分隔)")
+		csgMonitorAddr = flag.String("csg-monitor-addr", os.Getenv("CONTRACT_AGENT_CSG_MONITOR_ADDR"), "可选预设 RPCMonitorService CrosTCP 端点 (<ip>:<port>)")
+		csgProbeBin    = flag.String("csg-probe-bin", os.Getenv("CONTRACT_AGENT_CSG_PROBE_BIN"), "可选真机只读 rpcmon_probe 二进制白名单路径")
 	)
 	flag.Parse()
 
@@ -179,6 +180,7 @@ func main() {
 		AgentVersion:          version.Short(),
 		ProcRoot:              *procRoot,
 		CSGAddrs:              csgAddrs,
+		CSGMonitorAddr:        strings.TrimSpace(*csgMonitorAddr),
 		CSGProbeBin:           strings.TrimSpace(*csgProbeBin),
 	}
 

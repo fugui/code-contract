@@ -12,11 +12,13 @@ import (
 
 func main() {
 	addr := flag.String("addr", "127.0.0.1:9002", "TCP listen address for Account Service")
+	csgAddr := flag.String("csg", "127.0.0.1:31806", "CSG dlink control-plane address (empty to disable CSG registration)")
 	flag.Parse()
 
 	log.Printf("[backend-account] Initializing CROS RPC Account Service...")
 	store := NewAccountStore()
 	server := crosframe.NewServer(*addr, "backend-account")
+	server.SetCSGAddr(*csgAddr)
 	store.RegisterHandlers(server)
 
 	if err := server.Start(); err != nil {

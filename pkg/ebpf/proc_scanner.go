@@ -280,11 +280,15 @@ func (s *ProcScanner) ScanProcessEstablishedSockets(pid uint32) ([]EstablishedSo
 func (s *ProcScanner) DiagnoseEstablishedConns(pid uint32, downstreams []agentproto.DownstreamEndpoint, extra ...uint16) (int, bool, error) {
 	listenPort := uint16(0)
 	proxyPort := uint16(0)
+	csgPort := uint16(0)
 	if len(extra) > 0 {
 		listenPort = extra[0]
 	}
 	if len(extra) > 1 {
 		proxyPort = extra[1]
+	}
+	if len(extra) > 2 {
+		csgPort = extra[2]
 	}
 
 	socks, err := s.ScanProcessEstablishedSockets(pid)
@@ -314,8 +318,16 @@ func (s *ProcScanner) DiagnoseEstablishedConns(pid uint32, downstreams []agentpr
 			continue
 		}
 
-		// 3. 统计未受代理的直连出站长连接
+		// 3. 排除 CSG dlink 控制面连接（非业务数据面出站连接）
+		if csgPort > 0 && sock.RemPort == csgPort {
+			continue
+		}
+
+		// 4. 统计未受代理的直连出站长连接
 		if len(downstreams) == 0 {
+			if sock.RemPort >= 31800 && sock.RemPort <= 31900 {
+				continue
+			}
 			count++
 		} else {
 			key := fmt.Sprintf("%s:%d", sock.RemIP, sock.RemPort)

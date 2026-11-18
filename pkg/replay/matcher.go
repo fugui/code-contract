@@ -53,18 +53,22 @@ type mockEntry struct {
 }
 
 type scopedPool struct {
-	exactMap map[string][]*mockEntry
-	seqQueue map[string][]*mockEntry
+	exactMap    map[string][]*mockEntry
+	seqQueue    map[string][]*mockEntry
+	anyExactMap map[string][]*mockEntry
+	anySeqQueue map[string][]*mockEntry
 }
 
 func newScopedPool() *scopedPool {
 	return &scopedPool{
-		exactMap: make(map[string][]*mockEntry),
-		seqQueue: make(map[string][]*mockEntry),
+		exactMap:    make(map[string][]*mockEntry),
+		seqQueue:    make(map[string][]*mockEntry),
+		anyExactMap: make(map[string][]*mockEntry),
+		anySeqQueue: make(map[string][]*mockEntry),
 	}
 }
 
-func (p *scopedPool) add(exactKey, methodKey, dstTag string, rsps [][]byte) {
+func (p *scopedPool) add(exactKey, methodKey, baseExactKey, baseMethodKey, dstTag string, rsps [][]byte) {
 	entry := &mockEntry{
 		exactKey:  exactKey,
 		methodKey: methodKey,
@@ -73,54 +77,70 @@ func (p *scopedPool) add(exactKey, methodKey, dstTag string, rsps [][]byte) {
 	}
 	p.exactMap[exactKey] = append(p.exactMap[exactKey], entry)
 	p.seqQueue[methodKey] = append(p.seqQueue[methodKey], entry)
+	if dstTag != "" {
+		p.anyExactMap[baseExactKey] = append(p.anyExactMap[baseExactKey], entry)
+		p.anySeqQueue[baseMethodKey] = append(p.anySeqQueue[baseMethodKey], entry)
+	}
 }
 
-func (p *scopedPool) popExact(exactKey string) ([][]byte, bool) {
-	entries := p.exactMap[exactKey]
+func popFromMap(m map[string][]*mockEntry, key string) ([][]byte, bool) {
+	entries := m[key]
 	for i, entry := range entries {
 		if !entry.consumed {
 			entry.consumed = true
-			p.exactMap[exactKey] = append(entries[:i], entries[i+1:]...)
-			p.cleanSeqQueue(entry.methodKey)
+			m[key] = cleanUnconsumed(entries[i+1:])
 			return entry.rsps, true
 		}
 	}
 	return nil, false
 }
 
-func (p *scopedPool) popSeq(methodKey string) ([][]byte, bool) {
-	entries := p.seqQueue[methodKey]
-	for i, entry := range entries {
-		if !entry.consumed {
-			entry.consumed = true
-			p.seqQueue[methodKey] = append(entries[:i], entries[i+1:]...)
-			p.cleanExactMap(entry.exactKey)
-			return entry.rsps, true
-		}
-	}
-	return nil, false
-}
-
-func (p *scopedPool) cleanSeqQueue(methodKey string) {
-	entries := p.seqQueue[methodKey]
+func cleanUnconsumed(entries []*mockEntry) []*mockEntry {
 	cleaned := entries[:0]
 	for _, entry := range entries {
 		if !entry.consumed {
 			cleaned = append(cleaned, entry)
 		}
 	}
-	p.seqQueue[methodKey] = cleaned
+	return cleaned
 }
 
-func (p *scopedPool) cleanExactMap(exactKey string) {
-	entries := p.exactMap[exactKey]
-	cleaned := entries[:0]
-	for _, entry := range entries {
-		if !entry.consumed {
-			cleaned = append(cleaned, entry)
+func matchInPool(
+	pool *scopedPool,
+	dstTag, taggedExactKey, baseExactKey, taggedMethodKey, baseMethodKey string,
+	allowStubFallback bool,
+	exactHit, seqHit MatchResultType,
+) ([][]byte, MatchResultType) {
+	if pool == nil {
+		return nil, ""
+	}
+	if dstTag != "" {
+		if rsps, found := popFromMap(pool.exactMap, taggedExactKey); found {
+			return rsps, exactHit
 		}
 	}
-	p.exactMap[exactKey] = cleaned
+	if rsps, found := popFromMap(pool.exactMap, baseExactKey); found {
+		return rsps, exactHit
+	}
+	if allowStubFallback {
+		if rsps, found := popFromMap(pool.anyExactMap, baseExactKey); found {
+			return rsps, exactHit
+		}
+	}
+	if dstTag != "" {
+		if rsps, found := popFromMap(pool.seqQueue, taggedMethodKey); found {
+			return rsps, seqHit
+		}
+	}
+	if rsps, found := popFromMap(pool.seqQueue, baseMethodKey); found {
+		return rsps, seqHit
+	}
+	if allowStubFallback {
+		if rsps, found := popFromMap(pool.anySeqQueue, baseMethodKey); found {
+			return rsps, seqHit
+		}
+	}
+	return nil, ""
 }
 
 type observedCallKey struct {
@@ -138,6 +158,7 @@ type ScopedMockMatcher struct {
 	globalFallback *scopedPool
 	mngMocks       map[uint8][]byte  // msgType -> raw mng packet
 	endpointTags   map[string]string // "IP:Port" -> DstTag
+	stubEndpoints  map[string]bool   // ephemeral stub endpoints (e.g. PUB_STUB MockPort)
 	mockHitCount   int
 	mockMissCount  int
 	missRecords    []MockMissRecord
@@ -152,8 +173,22 @@ func NewScopedMockMatcher() *ScopedMockMatcher {
 		globalFallback: newScopedPool(),
 		mngMocks:       make(map[uint8][]byte),
 		endpointTags:   make(map[string]string),
+		stubEndpoints:  make(map[string]bool),
 		observedCalls:  make(map[observedCallKey]int),
 	}
+}
+
+// AddStubEndpoint 注册由 Agent 临时接管发布的本地 Stub 端点地址（如 PUB_STUB 监听口）
+func (m *ScopedMockMatcher) AddStubEndpoint(addr string) {
+	if addr == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.stubEndpoints == nil {
+		m.stubEndpoints = make(map[string]bool)
+	}
+	m.stubEndpoints[addr] = true
 }
 
 // SetEndpointTags 设置网络端点到进程 DstTag 的映射 (IP:Port -> DstTag)
@@ -189,13 +224,16 @@ func (m *ScopedMockMatcher) AddScopedMockWithTag(recordID uint64, service, opera
 		m.scopedMocks[recordID] = pool
 	}
 
-	methodKey := service + ":" + operation
+	baseMethodKey := service + ":" + operation
+	methodKey := baseMethodKey
 	if dstTag != "" {
 		methodKey = methodKey + "@" + dstTag
 	}
 	hash := sha256.Sum256(reqPayload)
-	exactKey := methodKey + ":" + hex.EncodeToString(hash[:])
-	pool.add(exactKey, methodKey, dstTag, rsps)
+	hashHex := hex.EncodeToString(hash[:])
+	baseExactKey := baseMethodKey + ":" + hashHex
+	exactKey := methodKey + ":" + hashHex
+	pool.add(exactKey, methodKey, baseExactKey, baseMethodKey, dstTag, rsps)
 }
 
 // AddGlobalFallback 录入全局兜底 Mock
@@ -208,13 +246,16 @@ func (m *ScopedMockMatcher) AddGlobalFallbackWithTag(service, operation, dstTag 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	methodKey := service + ":" + operation
+	baseMethodKey := service + ":" + operation
+	methodKey := baseMethodKey
 	if dstTag != "" {
 		methodKey = methodKey + "@" + dstTag
 	}
 	hash := sha256.Sum256(reqPayload)
-	exactKey := methodKey + ":" + hex.EncodeToString(hash[:])
-	m.globalFallback.add(exactKey, methodKey, dstTag, rsps)
+	hashHex := hex.EncodeToString(hash[:])
+	baseExactKey := baseMethodKey + ":" + hashHex
+	exactKey := methodKey + ":" + hashHex
+	m.globalFallback.add(exactKey, methodKey, baseExactKey, baseMethodKey, dstTag, rsps)
 }
 
 // RegisterScopedDownstreamRule 解析出站请求帧与应答帧列表，注册到指定 RecordID 的专属局部作用域 (ADR-12, M13, M20)
@@ -376,71 +417,24 @@ func (m *ScopedMockMatcher) MatchAndHealWithDstTag(liveReq []byte, dstAddr, dstT
 		taggedExactKey = taggedMethodKey + ":" + hashHex
 	}
 
-	// 3. 检查专属局部池
-	var matchedRsps [][]byte
-	var hitType MatchResultType
+	allowStubFallback := dstTag == "" && dstAddr != "" && m.stubEndpoints[dstAddr]
 
-	if pool, ok := m.scopedMocks[m.activeRecordID]; ok {
-		// 3.1 尝试带 DstTag 精确哈希匹配
-		if dstTag != "" {
-			if rsps, found := pool.popExact(taggedExactKey); found {
-				matchedRsps = rsps
-				hitType = MatchHitScoped
-			}
-		}
-		// 3.2 尝试无 DstTag 精确哈希匹配（回退到通用/独占契约规则）
-		if matchedRsps == nil {
-			if rsps, found := pool.popExact(baseExactKey); found {
-				matchedRsps = rsps
-				hitType = MatchHitScoped
-			}
-		}
-		// 3.3 尝试带 DstTag 同接口次序兜底
-		if matchedRsps == nil && dstTag != "" {
-			if rsps, found := pool.popSeq(taggedMethodKey); found {
-				matchedRsps = rsps
-				hitType = MatchHitScopedSeq
-			}
-		}
-		// 3.4 尝试无 DstTag 同接口次序兜底
-		if matchedRsps == nil {
-			if rsps, found := pool.popSeq(baseMethodKey); found {
-				matchedRsps = rsps
-				hitType = MatchHitScopedSeq
-			}
-		}
-	}
+	// 3. 检查专属局部池
+	matchedRsps, hitType := matchInPool(
+		m.scopedMocks[m.activeRecordID],
+		dstTag, taggedExactKey, baseExactKey, taggedMethodKey, baseMethodKey,
+		allowStubFallback,
+		MatchHitScoped, MatchHitScopedSeq,
+	)
 
 	// 4. 专属池未命中，检查全局兜底池
-	if matchedRsps == nil && m.globalFallback != nil {
-		// 4.1 尝试带 DstTag 全局精确哈希匹配
-		if dstTag != "" {
-			if rsps, found := m.globalFallback.popExact(taggedExactKey); found {
-				matchedRsps = rsps
-				hitType = MatchHitGlobal
-			}
-		}
-		// 4.2 尝试无 DstTag 全局精确哈希匹配
-		if matchedRsps == nil {
-			if rsps, found := m.globalFallback.popExact(baseExactKey); found {
-				matchedRsps = rsps
-				hitType = MatchHitGlobal
-			}
-		}
-		// 4.3 尝试带 DstTag 全局同接口次序兜底
-		if matchedRsps == nil && dstTag != "" {
-			if rsps, found := m.globalFallback.popSeq(taggedMethodKey); found {
-				matchedRsps = rsps
-				hitType = MatchHitGlobal
-			}
-		}
-		// 4.4 尝试无 DstTag 全局同接口次序兜底
-		if matchedRsps == nil {
-			if rsps, found := m.globalFallback.popSeq(baseMethodKey); found {
-				matchedRsps = rsps
-				hitType = MatchHitGlobal
-			}
-		}
+	if matchedRsps == nil {
+		matchedRsps, hitType = matchInPool(
+			m.globalFallback,
+			dstTag, taggedExactKey, baseExactKey, taggedMethodKey, baseMethodKey,
+			allowStubFallback,
+			MatchHitGlobal, MatchHitGlobal,
+		)
 	}
 
 	// 5. 命中处理：自愈头部并返回

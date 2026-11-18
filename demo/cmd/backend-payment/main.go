@@ -14,6 +14,7 @@ import (
 
 func main() {
 	addr := flag.String("addr", "127.0.0.1:9004", "TCP listen address for Payment Channel Instance")
+	csgAddr := flag.String("csg", "127.0.0.1:31806", "CSG dlink control-plane address (empty to disable CSG registration)")
 	channel := flag.String("channel", payment.ChannelAlipay, "Payment implementation channel key (e.g. ALIPAY, WECHAT)")
 	serviceName := flag.String("service-name", "", "Published CROS RPC service name (defaults to demo.payment.<CHANNEL>_PaymentService; set to demo.payment.PaymentService for shared-name mode)")
 	flag.Parse()
@@ -25,6 +26,7 @@ func main() {
 		logPrefix, payment.ContractServiceName, gateway.ServiceName())
 
 	server := crosframe.NewServer(*addr, logPrefix)
+	server.SetCSGAddr(*csgAddr)
 	gateway.RegisterHandlers(server)
 
 	if err := server.Start(); err != nil {

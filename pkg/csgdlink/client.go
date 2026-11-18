@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -255,4 +256,46 @@ func (c *Client) roundTrip(subType uint16, payload []byte, wantAck uint16, timeo
 		}
 		return got, body, nil
 	}
+}
+
+// ResolveServiceTCP dials csgAddr, queries serviceName via Sub, immediately Unsubs,
+// and returns the first advertised tcp:// target in host:port form.
+func ResolveServiceTCP(csgAddr, serviceName string, timeout time.Duration) (string, error) {
+	if strings.TrimSpace(csgAddr) == "" {
+		return "", fmt.Errorf("csgdlink: empty CSG address")
+	}
+	if strings.TrimSpace(serviceName) == "" {
+		return "", fmt.Errorf("csgdlink: empty service name")
+	}
+	if timeout <= 0 {
+		timeout = 3 * time.Second
+	}
+	cli, err := Dial(csgAddr, timeout)
+	if err != nil {
+		return "", fmt.Errorf("csgdlink: dial %s failed: %w", csgAddr, err)
+	}
+	defer func() { _ = cli.Close() }()
+
+	if _, err := cli.Register(timeout); err != nil {
+		return "", fmt.Errorf("csgdlink: register failed: %w", err)
+	}
+	if _, err := cli.ClientID(timeout); err != nil {
+		return "", fmt.Errorf("csgdlink: client_id failed: %w", err)
+	}
+	insts, err := cli.Sub(serviceName, timeout)
+	_ = cli.Unsub(serviceName, timeout)
+	if err != nil {
+		return "", fmt.Errorf("csgdlink: sub %s failed: %w", serviceName, err)
+	}
+	for _, inst := range insts {
+		if IsTCPAddr(inst.Addr) {
+			if hp, ok := ParseTCPTarget(inst.Addr); ok {
+				return hp, nil
+			}
+		}
+	}
+	if len(insts) > 0 {
+		return "", fmt.Errorf("csgdlink: service %s has no tcp:// instance (%s)", serviceName, insts[0].Addr)
+	}
+	return "", fmt.Errorf("csgdlink: service %s not published on %s", serviceName, csgAddr)
 }

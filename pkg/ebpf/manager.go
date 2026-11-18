@@ -573,6 +573,36 @@ func (m *Manager) SetReplayMock(taskID uint64, matcher *replay.ScopedMockMatcher
 	}
 }
 
+// ResetPassthrough 退出回放模式，清空 Mock 匹配器并恢复 BPF 与 EgressProxy 为待命透传状态
+func (m *Manager) ResetPassthrough() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.detachCaptureTracepointsLocked()
+	if m.egressProxy != nil {
+		m.egressProxy.SetMockMatcher(nil, nil)
+		m.egressProxy.SetCSGHandler(nil, nil)
+		m.egressProxy.SetMode(ModePassthrough)
+	}
+	m.sessionID = 0
+
+	if m.objs != nil {
+		for _, proc := range m.monitoredProcs {
+			if proc.CurrentPID > 0 {
+				tp := cros_probeTargetProc{
+					SessionId:  0,
+					ProcessId:  proc.Spec.ProcessID,
+					ListenPort: proc.Spec.ListenPort,
+					Mode:       0,
+				}
+				if err := m.objs.TargetPidsMap.Put(proc.CurrentPID, tp); err != nil {
+					log.Printf("[eBPF] ResetPassthrough TargetPidsMap.Put (pid=%d) 警告: %v", proc.CurrentPID, err)
+				}
+			}
+		}
+	}
+}
+
 // EgressProxy 返回出站代理实例
 func (m *Manager) EgressProxy() *EgressProxy {
 	m.mu.Lock()

@@ -145,8 +145,8 @@ func (s *AgentServer) prepareReplayCSG(ctx context.Context, w http.ResponseWrite
 }
 
 func (s *AgentServer) finishCSGSim(sim *csg.SimController, taskID uint64) {
-	if s.ebpfMgr != nil && s.ebpfMgr.EgressProxy() != nil {
-		s.ebpfMgr.EgressProxy().SetCSGHandler(nil, nil)
+	if s.ebpfMgr != nil {
+		s.ebpfMgr.ResetPassthrough()
 	}
 	if s.replayExec != nil {
 		s.replayExec.SetTargetDialOverride("")

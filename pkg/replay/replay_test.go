@@ -189,6 +189,35 @@ func TestHealResponseFramesV1ToV4AndMultiSeg(t *testing.T) {
 			t.Errorf("seg %d: expected SNO %x, got %x", i, liveSNO, gotSNO)
 		}
 	}
+
+	// 验证携带 ExtendHead (CommHead.HeadLen = sessionHeadLen + 36B) 的报文也能正确按内嵌 usRspHeadLen 自愈
+	reqWithExt := make([]byte, len(liveReq)+36)
+	copy(reqWithExt[:24+256], liveReq[:24+256])
+	binary.BigEndian.PutUint16(reqWithExt[20:22], 256+36)
+	binary.BigEndian.PutUint32(reqWithExt[16:20], uint32(256+36+len("req_payload_data")))
+	binary.BigEndian.PutUint16(reqWithExt[24+256:24+258], 32)
+	reqWithExt[24+258] = crosrpc.ExtTypeTraceKey
+	copy(reqWithExt[24+256+36:], []byte("req_payload_data"))
+
+	baseRspV1 := buildTestRspPacket(777, crosrpc.MsgTypeRsp, 156, "old.svc", "oldOp", 0, []byte("ext_rsp"))
+	rspWithExt := make([]byte, len(baseRspV1)+36)
+	copy(rspWithExt[:24+156], baseRspV1[:24+156])
+	binary.BigEndian.PutUint16(rspWithExt[20:22], 156+36)
+	binary.BigEndian.PutUint32(rspWithExt[16:20], uint32(156+36+len("ext_rsp")))
+	binary.BigEndian.PutUint16(rspWithExt[24+156:24+158], 32)
+	rspWithExt[24+158] = crosrpc.ExtTypeTraceKey
+	copy(rspWithExt[24+156+36:], []byte("ext_rsp"))
+
+	healedExt, err := HealSingleResponseFrame(reqWithExt, rspWithExt)
+	if err != nil {
+		t.Fatalf("HealSingleResponseFrame with ExtendHead failed: %v", err)
+	}
+	if binary.BigEndian.Uint64(healedExt[8:16]) != liveSNO {
+		t.Errorf("ExtendHead heal SNO mismatch")
+	}
+	if !bytes.Equal(healedExt[24+156+36:], []byte("ext_rsp")) {
+		t.Errorf("ExtendHead heal altered payload: %q", string(healedExt[24+156+36:]))
+	}
 }
 
 // TestScopedMockMatcherExactAndFallback 测试分层局部优先与兜底匹配

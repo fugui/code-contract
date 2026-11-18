@@ -2,7 +2,7 @@ export PATH := $(HOME)/go/bin:$(PATH)
 
 BIN_DIR := bin
 
-.PHONY: all build test clean start stop run-client proto tmux
+.PHONY: all build test clean start stop run-client csg-status proto tmux
 
 all: build
 
@@ -17,10 +17,11 @@ proto:
 		demo/proto/inventory.proto \
 		demo/proto/payment.proto
 
-# 编译微服务组件与 Agent 二进制产物
+# 编译微服务组件、CSG 控制面与 Agent 二进制产物
 build: proto
-	@echo "Building all CROS RPC binaries and Agent into $(BIN_DIR)..."
+	@echo "Building all CROS RPC binaries, csgserver and Agent into $(BIN_DIR)..."
 	@mkdir -p $(BIN_DIR)
+	go build -o $(BIN_DIR)/csgserver ./cmd/csgserver
 	go build -o $(BIN_DIR)/backend-account ./cmd/backend-account
 	go build -o $(BIN_DIR)/backend-inventory ./cmd/backend-inventory
 	go build -o $(BIN_DIR)/backend-payment ./cmd/backend-payment
@@ -39,7 +40,7 @@ test:
 start: build
 	@./scripts/start_all.sh
 
-# 一键启动 Tmux 田字格可视化集群 (推荐：4 进程 2x2 分屏实时监控与交互)
+# 一键启动 Tmux 分屏可视化集群
 tmux:
 	@./start.sh
 
@@ -47,9 +48,13 @@ tmux:
 stop:
 	@./scripts/stop_all.sh
 
-# 启动 TUI 交互式客户端
+# 启动 TUI 交互式客户端（默认经由 CSG 控制面动态寻址 SUT）
 run-client:
-	@./bin/client --addr="127.0.0.1:9001"
+	@./bin/client --csg="127.0.0.1:31806" --addr="127.0.0.1:9001"
+
+# 查询当前 CSG 注册服务实例与客户端订阅目录
+csg-status:
+	@./bin/csgserver --query --addr="127.0.0.1:31806" --monitor="127.0.0.1:31901" --op=all
 
 # 清理构建产物
 clean:

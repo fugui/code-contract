@@ -48,27 +48,38 @@ type OrderOrchestrator struct {
 	paymentTargets map[string]*paymentTarget
 }
 
+func newDownstreamClient(csgAddr, serviceName, fallbackAddr string, timeout time.Duration) *crosframe.Client {
+	if strings.TrimSpace(csgAddr) != "" {
+		return crosframe.NewCSGClient(csgAddr, serviceName, fallbackAddr, timeout)
+	}
+	return crosframe.NewClient(fallbackAddr, timeout)
+}
+
 func NewOrderOrchestrator(accountAddr, inventoryAddr string, paymentRoutes map[string]PaymentRoute) *OrderOrchestrator {
+	return NewOrderOrchestratorWithCSG("", accountAddr, inventoryAddr, paymentRoutes)
+}
+
+func NewOrderOrchestratorWithCSG(csgAddr, accountAddr, inventoryAddr string, paymentRoutes map[string]PaymentRoute) *OrderOrchestrator {
 	targets := make(map[string]*paymentTarget, len(paymentRoutes))
 	for ch, route := range paymentRoutes {
 		normCh := payment.NormalizeChannel(ch)
 		addr := strings.TrimSpace(route.Addr)
-		if addr == "" {
-			continue
-		}
 		svcName := strings.TrimSpace(route.ServiceName)
 		if svcName == "" {
 			svcName = payment.DefaultPublishedServiceName(normCh)
 		}
+		if addr == "" && strings.TrimSpace(csgAddr) == "" {
+			continue
+		}
 		targets[normCh] = &paymentTarget{
-			cli:         crosframe.NewClient(addr, 3*time.Second),
+			cli:         newDownstreamClient(csgAddr, svcName, addr, 3*time.Second),
 			serviceName: svcName,
 		}
 	}
 	return &OrderOrchestrator{
 		orders:         make(map[string]*OrderRecord),
-		accountCli:     crosframe.NewClient(accountAddr, 3*time.Second),
-		inventoryCli:   crosframe.NewClient(inventoryAddr, 3*time.Second),
+		accountCli:     newDownstreamClient(csgAddr, "demo.account.AccountService", accountAddr, 3*time.Second),
+		inventoryCli:   newDownstreamClient(csgAddr, "demo.inventory.InventoryService", inventoryAddr, 3*time.Second),
 		paymentTargets: targets,
 	}
 }
@@ -88,7 +99,13 @@ func (s *OrderOrchestrator) Close() {
 }
 
 func (s *OrderOrchestrator) RegisterHandlers(server *crosframe.Server) {
-	serviceName := "demo.order.OrderService"
+	s.RegisterHandlersForService(server, "demo.order.OrderService")
+}
+
+func (s *OrderOrchestrator) RegisterHandlersForService(server *crosframe.Server, serviceName string) {
+	if strings.TrimSpace(serviceName) == "" {
+		serviceName = "demo.order.OrderService"
+	}
 
 	server.Register(serviceName, "GetCompositeQuote", s.handleGetCompositeQuote)
 	server.Register(serviceName, "CreateOrder", s.handleCreateOrder)

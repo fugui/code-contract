@@ -22,15 +22,29 @@ func HealSingleResponseFrame(liveReq []byte, mockRsp []byte) ([]byte, error) {
 	// 1. 覆写公共头偏移 8..15 的 8B 大端请求序列号 ullSNO
 	copy(healed[8:16], liveReq[8:16])
 
-	// 读取双方会话头实际长度
-	// 偏移 20..21: CommHead.HeadLen
-	reqSessionLen := int(binary.BigEndian.Uint16(liveReq[20:22]))
-	rspSessionLen := int(binary.BigEndian.Uint16(healed[20:22]))
-	if reqSessionLen == 0 && len(liveReq) >= 28 {
-		reqSessionLen = int(binary.BigEndian.Uint16(liveReq[26:28]))
+	// 读取双方会话头实际长度（优先取内嵌 usReqHeadLen / usRspHeadLen，兼容携带扩展头的报文）
+	commReqHeadLen := int(binary.BigEndian.Uint16(liveReq[20:22]))
+	reqSessionLen := 0
+	if len(liveReq) >= 28 {
+		cand := int(binary.BigEndian.Uint16(liveReq[26:28]))
+		if cand >= crosrpc.ReqHeadMinLen && (commReqHeadLen == 0 || cand <= commReqHeadLen) {
+			reqSessionLen = cand
+		}
 	}
-	if rspSessionLen == 0 && len(healed) >= 28 {
-		rspSessionLen = int(binary.BigEndian.Uint16(healed[26:28]))
+	if reqSessionLen == 0 {
+		reqSessionLen = commReqHeadLen
+	}
+
+	commRspHeadLen := int(binary.BigEndian.Uint16(healed[20:22]))
+	rspSessionLen := 0
+	if len(healed) >= 28 {
+		cand := int(binary.BigEndian.Uint16(healed[26:28]))
+		if _, lErr := crosrpc.LookupRspLayout(cand); lErr == nil && (commRspHeadLen == 0 || cand <= commRspHeadLen) {
+			rspSessionLen = cand
+		}
+	}
+	if rspSessionLen == 0 {
+		rspSessionLen = commRspHeadLen
 	}
 
 	if reqSessionLen > len(liveReq)-crosrpc.CommHeadLen {

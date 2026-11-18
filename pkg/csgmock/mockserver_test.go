@@ -130,6 +130,26 @@ func TestMockCSGServer_E2E_PubSubCrosRPC_AndRpcmonAll(t *testing.T) {
 	if rep.Ports[0].IPAddr != "127.0.0.1" || rep.Ports[0].Used != 1 {
 		t.Fatalf("unexpected port usage: %+v", rep.Ports)
 	}
+
+	// Verify RPCMonitorService is resolvable via dlink Sub without inflating Snapshot().ServerNum().
+	monLookupCli, err := csgdlink.Dial(mock.Addr(), 2*time.Second)
+	if err != nil {
+		t.Fatalf("monLookupCli dial failed: %v", err)
+	}
+	defer monLookupCli.Close()
+	_, _ = monLookupCli.Register(2 * time.Second)
+	_, _ = monLookupCli.ClientID(2 * time.Second)
+	monInsts, err := monLookupCli.Sub(rpcmon.ServiceName, 2*time.Second)
+	_ = monLookupCli.Unsub(rpcmon.ServiceName, 2*time.Second)
+	if err != nil {
+		t.Fatalf("sub RPCMonitorService failed: %v", err)
+	}
+	if len(monInsts) != 1 || monInsts[0].Addr != "tcp://ipv4:"+mock.MonitorAddr() {
+		t.Fatalf("expected RPCMonitorService addr tcp://ipv4:%s, got %+v", mock.MonitorAddr(), monInsts)
+	}
+	if mock.Snapshot().ServerNum() != 1 {
+		t.Fatalf("expected ServerNum to remain 1 after transient monitor lookup, got %d", mock.Snapshot().ServerNum())
+	}
 }
 
 func TestMockCSGServer_PidSuffixMatchAndMeshRewritePreservesAddr(t *testing.T) {

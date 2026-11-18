@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -38,6 +39,7 @@ type MockCSGServer struct {
 	rewriteMeshTCP   bool
 	onMeshOnlySub    func(serviceName string)
 	onSubObserved    func(clientPID uint32, serviceName string)
+	eventHook        func(event, detail string)
 
 	ln     net.Listener
 	monLn  net.Listener
@@ -106,6 +108,22 @@ func (m *MockCSGServer) SetSubObservedHook(fn func(clientPID uint32, serviceName
 	m.regLock.Lock()
 	defer m.regLock.Unlock()
 	m.onSubObserved = fn
+}
+
+// SetEventHook registers an optional callback for CSG control-plane events.
+func (m *MockCSGServer) SetEventHook(fn func(event, detail string)) {
+	m.regLock.Lock()
+	defer m.regLock.Unlock()
+	m.eventHook = fn
+}
+
+func (m *MockCSGServer) emitEvent(event, detail string) {
+	m.regLock.RLock()
+	fn := m.eventHook
+	m.regLock.RUnlock()
+	if fn != nil {
+		fn(event, detail)
+	}
 }
 
 // SeedInstance pre-registers an external/mock instance independent of client connections.
@@ -186,18 +204,25 @@ func (m *MockCSGServer) ServeConn(conn net.Conn) {
 	m.regLock.Unlock()
 
 	defer func() {
+		var discPID uint32
+		var removedPubs int
 		m.regLock.Lock()
 		delete(m.conns, conn)
 		if sess := m.sessions[key]; sess != nil {
+			discPID = sess.pid
 			for pk := range sess.pubKeys {
 				if entry, ok := m.reg[pk]; ok && !entry.seeded {
 					delete(m.reg, pk)
+					removedPubs++
 				}
 			}
 			delete(m.sessions, key)
 		}
 		m.regLock.Unlock()
 		_ = conn.Close()
+		if discPID > 0 || removedPubs > 0 {
+			m.emitEvent("DISCONNECT", fmt.Sprintf("pid=%d removed_pubs=%d remote=%s", discPID, removedPubs, key))
+		}
 	}()
 
 	for {
@@ -267,6 +292,7 @@ func (m *MockCSGServer) handleRegister(conn net.Conn, f csgdlink.Frame, body []b
 	payload := make([]byte, 8)
 	binary.BigEndian.PutUint32(payload[0:4], 0)
 	binary.BigEndian.PutUint32(payload[4:8], uuid)
+	m.emitEvent("REGISTER", fmt.Sprintf("pid=%d uuid=%d", pid, uuid))
 	return m.reply(conn, f, csgdlink.SubTypeRegisterAck, payload)
 }
 
@@ -289,6 +315,7 @@ func (m *MockCSGServer) handleClientID(conn net.Conn, f csgdlink.Frame, body []b
 	binary.BigEndian.PutUint32(payload[0:4], 0)
 	binary.BigEndian.PutUint32(payload[4:8], 0)
 	binary.BigEndian.PutUint64(payload[8:16], clientID)
+	m.emitEvent("CLIENT_ID", fmt.Sprintf("pid=%d client_id=%d", realPid, clientID))
 	return m.reply(conn, f, csgdlink.SubTypeClientIDAck, payload)
 }
 
@@ -311,6 +338,7 @@ func (m *MockCSGServer) handlePub(conn net.Conn, f csgdlink.Frame, body []byte) 
 	sess.pubKeys[pk] = struct{}{}
 	m.regLock.Unlock()
 
+	m.emitEvent("PUB", fmt.Sprintf("service=%s addr=%s pid=%d client_id=%d", req.Instance.Name64, req.Instance.Addr, req.Instance.ProcID, req.Instance.ClientID))
 	return m.reply(conn, f, csgdlink.SubTypePubAck, make([]byte, 8))
 }
 
@@ -327,8 +355,21 @@ func (m *MockCSGServer) handleSub(conn net.Conn, f csgdlink.Frame, body []byte) 
 	rewrite := m.rewriteMeshTCP
 	meshHook := m.onMeshOnlySub
 	subHook := m.onSubObserved
+	monAddr := m.MonitorAddr()
 
 	matched := collectMatchingInstances(m.reg, req.Name, req.Trans, rewrite, &m.meshRewrites)
+	if len(matched) == 0 && monAddr != "" &&
+		(req.Name == rpcmon.ServiceName || req.Name == "RPCMonitorService" || req.Name == "swp.rpc.RPCMonitorService") {
+		cand := csgdlink.Instance{
+			ProcID: uint32(os.Getpid()),
+			Name32: "RPCMonitorService",
+			Addr:   "tcp://ipv4:" + monAddr,
+			Name64: rpcmon.ServiceName,
+		}
+		if transMatches(cand.Addr, cand.Addr, req.Trans) {
+			matched = append(matched, cand)
+		}
+	}
 	m.regLock.Unlock()
 
 	if subHook != nil {
@@ -337,6 +378,7 @@ func (m *MockCSGServer) handleSub(conn net.Conn, f csgdlink.Frame, body []byte) 
 	if meshHook != nil && req.Trans[1] == 0 && req.Trans[4] != 0 {
 		meshHook(req.Name)
 	}
+	m.emitEvent("SUB", fmt.Sprintf("service=%s pid=%d matched=%d", req.Name, clientPID, len(matched)))
 
 	payload := make([]byte, 16, 16+len(matched)*csgdlink.ServiceInstLen)
 	binary.BigEndian.PutUint32(payload[0:4], uint32(len(matched)))
@@ -363,16 +405,20 @@ func (m *MockCSGServer) handleUnpub(conn net.Conn, f csgdlink.Frame, body []byte
 	}
 	m.regLock.Unlock()
 
+	m.emitEvent("UNPUB", fmt.Sprintf("service=%s addr=%s pid=%d", inst.Name64, inst.Addr, inst.ProcID))
 	return m.reply(conn, f, csgdlink.SubTypeUnpubAck, make([]byte, 8))
 }
 
 func (m *MockCSGServer) handleUnsub(conn net.Conn, f csgdlink.Frame, body []byte) error {
 	name := unsubName(body)
+	var clientPID uint32
 	m.regLock.Lock()
 	if sess := m.sessions[connKey(conn)]; sess != nil && name != "" {
+		clientPID = sess.pid
 		delete(sess.subs, name)
 	}
 	m.regLock.Unlock()
+	m.emitEvent("UNSUB", fmt.Sprintf("service=%s pid=%d", name, clientPID))
 	return m.reply(conn, f, csgdlink.SubTypeUnsubAck, make([]byte, 8))
 }
 
@@ -579,6 +625,11 @@ func (m *MockCSGServer) Snapshot() rpcmon.Snapshot {
 func procNameFromPID(pid uint32) string {
 	if pid == 0 {
 		return "mock-proc"
+	}
+	if b, err := os.ReadFile("/proc/" + strconv.FormatUint(uint64(pid), 10) + "/comm"); err == nil {
+		if name := strings.TrimSpace(string(b)); name != "" {
+			return name
+		}
 	}
 	return "pid-" + strconv.FormatUint(uint64(pid), 10)
 }

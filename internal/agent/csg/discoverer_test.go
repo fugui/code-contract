@@ -273,3 +273,28 @@ func TestDiscoverAndFuse_709Servers724Clients_RemoteLDCFiltered(t *testing.T) {
 		t.Fatalf("expected 0 leftover dlink subscriptions after DiscoverAndFuse, got %+v", leftovers)
 	}
 }
+
+func TestDiscoverAndFuse_DeduplicatesMultiPortLocalPID(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	report, fused, err := csg.DiscoverAndFuse(ctx, csg.DiscovererConfig{
+		LocalIPs: []string{"127.0.0.1"},
+		LocalPIDs: []agentproto.DiscoveredProcess{
+			{PID: 4242, ExeName: "multi-port-svc", ListenPort: 31806},
+			{PID: 4242, ExeName: "multi-port-svc", ListenPort: 31901, ServiceNames: []string{"ExtraSvc"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("DiscoverAndFuse failed: %v", err)
+	}
+	if report == nil {
+		t.Fatal("expected non-nil report")
+	}
+	if len(fused) != 1 {
+		t.Fatalf("expected 1 deduplicated PID entry, got %d: %+v", len(fused), fused)
+	}
+	if fused[0].ListenPort != 31806 || len(fused[0].ServiceNames) != 1 || fused[0].ServiceNames[0] != "ExtraSvc" {
+		t.Fatalf("unexpected merged process fields: %+v", fused[0])
+	}
+}

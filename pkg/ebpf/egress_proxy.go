@@ -300,6 +300,11 @@ func (p *EgressProxy) handleConnection(clientConn net.Conn) {
 	targetAddr := net.JoinHostPort(origIP.String(), strconv.Itoa(int(origPort)))
 	targetConn, err := net.DialTimeout("tcp", targetAddr, 3*time.Second)
 	if err != nil {
+		if p.Mode() == ModeReplayMock {
+			p.activeConns.Store(clientConn, true)
+			defer p.activeConns.Delete(clientConn)
+			p.handleMockConnection(clientConn, origIP, origPort)
+		}
 		return
 	}
 	defer targetConn.Close()
