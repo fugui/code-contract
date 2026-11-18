@@ -169,8 +169,9 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
         service_names: Array.from(selectedServices),
         import_dependencies: importDeps,
       });
+      const createdProcs = res.created_processes ?? res.created_arch_processes ?? 0;
       toast.success(
-        `CSG 蓝图导入完成：新增进程 ${res.created_arch_processes}、服务 ${res.created_services}、依赖 ${res.created_dependencies}`
+        `CSG 蓝图导入完成：新增进程 ${createdProcs}、服务 ${res.created_services}、依赖 ${res.created_dependencies}`
       );
       await loadTopology();
       onImported?.();
@@ -206,6 +207,16 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
   };
 
   const services: ReconciledCSGService[] = report?.services || [];
+  const endpoints = report?.csg_endpoints || [];
+  const discoveryErrors = report?.errors || [];
+  const liveServiceCount = report
+    ? report.summary.live_service_count ??
+      report.summary.matched_count + report.summary.undeclared_count
+    : 0;
+  const liveSubCount = report
+    ? report.summary.live_sub_count ??
+      (report.summary.sub_matched_count ?? 0) + (report.summary.sub_undeclared_count ?? 0)
+    : 0;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', padding: '4px 0' }}>
@@ -286,6 +297,86 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
 
       {report && (
         <>
+          {endpoints.length > 0 && (
+            <div
+              data-testid="csg-endpoints-selector"
+              style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '8px 12px',
+                borderRadius: '6px',
+                border: '1px solid var(--color-border-subtle)',
+                backgroundColor: 'var(--color-bg-secondary)',
+                fontSize: '12px',
+              }}
+            >
+              <span style={{ color: 'var(--color-text-secondary)', fontWeight: 500 }}>
+                候选 CSG 控制面 ({endpoints.length})：
+              </span>
+              {endpoints.map((ep, idx) => {
+                const epAddr = `${ep.listen_ip}:${ep.listen_port}`;
+                const active =
+                  csgAddrInput.trim() === epAddr || (csgAddrInput.trim() === '' && idx === 0);
+                return (
+                  <button
+                    key={`${epAddr}-${ep.source}-${idx}`}
+                    type="button"
+                    disabled={loading}
+                    onClick={() => {
+                      setCsgAddrInput(epAddr);
+                      void loadTopology(epAddr);
+                    }}
+                    style={{
+                      padding: '3px 8px',
+                      borderRadius: '4px',
+                      border: `1px solid ${
+                        active ? 'var(--color-accent-primary)' : 'var(--color-border-default)'
+                      }`,
+                      backgroundColor: active
+                        ? 'color-mix(in srgb, var(--color-accent-primary) 14%, transparent)'
+                        : 'var(--color-bg-primary)',
+                      color: active ? 'var(--color-accent-primary)' : 'var(--color-text-primary)',
+                      fontFamily: 'monospace',
+                      fontSize: '12px',
+                      cursor: loading ? 'wait' : 'pointer',
+                    }}
+                  >
+                    {epAddr} ({ep.exe_name ? `${ep.exe_name} · ` : ''}{ep.source})
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {discoveryErrors.length > 0 && (
+            <div
+              data-testid="csg-discovery-errors-banner"
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '4px',
+                padding: '10px 12px',
+                borderRadius: '6px',
+                backgroundColor: 'color-mix(in srgb, var(--color-warning) 12%, transparent)',
+                border: '1px solid var(--color-warning)',
+                color: 'var(--color-warning)',
+                fontSize: '12px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600 }}>
+                <AlertTriangle size={14} />
+                <span>CSG 发现告警 / 降级原因</span>
+              </div>
+              {discoveryErrors.map((errItem, idx) => (
+                <div key={idx} style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                  {errItem}
+                </div>
+              ))}
+            </div>
+          )}
+
           <div
             style={{
               display: 'grid',
@@ -316,7 +407,7 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
             >
               <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>已纳管 / 现网数</div>
               <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-success)' }}>
-                {report.summary.matched_count} / {report.summary.live_service_count}
+                {report.summary.matched_count} / {liveServiceCount}
               </div>
             </div>
             <div
@@ -342,7 +433,7 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
             >
               <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>现网缺失 / 订阅</div>
               <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-text-primary)' }}>
-                {report.summary.missing_in_live_count} / {report.summary.live_sub_count}
+                {report.summary.missing_in_live_count} / {liveSubCount}
               </div>
             </div>
           </div>
@@ -385,12 +476,12 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
                     </td>
                   </tr>
                 ) : (
-                  services.map((svc) => {
+                  services.map((svc, idx) => {
                     const isUndeclared = svc.state === 'UNDECLARED_IN_SSOT';
                     const checked = selectedServices.has(svc.service_name);
                     return (
                       <tr
-                        key={`${svc.service_name}-${svc.state}`}
+                        key={`${svc.service_name}-${svc.server_pid ?? 0}-${svc.port ?? 0}-${svc.state}-${idx}`}
                         style={{ borderTop: '1px solid var(--color-border-subtle)' }}
                       >
                         <td style={{ padding: '8px 10px' }}>
@@ -416,7 +507,9 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
                           </div>
                         </td>
                         <td style={{ padding: '8px 10px', color: 'var(--color-text-primary)' }}>
-                          {svc.server_proc ? `${svc.server_proc} (${svc.server_pid || 0})` : svc.ssot_module_name || '-'}
+                          {svc.server_proc
+                            ? `${svc.server_proc} (${svc.server_pid || 0})`
+                            : svc.ssot_module_name || svc.ssot_module_code || '-'}
                         </td>
                         <td style={{ padding: '8px 10px' }}>{renderStateBadge(svc.state)}</td>
                       </tr>

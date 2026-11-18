@@ -77,6 +77,7 @@ type Manager struct {
 	db               *gorm.DB
 	cfg              *config.Config
 	httpClient       *http.Client
+	discoveryClient  *http.Client
 	failureCounters  sync.Map // agentID (uint64) -> int (consecutive failures)
 	eventSubscribers sync.Map // subscriberID -> chan AgentEvent
 	subCounter       uint64
@@ -86,20 +87,31 @@ type Manager struct {
 	rearmMu          sync.Mutex
 }
 
-// NewManager 构造 Hub 管理器
-func NewManager(db *gorm.DB, cfg *config.Config) *Manager {
-	client := &http.Client{
-		Timeout: HeartbeatTimeout,
+func newAgentHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout: timeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			// 严格禁止跟随 HTTP 重定向，防御 SSRF 绕过
 			return http.ErrUseLastResponse
 		},
 	}
+}
+
+// NewManager 构造 Hub 管理器
+func NewManager(db *gorm.DB, cfg *config.Config) *Manager {
 	return &Manager{
-		db:         db,
-		cfg:        cfg,
-		httpClient: client,
+		db:              db,
+		cfg:             cfg,
+		httpClient:      newAgentHTTPClient(HeartbeatTimeout),
+		discoveryClient: newAgentHTTPClient(DiscoveryTimeout),
 	}
+}
+
+func (m *Manager) effectiveDiscoveryClient() *http.Client {
+	if m.discoveryClient != nil {
+		return m.discoveryClient
+	}
+	return m.httpClient
 }
 
 // RegisterAgent 注册并立即握手探活 Agent
@@ -509,7 +521,7 @@ func (m *Manager) DiscoverProcesses(ctx context.Context, agentID uint64, current
 		httpReq.Header.Set(agentproto.HeaderClaimCode, agent.ClaimCode)
 	}
 
-	httpResp, err := m.httpClient.Do(httpReq)
+	httpResp, err := m.effectiveDiscoveryClient().Do(httpReq)
 	if err != nil {
 		return nil, err
 	}

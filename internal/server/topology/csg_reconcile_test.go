@@ -93,9 +93,10 @@ func TestReconcileLiveCSGWithSSOT_ThreeStates(t *testing.T) {
 	}
 
 	svcOrder := models.ModuleService{
-		ModuleID:        modOrder.ID,
-		ServiceName:     "OrderService-0",
-		DiffIgnorePaths: datatypes.JSON("[]"),
+		ModuleID:         modOrder.ID,
+		ServiceName:      "OrderService-0",
+		ProtoServiceName: "order.v1.OrderService",
+		DiffIgnorePaths:  datatypes.JSON("[]"),
 	}
 	svcGhost := models.ModuleService{
 		ModuleID:        modGhost.ID,
@@ -156,7 +157,7 @@ func TestReconcileLiveCSGWithSSOT_ThreeStates(t *testing.T) {
 		t.Fatalf("ReconcileLiveCSGWithSSOT failed: %v", err)
 	}
 
-	if reconciled.Summary.MatchedCount != 1 || reconciled.Summary.UndeclaredCount != 1 || reconciled.Summary.MissingInLiveCount != 1 {
+	if reconciled.Summary.LiveServiceCount != 2 || reconciled.Summary.MatchedCount != 1 || reconciled.Summary.UndeclaredCount != 1 || reconciled.Summary.MissingInLiveCount != 1 || reconciled.Summary.LiveSubCount != 1 {
 		t.Fatalf("unexpected service summary counts: %+v", reconciled.Summary)
 	}
 
@@ -164,14 +165,14 @@ func TestReconcileLiveCSGWithSSOT_ThreeStates(t *testing.T) {
 	for _, s := range reconciled.Services {
 		statesBySvc[s.ServiceName] = s
 	}
-	if item, ok := statesBySvc["OrderService-0-12001"]; !ok || item.State != topology.CSGReconcileMatched || item.SSOTServiceID == nil || *item.SSOTServiceID != svcOrder.ID {
-		t.Fatalf("expected OrderService MATCHED, got %+v", item)
+	if item, ok := statesBySvc["OrderService-0-12001"]; !ok || item.State != topology.CSGReconcileMatched || item.SSOTServiceID == nil || *item.SSOTServiceID != svcOrder.ID || item.SSOTProtoSvc != "order.v1.OrderService" || item.SSOTModuleName != "OrderMod" {
+		t.Fatalf("expected OrderService MATCHED with proto/module meta, got %+v", item)
 	}
 	if item, ok := statesBySvc["PayService-PayService"]; !ok || item.State != topology.CSGReconcileUndeclared || item.SSOTServiceID != nil {
 		t.Fatalf("expected PayService UNDECLARED_IN_SSOT, got %+v", item)
 	}
-	if item, ok := statesBySvc["GhostService-GhostService"]; !ok || item.State != topology.CSGReconcileMissingInLive || item.SSOTServiceID == nil || *item.SSOTServiceID != svcGhost.ID {
-		t.Fatalf("expected GhostService MISSING_IN_LIVE, got %+v", item)
+	if item, ok := statesBySvc["GhostService-GhostService"]; !ok || item.State != topology.CSGReconcileMissingInLive || item.SSOTServiceID == nil || *item.SSOTServiceID != svcGhost.ID || item.SSOTModuleName != "GhostMod" || item.ExpectedPort != 20002 {
+		t.Fatalf("expected GhostService MISSING_IN_LIVE with module/expected_port, got %+v", item)
 	}
 
 	if len(reconciled.Subscriptions) != 2 {

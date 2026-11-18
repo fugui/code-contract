@@ -87,6 +87,7 @@ g++ $(printf '%q ' "${CXX_COMMON[@]}") \\
     -I"\$STAGE/sw/ssp/export" -I"\$STAGE/sw/ltcommon/export" \\
     -I"\$STAGE/sw/rpc/gen/cplus" -I"\$STAGE/sw/gen/cplus" \\
     "\$STAGE/out/rpcmon_probe.cpp" -o "$OUT" \\
+    -Wl,--disable-new-dtags -Wl,-rpath,"\$SDK/lib/link/sw:\$SDK/lib/3rd/dopra:\$SDK/lib/3rd" \\
     -L"\$SDK/lib/link/sw" -L"\$SDK/lib/3rd/dopra" -L"\$SDK/lib/3rd" \\
     -lSRMLFClient -lCommonType -l:libprotobuf.so.24 -lcroscppapi -lcroscpp \\
     -ldophicros -ldophimesh -lddmbase -lsecurec -lSSPAFplat -lSSPAFcf -lSSPAFCfg \\
@@ -96,20 +97,26 @@ EOF
 }
 
 if [[ -z "$REMOTE" ]]; then
-    echo "== 本机编译 $SRC -> $OUT" >&2
+    LOCAL_SDK="$SDK"
+    if [[ "$LOCAL_SDK" == '$HOME/SW' ]]; then
+        LOCAL_SDK="$HOME/SW"
+    fi
+    echo "== 本机编译 $SRC -> $OUT (SDK: $LOCAL_SDK)" >&2
     STAGE_DIR="${TMPDIR:-/tmp}/swinc"
     mkdir -p "$STAGE_DIR/3rd" "$STAGE_DIR/out"
-    [[ -d "$STAGE_DIR/sw" ]] || cp -r "$HOME/SW/include/sw" "$STAGE_DIR/" 2>/dev/null || true
+    [[ -d "$STAGE_DIR/sw" ]] || cp -r "$LOCAL_SDK/include/sw" "$STAGE_DIR/" 2>/dev/null || true
     for d in dopra google securec; do
-        [[ -d "$STAGE_DIR/3rd/$d" ]] || cp -r "$HOME/SW/include/3rd/$d" "$STAGE_DIR/3rd/" 2>/dev/null || true
+        [[ -d "$STAGE_DIR/3rd/$d" ]] || cp -r "$LOCAL_SDK/include/3rd/$d" "$STAGE_DIR/3rd/" 2>/dev/null || true
     done
     cp "$SRC" "$STAGE_DIR/out/rpcmon_probe.cpp"
+    mkdir -p "$(dirname "$OUT")"
     g++ "${CXX_COMMON[@]}" \
         -I"$STAGE_DIR" -I"$STAGE_DIR/3rd" -I"$STAGE_DIR/3rd/dopra" -I"$STAGE_DIR/3rd/securec" \
         -I"$STAGE_DIR/sw/ssp/export" -I"$STAGE_DIR/sw/ltcommon/export" \
         -I"$STAGE_DIR/sw/rpc/gen/cplus" -I"$STAGE_DIR/sw/gen/cplus" \
         "$STAGE_DIR/out/rpcmon_probe.cpp" -o "$OUT" \
-        -L"$HOME/SW/lib/link/sw" -L"$HOME/SW/lib/3rd/dopra" -L"$HOME/SW/lib/3rd" \
+        -Wl,--disable-new-dtags -Wl,-rpath,"$LOCAL_SDK/lib/link/sw:$LOCAL_SDK/lib/3rd/dopra:$LOCAL_SDK/lib/3rd" \
+        -L"$LOCAL_SDK/lib/link/sw" -L"$LOCAL_SDK/lib/3rd/dopra" -L"$LOCAL_SDK/lib/3rd" \
         -lSRMLFClient -lCommonType -l:libprotobuf.so.24 -lcroscppapi -lcroscpp \
         -ldophicros -ldophimesh -lddmbase -lsecurec -lSSPAFplat -lSSPAFcf -lSSPAFCfg \
         -lpthread -ldl -lrt

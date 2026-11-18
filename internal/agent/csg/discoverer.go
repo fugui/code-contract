@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,6 +13,8 @@ import (
 	"code-contract/pkg/csgdlink"
 	"code-contract/pkg/rpcmon"
 )
+
+const defaultSubEnrichBudget = 8 * time.Second
 
 // DiscovererConfig configures L1 (/proc) + L2 (rpcmon & dlink Sub->Unsub) fusion.
 type DiscovererConfig struct {
@@ -44,6 +47,8 @@ func DiscoverAndFuse(ctx context.Context, cfg DiscovererConfig) (*agentproto.CSG
 	report := &agentproto.CSGTopologyReport{
 		CSGEndpoints:  endpoints,
 		DiscoveryMode: "PROC_ONLY",
+		Services:      []agentproto.CSGServiceInfo{},
+		Subscriptions: []agentproto.CSGSubscription{},
 		CapturedAt:    time.Now().UTC().Format(time.RFC3339),
 	}
 
@@ -125,15 +130,19 @@ func DiscoverAndFuse(ctx context.Context, cfg DiscovererConfig) (*agentproto.CSG
 		}
 
 		for _, s := range monRep.Servers {
-			hostIP, port, _ := csgdlink.ParseAddrIPPort(s.ServerAddr)
+			hostIP, port := extractHostIPAndPort(s.ServerAddr)
 			if !isHostLocal(hostIP, localSet) {
 				report.FilteredRemoteCount++
 				continue
 			}
+			transport := detectTransport(s.ServerAddr)
+			if transport == "" && port > 0 {
+				transport = "TCP"
+			}
 			svc := agentproto.CSGServiceInfo{
 				ServiceName: s.ServerName,
 				Addr:        s.ServerAddr,
-				Transport:   detectTransport(s.ServerAddr),
+				Transport:   transport,
 				HostIP:      hostIP,
 				Port:        port,
 				ServerPID:   s.Pid,
@@ -148,7 +157,8 @@ func DiscoverAndFuse(ctx context.Context, cfg DiscovererConfig) (*agentproto.CSG
 				report.FilteredTransientCnt++
 				continue
 			}
-			if !isHostLocal(c.ClientAddr, localSet) {
+			clientIP, _ := extractHostIPAndPort(c.ClientAddr)
+			if !isHostLocal(clientIP, localSet) {
 				report.FilteredRemoteCount++
 				continue
 			}
@@ -257,16 +267,22 @@ func locateForConfig(cfg DiscovererConfig) []agentproto.CSGEndpointInfo {
 }
 
 func enrichServicesByDlinkSub(ctx context.Context, csgAddr string, timeout time.Duration, services []agentproto.CSGServiceInfo) error {
-	client, err := csgdlink.Dial(csgAddr, timeout)
+	if len(services) == 0 {
+		return nil
+	}
+	enrichCtx, cancel := context.WithTimeout(ctx, defaultSubEnrichBudget)
+	defer cancel()
+
+	client, err := csgdlink.Dial(csgAddr, cappedOpTimeout(enrichCtx, timeout))
 	if err != nil {
 		return err
 	}
 	defer func() { _ = client.Close() }()
 
-	if _, err := client.Register(timeout); err != nil {
+	if _, err := client.Register(cappedOpTimeout(enrichCtx, timeout)); err != nil {
 		return err
 	}
-	if _, err := client.ClientID(timeout); err != nil {
+	if _, err := client.ClientID(cappedOpTimeout(enrichCtx, timeout)); err != nil {
 		return err
 	}
 
@@ -281,11 +297,15 @@ func enrichServicesByDlinkSub(ctx context.Context, csgAddr string, timeout time.
 	}
 
 	for _, name := range names {
-		if err := ctx.Err(); err != nil {
+		if err := enrichCtx.Err(); err != nil {
 			return err
 		}
-		insts, err := client.Sub(name, timeout)
-		if unsubErr := client.Unsub(name, timeout); unsubErr != nil {
+		insts, err := client.Sub(name, cappedOpTimeout(enrichCtx, timeout))
+		unsubTimeout := timeout
+		if unsubTimeout <= 0 || unsubTimeout > time.Second {
+			unsubTimeout = time.Second
+		}
+		if unsubErr := client.Unsub(name, unsubTimeout); unsubErr != nil {
 			return fmt.Errorf("unsub %s: %w", name, unsubErr)
 		}
 		if err != nil || len(insts) == 0 {
@@ -298,12 +318,64 @@ func enrichServicesByDlinkSub(ctx context.Context, csgAddr string, timeout time.
 			services[idx].OsNodeID = match.OsNodeID
 			services[idx].CompatName32 = match.Name32
 			services[idx].ResolvedBySub = true
-			if match.Addr != "" && services[idx].Addr == "" {
+			if match.Addr != "" && (services[idx].Addr == "" || !strings.Contains(services[idx].Addr, "://") || services[idx].Port == 0) {
 				services[idx].Addr = match.Addr
+				if tr := detectTransport(match.Addr); tr != "" {
+					services[idx].Transport = tr
+				}
+				if hp, p := extractHostIPAndPort(match.Addr); hp != "" {
+					services[idx].HostIP = hp
+					if p > 0 {
+						services[idx].Port = p
+					}
+				}
 			}
 		}
 	}
 	return nil
+}
+
+func cappedOpTimeout(ctx context.Context, fallback time.Duration) time.Duration {
+	if fallback <= 0 {
+		fallback = 2 * time.Second
+	}
+	if dl, ok := ctx.Deadline(); ok {
+		rem := time.Until(dl)
+		if rem <= 0 {
+			return 10 * time.Millisecond
+		}
+		if rem < fallback {
+			return rem
+		}
+	}
+	return fallback
+}
+
+func extractHostIPAndPort(raw string) (string, uint16) {
+	if host, port, ok := csgdlink.ParseAddrIPPort(raw); ok {
+		return host, port
+	}
+	trimmed := strings.TrimSpace(raw)
+	trimmed = strings.TrimPrefix(trimmed, "ipv4:")
+	if trimmed == "" {
+		return "", 0
+	}
+	if ip := net.ParseIP(trimmed); ip != nil {
+		if v4 := ip.To4(); v4 != nil {
+			return v4.String(), 0
+		}
+	}
+	if host, portStr, err := net.SplitHostPort(trimmed); err == nil {
+		if ip := net.ParseIP(host); ip != nil {
+			if v4 := ip.To4(); v4 != nil {
+				if p, pErr := strconv.Atoi(portStr); pErr == nil && p > 0 && p <= 65535 {
+					return v4.String(), uint16(p)
+				}
+				return v4.String(), 0
+			}
+		}
+	}
+	return "", 0
 }
 
 func matchBestInstance(svc agentproto.CSGServiceInfo, insts []csgdlink.Instance) csgdlink.Instance {
@@ -317,21 +389,31 @@ func matchBestInstance(svc agentproto.CSGServiceInfo, insts []csgdlink.Instance)
 			return inst
 		}
 	}
+	if svc.HostIP != "" {
+		for _, inst := range insts {
+			if hp, _ := extractHostIPAndPort(inst.Addr); hp == svc.HostIP {
+				return inst
+			}
+		}
+	}
 	return insts[0]
 }
 
 func detectTransport(addr string) string {
+	trimmed := strings.TrimSpace(addr)
 	switch {
-	case csgdlink.IsMeshAddr(addr):
+	case csgdlink.IsMeshAddr(trimmed):
 		return "MESH"
-	case strings.Contains(addr, "dms://"):
+	case strings.Contains(trimmed, "dms://"):
 		return "DMS"
-	case strings.Contains(addr, "dpuc://"):
+	case strings.Contains(trimmed, "dpuc://"):
 		return "UC"
-	case strings.Contains(addr, "domain://"):
+	case strings.Contains(trimmed, "domain://"):
 		return "DOMAIN"
-	default:
+	case csgdlink.IsTCPAddr(trimmed):
 		return "TCP"
+	default:
+		return ""
 	}
 }
 

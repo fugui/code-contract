@@ -193,6 +193,7 @@ func main() {
 	log.Printf("[Agent] 监听地址: %s, 白名单: %v", *listenAddr, allowIPs)
 	log.Printf("[Agent] 认领码 (ClaimCode): %s", srv.ClaimCode())
 	log.Printf("[Agent] 实例 BootID: %s", srv.BootID())
+	log.Printf("[Agent] CSG 发现配置: csg_addrs=%v, monitor_addr=%q, probe_bin=%q", cfg.CSGAddrs, cfg.CSGMonitorAddr, cfg.CSGProbeBin)
 
 	// 启动特权自检与显式横幅输出
 	if srv.EbpfManager() != nil {

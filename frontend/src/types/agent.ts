@@ -147,12 +147,16 @@ export interface ReconciledCSGService {
   port?: number;
   server_pid?: number;
   server_proc?: string;
+  os_node_id?: number;
+  version?: number;
   is_local?: boolean;
   resolved_by_sub?: boolean;
   state: CSGReconcileState;
   ssot_service_id?: number;
   ssot_module_id?: number;
+  ssot_module_code?: string;
   ssot_module_name?: string;
+  ssot_arch_process_id?: number;
   ssot_arch_proc_id?: number;
   ssot_proto_svc?: string;
   expected_port?: number;
@@ -164,6 +168,7 @@ export interface ReconciledCSGSubscription {
   client_addr: string;
   service_name: string;
   state: CSGReconcileState;
+  ssot_dep_id?: number;
 }
 
 export interface CSGReconcileSummary {
@@ -172,7 +177,10 @@ export interface CSGReconcileSummary {
   undeclared_count: number;
   missing_in_live_count: number;
   live_sub_count: number;
-  undeclared_sub_count: number;
+  sub_matched_count?: number;
+  sub_undeclared_count?: number;
+  sub_missing_count?: number;
+  undeclared_sub_count?: number;
 }
 
 export interface CSGTopologyReconcileResp {
@@ -199,12 +207,16 @@ export interface CSGImportBlueprintReq {
 }
 
 export interface CSGImportBlueprintResult {
-  created_arch_processes: number;
+  created_processes: number;
+  skipped_processes?: number;
+  created_arch_processes?: number;
   created_modules: number;
   created_services: number;
   skipped_services: number;
   created_dependencies: number;
   skipped_dependencies: number;
-  imported_service_names: string[];
-  imported_dependencies: string[];
+  functional_group_id?: number;
+  process_group_id?: number;
+  imported_service_names?: string[];
+  imported_dependencies?: string[];
 }

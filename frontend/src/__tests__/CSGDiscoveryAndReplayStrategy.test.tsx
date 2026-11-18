@@ -120,6 +120,7 @@ describe('M28 CSG Discovery, Blueprint Import & 3-Mode Simulation Console', () =
     filtered_remote_count: 2,
     filtered_transient_count: 1,
     captured_at: '2026-11-18T00:00:00Z',
+    errors: ['rpcmon: native probe warning'],
   };
 
   const adminUser: CurrentUserProfile = {
@@ -168,6 +169,11 @@ describe('M28 CSG Discovery, Blueprint Import & 3-Mode Simulation Console', () =
     expect(adminHtml).toContain('OrderServiceImpl-OrderService');
     expect(adminHtml).toContain('LedgerServiceImpl-LedgerService');
     expect(adminHtml).toContain('LegacyAudit-0');
+    expect(adminHtml).toContain('csg-endpoints-selector');
+    expect(adminHtml).toContain('127.0.0.1:31806');
+    expect(adminHtml).toContain('csg-discovery-errors-banner');
+    expect(adminHtml).toContain('rpcmon: native probe warning');
+    expect(adminHtml).toContain('1<!-- --> / <!-- -->2');
     expect(adminHtml).toContain('一键导入 SSOT 蓝图');
     expect(adminHtml).not.toContain('csg-admin-only-notice');
 

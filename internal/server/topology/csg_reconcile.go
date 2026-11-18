@@ -48,7 +48,10 @@ type ReconciledCSGService struct {
 	SSOTServiceID     *uint64           `json:"ssot_service_id,omitempty"`
 	SSOTModuleID      *uint64           `json:"ssot_module_id,omitempty"`
 	SSOTModuleCode    string            `json:"ssot_module_code,omitempty"`
+	SSOTModuleName    string            `json:"ssot_module_name,omitempty"`
 	SSOTArchProcessID *uint64           `json:"ssot_arch_process_id,omitempty"`
+	SSOTProtoSvc      string            `json:"ssot_proto_svc,omitempty"`
+	ExpectedPort      int               `json:"expected_port,omitempty"`
 }
 
 // ReconciledCSGSubscription merges a live CSG subscription (or SSOT dependency missing in live).
@@ -63,9 +66,11 @@ type ReconciledCSGSubscription struct {
 
 // CSGReconcileSummary summarizes the 3-state diff counts across services and subscriptions.
 type CSGReconcileSummary struct {
+	LiveServiceCount   int `json:"live_service_count"`
 	MatchedCount       int `json:"matched_count"`
 	UndeclaredCount    int `json:"undeclared_count"`
 	MissingInLiveCount int `json:"missing_in_live_count"`
+	LiveSubCount       int `json:"live_sub_count"`
 	SubMatchedCount    int `json:"sub_matched_count"`
 	SubUndeclaredCount int `json:"sub_undeclared_count"`
 	SubMissingCount    int `json:"sub_missing_count"`
@@ -107,12 +112,16 @@ func ReconcileLiveCSGWithSSOT(db *gorm.DB, agentID uint64, live *agentproto.CSGT
 		return nil, err
 	}
 	mountedArchProcIDs := make(map[uint64]struct{}, len(procs))
+	mountedPortByArchProcID := make(map[uint64]int, len(procs))
 	for _, p := range procs {
 		mountedArchProcIDs[p.ArchProcessID] = struct{}{}
+		if p.EffectiveListenPort > 0 {
+			mountedPortByArchProcID[p.ArchProcessID] = p.EffectiveListenPort
+		}
 	}
 
 	var allSvcs []models.ModuleService
-	if err := db.Preload("Module").Order("id ASC").Find(&allSvcs).Error; err != nil {
+	if err := db.Preload("Module").Preload("Module.ArchProcess").Order("id ASC").Find(&allSvcs).Error; err != nil {
 		return nil, err
 	}
 
@@ -138,15 +147,43 @@ func ReconcileLiveCSGWithSSOT(db *gorm.DB, agentID uint64, live *agentproto.CSGT
 		}
 	}
 
+	endpoints := live.CSGEndpoints
+	if endpoints == nil {
+		endpoints = []agentproto.CSGEndpointInfo{}
+	}
 	resp := &CSGTopologyReconcileResp{
 		AgentID:              agentID,
 		DiscoveryMode:        live.DiscoveryMode,
-		CSGEndpoints:         live.CSGEndpoints,
+		CSGEndpoints:         endpoints,
 		PortUsages:           live.PortUsages,
+		Services:             []ReconciledCSGService{},
+		Subscriptions:        []ReconciledCSGSubscription{},
 		FilteredRemoteCount:  live.FilteredRemoteCount,
 		FilteredTransientCnt: live.FilteredTransientCnt,
 		CapturedAt:           live.CapturedAt,
 		Errors:               live.Errors,
+	}
+	resp.Summary.LiveServiceCount = len(live.Services)
+	resp.Summary.LiveSubCount = len(live.Subscriptions)
+
+	populateSSOTServiceMeta := func(item *ReconciledCSGService, svc models.ModuleService, includeExpectedPort bool) {
+		sid := svc.ID
+		mid := svc.ModuleID
+		item.SSOTServiceID = &sid
+		item.SSOTModuleID = &mid
+		item.SSOTProtoSvc = strings.TrimSpace(svc.ProtoServiceName)
+		if svc.Module != nil {
+			item.SSOTModuleCode = svc.Module.Code
+			item.SSOTModuleName = svc.Module.Name
+			item.SSOTArchProcessID = svc.Module.ArchProcessID
+			if includeExpectedPort && svc.Module.ArchProcessID != nil {
+				if p := mountedPortByArchProcID[*svc.Module.ArchProcessID]; p > 0 {
+					item.ExpectedPort = p
+				} else if svc.Module.ArchProcess != nil && svc.Module.ArchProcess.DefaultListenPort > 0 {
+					item.ExpectedPort = svc.Module.ArchProcess.DefaultListenPort
+				}
+			}
+		}
 	}
 
 	matchedSvcIDs := make(map[uint64]struct{})
@@ -170,14 +207,7 @@ func ReconcileLiveCSGWithSSOT(db *gorm.DB, agentID uint64, live *agentproto.CSGT
 		}
 		if ok {
 			item.State = CSGReconcileMatched
-			sid := matched.ID
-			mid := matched.ModuleID
-			item.SSOTServiceID = &sid
-			item.SSOTModuleID = &mid
-			if matched.Module != nil {
-				item.SSOTModuleCode = matched.Module.Code
-				item.SSOTArchProcessID = matched.Module.ArchProcessID
-			}
+			populateSSOTServiceMeta(&item, matched, false)
 			matchedSvcIDs[matched.ID] = struct{}{}
 			resp.Summary.MatchedCount++
 		} else {
@@ -191,18 +221,11 @@ func ReconcileLiveCSGWithSSOT(db *gorm.DB, agentID uint64, live *agentproto.CSGT
 		if _, seen := matchedSvcIDs[ms.ID]; seen {
 			continue
 		}
-		sid := ms.ID
-		mid := ms.ModuleID
 		item := ReconciledCSGService{
-			ServiceName:   ms.ServiceName,
-			State:         CSGReconcileMissingInLive,
-			SSOTServiceID: &sid,
-			SSOTModuleID:  &mid,
+			ServiceName: ms.ServiceName,
+			State:       CSGReconcileMissingInLive,
 		}
-		if ms.Module != nil {
-			item.SSOTModuleCode = ms.Module.Code
-			item.SSOTArchProcessID = ms.Module.ArchProcessID
-		}
+		populateSSOTServiceMeta(&item, ms, true)
 		resp.Summary.MissingInLiveCount++
 		resp.Services = append(resp.Services, item)
 	}

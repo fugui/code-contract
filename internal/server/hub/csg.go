@@ -42,7 +42,7 @@ func (m *Manager) FetchAgentCSGTopology(ctx context.Context, agentID uint64, csg
 		req.Header.Set(agentproto.HeaderClaimCode, agent.ClaimCode)
 	}
 
-	resp, err := m.httpClient.Do(req)
+	resp, err := m.effectiveDiscoveryClient().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("请求 Agent CSG 拓扑失败: %w", err)
 	}

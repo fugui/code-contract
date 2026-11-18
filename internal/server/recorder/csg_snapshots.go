@@ -26,9 +26,9 @@ func (o *Orchestrator) collectInitialCSGSnapshots(ctx context.Context, agentIDs 
 		if err := o.db.WithContext(ctx).Where("id IN ?", agentIDs).Find(&agents).Error; err == nil {
 			client := o.httpClient
 			if client == nil {
-				client = &http.Client{Timeout: 2 * time.Second}
+				client = &http.Client{Timeout: 5 * time.Second}
 			}
-			subCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			subCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			defer cancel()
 
 			for _, ag := range agents {

@@ -21,6 +21,7 @@ import (
 const (
 	DefaultLeaseTTL        = 30 * time.Second
 	HeartbeatTimeout       = 2 * time.Second
+	DiscoveryTimeout       = 25 * time.Second
 	MaxMissedHeartbeats    = 3
 	MinAgentPort           = 1024
 	MaxAgentPort           = 65535

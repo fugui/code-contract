@@ -279,6 +279,7 @@ func TestDiscoverAndFuse_DeduplicatesMultiPortLocalPID(t *testing.T) {
 	defer cancel()
 
 	report, fused, err := csg.DiscoverAndFuse(ctx, csg.DiscovererConfig{
+		Locate:   csg.LocateOptions{ProcRoot: t.TempDir()},
 		LocalIPs: []string{"127.0.0.1"},
 		LocalPIDs: []agentproto.DiscoveredProcess{
 			{PID: 4242, ExeName: "multi-port-svc", ListenPort: 31806},
@@ -296,5 +297,98 @@ func TestDiscoverAndFuse_DeduplicatesMultiPortLocalPID(t *testing.T) {
 	}
 	if fused[0].ListenPort != 31806 || len(fused[0].ServiceNames) != 1 || fused[0].ServiceNames[0] != "ExtraSvc" {
 		t.Fatalf("unexpected merged process fields: %+v", fused[0])
+	}
+}
+
+func TestDiscoverAndFuse_BareIPRemoteLDCFilteredAndSubEnrichBackfillsAddr(t *testing.T) {
+	mockCSG := csgmock.NewMockCSGServer("127.0.0.1:0")
+	if err := mockCSG.Start(); err != nil {
+		t.Fatalf("mockCSG.Start failed: %v", err)
+	}
+	defer mockCSG.Close()
+
+	mockCSG.SeedInstance(csgdlink.Instance{
+		ClientID: 11,
+		Version:  7,
+		ProcID:   6001,
+		OsNodeID: 1,
+		Name32:   "LocalTCP",
+		Addr:     "tcp://ipv4:127.0.0.1:28101",
+		Name64:   "LocalTCP-LocalTCP",
+	})
+	mockCSG.SeedInstance(csgdlink.Instance{
+		ClientID: 12,
+		Version:  8,
+		ProcID:   6002,
+		OsNodeID: 2,
+		Name32:   "LocalMesh",
+		Addr:     "dophi_mesh://ipv4:127.0.0.1:28102",
+		Name64:   "LocalMesh-LocalMesh",
+	})
+
+	snap := rpcmon.Snapshot{
+		Ports: []rpcmon.PortUsage{{IPAddr: "127.0.0.1", Used: 2, Total: 1200}},
+		Servers: []rpcmon.ServerEntry{
+			{ProcName: "local_tcp_svr", Pid: 6001, ServerName: "LocalTCP-LocalTCP", ServerAddr: "127.0.0.1"},
+			{ProcName: "local_mesh_svr", Pid: 6002, ServerName: "LocalMesh-LocalMesh", ServerAddr: "ipv4:127.0.0.1"},
+			{ProcName: "remote_ldc_svr", Pid: 900001, ServerName: "RemoteLDC-RemoteLDC", ServerAddr: "10.1.126.150"},
+		},
+		Clients: []rpcmon.ClientEntry{
+			{ProcName: "local_cli", Pid: 6003, ClientAddr: "127.0.0.1", ServerName: "LocalTCP-LocalTCP"},
+			{ProcName: "remote_cli", Pid: 900002, ClientAddr: "ipv4:10.1.126.150", ServerName: "LocalTCP-LocalTCP"},
+		},
+	}
+
+	monLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen mon failed: %v", err)
+	}
+	defer monLn.Close()
+	go func() {
+		_ = rpcmon.NewServer(&scaleSnapshotProvider{snap: snap}).Serve(monLn)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	report, fusedProcs, err := csg.DiscoverAndFuse(ctx, csg.DiscovererConfig{
+		MonitorAddr: monLn.Addr().String(),
+		CSGAddr:     mockCSG.Addr(),
+		LocalIPs:    []string{"127.0.0.1"},
+		SubEnrich:   true,
+	})
+	if err != nil {
+		t.Fatalf("DiscoverAndFuse failed: %v", err)
+	}
+	if len(report.Services) != 2 {
+		t.Fatalf("expected 2 local services (1 bare-IP remote LDC filtered), got %d: %+v", len(report.Services), report.Services)
+	}
+	if len(report.Subscriptions) != 1 {
+		t.Fatalf("expected 1 local subscription (1 remote LDC client filtered), got %d: %+v", len(report.Subscriptions), report.Subscriptions)
+	}
+	if report.FilteredRemoteCount != 2 {
+		t.Fatalf("expected FilteredRemoteCount=2, got %d", report.FilteredRemoteCount)
+	}
+
+	byName := make(map[string]agentproto.CSGServiceInfo, len(report.Services))
+	for _, s := range report.Services {
+		byName[s.ServiceName] = s
+	}
+	if tcpSvc := byName["LocalTCP-LocalTCP"]; tcpSvc.Addr != "tcp://ipv4:127.0.0.1:28101" || tcpSvc.Transport != "TCP" || tcpSvc.Port != 28101 || !tcpSvc.ResolvedBySub {
+		t.Fatalf("expected LocalTCP bare IP enriched to full tcp URI & port, got %+v", tcpSvc)
+	}
+	if meshSvc := byName["LocalMesh-LocalMesh"]; meshSvc.Addr != "dophi_mesh://ipv4:127.0.0.1:28102" || meshSvc.Transport != "MESH" || meshSvc.Port != 28102 || !meshSvc.ResolvedBySub {
+		t.Fatalf("expected LocalMesh bare IP enriched to full dophi_mesh URI & port, got %+v", meshSvc)
+	}
+
+	procByPID := make(map[uint32]agentproto.DiscoveredProcess, len(fusedProcs))
+	for _, p := range fusedProcs {
+		procByPID[p.PID] = p
+	}
+	if _, leaked := procByPID[900001]; leaked {
+		t.Fatalf("remote bare-IP server leaked into fusedProcs: %+v", procByPID[900001])
+	}
+	if pTCP := procByPID[6001]; pTCP.ListenPort != 28101 {
+		t.Fatalf("expected local_tcp_svr ListenPort=28101 backfilled from SubEnrich, got %+v", pTCP)
 	}
 }

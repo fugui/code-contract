@@ -689,3 +689,42 @@ func TestAgentHub_SingleFlightRearm_BackoffAndOptimisticLock(t *testing.T) {
 		t.Fatalf("自愈恢复后期望 READY，实际: %s", freshProc.ProbeStatus)
 	}
 }
+
+func TestFetchAgentCSGTopology_ExceedsHeartbeatTimeout(t *testing.T) {
+	db := setupTestDB(t)
+
+	slowAgent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/agent/v1/csg/topology" {
+			http.NotFound(w, r)
+			return
+		}
+		time.Sleep(hub.HeartbeatTimeout + 200*time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(agentproto.CSGTopologyReport{
+			DiscoveryMode: "NATIVE_PROBE",
+			Services: []agentproto.CSGServiceInfo{
+				{ServiceName: "SlowProbeSvc-SlowProbeSvc", IsLocal: true},
+			},
+		})
+	}))
+	defer slowAgent.Close()
+
+	agent := models.Agent{
+		Name:     "SlowCSGAgent",
+		Endpoint: slowAgent.URL,
+		Scope:    models.ScopeShared,
+		Status:   models.AgentStatusOnline,
+	}
+	if err := db.Create(&agent).Error; err != nil {
+		t.Fatalf("create agent failed: %v", err)
+	}
+
+	mgr := hub.NewManager(db, &config.Config{})
+	rep, err := mgr.FetchAgentCSGTopology(context.Background(), agent.ID, "", 1, true)
+	if err != nil {
+		t.Fatalf("expected FetchAgentCSGTopology to tolerate >HeartbeatTimeout latency, got err: %v", err)
+	}
+	if rep.DiscoveryMode != "NATIVE_PROBE" || len(rep.Services) != 1 {
+		t.Fatalf("unexpected topology report: %+v", rep)
+	}
+}
