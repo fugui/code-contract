@@ -1,11 +1,18 @@
 # 架构与活体契约治理 (`code-contract`) 数据面引擎与 CROS RPC 协议栈设计
 
 - **文档编号**：`02-data-plane-and-cros-rpc-engine.md`
-- **文档版本**：v1.5.0
-- **更新日期**：2026-11-04
+- **文档版本**：v1.6.0
+- **更新日期**：2026-11-18
 - **归属阶段**：阶段二：系统架构与数据模型设计 (`02-design`)
-- **状态**：已批准待实施 (Approved for M13)
-- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.10.0)、[`01-cros-rpc-protocol-spec.md`](../07-references/01-cros-rpc-protocol-spec.md) (v1.0.0)、[`01-system-architecture.md`](./01-system-architecture.md)、[`09-arch-process-ssot-and-ebpf-premount-standby-adr.md`](../05-adr/09-arch-process-ssot-and-ebpf-premount-standby-adr.md) (ADR-09 v1.1.0)、[`11-single-process-bidirectional-capture-and-recording-ux-adr.md`](../05-adr/11-single-process-bidirectional-capture-and-recording-ux-adr.md) (ADR-11 v1.0.0)、[`12-packet-causality-call-tree-and-sequence-ux-adr.md`](../05-adr/12-packet-causality-call-tree-and-sequence-ux-adr.md) (ADR-12 v1.0.0)
+- **状态**：M1~M27 已交付；ADR-21 v2.1.0 (M28) SDD 详细设计定稿
+- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.22.0)、[`01-cros-rpc-protocol-spec.md`](../07-references/01-cros-rpc-protocol-spec.md) (v1.0.0)、[`01-system-architecture.md`](./01-system-architecture.md) (v1.9.0)、[`09-arch-process-ssot-and-ebpf-premount-standby-adr.md`](../05-adr/09-arch-process-ssot-and-ebpf-premount-standby-adr.md) (ADR-09 v1.1.0)、[`11-single-process-bidirectional-capture-and-recording-ux-adr.md`](../05-adr/11-single-process-bidirectional-capture-and-recording-ux-adr.md) (ADR-11 v1.0.0)、[`12-packet-causality-call-tree-and-sequence-ux-adr.md`](../05-adr/12-packet-causality-call-tree-and-sequence-ux-adr.md) (ADR-12 v1.0.0)、[`21-csg-aware-agent-service-discovery-and-replay-mock-adr.md`](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (ADR-21 v2.1.0)
+
+### 修订记录
+
+| 版本 | 日期 | 修订说明 |
+| :--- | :--- | :--- |
+| v1.5.0 | 2026-11-04 | 依据 ADR-11 / ADR-12 对齐全出站透明代理、`StreamFramer` SIMD 紧缩、首字节定戳与 `ScopedMockMatcher` 因果池设计 |
+| v1.6.0 | 2026-11-18 | **依据 ADR-21 (v2.1.0 / M28) 增补 CSG 控制面协议栈、双层自动发现与三模仿真测试引擎设计**：新增 §4（`pkg/csgdlink` 32B 帧头/248B 实例/`Observer` 与 `pkg/rpcmon` 基于 `pkg/crosrpc` 标准帧及零 `protoregistry` Wire 编解码）、§5（`internal/agent/csg/discoverer.go` 多租户定位、L1/L2/L3 融合与跨板 LDC 隔离）及 §6（`pkg/csgmock.MockCSGServer` 与 `SimulationController` `CLIENT_INJECT`/`PUB_STUB`/`MOCK_SERVER` 状态机及五出口清理） |
 
 ---
 
@@ -491,3 +498,86 @@ func HealSingleResponseFrame(liveReq []byte, mockRsp []byte) ([]byte, error) {
 ```
 
 * **多段分片应答 (`RSP_SEG`) 连续切片自愈保障**：当一次下游调用录制有 $K$ 个响应片段（如 `RSP_SEG #0`, `RSP_SEG #1`, `RSP #2`）时，`HealResponseFrames` 按 `usRspMsgNo` 录制原序遍历全部 $K$ 个片段，逐片调用 `HealSingleResponseFrame(liveReq, seg_k)` 后依次写入 Mock Socket，确保分片流在客户端侧无缝重组。
+
+---
+
+## 4. CSG 控制面协议栈与旁路观测引擎 (`pkg/csgdlink`)
+
+依据 [`ADR-21`](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) 规范，新增纯 Go 标准库包 `pkg/csgdlink`（**零第三方依赖、零 CGO、零 DB**），负责 DOPRA `dlink` / CSG 控制面双向编解码、只读发现/受控桩注册客户端，以及 `EgressProxy` 旁路控制面观测。
+
+### 4.1 dlink 32B 帧头与控制面子类型契约 (`protocol.go` / `instance.go`)
+
+1. **TCP 控制面与保活机制**：CSG 控制面端口按租户编码为 `31800 + userId`（明文 TCP，无 TLS/鉴权握手），由内核 `SO_KEEPALIVE` 保活；客户端断链触发服务端 `csgServerLinkFaultProc → csgClientForceDownline` 自动清理其 `PUB` 实例、`SUB` 订阅与申请端口。
+2. **32 字节大端帧头 `DDM_DLINK_MSG_HEAD_S`** (`Frame`)：
+   - `0..3`: `uiMagic = 0x444C4E4B` (`"DLNK"`)；
+   - `4..5`: `usType` (`0=REQUEST`, `1=REPLY`, `2=NOTIFY`, `3=FAULT`)；
+   - `6..7`: `usMsgHeadLen = 32`；
+   - `8..9`: `usSize`（消息体字节长，上限 `32000`）；
+   - `10..11`: `usSubType`；
+   - `12..15`: `uiCorrID`（`NOTIFY` 固定 `0xFFFFFFFF`）；
+   - `16..19`: `uiLinkID`（CSG `serviceID = 0x0A`，客户端固定置 `0x020A0000`，由 `(uiLinkID >> 16) & 0xFF == 0x0A` 识别）；
+   - `20..23`: `uiReserved = 0`；
+   - `24..31`: `ullTimeStamp` (UINT64 BE)。
+3. **10 类请求/应答 + 2 类异步 `NOTIFY` 子类型**：
+   - dlink 系统消息：`REGISTER (0xFF00 -> 0xFF01, 8B/8B)`、`UNREGISTER (0xFF02 -> 0xFF03, 8B/8B)`；
+   - CSG 控制消息：`CLIENT_ID (1 -> 1001, 8B/16B)`、`PUB_SERVICE (2 -> 1002, 256B/8B)`、`SUB_SERVICE (3 -> 1003, 80B/16B+N×248B, N≤128)`、`UNPUB_SERVICE (4 -> 1004, 248B/8B)`、`UNSUB_SERVICE (5 -> 1005, 72B/8B)`、`SESSION_ID_GET (6 -> 1006, 80B/8B)`、`GET_BIND_ADDR (7 -> 1007, 8B/128B)`、`FREE_BIND_ADDR (8 -> 1008, 8B/8B)`；
+   - dlink `NOTIFY (usType=2)`：`PUB_UPDATE (usSubType=1, 224B CSG_SVC_CHANGE_MSG_S)`、`SUBER_QUIT (usSubType=2, 8B CSG_SUBER_QUIT_MSG_S)`。
+4. **248B 服务实例结构 `CSG_SERVICE_INST_INFO_S` (`Instance`) 与 8 项收口加固**：
+   - `0..7`: `ullClientId`；`8..15`: `ullVersion`（高 32 位含 `ucFromLdcFlag`）；`16..19`: `uiProcId`；`20..23`: `uiOsNodeId`；`24..55`: `acService32byteName[32]`；`56..183`: `acSvcInstAddr[128]`（URI 如 `tcp://ipv4:10.29.92.80:18500` 或 `dophi_mesh://ipv4:...`）；`184..247`: `acServiceName[64]`（64B 运行期服务名）。
+   - **`CString` 截断安全**：统一在首个 `\x00` 字节截断（`bytes.IndexByte(b, 0)`），杜绝 C 栈残留污染。
+   - **7 字节传输数组 `aucSubTransType[7]`**：`SUB` 请求偏移 `72..78` 按枚举下标置 `1`（`0=DEFAULT, 1=TCP, 2=DMS, 3=UC, 4=MESH, 5=DOMAIN, 6=BUTT`，同源对齐 `CROS RPC_COMM_HEAD_S.ucProtocol`）。
+   - **Mesh 重写 helper (`RewriteMeshAddrToTCP` / `ParseInstAddr`)**：保持原 `IP:PORT` 不变仅将 `dophi_mesh://` 前缀替换为 `tcp://`，确保 `ADR-16` 按目的 `IP:Port` 索引的 `@dst_tag` 多实现隔离继续有效。
+
+### 4.2 协议对齐正交分流、客户端会话与 `Observer` 旁路 (`client.go` / `observer.go`)
+
+1. **`EgressProxy` 与 `"DLNK"` / `"CSE.TCP"` 完全正交分流**：
+   - `pkg/crosrpc.StreamFramer` 严格要求前 7 字节 `"CSE.TCP"` 且 `ucProtocol <= 1`，因此透传 `EgressProxy` 的 `"DLNK"`（`0x444C4E4B`）控制面字节流会被 `StreamFramer` 天然跳过（零伪帧）。
+   - `csgdlink.IsDlinkPrefix` 仅在前 4 字节匹配 `"DLNK"` 且 `IsCSGLinkID` 匹配时触发 `csgdlink.Observer` 旁路读取；二者互不干扰。
+2. **`csgdlink.Client` 只读/受控原语**：
+   - 提供 `Dial`、`Close`、`Register`、`Unregister`、`ClientID`、`Pub`、`Unpub`、`Sub`、`Unsub`；
+   - `ClientID` 写入 `os.Getpid()` 以便 `RPCMonitorService` 准确关联进程；`roundTrip` 自动识别异步 `NOTIFY` 帧触发可选 `OnNotify` 回调后继续等待匹配 `uiCorrID` 的 `REPLY`；
+   - 发现阶段 `Sub` 拿到实例后立即 `Unsub` ➔ `Unregister` ➔ `Close`；**禁止调用 `GET_BIND_ADDR` / `FREE_BIND_ADDR` 推进真实 CSG 端口游标**。
+3. **录制期控制面旁路 `Observer`**：
+   - 在 `MODE_CAPTURE` 录制期对识别到 `"DLNK"` 的连接旁路解码 `SUB` / `SUB_ACK` / `PUB` / `UNPUB` / `NOTIFY(PUB_UPDATE)`，生成结构化摘要并发送 `EventCSGObservation (0x08)` WebSocket 二进制信封帧至主控。
+
+---
+
+## 5. CSG 监控契约与统一 CROS RPC 传输层 (`pkg/rpcmon`)
+
+### 5.1 监控模型、纯 Go Hand-Coded Protobuf Wire 编解码与 `deps_test.go` 红线
+
+1. **统一监控模型 (`model.go`)**：
+   - 对齐 `RPCMonitorServiceMsg.proto` 定义 `PortUsage` (`ipAddr`, `uiPortUsed`, `uiPortTotal`)、`ServerEntry` (`procName`, `pid`, `serverName`, `serverAddr`)、`ClientEntry` (`procName`, `pid`, `clientAddr`, `serverName`)、`Snapshot`、`Report`；
+   - 定义双端共享抽象 `Provider interface { Snapshot() Snapshot }` 与 `Backend interface { FetchSnapshot(ctx) (Snapshot, error); Close() error }`，以及 `BuildReport(ctx, b, op)`（支持 `all | port-info | server-num | server-detail | client-num | client-detail`）。
+2. **手写纯 Go Wire 编解码器 (`wire.go`) 守住零 `protoregistry` 红线**：
+   - 标准 `protoc-gen-go` 会引入 `google.golang.org/protobuf/runtime/protoimpl` 并传递依赖 `protoregistry`，直接违反 `cmd/agent/deps_test.go` 硬禁令；
+   - 因此 `pkg/rpcmon/wire.go` 仅用 Go 标准库实现 varint / length-delimited / fixed64 Wire 原语及 `EncodePortInfoResponse`、`DecodePortInfoResponse`、`EncodeServerDetailResponse`、`DecodeServerDetailResponse`、`EncodeClientDetailResponse`、`DecodeClientDetailResponse`、`EncodeUInt32Type` 与 `VoidTypePayload ([]byte{0x08, 0x00})`，做到 **零 `google.golang.org/protobuf` 运行时依赖**。
+
+### 5.2 基于 `pkg/crosrpc` 的标准 `CrosTCP` 监控通道与双后端实现
+
+> **架构收敛声明**：彻底淘汰 `@csg-ver` 原型期的 `internal/rpcmon/transport.go` 12B 私有 `"RMON"` 帧。`pkg/rpcmon` 与 `@pkg-crosrpc` 完全统一！
+
+1. **标准 `CrosTCP` 服务端/客户端 (`cros_transport.go` / `server.go`)**：
+   - `pkg/rpcmon.Server` 与 `NewCrosTCP(addr, timeout)` **100% 使用 [`pkg/crosrpc`](#1-共享协议栈-pkgcrosrpc-设计零-pb-依赖) 标准二进制帧**（`24B RPC_COMM_HEAD_S "CSE.TCP"\x01` + `256B V05 RPC_REQ_HEAD_S` / `200B V04 RPC_RSP_HEAD_S` + Wire Payload）；
+   - 按 `ascServiceName = "RPCMonitorService-RPCMonitorService"` 与 `ascOperation ∈ {GetRpcPortInfo, GetRpcServerNumInfo, GetRpcServerDetailInfo, GetRpcClientNumInfo, GetRpcClientDetailInfo}` 分发（通过 `BuildCrosReqPacket` / `BuildCrosRspPacket` 构造，并直接兼容 `pkg/ebpf` 与 `pkg/replay` 采集/自愈通路）。
+2. **真机 `NativeBackend` (`native.go`)**：
+   - 当宿主机存在管理员预置并校验通过的只读 C++ 探针 `rpcmon_probe`（源码位于 `scripts/csg/rpcmon_probe.cpp`，由 `scripts/csg/build-native-probe.sh` 编译）时，通过 `exec.CommandContext` 按严格格式白名单参数 `ipv4:<ip>:<port>` 调用（严禁拼接 Shell），自动跳过环境初始化日志从首个 `{` 起解析 JSON 输出为 `rpcmon.Snapshot`，进程退出即释放全部 DOPRA SDK 资源；**Agent 本体保持 100% 纯 Go 零 CGO**。
+
+---
+
+## 6. 内存态 CSG 控制面沙箱 (`pkg/csgmock`) 与三模仿真数据面接入
+
+1. **内存态 `MockCSGServer` (`pkg/csgmock/mockserver.go`)**：
+   - 依赖约束：仅依赖 `pkg/csgdlink`、`pkg/rpcmon` 与 Go 标准库，**严禁依赖 `pkg/ebpf` 与数据库包**；
+   - 实现完整 10 类 dlink/CSG 控制面消息 + 断链自动清理 `sessions`/`reg`（对齐 `csgServerLinkFaultProc`）+ 原生实现 `rpcmon.Provider`；
+   - `StartMonitor(addr)` 在开启 `pkg/crosrpc` 标准 `rpcmon.Server` 监听的同时自动向 `reg` 写入 `"RPCMonitorService-RPCMonitorService"` -> `"tcp://ipv4:" + monAddr`，实现与真机 `DophiServer` 100% 同构的自注册与 `SUB` 寻址；
+   - **双通路接入**：支持通过 `ServeConn(conn)` 由 `EgressProxy` 在 `REPLAY_MOCK` 下对 `[31800, 31900]`/`"DLNK"` 连接进行进程内透明接管，亦支持独立 `-addr/-monitor` 端口供容器/无特权降级使用。
+2. **快照预载、`Mesh->TCP` 重写与 PID 后缀归一化 (`Config`)**：
+   - 初始化预载 `Preload []csgdlink.Instance`（源自录制 `csg_snapshots` 或发现快照）；
+   - 处理 `SUB` 时校验 7B `aucSubTransType`：若仅 `Trans[4]==1 && Trans[1]==0`（纯 `dophi_mesh://` 请求），触发 `OnMeshOnlySub` 并返回快速失败诊断 `CSG_DATAPLANE_MESH_UNSUPPORTED`；
+   - 若支持 `TCP`：先精确匹配 `req.Name`，未命中时按正则 `^(.+-\d+)-(\d+)$` 查 `normIndex` 并在返回实例中回显请求的 `Name64`（通过客户端 `strcmp`）；开启 `RewriteMeshToTCP` 时自动将快照 `dophi_mesh://ipv4:IP:PORT` 重写为 `tcp://ipv4:IP:PORT`（**保留原 `IP:PORT` 对齐 `@dst_tag`**）；
+   - `PUB`/`UNPUB` 仅在沙箱内存 `reg` 增删并累计 `pubSwallowed`（绝不外泄真实 CSG）；`GET_BIND_ADDR` 仅固定分配 `cfg.FixedBindPort`（若端口冲突返错）。
+3. **三模仿真测试数据面配合规则 (`CLIENT_INJECT` / `PUB_STUB` / `MOCK_SERVER`)**：
+   - **`CLIENT_INJECT`**：`ReplayExecutor` 注入前经只读 `csgdlink.Sub` 解析被测服务在线 `tcp://ipv4:ip:port` 后拨号发送 `MngMocks` 与 `IngressItems`（纯 `mesh` 报 `422 CSG_DATAPLANE_MESH_UNSUPPORTED`），无静态 `ListenPort` 依赖；
+   - **`PUB_STUB`**：Agent 逐一对下游服务执行前置 `Sub(svc)` 门禁（任意在线返回 `409 CSG_SERVICE_ALREADY_PUBLISHED`），全部缺席时启动本地 TCP `MockListener` 并执行 `Pub(svc, "tcp://ipv4:"+mockAddr)`，下游请求直达 `ScopedMockMatcher` 执行分层匹配与 `ullSNO` 自愈（严禁 `GET_BIND_ADDR`）；
+   - **`MOCK_SERVER`**：`EgressProxy` 分流 `"DLNK"` 控制面至 `MockCSGServer`，数据面由 `ScopedMockMatcher` 拦截自愈；重放结束与异常取消/超时/进程退出时执行 **5 出口原子自洁**，将 `MockCSGServer.Snapshot()` 导出至 `ReplayTaskResultResp.CSGSandboxReport`。

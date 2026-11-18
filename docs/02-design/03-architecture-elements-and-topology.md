@@ -1,12 +1,12 @@
 # 架构与活体契约治理 (`code-contract`) 架构元素建模与拓扑一致性验证设计
 
 - **文档编号**：`03-architecture-elements-and-topology.md`
-- **文档版本**：v1.9.0
-- **更新日期**：2026-11-14
+- **文档版本**：v1.10.0
+- **更新日期**：2026-11-18
 - **归属阶段**：阶段二：系统架构与数据模型设计 (`02-design`)
-- **状态**：M1~M22 已交付；M23~M26 已完成设计待实施 (Approved for M23~M26)
-- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.19.0)、[`01-system-architecture.md`](./01-system-architecture.md) (v1.8.0)、[`09-arch-process-ssot-and-ebpf-premount-standby-adr.md`](../05-adr/09-arch-process-ssot-and-ebpf-premount-standby-adr.md) (ADR-09 v1.1.0)、[`15-scalable-topology-focus-and-layout-persistence-adr.md`](../05-adr/15-scalable-topology-focus-and-layout-persistence-adr.md) (ADR-15 v1.3.0)、[`16-multi-implementation-service-contract-adr.md`](../05-adr/16-multi-implementation-service-contract-adr.md) (ADR-16 v2.0.0)、[`17-topology-single-layer-drilldown-and-layout-ux-adr.md`](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md) (ADR-17 v1.1.0)、[`18-proto-full-lifecycle-and-git-mr-governance-adr.md`](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (ADR-18 v1.2.0)
-- **关联工程作战卡**：[`docs/04-tasks/21-m20-multi-implementation-service-contract.md`](../04-tasks/21-m20-multi-implementation-service-contract.md) (M20)、[`docs/04-tasks/22-m21-topology-single-layer-drilldown-and-layout-ux.md`](../04-tasks/22-m21-topology-single-layer-drilldown-and-layout-ux.md) (M21)、[`docs/04-tasks/23-m22-protocompile-layering-and-dependency-graph.md`](../04-tasks/23-m22-protocompile-layering-and-dependency-graph.md) (M22)
+- **状态**：M1~M27 已交付；ADR-21 v2.1.0 (M28) SDD 详细设计定稿
+- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.22.0)、[`01-system-architecture.md`](./01-system-architecture.md) (v1.9.0)、[`09-arch-process-ssot-and-ebpf-premount-standby-adr.md`](../05-adr/09-arch-process-ssot-and-ebpf-premount-standby-adr.md) (ADR-09 v1.1.0)、[`15-scalable-topology-focus-and-layout-persistence-adr.md`](../05-adr/15-scalable-topology-focus-and-layout-persistence-adr.md) (ADR-15 v1.3.0)、[`16-multi-implementation-service-contract-adr.md`](../05-adr/16-multi-implementation-service-contract-adr.md) (ADR-16 v2.0.0)、[`17-topology-single-layer-drilldown-and-layout-ux-adr.md`](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md) (ADR-17 v1.1.0)、[`18-proto-full-lifecycle-and-git-mr-governance-adr.md`](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (ADR-18 v1.3.0)、[`21-csg-aware-agent-service-discovery-and-replay-mock-adr.md`](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (ADR-21 v2.1.0)
+- **关联工程作战卡**：[`docs/04-tasks/21-m20-multi-implementation-service-contract.md`](../04-tasks/21-m20-multi-implementation-service-contract.md) (M20)、[`docs/04-tasks/22-m21-topology-single-layer-drilldown-and-layout-ux.md`](../04-tasks/22-m21-topology-single-layer-drilldown-and-layout-ux.md) (M21)、[`docs/04-tasks/23-m22-protocompile-layering-and-dependency-graph.md`](../04-tasks/23-m22-protocompile-layering-and-dependency-graph.md) (M22)、[`docs/04-tasks/29-m28-csg-service-discovery-and-multi-mode-simulation.md`](../04-tasks/29-m28-csg-service-discovery-and-multi-mode-simulation.md) (M28)
 
 ### 修订记录
 
@@ -18,6 +18,7 @@
 | v1.7.1 | 2026-11-13 | 依据 [`ADR-17` (v1.1.0)](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md) 架构检视意见加固 §4.2 与 §6：1. `scopeAndFilter` 固定「全子树过滤在前、单层投影在后」；2. 外部传送门卡强制 `FIRST/LAST` 贴边并在 `detectCycles` 中豁免 `EXTERNAL_CONTEXT` 假阳性环路；3. `pruneIsolated` 受控于 `hideIsolated === true` 且保留 `internalEdgeCount > 0` 的容器；4. 五类节点组件（补齐 `UnregisteredInterfaceNode.tsx`）`overflow: hidden`、四向双向 `<Handle>` 绑定及非 `right->left` 走线丢弃 ELK `bendPoints` 切换 `SmoothStep`；5. `${focusScope}::${extId}` 在 `extractPersistablePositions` 与 `diffLayoutAgainstGraph` 中的白名单兼容及 `SavedFilterState` 字段对齐 |
 | v1.8.0 | 2026-11-13 | 依据 [`ADR-18` (v1.1.0)](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (`M22`) 增补：1. §2.3 可配置架构层级 (`layer_level`) 校验规则与模块间有向环路检测守卫；2. §4.4 `GraphNode.Meta` 补充有效层级元数据；3. §6.5 `/topology` 客户端 SVG / PNG 导出设计 (`F-32`) |
 | v1.9.0 | 2026-11-13 | 依据 [`ADR-18` (v1.2.0)](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) 检视意见修订 §2.3 与 §6.5：1. 明确更新入参使用 `*int` 区分「未传保持原值」与「传 `0` 显式豁免」、补充绑定多实现 `ContractID` 时对既有 `DISPATCH` 消费方的反向层级校核及 `CONTRACT_LIB` DIP 倒挂分层约定；2. §6.5 废弃易触发 Canvas 跨域污染或 CSS 变量丢失的 `<foreignObject>` 方案，改为基于画布模型数据的程序化纯矢量 `<svg>` + `getComputedStyle` 解析 `--color-*` Token + 离屏 2x `<canvas>` PNG 导出 |
+| v1.10.0 | 2026-11-18 | 依据 [`ADR-21` (v2.1.0)](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (`M28`) 同步 CSG 现网自动发现与蓝图对齐设计：1. §2.1 演进 `A-07` 与服务名映射契约（允许 `ModuleService.service_name` 存储最长 64B 的 CSG 物理发布名如 `OrderSvc-1024-8`，并新增 `proto_service_name` 注入 `CompiledRegistry.ServiceAliases` 与 `^(.+-\d+)-(\d+)$` 实例号剥离归一化）；2. 新增 §3.4 基于 CSG 双层自动发现（`dlink` + `RPCMonitorService`）的架构 SSOT 三态对账（`MATCHED`/`UNDECLARED`/`GHOST`）与 `POST /api/agents/:id/csg/import-blueprint` 一键架构导入闭环 |
 
 ---
 
@@ -141,21 +142,23 @@ func MoveFunctionalGroup(tx *gorm.DB, groupID uint64, newParentID *uint64) error
 - **`PROVIDE`（供给服务 / 实现契约，`contract_module_services`，仅 `BUSINESS` 模块可声明）**：本业务功能模块对外实现的 CROS RPC 服务（`contract_id IS NULL` 为默认独占供给 `EXCLUSIVE`；`contract_id IS NOT NULL` 为实现某多实现契约 `MULTI_IMPL` 并携带业务身份 `impl_key`）；
 - **`DEPEND`（依赖服务 / 分发依赖，`contract_module_dependencies`，仅 `BUSINESS` 模块可声明）**：本业务功能模块运行期需要调用的下游内部具体服务实现（关联 `service_id`）、多实现契约分发调用（关联 `contract_id`，`DISPATCH`）或外部异构系统（`is_external = true`）。
 
-### 2.1 `{package}.{serviceName}` 规范化命名契约 (A-07) 与分模式唯一性红线 (修订 A-05)
+### 2.1 `{package}.{serviceName}` 与 CSG 64B 运行期服务名映射契约 (修订 A-07)
 
-依据 DOPHI CROS RPC 框架运行时规范，线上报文 `RPC_REQ_HEAD_S` 中的 `ascServiceName` 与 `ascOperation` 严格满足以下映射公式：
+依据 DOPHI CROS RPC 与 DOPRA CSG 现网运行时规范（参见 [`ADR-21`](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) §3.3 / §3.6）：
+- **经典点分形式**：未启用 CSG 时，线上 `RPC_REQ_HEAD_S.ascServiceName` 按 `{package}.{serviceName}`（无 `package` 时取 `{serviceName}`）拼接；
+- **CSG 运行期 64B 形式**：启用 CSG 时，C++ 框架按 `append(clsName, 0, 31).append("-").append(svrName, 0, 31)` 拼接（如 `RPCMonitorService-RPCMonitorService`、`SMCLService-CSC`、或带实例号与启动 PID 后缀 `SSPMonitorService-SSPMonitorService-1-52341`），**该 64B 字符串同时写入 CSG 控制面 `acServiceName[64]` 与 CROS RPC 数据面 `ascServiceName[64]`**。
 
-$$\text{ascServiceName} = \begin{cases} \text{package} + \text{"."} + \text{serviceName}, & \text{package} \neq \text{""} \\ \text{serviceName}, & \text{package} = \text{""} \end{cases}, \quad \text{ascOperation} = \text{methodName}$$
+| 场景示例 | 运行期 `ModuleService.service_name` | 可选 `proto_service_name` (`.pb` 全名) | 注入 `ServiceAliases` 映射关系 | 规范化 `operation` |
+| :--- | :--- | :--- | :--- | :--- |
+| 标准点分（无别名） | `dophi.order.v1.TradeService` | `""`（回退等于 `service_name`） | 直查 `Operations["dophi.order.v1.TradeService"]` | `CreateOrder` |
+| CSG 64B 运行期名 | `RPCMonitorService-RPCMonitorService` | `swp.rpc.RPCMonitorService` | `ServiceAliases["RPCMonitorService-RPCMonitorService"] = "swp.rpc.RPCMonitorService"` | `GetRpcServerDetailInfo` |
+| 实例号 + PID 后缀 | `SSPMonitorService-SSPMonitorService-1-52341` | `swp.ssp.SSPMonitorService` | 登记去 PID 基名 `SSPMonitorService-SSPMonitorService-1`；匹配与解码均支持 `^(.+-\d+)-(\d+)$` 归一化 | `GetStatus` |
 
-| Protobuf 定义示例 | `package` 声明 | `service` 名称 | `rpc` 方法名 | 规范化 `service_name` (`ascServiceName`) | 规范化 `operation` (`ascOperation`) |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| `dophi/order/v1/trade.proto` | `dophi.order.v1` | `TradeService` | `CreateOrder` | `dophi.order.v1.TradeService` | `CreateOrder` |
-| `cros/auth/session.proto` | `cros.auth` | `SessionMgr` | `VerifyTicket` | `cros.auth.SessionMgr` | `VerifyTicket` |
-
-* **强校验规则**：
-  1. `package` 与 `serviceName` **统一遵循点分连接规范**（`.`，与 `internal/server/decoder/registry.go` 动态解码注册表完全一致；若未声明 `package` 则直接采用 `serviceName`）；
-  2. 受限于 CROS RPC 协议头 `CHAR[64]`（含末尾 `\0` 终止符），`service_name` 与 `operation` 字节长度均强制校验为 **`1..63` 位可见 ASCII 字符**（正则：`^[A-Za-z0-9._]{1,63}$` 与 `^[A-Za-z0-9_]{1,63}$`）。
-  3. **唯一性红线（由 [`ADR-16`](../05-adr/16-multi-implementation-service-contract-adr.md) v2.0 修订 A-05）**：
+* **强校验与别名映射规则**：
+  1. **运行期 `service_name` 真实源原则**：`contract_module_services.service_name` 始终以线上 `ascServiceName` / CSG `acServiceName` 为唯一真实源（支持长度 **`1..63` 位可见 ASCII**，正则扩展为 **`^[A-Za-z0-9._-]{1,63}$`**，兼容 `-` 连字符）；`operation` 正则保持 `^[A-Za-z0-9_]{1,63}$`。
+  2. **可选 `.pb` 契约全名绑定 (`proto_service_name`)**：`contract_module_services` 新增可选列 `proto_service_name varchar(128) NOT NULL DEFAULT ''`（非空时校验点分格式 `^[A-Za-z0-9._]{1,128}$`）。当 `proto_service_name != "" && proto_service_name != service_name` 时，`internal/server/decoder/registry.go` 在 `Reload()` 阶段自动向既有 `CompiledRegistry.ServiceAliases` 注入 `ServiceAliases[ms.ServiceName] = ms.ProtoServiceName`（复用 `ADR-16` 别名解析路径，无需改造解码器主流程即可完成 Protobuf 动态解码、字典树反射与字段级 Diff）。
+  3. **实例级 PID 后缀归一化 (`^(.+-\d+)-(\d+)$`)**：架构建模登记实例基名（如 `SSPMonitorService-SSPMonitorService-1`），控制面归因/解码及 `pkg/csgmock.MockCSGServer` 查找索引时自动剥离末尾 `-{pid}` 匹配模板并回显请求的 `Name64`。
+  4. **唯一性红线（由 [`ADR-16`](../05-adr/16-multi-implementation-service-contract-adr.md) v2.0 修订 A-05）**：
      - **独占契约与自定义发布名实现全局唯一供给（`contract_id IS NULL OR is_custom_service_name = true`）**：对于独占服务，以及实现多实现契约但自定义了不同于契约原名的运行期发布服务名（如 `DH_SyncService`）的服务，其 `service_name` 在全库部分唯一索引 `uk_contract_mod_svc_name_excl ON (service_name) WHERE contract_id IS NULL OR is_custom_service_name = true` 保护下保持全局唯一，且自定义发布名不得与任意 `ServiceContract.service_name` 冲突；
      - **多实现契约按 `(contract_id, impl_key)` 与 `(contract_id, module_id)` 唯一（`MULTI_IMPL`，`contract_id IS NOT NULL`）**：契约本身在 `contract_service_contracts` 中按 `.pb` 原始 `service_name` 全局唯一（`uk_contract_svc_contract_name`）；其下各实现行通过部分唯一索引 `uk_contract_mod_svc_contract_impl` 与 `uk_contract_mod_svc_contract_mod` 保证同一契约下每个 `impl_key` 唯一且同一模块对同一契约至多实现一次；
      - **消费依赖唯一性**：同一消费模块对同一内部具体服务实现唯一（`UNIQUE(consumer_module_id, service_id)`），对同一多实现分发契约唯一（`uk_contract_dep_consumer_contract ON (consumer_module_id, contract_id) WHERE contract_id IS NOT NULL`），且同一消费方对同一契约不得同时声明分发依赖与具体实现依赖（`409 Conflict`）。
@@ -400,6 +403,26 @@ func ValidateReplayProcessCompatibility(
 	return nil
 }
 ```
+
+### 3.4 基于 CSG 双层自动发现的架构 SSOT 三态对账与一键蓝图导入 (`ADR-21` / M28)
+
+依托 Agent 上报的 `CSGTopologyReport` 与融合后的 `[]DiscoveredProcess`（含 `CSGServices` 与 `CSGSubscriptions`），控制面无需先执行流量录制即可在 `/agents` 与 `/architecture` 执行架构治理建模闭环：
+
+1. **三层实时对账引擎 (`ReconcileLiveCSGWithSSOT`)**：
+   - **进程对账**：将本机非远端 LDC 的 CSG 进程 `(procName, cmdline, listenPort)` 与该环境已挂载的 `Process -> ArchProcess` 按监听端口/进程名模板匹配；
+   - **服务供给对账 (`PROVIDE`)**：按 `service_name`（含 `^(.+-\d+)-(\d+)$` PID 后缀剥离归一化）比对进程发布的 `CSGServices[]` vs 该 `ArchProcess` 承载业务模块的 `ModuleService` 声明；
+   - **服务依赖对账 (`DEPEND`)**：按进程订阅的 `CSGSubscriptions[]`（已剔除 `rpcmon_probe` 自身瞬态订阅）比对承载模块的 `ModuleDependency` 声明（支持解析直接依赖 `ServiceID` 与多实现分发契约 `ContractID`），统一输出三态标签：
+     - `MATCHED`（现网与架构 SSOT 一致）；
+     - `UNDECLARED_IN_SSOT`（现网存在发布或订阅但 SSOT 尚未登记）；
+     - `MISSING_IN_LIVE`（SSOT 已声明但现网当前离线/未发布/未订阅）。
+2. **一键导入/同步架构蓝图闭环 (`POST /api/agents/:id/csg/import-blueprint`)**：
+   - **权限守卫**：仅 `contract_admin` / `super_admin` 可执行全局 SSOT 写入（`RequireAdmin("contract_admin")` + `commonAudit`，遵循 [`ADR-21`](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) §10 Non-Goal 5：绝不越过管理员审批自动覆写全局 SSOT）；
+   - **单事务幂等创建顺序**：接收管理员筛选的进程、发布服务与依赖边勾选清单，在 PostgreSQL 事务内按拓扑顺序执行（不覆写既有非空人工字段）：
+     1. 为尚未建档的本机 CSG 进程创建标准物理进程 `ArchProcess`（归入指定或默认 `ArchProcessGroup`，若已传 `listen_port == 0` 兼容纯客户端进程 `A-02`）并挂载/绑定至当前 `Agent` (`Process`)；
+     2. 创建或关联归属 `Module`（绑定 `arch_process_id`，遵守 `A-03`）；
+     3. 注册 `ModuleService`（写入 64B 运行期 `service_name`，若 `<ClassName>-<svrName>` 左段在生效 `.pb` 注册表中命中单一后缀如 `*.ClassName`，自动推荐填充 candidate `proto_service_name` 供解码衔接，遵守 `A-07` 与 `A-05`）；
+     4. 根据本机 `Clients` 订阅关系查询目标 `ModuleService` 或 `ServiceContract` 幂等补齐 `ModuleDependency`（校验并尊重 `layer_level` 与 `AssertNoCyclicDependency` 守卫，无法归因的跨板/未纳管目标可选跳过或登记为 `is_external=true` 外部系统）；
+   - **审计追踪**：记录 `contract_arch:import_csg_blueprint` 批量导入汇总与变更对象计数。
 
 ---
 

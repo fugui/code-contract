@@ -1,11 +1,11 @@
 # 架构与活体契约治理 (`code-contract`) 数据库物理模型与 GORM 建模字典
 
 - **文档编号**：`05-database-schema.md`
-- **文档版本**：v1.9.0
-- **更新日期**：2026-11-14
+- **文档版本**：v1.10.0
+- **更新日期**：2026-11-18
 - **归属阶段**：阶段二：系统架构与数据模型设计 (`02-design`)
-- **状态**：M1~M23 已交付；M24~M26 已批准待实施 (Approved for M24~M26)
-- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.20.0)、[`01-system-architecture.md`](./01-system-architecture.md) (v1.8.1)、[`04-traffic-storage-partitioning-and-relational-normalization.md`](../05-adr/04-traffic-storage-partitioning-and-relational-normalization.md)、[`09-arch-process-ssot-and-ebpf-premount-standby-adr.md`](../05-adr/09-arch-process-ssot-and-ebpf-premount-standby-adr.md) (ADR-09 v1.1.0)、[`12-packet-causality-call-tree-and-sequence-ux-adr.md`](../05-adr/12-packet-causality-call-tree-and-sequence-ux-adr.md) (ADR-12 v1.0.0)、[`14-governance-dashboard-golden-suite-and-ci-gate-adr.md`](../05-adr/14-governance-dashboard-golden-suite-and-ci-gate-adr.md) (ADR-14 v1.1.0)、[`15-scalable-topology-focus-and-layout-persistence-adr.md`](../05-adr/15-scalable-topology-focus-and-layout-persistence-adr.md) (ADR-15 v1.3.0)、[`16-multi-implementation-service-contract-adr.md`](../05-adr/16-multi-implementation-service-contract-adr.md) (ADR-16 v2.0.0)、[`17-topology-single-layer-drilldown-and-layout-ux-adr.md`](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md) (ADR-17 v1.1.0)、[`18-proto-full-lifecycle-and-git-mr-governance-adr.md`](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (ADR-18 v1.3.0)
+- **状态**：M1~M27 已交付；ADR-21 v2.1.0 (M28) SDD 详细设计定稿
+- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.22.0)、[`01-system-architecture.md`](./01-system-architecture.md) (v1.9.0)、[`04-traffic-storage-partitioning-and-relational-normalization.md`](../05-adr/04-traffic-storage-partitioning-and-relational-normalization.md)、[`09-arch-process-ssot-and-ebpf-premount-standby-adr.md`](../05-adr/09-arch-process-ssot-and-ebpf-premount-standby-adr.md) (ADR-09 v1.1.0)、[`12-packet-causality-call-tree-and-sequence-ux-adr.md`](../05-adr/12-packet-causality-call-tree-and-sequence-ux-adr.md) (ADR-12 v1.0.0)、[`14-governance-dashboard-golden-suite-and-ci-gate-adr.md`](../05-adr/14-governance-dashboard-golden-suite-and-ci-gate-adr.md) (ADR-14 v1.1.0)、[`15-scalable-topology-focus-and-layout-persistence-adr.md`](../05-adr/15-scalable-topology-focus-and-layout-persistence-adr.md) (ADR-15 v1.3.0)、[`16-multi-implementation-service-contract-adr.md`](../05-adr/16-multi-implementation-service-contract-adr.md) (ADR-16 v2.0.0)、[`17-topology-single-layer-drilldown-and-layout-ux-adr.md`](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md) (ADR-17 v1.1.0)、[`18-proto-full-lifecycle-and-git-mr-governance-adr.md`](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (ADR-18 v1.3.0)、[`21-csg-aware-agent-service-discovery-and-replay-mock-adr.md`](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (ADR-21 v2.1.0)
 
 ### 修订记录
 
@@ -17,6 +17,7 @@
 | v1.7.0 | 2026-11-13 | 依据 [`ADR-18`](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (v1.1.0, `M22~M25`) 扩充 Proto 全生命周期、Git 同步、MR 门禁与通知实体 |
 | v1.8.0 | 2026-11-13 | 依据 [`ADR-18`](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (v1.2.0, `M22~M26`) 检视修订：全库扩充为 **30 张核心 `contract_*` 业务表 + `contract_settings` 运行配置表（共 31 张物理表）**：1. 将 `GitRepo` 拆分为 **Git 仓连接 (`contract_git_repos`, #20) `1:N` 编译单元 (`contract_git_proto_bundles`, #21)** 原生支持 Monorepo 多子目录包，对应为 `ProtoSchema` 增补 `source_bundle_id`，`ProtoFile` (#22) 增补 `bundle_id`/`target_schema_name`/`latest_version_id`/`is_deleted`（零写锁）；2. `MRCheckRun` (#29) 增补 `bundle_id`/`mr_url`/`target_head_sha`/`remote_comment_id`/`event_phase`，去重索引升级为 `uk_contract_mr_dedup (git_repo_id, COALESCE(bundle_id, 0), event_phase, head_commit_sha, target_head_sha)` 防 Fast-Forward 同 SHA 误丢；3. `CheckRule` (#25) 增补 `suggestion_template`，`VocabularyTerm` (#26) 补齐 `aliases`/`description_en`/`similar_terms`/`domain`；4. `Notification` (#30) 规范为 `email_status`/`external_channel`/`email_error`，`contract_settings` 增补 `outbound_trusted_cidrs`、`code_notifier_enabled`、`code_notifier_url`、`code_notifier_token_enc` 支持跨机 LAN 部署的 `code-notifier`（AES 主密钥统一为 `CONTRACT_CRYPTO_KEY`） |
 | v1.9.0 | 2026-11-13 | 依据 [`ADR-18`](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (v1.3.0) 清除无用的外部旧库迁移设计：鉴于 `code-proto` 与 `protohub` 均未开发完成且从未运行，正式移除 `scripts/migrate_protohub_vocab` SQLite/JSON 迁移清单、`PROTOHUB_IMPORT` 枚举值与 SQLite 列对照表；`VocabularyTerm.Source` 收敛为 `MANUAL \| BUILTIN_SEED \| LLM_SUGGESTED`，并在 `SetupWithDB` 内直接完成通用基础词根与默认规则的幂等 Seed 初始化 |
+| v1.10.0 | 2026-11-18 | 依据 [`ADR-21` (v2.1.0)](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (`M28`) 扩充 CSG 现网自动发现与三模仿真审计字段（**零新增物理表**，维持 `30` 张核心业务表 + `contract_settings` = `31` 张表）：1. `contract_module_services` 增补 `proto_service_name` 映射实际 Protobuf `service` 名并建立前缀索引；2. `contract_recording_sessions` 与 `contract_golden_suite_items` 增补 `csg_snapshots` 固化 CSG `dlink` 与 LDC 订阅快照；3. `contract_replay_tasks` 增补 `csg_strategy`（`AUTO\|CLIENT_INJECT\|PUB_STUB\|MOCK_SERVER`）与 `csg_sandbox_report` 审计字段；4. 同步 §4 索引/约束与 §5 `409 CSG_SERVICE_ALREADY_PUBLISHED` / `422 CSG_DATAPLANE_MESH_UNSUPPORTED` 冲突矩阵 |
 
 ---
 
@@ -42,6 +43,9 @@
      1. **GORM `AutoMigrate` 与默认列升级**：在 `SetupWithDB` 中按里程碑扩充 **11 张新表**：`&ProtoDocSymbol{}` (M23)、`&CheckRule{}`/`&VocabularyTerm{}`/`&CheckReport{}`/`&CheckViolation{}` (M24)、`&GitRepo{}`/`&GitProtoBundle{}`/`&ProtoFile{}`/`&ProtoFileVersion{}` (M25)、`&MRCheckRun{}`/`&Notification{}` (M26)；为存量 `contract_subsystems` 与 `contract_modules` 幂等追加 `layer_level INT NOT NULL DEFAULT 0`（默认 `0` = 不限制分层，零破坏存量依赖）；为 `contract_proto_schemas` 幂等追加 `source_type VARCHAR(16) NOT NULL DEFAULT 'UPLOAD_PB'`、`git_repo_id BIGINT NULL`、`source_bundle_id BIGINT NULL`、`source_commit_sha VARCHAR(64) NOT NULL DEFAULT ''` 与 `source_mr_iid INT NULL`；
      2. **部分唯一索引、表达式去重索引与约束**：在 `DO $$ ... END $$` 中创建部分唯一索引 `uk_contract_pfile_bundle_path UNIQUE (bundle_id, file_path) WHERE is_deleted = false`、`uk_contract_mr_dedup UNIQUE (git_repo_id, COALESCE(bundle_id, 0), event_phase, head_commit_sha, target_head_sha)` 与通知覆盖索引 `idx_contract_notif_user_read (recipient_user_id, is_read, created_at DESC)`，幂等刷新新域表全部 `CHECK` 约束；
      3. **内置静态规则与通用基础词根幂等初始化（零 SQLite）**：因 `code-proto` 与 `protohub` 均未开发完成且未真正运行过，无历史数据库需要迁入；`SetupWithDB` 启动时通过 `EnsureBuiltinCheckRules`（`INSERT ... ON CONFLICT (rule_code) DO NOTHING` 预置 `ADR-18` 默认静态规则，含多段包名、默认 `WARNING` 的 `COMMENT_REQUIRED`/`DUPLICATE_MESSAGE_AST` 与 `suggestion_template`）及 `EnsureBuiltinVocabularyTerms`（`INSERT ... ON CONFLICT (term) DO NOTHING` 预置高频通用基础缩写词根，`source = 'BUILTIN_SEED'`、`is_approved = true`），全仓严禁引入任何 SQLite 驱动。
+   - **M28 CSG 自动发现与三模仿真零建表幂等加列迁移（`ADR-21` v2.1.0，维持 30+1 表总数不变）**：
+     1. `GORM AutoMigrate` 为 4 张既有表幂等追加轻量列（零数据破坏，100% 向后兼容）：`contract_module_services.proto_service_name VARCHAR(128) NOT NULL DEFAULT ''`、`contract_recording_sessions.csg_snapshots JSONB NOT NULL DEFAULT '[]'`、`contract_golden_suite_items.csg_snapshots JSONB NOT NULL DEFAULT '[]'`、`contract_replay_tasks.csg_strategy VARCHAR(24) NOT NULL DEFAULT 'PASSTHROUGH'` 与 `contract_replay_tasks.csg_sandbox_report JSONB`；
+     2. 显式幂等维护 `idx_contract_mod_svc_proto_name` 普通索引与 `chk_contract_replay_csg_strategy` (`CHECK (csg_strategy IN ('PASSTHROUGH','CLIENT_INJECT','PUB_STUB','MOCK_SERVER'))`) 枚举约束。
 4. **海量流量时间范围物理分区 (`Range Partitioning`)**：
    - 核心流量往返表 **`contract_traffic_records`** 采用 PostgreSQL 原生 **`PARTITION BY RANGE (created_at)`** 按日（或按周）自动建表；
    - 30 天保留期清理流水线采用轻量级 **`DROP TABLE contract_traffic_records_yYYYYmMMdDD`**，实现磁盘空间毫秒级无锁释放。
@@ -253,10 +257,12 @@ type ModuleService struct {
 	ID              uint64           `gorm:"primaryKey;autoIncrement" json:"id"`
 	ModuleID        uint64           `gorm:"not null;index:idx_contract_mod_svc_mod" json:"module_id"` // 供给/实现方模块 ID（必须为 BUSINESS 模块）
 	Module          *Module          `gorm:"foreignKey:ModuleID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE" json:"module,omitempty"`
-	ContractID      *uint64          `gorm:"index:idx_contract_mod_svc_contract" json:"contract_id,omitempty"` // NULL 表示独占契约 (EXCLUSIVE)；非 NULL 指向 contract_service_contracts(id) ON DELETE RESTRICT
-	Contract        *ServiceContract `gorm:"foreignKey:ContractID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT" json:"contract,omitempty"`
-	ServiceName     string           `gorm:"size:128;not null;index:idx_contract_mod_svc_name" json:"service_name"` // 格式 {package}.{serviceName}；多实现时冗余等于 contract.service_name
-	ImplKey         string           `gorm:"size:64;not null;default:''" json:"impl_key"`                          // 实现身份标识（如 "b"），多实现时必填 (^[A-Za-z0-9._-]{1,64}$)，独占时恒为 ""
+	ContractID          *uint64          `gorm:"index:idx_contract_mod_svc_contract" json:"contract_id,omitempty"` // NULL 表示独占契约 (EXCLUSIVE)；非 NULL 指向 contract_service_contracts(id) ON DELETE RESTRICT
+	Contract            *ServiceContract `gorm:"foreignKey:ContractID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT" json:"contract,omitempty"`
+	ServiceName         string           `gorm:"size:128;not null;index:idx_contract_mod_svc_name" json:"service_name"`                   // 线网运行期服务名：点分 {package}.{serviceName} 或 CSG 64B 运行期名 <ClassName[:31]>-<svrName[:31]> (修订 A-07)
+	ProtoServiceName    string           `gorm:"size:128;not null;default:'';index:idx_contract_mod_svc_proto_name" json:"proto_service_name"` // 可选 .pb 契约全名 {package}.{service}；非空且不等于 service_name 时自动注入 decoder.Registry.ServiceAliases (ADR-21)
+	IsCustomServiceName bool             `gorm:"not null;default:false" json:"is_custom_service_name"`                                    // 是否为多实现契约下自定义独立运行期发布名 (ADR-16 v2.0)
+	ImplKey             string           `gorm:"size:64;not null;default:''" json:"impl_key"`                                             // 实现身份标识（如 "b"），多实现时必填 (^[A-Za-z0-9._-]{1,64}$)，独占时恒为 ""
 	DiffIgnorePaths datatypes.JSON   `gorm:"type:jsonb;not null;default:'[]'" json:"diff_ignore_paths"`            // 服务级默认回归 Diff 忽略字段路径 []string (F-14)
 	Description     string           `gorm:"type:text" json:"description"`
 	CreatedBy       uint             `gorm:"not null;default:0" json:"created_by"`
@@ -617,6 +623,7 @@ type RecordingSession struct {
 	TargetProcessIDs      datatypes.JSON `gorm:"type:jsonb;not null" json:"target_process_ids"`                  // []uint64 参与进程挂载实例 ID 列表
 	ProcessSnapshots      datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"process_snapshots"`      // []ProcessSnapshotItem [{process_id, arch_process_id, code, name, module_ids, listen_port}] 录制时刻快照，解耦后续卸载挂载实例
 	EndpointSnapshots     datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"endpoint_snapshots"`     // []EndpointSnapshotItem [{endpoint, arch_process_id, source}] 录制时刻端点字典快照，支撑多实现契约 EGRESS 目的进程消歧 (F-05.1, ADR-16 §3.6)
+	CSGSnapshots          datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"csg_snapshots"`          // []CSGResolution [{service_name, instances[]}] 固化录制初始 CSG 发现与录制期 EventCSGObservation(0x08) 观测快照，供 MOCK_SERVER 仿真预载 (ADR-21)
 	ProcessDiagnostics    datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"process_diagnostics"`    // PID 定位与存量长连接诊断快照
 	MaxDurationSec        int            `gorm:"not null;default:1800" json:"max_duration_sec"`                  // 默认最长 30 分钟
 	MaxFrames             int            `gorm:"not null;default:100000" json:"max_frames"`                      // 默认最大 10 万帧
@@ -714,6 +721,7 @@ type ReplayTask struct {
 	Agent               *Agent            `gorm:"foreignKey:AgentID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT" json:"agent,omitempty"`
 	SelectedRecordIDs   datatypes.JSON    `gorm:"type:jsonb;not null;default:'[]'" json:"selected_record_ids"`          // []uint64 选定注入的 INGRESS 往返记录 ID（套件源时为空或存 suite_item_id）
 	ExtraIgnorePaths    datatypes.JSON    `gorm:"type:jsonb;not null;default:'[]'" json:"extra_ignore_paths"`           // 任务级临时追加忽略字段路径 []string
+	CSGStrategy         string            `gorm:"size:24;not null;default:'PASSTHROUGH';check:chk_contract_replay_csg_strategy,csg_strategy IN ('PASSTHROUGH','CLIENT_INJECT','PUB_STUB','MOCK_SERVER')" json:"csg_strategy"` // CSG 仿真测试策略 (ADR-21)
 	TimeoutMs           int               `gorm:"not null;default:30000" json:"timeout_ms"`                             // 单请求等待超时默认 30s
 	LifecycleState      string            `gorm:"size:32;not null;default:'PENDING';index:idx_contract_replay_state" json:"lifecycle_state"`
 	ResultStatus        string            `gorm:"size:32;not null;default:'';index:idx_contract_replay_result" json:"result_status"` // PASS | FAILED | MOCK_MISS | TIMEOUT | ERROR
@@ -723,6 +731,7 @@ type ReplayTask struct {
 	MockHitCount        int               `gorm:"not null;default:0" json:"mock_hit_count"`
 	MockMissCount       int               `gorm:"not null;default:0" json:"mock_miss_count"`
 	ObservedEgressCalls datatypes.JSON    `gorm:"type:jsonb;not null;default:'[]'" json:"observed_egress_calls"` // []ObservedEgressCall 重放期 Agent 实测捕获的全部出站调用摘要，供门禁 Violation 核验 (ADR-14)
+	CSGSandboxReport    datatypes.JSON    `gorm:"type:jsonb" json:"csg_sandbox_report,omitempty"`                // MOCK_SERVER 模式下 MockCSGServer.Snapshot() 导出的沙箱控制面发布与订阅轨迹 (ADR-21)
 	MockEvents          datatypes.JSON    `gorm:"type:jsonb;not null;default:'[]'" json:"mock_events"`           // Mock 命中/自愈回写详情与 MOCK_MISS 诊断明细
 	ErrorMessage        string            `gorm:"type:text" json:"error_message"`
 	StartedAt           *time.Time        `json:"started_at"`
@@ -809,6 +818,7 @@ type GoldenSuiteItem struct {
 	RawRspPacket    []byte         `gorm:"type:bytea;not null" json:"-"`                                         // 深拷贝固化的无损预期应答 CROS RPC 帧
 	ScopedMocks     datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"scoped_mocks"`                 // []agentproto.MockRuleDownstream 固化的专属下游请求+应答闭包 (含 dst_tag)
 	EgressEndpoints datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"egress_endpoints"`             // []agentproto.DownstreamEndpoint 固化的历史下游端点集 (含 dst_tag)
+	CSGSnapshots    datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"csg_snapshots"`                // []CSGResolution 从源录制会话深拷贝固化的 CSG 控制面快照，保证源会话删除后仍可独立 MOCK_SERVER 仿真 (ADR-21)
 	MaskRulesJSON   datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"mask_rules_json"`              // []MaskRule 用例级动态掩码与忽略路径规则
 	CreatedBy       uint           `gorm:"not null;default:0" json:"created_by"`
 	CreatedAt       time.Time      `json:"created_at"`
@@ -1309,7 +1319,8 @@ func (Notification) TableName() string { return config.TablePrefix + "notificati
 | `contract_proto_schemas` | `chk_contract_proto_size` / `chk_contract_proto_category` | `CHECK (file_size > 0 AND file_size <= 16777216)` / `CHECK (category IN ('BASE_LIB','BUSINESS','GATEWAY'))` | **F-03.5 & F-03.6 (ADR-10)**：`16MB` 制品上限与单一受控分类枚举（`db.go` 显式幂等更新） |
 | `contract_proto_operations` | `uk_contract_proto_op_schema` | `UNIQUE (schema_id, service_name, operation)` | F-03：单个 `.pb` 版本内部接口映射唯一 |
 | `contract_proto_operations` | `uk_contract_active_proto_op` | `UNIQUE (service_name, operation) WHERE is_active = true` | **F-03.3**：所有生效描述集之间 `(service, operation)` 全局唯一，杜绝并发激活冲突 |
-| `contract_replay_tasks` | `uk_contract_replay_task_no` | `UNIQUE (task_no)` | F-12：重放任务流水号全局唯一 |
+| `contract_module_services` | `idx_contract_mod_svc_proto_name` | `BTREE (proto_service_name)` | **F-34 (ADR-21 / M28)**：支撑 64B CSG 运行期名 ⇄ `.pb` 全名双向映射检索与别名加载 |
+| `contract_replay_tasks` | `uk_contract_replay_task_no` / `chk_contract_replay_csg_strategy` | `UNIQUE (task_no)`；`CHECK (csg_strategy IN ('PASSTHROUGH','CLIENT_INJECT','PUB_STUB','MOCK_SERVER'))` | **F-12 / ADR-21**：重放任务流水号唯一与四档 CSG 仿真策略枚举强约束 |
 | `contract_replay_items` | `uk_contract_replay_task_seq` | `UNIQUE (task_id, seq_no)` | **F-12 & F-25**：单重放任务内请求执行序号唯一（同时兼容录制批次源 `record_id` 与黄金套件源 `suite_item_id`） |
 | `contract_golden_suites` | `uk_contract_golden_suite_code` | `UNIQUE (code)` | **F-25 (ADR-14)**：黄金契约套件编码全局唯一 |
 | `contract_golden_suite_items` | `uk_contract_golden_item_order` | `UNIQUE (suite_id, order_no)` | **F-25 (ADR-14)**：同一黄金套件内事务执行顺序严格唯一不冲突 |
@@ -1366,6 +1377,7 @@ func (Notification) TableName() string { return config.TablePrefix + "notificati
 | Git 仓/Bundle 配置、Sync、Webhook 与路径校验 (`contract_git_repos` / `contract_git_proto_bundles` / `contract_proto_files`) | 1. 优先匹配 `/api/webhooks/git-mr/:repoId` 并对 Webhook Header `X-Gitlab-Token` / `X-Hub-Signature-256` / `X-Gitea-Signature` 执行 `subtle.ConstantTimeCompare` 校验；<br>2. 出站 URL 解析命中云元数据或未列入 `outbound_trusted_cidrs` 的回环/私网（`SafeDialer` 拦截 SSRF）或 `proto_include_dirs` / `file_path` 含 `..` 路径穿越；<br>3. `GitProtoBundle.TargetSchemaName` 与既有 Bundle 冲突或正在运行全量同步并发争用 | `401 / 403`<br>`400 Bad Request`<br>`409 Conflict` | 使用 `CONTRACT_CRYPTO_KEY` AES-256-GCM 解密校验凭据；删除 `GitRepo` 级联 `CASCADE` 清理 `GitProtoBundle` / `ProtoFile` / `MRCheckRun`，并对已入池 `ProtoSchema.git_repo_id` / `source_bundle_id` 执行 `ON DELETE SET NULL` |
 | MR 门禁人工豁免 `POST /api/mr-check-runs/:id/override` | 1. 非 `contract_admin` 尝试覆盖豁免；<br>2. 当前状态非 `FAILED`、包含 `compile_passed=false` 语法编译错误或 `override_reason` 缺失 | `403 Forbidden`<br>`409 / 400` | `requireAdmin` + `override_reason` 必填 + 禁止豁免语法编译失败（仅可豁免 Breaking/规则冲突）+ 强制产生 `P1` 级高危审计并向 Git 平台回写豁免状态 |
 | 静态规则与通知收件箱 (`CheckRule` / `Notification`) | 1. 非 `contract_admin` 增删改 `CheckRule` 或 `VocabularyTerm`，或尝试删除 `is_builtin=true` 内置规则；<br>2. 普通用户读写他人 `Notification`（IDOR） | `403 Forbidden`<br>`409 Conflict` | `requireAdmin` + 内置规则仅允许关闭 `enabled=false` 或调规则正则，禁止物理删除；通知接口强制 `WHERE recipient_user_id = currentUserID` 过滤 |
+| CSG 自动发现蓝图导入与三模仿真 (`import-blueprint` / `PUB_STUB` / `MOCK_SERVER`) | 1. 非 `contract_admin` 调用 `POST /api/agents/:id/csg/import-blueprint`，或普通用户查看他人 `PRIVATE` Agent 的 `/csg/topology`；<br>2. `PUB_STUB` 模式下前置 `csgdlink.Sub(svcName)` 检测到同名服务已在线 (`> 0` 实例)；<br>3. `CLIENT_INJECT` / `MOCK_SERVER` 检测到目标进程仅支持纯 `dophi_mesh://` 数据面（`Trans[1]==0 && Trans[4]==1`） | `403 Forbidden`<br>`409 CSG_SERVICE_ALREADY_PUBLISHED`<br>`422 CSG_DATAPLANE_MESH_UNSUPPORTED` | `import-blueprint` 强制 `RequireAdmin` + 单事务幂等补齐 + `commonAudit`；`PUB_STUB` 拒接防污染同租户并引导切换 `MOCK_SERVER` 沙箱；纯 `mesh` 显式报错并阻断静默失真；重放退出执行 5 出口清理 |
 
 ---
 

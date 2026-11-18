@@ -1,22 +1,23 @@
 # 架构与活体契约治理 (`code-contract`) 管理面服务、微前端控制台与回归断言设计
 
 - **文档编号**：`04-control-plane-and-web-console.md`
-- **文档版本**：v1.12.0
-- **更新日期**：2026-11-15
+- **文档版本**：v1.13.0
+- **更新日期**：2026-11-18
 - **归属阶段**：阶段二：系统架构与数据模型设计 (`02-design`)
-- **状态**：M1~M26 已交付；同步 ADR-19 (`M27`) 四工作台拆解定稿
-- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.21.0)、[`01-system-architecture.md`](./01-system-architecture.md) (v1.8.1)、[`02-data-plane-and-cros-rpc-engine.md`](./02-data-plane-and-cros-rpc-engine.md)、[`03-architecture-elements-and-topology.md`](./03-architecture-elements-and-topology.md) (v1.9.0)、[`07-console-ia-restructuring-and-workflow-workbench-adr.md`](../05-adr/07-console-ia-restructuring-and-workflow-workbench-adr.md) (ADR-07)、[`08-recording-drawer-and-process-tree-selection-adr.md`](../05-adr/08-recording-drawer-and-process-tree-selection-adr.md) (ADR-08)、[`09-arch-process-ssot-and-ebpf-premount-standby-adr.md`](../05-adr/09-arch-process-ssot-and-ebpf-premount-standby-adr.md) (ADR-09 v1.1.0)、[`10-enhanced-proto-schema-file-management-adr.md`](../05-adr/10-enhanced-proto-schema-file-management-adr.md) (ADR-10 v1.1.0)、[`11-single-process-bidirectional-capture-and-recording-ux-adr.md`](../05-adr/11-single-process-bidirectional-capture-and-recording-ux-adr.md) (ADR-11 v1.0.0)、[`12-packet-causality-call-tree-and-sequence-ux-adr.md`](../05-adr/12-packet-causality-call-tree-and-sequence-ux-adr.md) (ADR-12 v1.0.0)、[`15-scalable-topology-focus-and-layout-persistence-adr.md`](../05-adr/15-scalable-topology-focus-and-layout-persistence-adr.md) (ADR-15 v1.3.0)、[`16-multi-implementation-service-contract-adr.md`](../05-adr/16-multi-implementation-service-contract-adr.md) (ADR-16 v2.0.0)、[`17-topology-single-layer-drilldown-and-layout-ux-adr.md`](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md) (ADR-17 v1.1.0)、[`18-proto-full-lifecycle-and-git-mr-governance-adr.md`](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (ADR-18 v1.3.0)、[`19-proto-contract-ia-unbundling-and-four-workbenches-adr.md`](../05-adr/19-proto-contract-ia-unbundling-and-four-workbenches-adr.md) (ADR-19 v1.0.0)
+- **状态**：M1~M27 已交付；ADR-21 v2.1.0 (M28) SDD 详细设计定稿
+- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.22.0)、[`01-system-architecture.md`](./01-system-architecture.md) (v1.9.0)、[`02-data-plane-and-cros-rpc-engine.md`](./02-data-plane-and-cros-rpc-engine.md) (v1.6.0)、[`03-architecture-elements-and-topology.md`](./03-architecture-elements-and-topology.md) (v1.10.0)、[`07-console-ia-restructuring-and-workflow-workbench-adr.md`](../05-adr/07-console-ia-restructuring-and-workflow-workbench-adr.md) (ADR-07)、[`08-recording-drawer-and-process-tree-selection-adr.md`](../05-adr/08-recording-drawer-and-process-tree-selection-adr.md) (ADR-08)、[`09-arch-process-ssot-and-ebpf-premount-standby-adr.md`](../05-adr/09-arch-process-ssot-and-ebpf-premount-standby-adr.md) (ADR-09 v1.1.0)、[`10-enhanced-proto-schema-file-management-adr.md`](../05-adr/10-enhanced-proto-schema-file-management-adr.md) (ADR-10 v1.1.0)、[`11-single-process-bidirectional-capture-and-recording-ux-adr.md`](../05-adr/11-single-process-bidirectional-capture-and-recording-ux-adr.md) (ADR-11 v1.0.0)、[`12-packet-causality-call-tree-and-sequence-ux-adr.md`](../05-adr/12-packet-causality-call-tree-and-sequence-ux-adr.md) (ADR-12 v1.0.0)、[`15-scalable-topology-focus-and-layout-persistence-adr.md`](../05-adr/15-scalable-topology-focus-and-layout-persistence-adr.md) (ADR-15 v1.3.0)、[`16-multi-implementation-service-contract-adr.md`](../05-adr/16-multi-implementation-service-contract-adr.md) (ADR-16 v2.0.0)、[`17-topology-single-layer-drilldown-and-layout-ux-adr.md`](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md) (ADR-17 v1.1.0)、[`18-proto-full-lifecycle-and-git-mr-governance-adr.md`](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (ADR-18 v1.3.0)、[`19-proto-contract-ia-unbundling-and-four-workbenches-adr.md`](../05-adr/19-proto-contract-ia-unbundling-and-four-workbenches-adr.md) (ADR-19 v1.0.0)、[`21-csg-aware-agent-service-discovery-and-replay-mock-adr.md`](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (ADR-21 v2.1.0)
 
 ### 修订记录
 
 | 版本 | 日期 | 作者 | 变更说明 |
 | :--- | :--- | :--- | :--- |
-| `v1.8.0` | `2026-11-11` | Architecture Team | 同步 ADR-16 (`v1.0.0`)：补充录制期 `endpoint_snapshots` 固化、多实现契约重放兼容性与 `dst_tag` 隔离；新增 §4.8 详细定义 `/architecture` 模块类型与「定义的接口」页签、`PROVIDE` 自动切换实现契约与 `impl_key`、`DEPEND` 分发/具体实现区分、`/topology` `«interface»` 库卡、`REALIZATION` 图层开关、`topo_contract_mode=AGG\|EXPAND`、第八类一致性状态 `IMPL_UNRESOLVED`（复用 `--color-warning`）与「实现待定」虚拟节点及 `/dashboard` 契约实现覆盖率 |
-| `v1.9.0` | `2026-11-13` | Architecture Team | 同步 [`ADR-17`](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md) (`v1.0.0` / `M21`)：更新 §4.1 `/topology` URL 状态参数、§4.2 `ArchCanvas` 组件树职责，并新增 §4.9 详细规范单层平铺逐级下钻面包屑导航、工具栏 4 组收纳 + `[⚙️ 筛选与图层]` Popover、三类 `1:1 border-box` 卡片、四向智能锚点路由、按作用域隔离的位置记忆与 `EdgeDetailDrawer` 节点中文名渲染 |
-| `v1.9.1` | `2026-11-13` | Architecture Team | 依据 [`ADR-17` (`v1.1.0`)](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md) 架构检视意见加固 §4.2 与 §4.9：1. §4.2 补齐 `UnregisteredInterfaceNode.tsx` 与状态宿主 `ArchTopologyTabPane.tsx`；2. §4.9 明确节点悬浮动作条（`arch-node-action-bar`）与 `Enter` 快捷键同步切换单层下钻、跨层搜索 `fitView` 后置等待 ELK 排版完成、五类节点四向双向 `<Handle>` 挂载以及非 `right->left` 走线丢弃 ELK `bendPoints` 切换 `SmoothStep` |
+| `v1.8.0` | `2026-11-11` | Architecture Team | 同步 ADR-16 (`v1.0.0`) 多实现服务契约及契约实现覆盖率 |
+| `v1.9.0` | `2026-11-13` | Architecture Team | 同步 [`ADR-17`](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md) (`v1.0.0` / `M21`) 单层平铺下钻、4 组工具栏与智能连线 |
+| `v1.9.1` | `2026-11-13` | Architecture Team | 依据 [`ADR-17` (`v1.1.0`)](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md) 加固 §4.2 与 §4.9 |
 | `v1.10.0` | `2026-11-13` | Architecture Team | 依据 [`ADR-18` (`v1.1.0`)](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (`M22~M25`) 全面补齐 Proto 全生命周期治理与 Git/MR 门禁设计 |
-| `v1.11.0` | `2026-11-13` | Architecture Team | 依据 [`ADR-18` (`v1.2.0`)](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (`M22~M26`) 全面检视修订：1. §1.6 拆分 `GitRepo (1:N) GitProtoBundle` 支持 Monorepo、新增 `:repoId` Webhook、`COALESCE(bundle_id,0)` 防 Fast-Forward 误丢、Bot 评论 `remote_comment_id` 原位更新与 `BASE_LIB` 传递闭包扩散通知；2. §1.8 升级 `SSEBroker(userID)` 定向推送，明确跨机 LAN `code-notifier` `NotifyPayload` 强制非空 `markdown_content` 与真实邮箱解析，支持 `outbound_trusted_cidrs` 与 `settings.go` 脱敏/审计占位；3. §4.1/§4.2 补齐双模 `WorkspaceUtilityHeader`（门户嵌入态+独立外壳 `NotificationBell`），§4.10 修正前端 JS 为基于 M21 基线 `<= 150KB gzip`（`<= 500KB` 原文）增量预算并补全 `GitRepoDTO.bundles`、`MRCheckRunDTO` 与 `email_status` TS 契约 |
-| `v1.12.0` | `2026-11-15` | Architecture Team | 依据 [`ADR-19` (`v1.0.0`)](../05-adr/19-proto-contract-ia-unbundling-and-four-workbenches-adr.md) (`M27`) 拆解重构 Proto 控制台信息架构：1. §4.1 将全局侧边栏从 4 组 10 项演进为 **5 组 13 项**，独立设立 `Proto 契约治理` 一级分组（`接口参考文档` `/proto-docs`、`源码与 Git 仓` `/proto-sources`、`MR 门禁与规范` `/proto-governance`、`描述集与依赖` `/schemas`），并固化 `SchemasRouteWrapper` 无损深链重定向（含 `#L<n>`）；2. §4.2/§4.10 拆分为四个职责正交页面组件（`ProtoDocsWorkbenchPage`、`ProtoSourcesWorkbenchPage`、`ProtoGovernanceWorkbenchPage`、`ProtoSchemaWorkbenchPage`），抽离嵌入式 `LintRuleAndVocabPanel` 至主工作区并清理高频查文档场景下的顶部资产统计条冗余 |
+| `v1.11.0` | `2026-11-13` | Architecture Team | 依据 [`ADR-18` (`v1.2.0`)](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (`M22~M26`) 检视修订 Monorepo Bundles、原位评论、定向 SSE 与跨机 `code-notifier` |
+| `v1.12.0` | `2026-11-15` | Architecture Team | 依据 [`ADR-19` (`v1.0.0`)](../05-adr/19-proto-contract-ia-unbundling-and-four-workbenches-adr.md) (`M27`) 拆解重构 Proto 控制台信息架构 |
+| `v1.13.0` | `2026-11-18` | Architecture Team | **依据 [`ADR-21` (`v2.1.0`)](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (`M28`) 增补 CSG 控制面协同编排与前端工作台设计**：1. 更新 §1.2 录制期 `csg_snapshots` 固化、`EVENT_CSG_OBSERVATION` 接收与 §1.3 重放调度器四档 `csg_strategy`（`PASSTHROUGH`/`CLIENT_INJECT`/`PUB_STUB`/`MOCK_SERVER`）及 `CSGSandboxReport` 门禁订阅核验；2. 更新 §2.1 `decoder.Registry` 加载 `ModuleService.proto_service_name` 至 `ServiceAliases` 及 PID 后缀归一化解码；3. 新增 §4.11 `/agents` CSG 现网拓扑透视与一键蓝图导入抽屉 & `/replay` 四档 CSG 仿真策略选择器完整 TypeScript 契约 |
 
 ---
 
@@ -124,10 +125,10 @@ flowchart LR
 
 ### 1.2 预挂就绪零重启录制编排与无损+结构化双模落盘流水线 (`recorder.Orchestrator`)
 
-1. **多进程排他租约获取、有序采集闸门与停录不断连**：
-   - 校验发起人对所选 `target_process_ids` 所属环境 Agent 的访问权（普通用户可组合本人 `PRIVATE` Agent 与当前空闲的任意 `SHARED` 环境 Agent），固化 `process_snapshots` 进程蓝图快照（解耦日后卸载挂载实例）与 `endpoint_snapshots` 下游端点映射快照（`[{endpoint, arch_process_id, source}]`，供多实现服务契约 `EGRESS` 流量历史幂等定位目的实现模块，[`ADR-16`](../05-adr/16-multi-implementation-service-contract-adr.md)），按 `agent_id` 升序调用 `AcquireAgentLeases` 原子加锁（冲突立即返回 `409 Conflict` 及持锁人信息）；
-   - 并发调用各 Agent `PUT /agent/v1/monitors/sync` 下发 `[]ProcessMonitorSpec`：Agent 实时复检 `/proc/<pid>/fd` 后按序先注入 `activeSessionID` 并开启 `EgressProxy` `CAPTURING` 分帧（目标 PID 默认全出站透明代理，即使仅挂载单个进程且 `Downstreams` 为空亦可自动录齐 `INGRESS + EGRESS`，[`ADR-11`](../05-adr/11-single-process-bidirectional-capture-and-recording-ux-adr.md)）、再预热存量已建立入站 FD 至 `ing_conn_map` 并动态挂载入站读写钩子（已 `ARMED` 进程 **0ms 零重启开录**，`DISARMED` 进程兜底临时挂载），将最新诊断写入 `contract_recording_sessions.process_diagnostics`；WebSocket 读取协程将真实采集 `agt.ID` 透传至 `ExchangeAssembler.Feed(agt.ID, env, payload)`（禁止硬编码 `agent_id = 1`）；
-   - 录制正常结束或触发上限时，严格调用 **`POST /agent/v1/monitors/{sessionId}/stop`**（携带路径参数 `sessionId`）：Agent 先卸载入站读写钩子 -> `200ms` 在途应答排空 -> 将 `EgressProxy` 拨回 `PASSTHROUGH` 并清零 `activeSessionID`（**不断开业务 TCP 长连接**） -> 发送 `EVENT_SESSION_DRAINED` 并释放本地 `RECORDING` 租约，主控在统一收尾函数中原子释放全部 DB 租约。
+1. **多进程排他租约获取、有序采集闸门、CSG 控制面快照捕获与停录不断连**：
+   - 校验发起人对所选 `target_process_ids` 所属环境 Agent 的访问权（普通用户可组合本人 `PRIVATE` Agent 与当前空闲的任意 `SHARED` 环境 Agent），固化 `process_snapshots` 进程蓝图快照（解耦日后卸载挂载实例）与 `endpoint_snapshots` 下游端点映射快照（`[{endpoint, arch_process_id, source}]`，供多实现服务契约 `EGRESS` 流量历史幂等定位目的实现模块，[`ADR-16`](../05-adr/16-multi-implementation-service-contract-adr.md)），**并在启用 CSG 发现的环境中于开录前抓取首版 CSG 服务/实例快照初始化 `csg_snapshots`**；按 `agent_id` 升序调用 `AcquireAgentLeases` 原子加锁（冲突立即返回 `409 Conflict` 及持锁人信息）；
+   - 并发调用各 Agent `PUT /agent/v1/monitors/sync` 下发 `[]ProcessMonitorSpec`（携带 `CSGServiceNames` 与 `CSGAddr`）：Agent 实时复检 `/proc/<pid>/fd` 后按序先注入 `activeSessionID` 并开启 `EgressProxy` `CAPTURING` 分帧（目标 PID 默认全出站透明代理；对首包匹配 `"DLNK"` 的连接旁路挂载 `csgdlink.Observer`，经 WebSocket 信封 `0x08 (EVENT_CSG_OBSERVATION)` 实时推送 `SUB`/`SUB_ACK`/`PUB`/`NOTIFY` 观测结果，由控制面幂等并入 `contract_recording_sessions.csg_snapshots`，**绝不干扰 `pkg/crosrpc.StreamFramer`**）、再预热存量已建立入站 FD 至 `ing_conn_map` 并动态挂载入站读写钩子（已 `ARMED` 进程 **0ms 零重启开录**，`DISARMED` 进程兜底临时挂载），将最新诊断写入 `contract_recording_sessions.process_diagnostics`；WebSocket 读取协程将真实采集 `agt.ID` 透传至 `ExchangeAssembler.Feed(agt.ID, env, payload)`（禁止硬编码 `agent_id = 1`）；
+   - 录制正常结束或触发上限时，严格调用 **`POST /agent/v1/monitors/{sessionId}/stop`**（携带路径参数 `sessionId`）：Agent 先卸载入站读写钩子 -> `200ms` 在途应答排空 -> 卸载 `csgdlink.Observer` 并将 `EgressProxy` 拨回 `PASSTHROUGH` 并清零 `activeSessionID`（**不断开业务 TCP 长连接**） -> 发送 `EVENT_SESSION_DRAINED` 并释放本地 `RECORDING` 租约，主控在统一收尾函数中原子释放全部 DB 租约。
 2. **双阈值自动停录守卫**：
    - 内存原子维护当前批次 `capturedFrames` 与启动定时器 `time.AfterFunc(MaxDuration)`（默认 `30 分钟` / `100,000 帧`）；任一阈值触发时自动向全部参与 Agent 发送 `/stop`、刷空配对窗口并释放租约，状态落盘为 **`COMPLETED_BY_LIMIT`**。
 3. **Track B 慢轨：连接内 `ullSNO` 往返配对与双模归档 (`ExchangeAssembler`)**：
@@ -144,18 +145,20 @@ flowchart LR
        - 每个 Worker 设立最大 `10000` 条挂起请求预算，防止慢连接恶意泄漏内存；
    - **微批写入**：每凑满 `200` 条往返记录或每 `200ms` 触发一次 GORM `CreateInBatches` 分区表写入。
 
-### 1.3 跨 Agent 同构重放调度器与多请求明细持久化 (`diff.ReplayScheduler`)
+### 1.3 跨 Agent 同构重放调度器、CSG 三模策略编排与多请求明细持久化 (`diff.ReplayScheduler`)
 
-1. **权限、快照解耦同构兼容性、就绪硬门禁与排他租约四重前置校验**：
+1. **权限、快照解耦同构兼容性、就绪硬门禁、CSG 策略适配与排他租约校验**：
    - 校验选定的 `INGRESS` 往返记录均属于同一 `session_id` 与同一源进程 `source_process_id`，且 `is_replayable == true`（`raw_req_packet` 非空且未被 4MB 截断）；
-   - 调用基于 `session.ProcessSnapshots` 与统一 `ContractResolver` 解耦的 `topology.ValidateReplayProcessCompatibility`（即使源环境 Agent 日后已卸载原挂载实例亦不受阻碍；针对多实现服务契约的 `INGRESS` 流量，按录制时源进程快照 `sourceSnap` 中承载的具体实现模块 `M_impl` 核验目标进程同构性，不会要求目标进程包含其他进程的实现模块，[`ADR-16`](../05-adr/16-multi-implementation-service-contract-adr.md)），校验发起人对录制素材与目标进程 `target_process_id` 所属环境 Agent 的权限及模块同构性；
-   - **重放零外泄前置硬门禁与历史 `EGRESS` 端点自动并集（[`ADR-11`](../05-adr/11-single-process-bidirectional-capture-and-recording-ux-adr.md) & [`ADR-16`](../05-adr/16-multi-implementation-service-contract-adr.md)）**：主控自动取「`CompileProcessDownstreams(target)` 静态推导下游端点（含展开 `DISPATCH` 多实现契约的全部实现进程端点并标记 `dst_tag = ArchProcess.Code`）$\cup$ 源录制批次中该源进程实测捕获的全部 `EGRESS` 记录 `DstAddr (IP:Port)`」合并写入 `ExecuteReplayReq.ProcessSpec.Downstreams`（使单进程零拓扑录制的素材同样 100% 闭环 Mock）；实时核验目标进程就绪态，若处于 `WAITING_PROC`（未启动）或持有指向该合并 Mock 端点集的未代理存量直连（`NEED_RECONNECT`, `established_conns > 0`），**直接拒绝启动重放并返回 `409 Conflict`**；
+   - 调用基于 `session.ProcessSnapshots` 与统一 `ContractResolver` 解耦的 `topology.ValidateReplayProcessCompatibility`（即使源环境 Agent 日后已卸载原挂载实例亦不受阻碍；针对多实现服务契约的 `INGRESS` 流量，按录制时源进程快照 `sourceSnap` 中承载的具体实现模块 `M_impl` 核验目标进程同构性，[`ADR-16`](../05-adr/16-multi-implementation-service-contract-adr.md)），校验发起人对录制素材与目标进程 `target_process_id` 所属环境 Agent 的权限及模块同构性（**当 `csg_strategy == CLIENT_INJECT` 时允许目标 `listen_port == 0` 动态寻址；`PASSTHROUGH` 等静态端口模式仍要求 `listen_port > 0`**）；
+   - **CSG 仿真策略校验与快照装配（`ADR-21`）**：校验入参 `csg_strategy ∈ {PASSTHROUGH, CLIENT_INJECT, PUB_STUB, MOCK_SERVER}`（空值默认 `PASSTHROUGH`），持久写入 `contract_replay_tasks.csg_strategy`；从录制会话 `session.CSGSnapshots`（或黄金套件明细 `item.CSGSnapshots`）读取固化快照列表填入 `ExecuteReplayReq.CSGSnapshots` 与可选 `CSGAddr`；若 Agent 预检或执行返回 `CSG_SERVICE_ALREADY_PUBLISHED`，主控原子释放租约并将错误映射为 **`409 Conflict`** 透传；若返回 `CSG_DATAPLANE_MESH_UNSUPPORTED`，映射为 **`422 Unprocessable Entity`** 明确提示；
+   - **重放零外泄前置硬门禁与历史 `EGRESS` 端点自动并集（[`ADR-11`](../05-adr/11-single-process-bidirectional-capture-and-recording-ux-adr.md) & [`ADR-16`](../05-adr/16-multi-implementation-service-contract-adr.md)）**：主控自动取「`CompileProcessDownstreams(target)` 静态推导下游端点（含展开 `DISPATCH` 多实现契约的全部实现进程端点并标记 `dst_tag = ArchProcess.Code`）$\cup$ 源录制批次中该源进程实测捕获的全部 `EGRESS` 记录 `DstAddr (IP:Port)`」合并写入 `ExecuteReplayReq.ProcessSpec.Downstreams`（附带 `CSGServiceNames`）；实时核验目标进程就绪态（若处于 `WAITING_PROC` 或非豁免模式下持有指向 Mock 端点集的 `NEED_RECONNECT` 直连，**拒绝启动返 `409 Conflict`**）；
    - 对目标进程所属 Agent 获取 `REPLAY` 排他租约（冲突立即返回 `409 Conflict`）。
-2. **重放生命周期状态机与既有代理连接零外泄 Mock 接管**：
-   - **状态机流转**：`PENDING`（初始创建） -> `RUNNING`（目标进程已 `🟢 READY`，无需手动重启；Agent 将 `EgressProxy` 中该进程的既有长连接原子切入 `REPLAY_MOCK` 物理阻断真实下游写通道并按序注入请求切片） -> `COMPLETED / CANCELLED / FAILED`；
-   - **按 `RecordID` 因果子树组装 `ScopedEgressMocks` 与 `dst_tag` 多实现隔离（[`ADR-12`](../05-adr/12-packet-causality-call-tree-and-sequence-ux-adr.md) & [`ADR-16`](../05-adr/16-multi-implementation-service-contract-adr.md)）**：从 `contract_traffic_records` 按 `req_captured_at_ns ASC, seq_no ASC, id ASC` 提取选定 `INGRESS` 记录组装 `IngressItems: []ReplayIngressItem{RecordID, RawReq}`，并调用 `callgraph.BuildReplayClosure`：优先按同进程同 `trace_id` 的 DOTR `FatherSpanID` 子孙闭包（无 `trace_id` 时回退 `[req_ns - 500μs, rsp_ns + 500μs]` 包含时间窗）为每条 `INGRESS` 切分专属 `ScopedEgressMocks[recordID]`，将未归属合格 `EGRESS` 放入 `GlobalFallbackMocks`（严格剔除 `is_truncated == true`、`REQ_ONLY` 与空应答帧），并根据每条 `EGRESS` 记录归因的 `dst_module_id` 填充目标实现进程编码 `DstTag`（Agent 侧 `ScopedMockMatcher` 按 `service:operation@dst_tag` 优先匹配，无标签回退 `service:operation`，严守零 DB 零 `.pb` 红线），纯二进制下发 Agent；
-   - **双轨可靠回收与独立明细持久化**：
+2. **重放生命周期状态机、CSG 三模协同与 `CSGSandboxReport` 回收**：
+   - **状态机流转**：`PENDING` -> `RUNNING`（Agent 根据 `CSGStrategy` 执行：`PASSTHROUGH` 直连 `ListenPort` + `REPLAY_MOCK`；`CLIENT_INJECT` 通过 `csgdlink.Sub` 解析最新 `tcp://ipv4` 注入；`PUB_STUB` 前置 `Sub==0` 后注册本地 TCP Mock 桩并禁止 `GET_BIND_ADDR`；`MOCK_SERVER` 在 `REPLAY_MOCK` 下分流 `"DLNK"` 至内置 `MockCSGServer`） -> `COMPLETED / CANCELLED / FAILED`；
+   - **按 `RecordID` 因果子树组装 `ScopedEgressMocks` 与 `dst_tag` 多实现隔离（[`ADR-12`](../05-adr/12-packet-causality-call-tree-and-sequence-ux-adr.md) & [`ADR-16`](../05-adr/16-multi-implementation-service-contract-adr.md)）**：从 `contract_traffic_records` 按 `req_captured_at_ns ASC, seq_no ASC, id ASC` 提取选定 `INGRESS` 记录组装 `IngressItems: []ReplayIngressItem{RecordID, RawReq}`，并调用 `callgraph.BuildReplayClosure` 切分专属 `ScopedEgressMocks[recordID]` 与 `GlobalFallbackMocks`（填充 `DstTag`），纯二进制下发 Agent；
+   - **双轨可靠回收与 `CSGSandboxReport` 审计持久化**：
      - 重放执行进度与结果通过 WebSocket `EVENT_REPLAY_ITEM_DONE` 实时推送，同时支持通过 `GET /agent/v1/replays/:taskId/result` 幂等拉取；
+     - `ReplayTaskResultResp.CSGSandboxReport`（`MOCK_SERVER` 下由 `MockCSGServer.Snapshot()` 导出）完整持久化至 `contract_replay_tasks.csg_sandbox_report`，并作为 `POST /api/gates/evaluate`（`F-27`）校验被测进程沙箱期 `SUB` 合规性的权威依据；
      - 每条请求重放回收的实际原始应答帧（`actual_rsp_packet` bytea）及双层比对结果独立持久化至 **`contract_replay_items`** 表，支持前端标准服务端分页查询与历史多次比对！
 3. **多请求状态聚合优先级定律**：
    单条请求及整包重放任务的最终 `result_status` 严格遵循以下全序优先级取最高异常级别：
@@ -258,7 +261,10 @@ flowchart LR
      - **停用下线 (`Deactivate`)**：$S_{\text{next}} = S_{\text{active}} \setminus \{s_{\text{target}}\}$；
    - **门禁 ①（跨集方法全局唯一）**：校验 $S_{\text{next}}$ 导出的全部 `(service_name, operation)` 两两无交集（重叠立即回滚返 `409 Conflict` 及 `conflicts` 明细）；
    - **门禁 ②（`CompileTrialPool(S_next)` 联合预编译与反向依赖保护）**：仅使用 $S_{\text{next}}$ 内部成员（加内置 WKT）执行去重拓扑联合 `protodesc.NewFiles`，并逐一核验 $S_{\text{next}}$ 全部 `ProtoOperation` 的 `ReqMessageFullName / RspMessageFullName` 均可解析为 `MessageDescriptor`。若待激活业务包依赖的 `BASE_LIB` 未激活，或停用/升级某基础库破坏了下游已生效业务包的依赖闭包，立即回滚并返回 **`409 Conflict`**（携带 `broken_dependents: [{schema_id, schema_name, version, reason}]`）；
-   - 校验通过后提交事务，并在 `reloadMu` 保护下执行 `Reload()` 将联合编译出的统一 `CompiledRegistry{Files, Operations}` 原子写入 `atomic.Pointer[CompiledRegistry]`。
+   - 校验通过后提交事务，并在 `reloadMu` 保护下执行 `Reload()` 将联合编译出的统一 `CompiledRegistry{Files, Operations, ServiceAliases}` 原子写入 `atomic.Pointer[CompiledRegistry]`。
+3. **CSG 64B 运行期服务名映射与 PID 后缀归一化 (`ServiceAliases`, `ADR-21` / M28)**：
+   - 复用 [`ADR-16`](../05-adr/16-multi-implementation-service-contract-adr.md) 引入的 `CompiledRegistry.ServiceAliases`（`map[string]string`），`Reload()` 在构建映射时扫描全库 `contract_module_services`：凡 `proto_service_name != "" && proto_service_name != service_name`（如 `service_name = "RPCMonitorService-RPCMonitorService"`，`proto_service_name = "swp.rpc.RPCMonitorService"`），直接注入 `ServiceAliases[service_name] = proto_service_name`；
+   - 对带实例号与运行期 PID 后缀的服务名（如 `SSPMonitorService-SSPMonitorService-1-52341`），当 `ServiceAliases` 与 `Operations` 直接查找未命中时，按正则 `^(.+-\d+)-(\d+)$` 剥离尾部 `-{pid}` 回退匹配登记基名后再查 `ServiceAliases`，确保线上采集、字典树展示与双层 Diff 100% 透明解码。
 
 ### 2.2 动态编解码与历史版本不可变契约
 
@@ -1438,6 +1444,81 @@ export interface StaticComplianceDTO {
 }
 ```
 
+### 4.11 CSG 现网拓扑透视、一键蓝图导入与三模仿真策略控制台设计 (`ADR-21` / M28)
+
+1. **`Agent与进程` 工作台 (`/agents`) 新增「CSG 现网发现与架构对账」面板与蓝图导入抽屉 (`CSGBlueprintImportDrawer`)**：
+   - 在右栏顶部新增 **`[🧭 探测 CSG 现网拓扑]`** 按钮，调用 `GET /api/agents/:id/csg/topology` 展示：
+     - **多租户端点与端口池概览条**：按 `csg_addr`（`host:31800+userId`）显示 `DiscoveryMode`（`RPCMON_NATIVE` / `RPCMON_MOCK` / `DLINK_FALLBACK`）、本机 IP 端口池水位（如 `81 / 1200`）与「本机实例数 vs 已隔离跨板 LDC 数」；
+     - **三态对账双视图标签（`[发布服务 PROVIDE]` / `[订阅依赖 DEPEND]`）**：高亮 `MATCHED`（绿色）、`UNDECLARED_IN_SSOT`（amber 虚标提示未建模）与 `MISSING_IN_LIVE`（弱化灰标），支持按本机/跨板 LDC 开关切换；
+     - **管理员一键导入抽屉 (`CSGBlueprintImportDrawer`, 680px 右侧抽屉，仅 `contract_admin` 可见)**：复选未登记的本机进程（含 `listen_port=0` 纯客户端与 `dophi_mesh://` 标识）、64B 发布服务名（提供 `.pb` 别名下拉推荐 `proto_service_name`）与订阅依赖边，提交 `POST /api/agents/:id/csg/import-blueprint` 完成增量导入并刷新 `/agents` 与 `/architecture`。
+2. **`防劣化回归` (`/replay`) 与 `黄金用例库` (`/golden-suites`) 新增「CSG 仿真策略四档选择器」**：
+   - 创建重放抽屉及黄金套件执行弹窗中增加 **`CSG 仿真策略 (csg_strategy)`** 分段控件：
+     - `PASSTHROUGH`（默认 · 直连静态端口 + `EgressProxy` 数据面 Mock）；
+     - `CLIENT_INJECT`（模式一 · `Sub` 动态寻址注入，免重启、无静态端口依赖）；
+     - `PUB_STUB`（模式二 · 缺席下游桩注册，前置在线冲突提示 `409 CSG_SERVICE_ALREADY_PUBLISHED`）；
+     - `MOCK_SERVER`（模式三 · 控制面/数据面全隔离沙箱，可在重放结果详情中查看 `CSGSandboxReport` 被测进程沙箱期发布的 `Servers` 与订阅的 `Clients` 轨迹）；
+   - 所有组件 100% 遵循 `theme.css` `--color-*` 语义 Token、禁止内联固定色值与 `any` 类型。
+
+```typescript
+export type CSGReplayStrategy = 'PASSTHROUGH' | 'CLIENT_INJECT' | 'PUB_STUB' | 'MOCK_SERVER';
+export type CSGReconcileState = 'MATCHED' | 'UNDECLARED_IN_SSOT' | 'MISSING_IN_LIVE';
+
+export interface CSGPortUsageDTO {
+  ip_addr: string;
+  port_used: number;
+  port_total: number;
+  is_local_ip: boolean;
+}
+
+export interface CSGServiceReconcileItemDTO {
+  service_name: string;
+  proc_name: string;
+  pid: number;
+  server_addr: string;
+  instance_addr?: string;
+  transport?: 'tcp' | 'mesh' | 'unknown';
+  port?: number;
+  csg_addr?: string;
+  user_id?: number;
+  is_remote_ldc: boolean;
+  reconcile_state: CSGReconcileState;
+  ssot_module_id?: number;
+  suggested_proto_service?: string;
+}
+
+export interface CSGSubscriptionReconcileItemDTO {
+  proc_name: string;
+  pid: number;
+  client_addr: string;
+  service_name: string;
+  is_remote_ldc: boolean;
+  reconcile_state: CSGReconcileState;
+  provider_procs?: string[];
+}
+
+export interface CSGTopologyReconcileDTO {
+  csg_addr: string;
+  user_id: number;
+  discovery_mode: 'RPCMON_NATIVE' | 'RPCMON_MOCK' | 'DLINK_FALLBACK';
+  timestamp: number;
+  server_num: number;
+  client_num: number;
+  local_server_count: number;
+  remote_ldc_server_count: number;
+  ports: CSGPortUsageDTO[];
+  servers: CSGServiceReconcileItemDTO[];
+  clients: CSGSubscriptionReconcileItemDTO[];
+}
+
+export interface CSGSandboxReportDTO {
+  captured_at: string;
+  servers: Array<{ proc_name: string; pid: number; server_name: string; server_addr: string }>;
+  clients: Array<{ proc_name: string; pid: number; client_addr: string; server_name: string }>;
+  pub_swallowed_count: number;
+  mesh_only_sub_count: number;
+}
+```
+
 ---
 
 ## 5. RBAC 权限矩阵与操作审计接入规范 (RBAC & Audit Governance)
@@ -1450,16 +1531,16 @@ export interface StaticComplianceDTO {
 | :--- | :---: | :---: | :---: |
 | 健康检查 (`/api/health`) 与认证配置 (`/api/auth/*`) | 允许 | 允许 | 允许 |
 | 查看公共三级逻辑架构、**物理进程蓝图 (`ArchProcessGroup / ArchProcess`)**、**多实现服务契约 (`ServiceContract`)**、模块契约、静态拓扑与 `.pb` 映射 | `401` | **允许** | **允许** |
-| 新增 / 修改 / 移动 / 删除公共逻辑架构元素（含 `layer_level` 分层调整）、**接口契约库与多实现服务契约登记/独占升级**、**物理进程组与标准架构进程蓝图**、`.pb` 描述集与在线源码编译入池 | `401` | `403` | **允许** |
+| 新增 / 修改 / 移动 / 删除公共逻辑架构元素（含 `layer_level` 分层调整）、**接口契约库与多实现服务契约登记/独占升级**、**物理进程组与标准架构进程蓝图**、`.pb` 描述集与在线源码编译入池、**一键导入 CSG 架构蓝图** (`POST /api/agents/:id/csg/import-blueprint`) | `401` | `403` | **允许** |
 | **活体接口参考文档中心 / 只读 Git 源码与 Diff / MR 门禁列表 / 依赖图查看与文档/图片导出** (`F-18`, `F-28`, `F-29`, `F-32`) | `401` | **允许**（只读浏览、导出 Markdown 与 SVG/PNG） | **允许** |
 | **Git 仓库集成 CRUD、手动全量同步、规则矩阵 (`CheckRule`) 与词库 (`VocabularyTerm`) 配置、MR 门禁 `Override` 人工豁免** | `401` | `403` | **允许**（MR 门禁列表查验与触发 `rerun` 按配置允许开发者使用，涉及秘钥/豁免仅限管理员） |
 | **手动静态扫描 (`POST /api/check-reports/scan`)** 与 **个人持久化通知收件箱** (`/api/notifications*`) | `401` | **允许**（通知严格按 `recipient_user_id == currentUser.ID` 防横向越权隔离） | **允许** |
 | **Git 平台 Webhook 回调** (`POST /api/webhooks/git-mr/:repoId`) | 经 Webhook Secret (`X-Gitlab-Token` / `X-Hub-Signature-256` / `X-Gitea-Signature`) 常量时间验签放行（无有效签名为 `401/403`） | — | — |
 | **CI/CD 质量门禁** (`POST /api/gates/evaluate`) | `X-Contract-CI-Token` 常量时间验证放行（无效返回 `401`） | `403` | **允许** |
-| 查看公共 `SHARED` Agent、挂载进程就绪灯态并刷新就绪诊断；创建并全权管理**本人 `PRIVATE` Agent**（`1:1` 勾选挂载架构进程、本地覆盖、预挂/暂停探针） | `401` | **允许**（访问或开关他人 `PRIVATE` Agent 探针返 `403`；修改 `SHARED` Agent 挂载配置返 `403`） | **允许**（全团队 `SHARED` 与各用户 `PRIVATE` Agent 均可见；负责管理 `SHARED` Agent 挂载/探针及强制释放异常租约） |
+| 查看公共 `SHARED` Agent、挂载进程就绪灯态、**CSG 现网拓扑对账** (`GET /api/agents/:id/csg/topology`) 与刷新就绪诊断；创建并全权管理**本人 `PRIVATE` Agent**（`1:1` 勾选挂载架构进程、本地覆盖、预挂/暂停探针、`/discover-processes`） | `401` | **允许**（访问或开关他人 `PRIVATE` Agent 探针/CSG 拓扑返 `403`；修改 `SHARED` Agent 挂载配置返 `403`） | **允许**（全团队 `SHARED` 与各用户 `PRIVATE` Agent 均可见；负责管理 `SHARED` Agent 挂载/探针及强制释放异常租约） |
 | 租用空闲的 `SHARED` Agent 或本人的 `PRIVATE` Agent **启动/停止录制** | `401` | **允许**（若目标 Agent 已被占用返 `409 Conflict`） | **允许**（同样遵守动态排他租约 `409` 互斥） |
 | 查看 `SHARED` 录制素材及**本人的 `PRIVATE` 录制素材**；将本人 `PRIVATE` 素材发布为 `SHARED` 或删除本人 `PRIVATE` 素材 | `401` | **允许**（访问或删除他人 `PRIVATE` 素材返 `403`；删除公共 `SHARED` 素材返 `403`） | **允许**（全团队 `SHARED` 与所有用户的 `PRIVATE` 录制素材均可见与审计；可治理并删除无引用的素材） |
-| **跨 Agent 同构离线重放**：选用有权限的 `SHARED` 或本人 `PRIVATE` 素材，投递至空闲 `SHARED` 或本人 `PRIVATE` Agent 的同构挂载进程 | `401` | **允许**（支持投递至本人私有或空闲共享环境，架构进程/模块不匹配返 `400`，Agent 被占用返 `409`） | **允许**（具备跨公私域同构调度与故障恢复特权） |
+| **跨 Agent 同构离线重放（含 CSG 多模式仿真策略 `PASSTHROUGH \| CLIENT_INJECT \| PUB_STUB \| MOCK_SERVER`）**：选用有权限的 `SHARED` 或本人 `PRIVATE` 素材，投递至空闲 `SHARED` 或本人 `PRIVATE` Agent 的同构挂载进程 | `401` | **允许**（支持投递至本人私有或空闲共享环境，架构进程/模块不匹配返 `400`，Agent 被占用或 `PUB_STUB` 冲突返 `409`，纯 Mesh 仿真返 `422`） | **允许**（具备跨公私域同构调度与故障恢复特权） |
 | 修改模块全局治理参数 (`/api/admin/settings`) | `401` | `403` | **允许** |
 
 ### 5.2 `commonAudit` 字段级 Diff 与操作事件审计埋点字典
@@ -1468,12 +1549,12 @@ export interface StaticComplianceDTO {
 
 | 审计子模块 (`module`) | 动作标识 (`action`) | 风险等级 | `before` / `after` 快照策略与必含上下文 |
 | :--- | :--- | :---: | :--- |
-| `contract_arch` | `create` / `update` / `move` / `delete` / `convert_contract` | `P1` (删除/转换) / `P2` | 传入变更前后的 `Subsystem` / `FunctionalGroup` / `Module` / `ServiceContract` / `ModuleService` / `ModuleDependency` / `ArchProcessGroup` / `ArchProcess` 结构体快照 |
+| `contract_arch` | `create` / `update` / `move` / `delete` / `convert_contract` / `import_csg_blueprint` | `P1` (删除/转换/蓝图导入) / `P2` | 传入变更前后的 `Subsystem` / `FunctionalGroup` / `Module` / `ServiceContract` / `ModuleService`（含 `proto_service_name`） / `ModuleDependency` / `ArchProcessGroup` / `ArchProcess` 结构体快照；`import_csg_blueprint` 附带来源 `agent_id`、`csg_addr` 与批量新增实体计数 |
 | `contract_agent` | `create` / `update` / `delete` / `sync_mounts` / `toggle_probe` / `force_unlock_lease` | `P1` | 传入 `Agent`（含 `scope`、`owner_id`、`endpoint`）或 `Process` 挂载实例（含 `arch_process_id`、`override_listen_port`、`override_cmd_pattern`、`probe_desired_state`）快照；管理员强制解锁记录原持锁人及原因 |
 | `contract_schema` | `upload` / `compile` / `activate` / `delete` / `update_op_ignores` | `P1` | 记录描述集 `name`、`version`、`source_type`、`file_sha256`、`is_active` 切换前后版本对比及方法级 `diff_ignore_paths` 变更（剔除大体积 `descriptor_bytes` 二进制字段与编译源码内容） |
 | `contract_git` | `create_repo` / `update_repo` / `delete_repo` / `upsert_bundle` / `manual_sync` | `P1` (删除/修改) / `P2` | 记录仓库 `name`、`provider`、`repo_url`、Bundle `target_schema_name`、`default_branch`；**严禁在审计前后快照中写入 `credentials_encrypted`、`webhook_secret_encrypted` 或明文密钥；`settings:update` 同理严禁将 `llm_api_key` / `smtp_password` / `code_notifier_token` 明文写入 `commonAudit` 字段级 Diff** |
 | `contract_mr_gate` | `override_mr_gate` / `rerun_mr_gate` | **`P1`** (Override) / `P2` | 记录 `git_repo_id`、`mr_iid`、`head_commit_sha`、原状态与 `override_reason`；`Webhook` 自动执行显式调用 `commonAudit.Skip(c)` 避免非人工事件刷爆表 |
 | `contract_linter` | `create_rule` / `update_rule` / `delete_rule` / `upsert_vocab` / `delete_vocab` / `run_scan` | `P2` | 记录静态规则编码/正则/启用态、词根增删改或手动扫描范围 |
 | `contract_record` | `start_session` / `stop_session` / `publish_session` / `delete_session` | `P1` | 操作事件审计：记录操作人、`session_no`、`scope`（`SHARED`/`PRIVATE`）、加锁的 `agent_id` 与 `process_id` 列表、停止原因 |
-| `contract_replay` | `execute_replay` / `cancel_replay` | `P2` | 操作事件审计：记录操作人、`task_no`、来源 `(session_id, source_process_id)`、目标 `(agent_id, target_process_id)` 与 `extra_ignore_paths` |
+| `contract_replay` | `execute_replay` / `cancel_replay` | `P2` | 操作事件审计：记录操作人、`task_no`、来源 `(session_id, source_process_id)`、目标 `(agent_id, target_process_id)`、`csg_strategy` 与 `extra_ignore_paths` |
 | `contract_system` | `retention_cleanup` | `P2` | 后台定时任务直接调用 `commonAudit.Push` 记录清理过期批次数量与释放流量行数 |

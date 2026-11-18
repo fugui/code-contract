@@ -17,18 +17,18 @@ docs/
 │   ├── 04-tdd-implementation-prompt.md            # 阶段四：TDD 红-绿-重构编码实施与全链路交付验证提示词
 │   └── 05-e2e-browser-test-and-ux-review-goal-prompt.md # 阶段四/验收：微前端全链路端到端黑盒测试与产品交互体验走查 Goal 提示词
 ├── 01-features/     # 特性与需求边界：特性清单矩阵 (Feature Matrix)、P0~P2 优先级与 Non-Goals
-│   └── 01-feature-matrix.md                       # 阶段一：需求范围、核心特性矩阵 (F-01~F-32 含子特性) 与验收场景 (SC-01~SC-16)
+│   └── 01-feature-matrix.md                       # 阶段一：需求范围、核心特性矩阵 (F-01~F-34 含子特性) 与验收场景 (SC-01~SC-17)
 ├── 02-design/       # 系统技术架构 (SDD)：双子系统边界、数据面引擎、业务拓扑与数据模型
 │   ├── 01-system-architecture.md                  # 【总览篇】系统总体架构、双模拓扑、主从信道与全链路时序
-│   ├── 02-data-plane-and-cros-rpc-engine.md       # 【数据面篇】CROS RPC 协议栈、Agent eBPF 采集与自愈重放引擎
-│   ├── 03-architecture-elements-and-topology.md   # 【业务篇】架构元素建模 (SSOT)、模块接口契约与拓扑验证
-│   ├── 04-control-plane-and-web-console.md        # 【管理面篇】Server 控制面、微前端控制台、Protobuf 编译与参考文档中心、静态规范与 MR 门禁
-│   ├── 05-database-schema.md                      # 【数据模型篇】30 张核心 contract_* 业务表 + contract_settings 物理表 GORM 字典、多实现契约、只读源码与 MR 门禁、分区表与索引设计
+│   ├── 02-data-plane-and-cros-rpc-engine.md       # 【数据面篇】CROS RPC 协议栈、Agent eBPF 采集、自愈重放引擎与 CSG 协议/监控/沙箱底座 (`pkg/{csgdlink,rpcmon,csgmock}`)
+│   ├── 03-architecture-elements-and-topology.md   # 【业务篇】架构元素建模 (SSOT)、64B 服务名映射、CSG 三态对账蓝图导入与拓扑验证
+│   ├── 04-control-plane-and-web-console.md        # 【管理面篇】Server 控制面、微前端控制台、CSG 拓扑/三模策略台、Protobuf 编译文档与 MR 门禁
+│   ├── 05-database-schema.md                      # 【数据模型篇】30 张核心 contract_* 业务表 + contract_settings 物理表 GORM 字典、CSG 增量字段、分区表与索引设计
 │   └── 06-agent-observability-and-self-healing-design.md # 【运维可观测与自愈篇】Agent 探针特权感知、体检诊断与全链路闭环自愈设计
 ├── 03-api/          # 接口与数据契约：RESTful / SSE API 签名、主从信道契约、RBAC 权限与审计规范
-│   └── 01-http-api-contract.md                    # 【API 契约】控制面 REST/SSE 字典（含活体文档、只读源码、Git/MR 门禁与通知）、CI 门禁契约、主从 HTTP/WS 契约与 RBAC 守卫
-├── 04-tasks/        # TDD 实施规划与验收：Milestone 1~27 依赖拓扑、任务作战卡与自动化验收标准 (AC)
-│   ├── 01-roadmap.md                              # 【工程路线图】模板清理策略、M1~M27 DAG 拓扑、F/SC 覆盖矩阵与安全质量门禁
+│   └── 01-http-api-contract.md                    # 【API 契约】控制面 REST/SSE 字典（含 CSG 自动发现/蓝图导入、活体文档、只读源码与 MR 门禁）、主从 HTTP/WS (`0x01~0x08`) 与 RBAC 守卫
+├── 04-tasks/        # TDD 实施规划与验收：Milestone 1~28 依赖拓扑、任务作战卡与自动化验收标准 (AC)
+│   ├── 01-roadmap.md                              # 【工程路线图】模板清理策略、M1~M28 DAG 拓扑、F/SC 覆盖矩阵与安全质量门禁
 │   ├── 02-m1-crosrpc-and-domain-models.md         # 【M1 作战卡】协议栈 (pkg/crosrpc)、信封协议与 13 张表/分区管理器
 │   ├── 03-m2-arch-proto-and-agent-control.md      # 【M2 作战卡】三级架构元素、.pb 动态编解码与公私域 Agent 排他租约管控
 │   ├── 04-m3-agent-dataplane-ebpf-and-replay.md   # 【M3 作战卡】数据面 Agent 信道、cilium/ebpf 采集与零 .pb 二进制自愈重放
@@ -55,7 +55,8 @@ docs/
 │   ├── 25-m24-static-lint-vocabulary-and-duplicate-ast.md            # 【M24 作战卡 | ✅ 已交付】安全底座 (CONTRACT_CRYPTO_KEY / SafeDialer 信任白名单)、设置脱敏、规范引擎、原生词库 Seed/CRUD、3s LLM 与 Jaccard>=0.85 三护栏重复检测
 │   ├── 26-m25-git-sync-and-monorepo-bundles.md                       # 【M25 作战卡 | ✅ 已交付】Git 无状态同步、GitRepo 1:N GitProtoBundle 多包对账、Tier-2 DB Resolver 与只读历史 Diff
 │   ├── 27-m26-mr-gates-notifications-and-compliance-dashboard.md     # 【M26 作战卡 | ✅ 已交付】MR 四合一门禁 (FF 去重/原位评论/Override P1)、SSE 按 userID 定向、持久化通知 (LAN code-notifier/SMTP) 与 F-24 合标卡片
-│   └── 28-m27-proto-ia-unbundling-and-four-workbenches.md            # 【M27 作战卡 | ✅ 已交付】Proto 契约控制台 IA 拆解：5 组 13 项菜单、四工作台正交拆分与无损深链兼容 (ADR-19)
+│   ├── 28-m27-proto-ia-unbundling-and-four-workbenches.md            # 【M27 作战卡 | ✅ 已交付】Proto 契约控制台 IA 拆解：5 组 13 项菜单、四工作台正交拆分与无损深链兼容 (ADR-19)
+│   └── 29-m28-csg-service-discovery-and-multi-mode-simulation.md     # 【M28 作战卡 | 📋 待实施】CSG 双层自动发现、蓝图一键导入、64B 服务名映射与三模仿真闭环 (ADR-21 v2.1.0)
 ├── 05-adr/          # 架构决策记录 (ADR)：重大技术选型与权衡记录 (Architecture Decision Records)
 │   ├── 01-microfrontend-and-table-prefix-isolation.md                  # ADR-01：微前端集成、共享库表前缀隔离与 TDD 测试策略
 │   ├── 02-ebpf-hook-and-dual-subsystem-adr.md                          # ADR-02：eBPF 入站旁路钩子、Cookie 原目的还原与无 Schema 数据面解耦
@@ -77,7 +78,7 @@ docs/
 │   ├── 18-proto-full-lifecycle-and-git-mr-governance-adr.md            # ADR-18：废弃未落地的 code-proto 与 protohub 后，Proto 全生命周期与 Git/MR 协同治理架构决策
 │   ├── 19-proto-contract-ia-unbundling-and-four-workbenches-adr.md     # ADR-19：Proto 契约控制台信息架构拆解与四工作台正交拆分架构决策 (5 组 13 项菜单 + 无损深链重定向)
 │   ├── 20-module-rebranding-*-to-code-contract-adr.md       # ADR-20：[已实施] 模块正式更名为 code-contract 的战略演进与全仓干净重构方案 (v1.2.0)
-│   └── 21-csg-aware-agent-service-discovery-and-replay-mock-adr.md     # ADR-21：[待评审] 基于 @csg-ver 现网实证的 CSG 服务与依赖拓扑自动发现及多模式仿真测试架构 (v2.1.0)
+│   └── 21-csg-aware-agent-service-discovery-and-replay-mock-adr.md     # ADR-21：[已采纳] 基于 @csg-ver 现网实证的 CSG 服务与依赖拓扑自动发现及多模式仿真测试架构 (v2.1.0)
 ├── 06-ops/          # 交付与验证：双模联调、物理隔离数据库测试与生产环境单二进制部署手册
 │   └── 01-verification-and-deployment-guide.md    # 联调验证、自动化回归测试与生产部署操作指南
 └── 07-references/   # 外部参考与上位契约基准：协议包规范、字节字典与领域标准文档

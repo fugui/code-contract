@@ -3,10 +3,11 @@
 - **文档编号**：`21-csg-aware-agent-service-discovery-and-replay-mock-adr.md`
 - **文档版本**：v2.1.0（基于 [`csg-ver`](../../../csg-ver/) 现网真机验证重构，并与 [`01-cros-rpc-protocol-spec.md`](../07-references/01-cros-rpc-protocol-spec.md) / `pkg/crosrpc` 100% 协议对齐）
 - **日期**：2026-11-18
-- **状态**：📋 待评审 (Proposed — v2.1.0)
+- **状态**：✅ 已采纳 (Accepted — v2.1.0)
 - **验证基线**：[`csg-ver/`](../../../csg-ver/)（含 [`docs/protocol.md`](../../../csg-ver/docs/protocol.md)、[`docs/rpcmonitor.md`](../../../csg-ver/docs/rpcmonitor.md)、`internal/{csgdlink,rpcmon,csgmock,server}`、`native/rpcmon_probe.cpp`、`cmd/{rpcmonitor,csgmockserver,csgserver,csgclient}`，已在本地 E2E 与现网 `10.29.92.80:31806` 实测闭环）
-- **关联特性**：`F-02`（物理进程蓝图与模块服务契约）、`F-05`（实测调用拓扑还原与一致性验证）、`F-08`（进程树选择与就绪诊断）、`F-09` / `F-11`（Agent 采集与出站透明代理）、`F-12`（同构重放编排）、`F-13`（Agent 零 `.pb` 二进制 Mock 匹配与自愈）、`F-23`（主动发包调试）
-- **关联设计**：[`01-cros-rpc-protocol-spec.md`](../07-references/01-cros-rpc-protocol-spec.md)、[`02-data-plane-and-cros-rpc-engine.md`](../02-design/02-data-plane-and-cros-rpc-engine.md)、[`03-architecture-elements-and-topology.md`](../02-design/03-architecture-elements-and-topology.md)、[`05-database-schema.md`](../02-design/05-database-schema.md)
+- **关联特性**：`F-02`（物理进程蓝图与模块服务契约）、`F-05`（实测调用拓扑还原与一致性验证）、`F-08`（进程树选择与就绪诊断）、`F-09` / `F-11`（Agent 采集与出站透明代理）、`F-12`（同构重放编排）、`F-13`（Agent 零 `.pb` 二进制 Mock 匹配与自愈）、`F-23`（主动发包调试）、`F-33`（CSG 现网服务与依赖双层自动发现及蓝图导入）、`F-34`（CSG 三模渐进式仿真测试架构）
+- **关联设计**：[`01-cros-rpc-protocol-spec.md`](../07-references/01-cros-rpc-protocol-spec.md)、[`01-system-architecture.md`](../02-design/01-system-architecture.md)、[`02-data-plane-and-cros-rpc-engine.md`](../02-design/02-data-plane-and-cros-rpc-engine.md)、[`03-architecture-elements-and-topology.md`](../02-design/03-architecture-elements-and-topology.md)、[`04-control-plane-and-web-console.md`](../02-design/04-control-plane-and-web-console.md)、[`05-database-schema.md`](../02-design/05-database-schema.md)
+- **关联任务卡**：[`29-m28-csg-service-discovery-and-multi-mode-simulation.md`](../04-tasks/29-m28-csg-service-discovery-and-multi-mode-simulation.md)
 - **关联 ADR**：[`ADR-02`](./02-ebpf-hook-and-dual-subsystem-adr.md)、[`ADR-09`](./09-arch-process-ssot-and-ebpf-premount-standby-adr.md)、[`ADR-11`](./11-single-process-bidirectional-capture-and-recording-ux-adr.md)、[`ADR-16`](./16-multi-implementation-service-contract-adr.md)
 
 ### 修订记录
@@ -15,7 +16,7 @@
 | :--- | :--- | :--- |
 | v1.0.0 ~ v1.9.0 | 2026-11-16 ~ 11-17 | 早期探索稿：基于“CSG 无法枚举服务与订阅者”的前置假设设计了种子轮询与单一 eBPF 重启劫持方案，历经 9 轮局部补丁后结构碎片化 |
 | v2.0.0 | 2026-11-18 | **基于 `@csg-ver` 现网验证推倒重构**：回归「**现网服务自动发现**」与「**现网服务仿真测试**」两大原始诉求，确立「`RPCMonitorService` 全量拓扑枚举 + `csgdlink.Sub` 精确端点富化」双层自动发现引擎，以及「`CLIENT_INJECT` + `PUB_STUB` + `MOCK_SERVER`」三模渐进式仿真测试架构 |
-| **v2.1.0** | **2026-11-18** | **与 `01-cros-rpc-protocol-spec.md` (`pkg/crosrpc`) 全面协议对齐核验**：1. 新增 §3.6「控制面 `dlink` 与数据面 `CROS RPC` 双平面协议关系及字段级对齐矩阵」；2. **彻底清除 `@csg-ver` 中的两处临时演示协议**（剔除 `internal/hello` 的 4B 长度前缀帧与 `internal/rpcmon/transport.go` 的 12B `"RMON"` `0x524D4F4E` 私有帧），将 `pkg/rpcmon` 的 TCP 服务端/客户端统一建立在 **`pkg/crosrpc` 标准帧（`24B RPC_COMM_HEAD_S "CSE.TCP"\x01` + `256B V05 RPC_REQ_HEAD_S` / `200B V04 RPC_RSP_HEAD_S` + Protobuf Payload，按 `ascServiceName = "RPCMonitorService-RPCMonitorService"` 与 `ascOperation = "GetRpc*"` 分发）** 之上；3. `MockCSGServer.StartMonitor` 自动将 `RPCMonitorService-RPCMonitorService` 注册进自身 CSG 实例表，实现「`csgdlink.Sub` 发现地址 ➔ `pkg/crosrpc` 标准报文调用」的 100% 真实协议闭环 |
+| **v2.1.0** | **2026-11-18** | **与 `01-cros-rpc-protocol-spec.md` (`pkg/crosrpc`) 全面协议对齐核验**：1. 新增 §3.6「控制面 `dlink` 与数据面 `CROS RPC` 双平面协议关系及字段级对齐矩阵」；2. **彻底清除 `@csg-ver` 中的两处临时演示协议**（剔除 `internal/hello` 的 4B 长度前缀帧与 `internal/rpcmon/transport.go` 的 12B `"RMON"` `0x524D4F4E` 私有帧），将 `pkg/rpcmon` 的 TCP 服务端/客户端统一建立在 **`pkg/crosrpc` 标准帧（`24B RPC_COMM_HEAD_S "CSE.TCP"\x01` + `256B V05 RPC_REQ_HEAD_S` / `200B V04 RPC_RSP_HEAD_S` + Protobuf Payload，按 `ascServiceName = "RPCMonitorService-RPCMonitorService"` 与 `ascOperation = "GetRpc*"` 分发）** 之上；3. `MockCSGServer.StartMonitor` 自动将 `RPCMonitorService-RPCMonitorService` 注册进自身 CSG 实例表，实现「`csgdlink.Sub` 发现地址 ➔ `pkg/crosrpc` 标准报文调用」的 100% 真实协议闭环。**评审通过，正式进入 SDD 详细设计、API 契约冻结与 M28 任务拆解阶段。** |
 
 ---
 
