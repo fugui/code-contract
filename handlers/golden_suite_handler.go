@@ -13,6 +13,7 @@ import (
 	commonAuth "code-common/backend/auth"
 	commonModels "code-common/backend/models"
 	"code-contract/internal/server/callgraph"
+	"code-contract/internal/server/diff"
 	"code-contract/models"
 	"code-contract/pkg/agentproto"
 
@@ -329,6 +330,16 @@ func CurateGoldenSuite(c *gin.Context) {
 		Where("session_id = ? AND direction = 'EGRESS' AND is_truncated = false AND exchange_type != 'REQ_ONLY'", req.SessionID).
 		Limit(500).Find(&egressRecords).Error
 
+	var srcSession models.RecordingSession
+	itemCSGSnapshots := datatypes.JSON([]byte("[]"))
+	if err := models.DB.WithContext(c.Request.Context()).
+		Select("id, csg_snapshots").
+		First(&srcSession, req.SessionID).Error; err == nil && len(srcSession.CSGSnapshots) > 0 {
+		copied := make([]byte, len(srcSession.CSGSnapshots))
+		copy(copied, srcSession.CSGSnapshots)
+		itemCSGSnapshots = datatypes.JSON(copied)
+	}
+
 	// 5. 组装并批量创建 GoldenSuiteItem 快照
 	var maxOrder int
 	models.DB.WithContext(c.Request.Context()).Model(&models.GoldenSuiteItem{}).
@@ -401,6 +412,7 @@ func CurateGoldenSuite(c *gin.Context) {
 			RawRspPacket:    rec.RawRspPacket,
 			ScopedMocks:     datatypes.JSON(scopedMocksJSON),
 			EgressEndpoints: datatypes.JSON(egressEndpointsJSON),
+			CSGSnapshots:    itemCSGSnapshots,
 			MaskRulesJSON:   datatypes.JSON(maskBytes),
 			CreatedBy:       userID,
 			CreatedAt:       time.Now(),
@@ -669,8 +681,10 @@ func ExecuteGoldenSuite(c *gin.Context) {
 	}
 
 	var req struct {
-		EnvAgentID uint64 `json:"env_agent_id" binding:"required"`
-		TimeoutMs  int    `json:"timeout_ms"`
+		EnvAgentID  uint64 `json:"env_agent_id" binding:"required"`
+		TimeoutMs   int    `json:"timeout_ms"`
+		CSGStrategy string `json:"csg_strategy"`
+		CSGAddr     string `json:"csg_addr"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "参数校验失败: " + err.Error()})
@@ -684,7 +698,7 @@ func ExecuteGoldenSuite(c *gin.Context) {
 		userID = uc.UserID
 	}
 
-	task, err := sched.ExecuteGoldenSuite(
+	task, err := sched.ExecuteGoldenSuiteWithCSG(
 		c.Request.Context(),
 		id,
 		req.EnvAgentID,
@@ -692,8 +706,20 @@ func ExecuteGoldenSuite(c *gin.Context) {
 		userID,
 		isAdmin,
 		req.TimeoutMs,
+		req.CSGStrategy,
+		req.CSGAddr,
 	)
 	if err != nil {
+		var csgConflict *diff.CSGConflictError
+		if errors.As(err, &csgConflict) {
+			c.JSON(http.StatusConflict, gin.H{"code": csgConflict.Code, "error": csgConflict.Message})
+			return
+		}
+		var csgMesh *diff.CSGMeshUnsupportedError
+		if errors.As(err, &csgMesh) {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"code": csgMesh.Code, "error": csgMesh.Message})
+			return
+		}
 		if strings.Contains(err.Error(), "404") {
 			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 			return

@@ -208,6 +208,8 @@ func RegisterAPIRoutes(r *gin.Engine) {
 		protected.DELETE("/agents/:id", DeleteAgent)
 		protected.POST("/agents/:id/handshake", HandshakeAgent)
 		protected.GET("/agents/:id/discover-processes", DiscoverAgentProcesses)
+		protected.GET("/agents/:id/csg/topology", GetAgentCSGTopology)
+		protected.POST("/agents/:id/csg/import-blueprint", requireAdmin, ImportAgentCSGBlueprint)
 		protected.POST("/agents/:id/lease/force-unlock", requireAdmin, ForceUnlockAgentLease)
 		protected.PUT("/agents/:id/process-mounts", BatchUpdateProcessMounts)
 		protected.POST("/agents/:id/probes/disarm-all", DisarmAllProbes)

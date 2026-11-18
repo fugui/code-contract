@@ -3,7 +3,7 @@ import { Modal } from '@code/common';
 import { useToast } from '../../utils/toast';
 import * as replayApi from '../../api/replay';
 import * as trafficApi from '../../api/traffic';
-import type { RecordingSession, TrafficRecordSummary, Process } from '../../types';
+import type { CSGReplayStrategy, RecordingSession, TrafficRecordSummary, Process } from '../../types';
 
 export interface ReplayTaskCreatorModalProps {
   open: boolean;
@@ -28,6 +28,8 @@ export const ReplayTaskCreatorModal: React.FC<ReplayTaskCreatorModalProps> = ({
   const [selectedProcessId, setSelectedProcessId] = useState('');
   const [extraIgnorePaths, setExtraIgnorePaths] = useState('');
   const [timeoutMs, setTimeoutMs] = useState(5000);
+  const [csgStrategy, setCsgStrategy] = useState<CSGReplayStrategy>('PASSTHROUGH');
+  const [csgAddr, setCsgAddr] = useState('');
 
   const [ingressRecords, setIngressRecords] = useState<TrafficRecordSummary[]>([]);
   const [selectedRecordIds, setSelectedRecordIds] = useState<string[]>([]);
@@ -128,13 +130,19 @@ export const ReplayTaskCreatorModal: React.FC<ReplayTaskCreatorModalProps> = ({
         selected_record_ids: selectedRecordIds,
         extra_ignore_paths: paths,
         timeout_ms: timeoutMs,
+        csg_strategy: csgStrategy,
+        csg_addr: csgAddr.trim() || undefined,
       });
       toast.success('同构重放任务已创建并进入调度队列');
       onSuccess();
       onClose();
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      if (errMsg.includes('409') || errMsg.includes('WAITING_PROC') || errMsg.includes('NEED_RECONNECT')) {
+      if (errMsg.includes('CSG_SERVICE_ALREADY_PUBLISHED')) {
+        toast.error(`CSG PUB_STUB 预检冲突 (409): 现网 CSG 已存在目标服务实例 (${errMsg})`);
+      } else if (errMsg.includes('CSG_DATAPLANE_MESH_UNSUPPORTED') || errMsg.includes('422')) {
+        toast.error(`CSG 数据面不兼容 (422): 纯 Mesh 服务请切换 PUB_STUB 或 MOCK_SERVER (${errMsg})`);
+      } else if (errMsg.includes('409') || errMsg.includes('WAITING_PROC') || errMsg.includes('NEED_RECONNECT')) {
         toast.error(`启动被拒绝 (409): 目标业务进程探针未就绪 (${errMsg})，请检查宿主机进程与网络连接`);
       } else {
         toast.error(errMsg || '创建重放任务失败');
@@ -281,6 +289,31 @@ export const ReplayTaskCreatorModal: React.FC<ReplayTaskCreatorModalProps> = ({
               className="code-input"
               value={timeoutMs}
               onChange={(e) => setTimeoutMs(Number(e.target.value))}
+            />
+          </div>
+          <div className="code-form-item">
+            <label className="code-form-label">CSG 控制面仿真策略:</label>
+            <select
+              className="code-select"
+              data-testid="select-csg-strategy"
+              value={csgStrategy}
+              onChange={(e) => setCsgStrategy(e.target.value as CSGReplayStrategy)}
+            >
+              <option value="PASSTHROUGH">PASSTHROUGH（默认直通）</option>
+              <option value="CLIENT_INJECT">CLIENT_INJECT（Sub 动态解析实测端口）</option>
+              <option value="PUB_STUB">PUB_STUB（无在线依赖时注册桩 · Sub==0 门禁）</option>
+              <option value="MOCK_SERVER">MOCK_SERVER（进程内孤岛沙箱 · 真实 CSG 零接触）</option>
+            </select>
+          </div>
+          <div className="code-form-item">
+            <label className="code-form-label">可选 CSG dlink 地址 (csg_addr):</label>
+            <input
+              type="text"
+              className="code-input"
+              data-testid="input-csg-addr"
+              value={csgAddr}
+              onChange={(e) => setCsgAddr(e.target.value)}
+              placeholder="留空自动探测 (如 127.0.0.1:31806)"
             />
           </div>
         </div>

@@ -891,8 +891,11 @@ func TestEgressProxy_ReplayMock_HistoricalEndpointsAndMagicWriteGuardZeroLeakage
 	var portMap sync.Map
 	proxy, err := NewEgressProxy(
 		func(clientPort uint16) (uint64, uint32, net.IP, uint16, bool) {
-			if target, ok := portMap.Load(clientPort); ok {
-				return 10, 1001, net.IPv4(127, 0, 0, 1), target.(uint16), true
+			for i := 0; i < 50; i++ {
+				if target, ok := portMap.Load(clientPort); ok {
+					return 10, 1001, net.IPv4(127, 0, 0, 1), target.(uint16), true
+				}
+				time.Sleep(2 * time.Millisecond)
 			}
 			return 10, 1001, net.IPv4(127, 0, 0, 1), portA, true
 		},

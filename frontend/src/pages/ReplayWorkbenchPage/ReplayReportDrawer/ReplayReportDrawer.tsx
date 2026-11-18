@@ -141,7 +141,67 @@ export const ReplayReportDrawer: React.FC<ReplayReportDrawerProps> = ({
               <span className="code-meta-label">MOCK_MISS 漏网:</span>
               <span className="code-meta-val code-color-danger code-font-mono">{task.mock_miss_requests}</span>
             </div>
+            {task.csg_strategy && (
+              <div className="code-meta-item">
+                <span className="code-meta-label">CSG 仿真策略:</span>
+                <span className="code-badge code-badge--info" data-testid="replay-report-csg-strategy">
+                  {task.csg_strategy}
+                </span>
+              </div>
+            )}
           </div>
+
+          {task.csg_sandbox_report && (
+            <div
+              data-testid="csg-sandbox-report-card"
+              style={{
+                marginTop: '12px',
+                padding: '12px',
+                borderRadius: '8px',
+                border: '1px solid var(--color-border-subtle)',
+                backgroundColor: 'var(--color-bg-secondary)',
+                fontSize: '13px',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                <strong style={{ color: 'var(--color-text-primary)' }}>
+                  CSG 控制面仿真与沙箱自洁报告 ({task.csg_sandbox_report.strategy})
+                </strong>
+                <span
+                  className={`code-badge ${
+                    task.csg_sandbox_report.cleanup_completed && task.csg_sandbox_report.real_csg_leak_count === 0
+                      ? 'code-badge--success'
+                      : 'code-badge--danger'
+                  }`}
+                >
+                  {task.csg_sandbox_report.cleanup_completed ? '自洁完成' : '自洁未完成'} · 泄漏 {task.csg_sandbox_report.real_csg_leak_count}
+                </span>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', color: 'var(--color-text-secondary)' }}>
+                {task.csg_sandbox_report.csg_addr && (
+                  <span>目标 CSG: <code className="code-font-mono">{task.csg_sandbox_report.csg_addr}</code></span>
+                )}
+                {task.csg_sandbox_report.mock_csg_addr && (
+                  <span>沙箱实例: <code className="code-font-mono">{task.csg_sandbox_report.mock_csg_addr}</code></span>
+                )}
+                {typeof task.csg_sandbox_report.mesh_rewrites === 'number' && (
+                  <span>Mesh-&gt;TCP 改写: {task.csg_sandbox_report.mesh_rewrites}</span>
+                )}
+                {task.csg_sandbox_report.unpublished_stubs && task.csg_sandbox_report.unpublished_stubs.length > 0 && (
+                  <span>已注销桩: {task.csg_sandbox_report.unpublished_stubs.join(', ')}</span>
+                )}
+                {task.csg_sandbox_report.sandbox_subscribed_svcs && task.csg_sandbox_report.sandbox_subscribed_svcs.length > 0 && (
+                  <span>沙箱订阅服务: {task.csg_sandbox_report.sandbox_subscribed_svcs.join(', ')}</span>
+                )}
+              </div>
+              {task.csg_sandbox_report.error_message && (
+                <div style={{ marginTop: '6px', color: 'var(--color-danger)' }}>
+                  {task.csg_sandbox_report.error_code ? `[${task.csg_sandbox_report.error_code}] ` : ''}
+                  {task.csg_sandbox_report.error_message}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* 请求条目横向切换标签 */}
           <div className="code-replay-item-tabs code-mt-sm">

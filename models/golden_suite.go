@@ -60,6 +60,7 @@ type GoldenSuiteItem struct {
 	RawRspPacket    []byte         `gorm:"type:bytea;not null" json:"-"`                             // 深拷贝固化的无损预期应答 CROS RPC 帧
 	ScopedMocks     datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"scoped_mocks"`     // []agentproto.MockRuleDownstream 固化的专属下游请求+应答闭包
 	EgressEndpoints datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"egress_endpoints"` // []agentproto.DownstreamEndpoint 固化的历史下游端点集
+	CSGSnapshots    datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"csg_snapshots"`    // []agentproto.CSGSnapshotRecord 固化的录制期 CSG 地址快照
 	MaskRulesJSON   datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"mask_rules_json"`  // []MaskRule 用例级动态掩码与忽略路径规则
 	CreatedBy       uint           `gorm:"not null;default:0" json:"created_by"`
 	CreatedAt       time.Time      `json:"created_at"`
@@ -84,6 +85,7 @@ type GoldenSuiteItemSummary struct {
 	RawRspLen       int            `json:"raw_rsp_len"`
 	ScopedMockCount int            `json:"scoped_mock_count"`
 	EgressEndpoints datatypes.JSON `json:"egress_endpoints"`
+	CSGSnapshots    datatypes.JSON `json:"csg_snapshots"`
 	MaskRulesJSON   datatypes.JSON `json:"mask_rules_json"`
 	CreatedBy       uint           `json:"created_by"`
 	CreatedAt       time.Time      `json:"created_at"`
@@ -114,6 +116,7 @@ func (i *GoldenSuiteItem) ToSummary() GoldenSuiteItemSummary {
 		RawRspLen:       len(i.RawRspPacket),
 		ScopedMockCount: mockCount,
 		EgressEndpoints: i.EgressEndpoints,
+		CSGSnapshots:    i.CSGSnapshots,
 		MaskRulesJSON:   i.MaskRulesJSON,
 		CreatedBy:       i.CreatedBy,
 		CreatedAt:       i.CreatedAt,

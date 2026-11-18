@@ -136,6 +136,8 @@ func main() {
 		doctor      = flag.Bool("doctor", false, "执行环境与内核特权就绪体检诊断并退出")
 		check       = flag.Bool("check", false, "执行环境与内核特权就绪体检诊断并退出 (等同于 --doctor)")
 		requireCaps = flag.Bool("require-caps", false, "是否强制要求必须具备 eBPF 内核特权，若缺少则拒绝启动")
+		csgAddr     = flag.String("csg-addr", os.Getenv("CONTRACT_AGENT_CSG_ADDR"), "可选预设 CSG 控制面端点 (<ip>:<port>，支持逗号分隔)")
+		csgProbeBin = flag.String("csg-probe-bin", os.Getenv("CONTRACT_AGENT_CSG_PROBE_BIN"), "可选真机只读 rpcmon_probe 二进制白名单路径")
 	)
 	flag.Parse()
 
@@ -161,6 +163,13 @@ func main() {
 
 	allowIPs := parseAllowIPs(*allowIPsStr)
 
+	var csgAddrs []string
+	for _, part := range strings.Split(*csgAddr, ",") {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			csgAddrs = append(csgAddrs, trimmed)
+		}
+	}
+
 	cfg := server.AgentServerConfig{
 		ListenAddr:            *listenAddr,
 		AllowIPs:              allowIPs,
@@ -169,6 +178,8 @@ func main() {
 		MaxSessionBufferBytes: *maxBufferMB * 1024 * 1024,
 		AgentVersion:          version.Short(),
 		ProcRoot:              *procRoot,
+		CSGAddrs:              csgAddrs,
+		CSGProbeBin:           strings.TrimSpace(*csgProbeBin),
 	}
 
 	srv, err := server.NewAgentServer(cfg)

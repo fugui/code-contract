@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"code-contract/internal/agent/csg"
 	"code-contract/pkg/agentproto"
 	"code-contract/pkg/crosrpc"
 	"code-contract/pkg/ebpf"
@@ -38,6 +39,10 @@ type AgentServerConfig struct {
 	AgentVersion          string
 	ProcRoot              string
 	CapabilityChecker     ebpf.CapabilityChecker
+	CSGAddrs              []string
+	CSGProbeBin           string
+	CSGProbeAllowedDirs   []string
+	CSGMonitorAddr        string
 }
 
 // AgentServer code-contract-agent HTTP REST + WebSocket 二进制数据面服务端
@@ -64,6 +69,8 @@ type AgentServer struct {
 	armedDigest     string
 	armedProcesses  []agentproto.ProcessMonitorSpec
 	latestDiags     []agentproto.ProcessDiagStatus
+	activeCSGSim    *csg.SimController
+	activeDone      chan struct{}
 }
 
 // NewAgentServer 构造 Agent 服务端实例
@@ -267,20 +274,24 @@ func (s *AgentServer) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-// PurgeAll 清空所有监控、取消重放并释放本地排他租约
+// PurgeAll 清空所有监控、取消重放、卸载 CSG 仿真桩并释放本地排他租约
 func (s *AgentServer) PurgeAll() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if s.ebpfMgr != nil {
 		s.ebpfMgr.PurgeAllMonitors()
 	}
 	if s.replayExec != nil && s.activeRefID > 0 {
 		s.replayExec.Cancel(s.activeRefID)
 	}
+	sim := s.activeCSGSim
+	s.activeCSGSim = nil
 	s.activeLeaseType = ""
 	s.activeRefID = 0
+	s.activeDone = nil
 	s.buffer.Reset()
+	s.mu.Unlock()
+
+	s.finishCSGSim(sim, 0)
 }
 
 // IP 白名单中间件 (严格忽略可被伪造的 X-Forwarded-For，仅取 TCP RemoteAddr)
@@ -350,8 +361,9 @@ func (s *AgentServer) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /agent/v1/handshake", s.handleHandshake)
 	mux.HandleFunc("GET /agent/v1/health", s.handleHandshake)
 
-	// 2. 候选进程探查
+	// 2. 候选进程与 CSG 拓扑探查
 	mux.HandleFunc("GET /agent/v1/processes/discover", s.handleDiscoverProcesses)
+	mux.HandleFunc("GET /agent/v1/csg/topology", s.handleCSGTopology)
 
 	// 3. 待命预挂载与状态同步
 	mux.HandleFunc("POST /agent/v1/monitors/arm", s.handleArmStandby)
@@ -412,6 +424,12 @@ func (s *AgentServer) handleHandshake(w http.ResponseWriter, r *http.Request) {
 	hasCaps, _, capDetail := s.ebpfMgr.CheckPrivileges()
 	uptime := uint64(time.Since(s.startedAt).Seconds())
 
+	armedDigest := s.armedDigest
+	armedCount := len(s.armedProcesses)
+	s.mu.Unlock()
+
+	csgEps := s.locateCSGEndpoints()
+
 	resp := agentproto.HandshakeResp{
 		AgentVersion:      s.cfg.AgentVersion,
 		ProtocolVersion:   agentproto.ProtocolVersion,
@@ -423,10 +441,10 @@ func (s *AgentServer) handleHandshake(w http.ResponseWriter, r *http.Request) {
 		ActiveLeaseType:   s.activeLeaseType,
 		ActiveRefID:       s.activeRefID,
 		UptimeSec:         uptime,
-		ArmedProcessCount: len(s.armedProcesses),
-		ArmedDigest:       s.armedDigest,
+		ArmedProcessCount: armedCount,
+		ArmedDigest:       armedDigest,
+		CSGEndpoints:      csgEps,
 	}
-	s.mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
@@ -440,6 +458,10 @@ func (s *AgentServer) handleDiscoverProcesses(w http.ResponseWriter, r *http.Req
 	}
 	if procs == nil {
 		procs = []agentproto.DiscoveredProcess{}
+	}
+
+	if _, fused, err := s.discoverCSGAndFuse(r.Context(), r.URL.Query().Get("csg_addr"), procs); err == nil && len(fused) > 0 {
+		procs = fused
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -607,21 +629,39 @@ func (s *AgentServer) handleExecuteReplay(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// 1. 拦截检查：若目标进程处于 NEED_RECONNECT 或 WAITING_PROC / NOT_FOUND，直接以 HTTP 409 拦截
-	pid, err := s.procScanner.FindPIDByPortAndCmd(req.ProcessSpec.ListenPort, req.ProcessSpec.CmdPattern)
+	s.mu.Lock()
+	if s.activeLeaseType != "" && (s.activeLeaseType != "REPLAY" || s.activeRefID != req.TaskID) {
+		s.mu.Unlock()
+		http.Error(w, "Conflict: Agent leased by other task", http.StatusConflict)
+		return
+	}
+	s.mu.Unlock()
+
+	// 0. 可选 CSG 三模渐进式仿真前置筹备 (CLIENT_INJECT / PUB_STUB / MOCK_SERVER)
+	simCtrl, simOut, effectivePort, handled := s.prepareReplayCSG(r.Context(), w, &req)
+	if handled {
+		return
+	}
+
+	// 1. 拦截检查：若目标进程处于 NEED_RECONNECT 或 WAITING_PROC / NOT_FOUND，直接以 HTTP 409 拦截并卸载本次 CSG 仿真资源
+	pid, err := s.procScanner.FindPIDByPortAndCmd(effectivePort, req.ProcessSpec.CmdPattern)
 	if err != nil || pid == 0 {
+		s.finishCSGSim(simCtrl, 0)
+		s.replayExec.CloseMockListener()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error":        "目标进程未运行，禁止盲目发起回放",
 			"status":       "WAITING_PROC",
-			"diag_message": fmt.Sprintf("未在端口 %d 检测到符合特征 [%s] 的进程", req.ProcessSpec.ListenPort, req.ProcessSpec.CmdPattern),
+			"diag_message": fmt.Sprintf("未在端口 %d 检测到符合特征 [%s] 的进程", effectivePort, req.ProcessSpec.CmdPattern),
 		})
 		return
 	}
 
 	estConns, needRec, _ := s.procScanner.DiagnoseEstablishedConns(pid, req.ProcessSpec.Downstreams)
 	if needRec {
+		s.finishCSGSim(simCtrl, 0)
+		s.replayExec.CloseMockListener()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -635,12 +675,38 @@ func (s *AgentServer) handleExecuteReplay(w http.ResponseWriter, r *http.Request
 	s.mu.Lock()
 	if s.activeLeaseType != "" && (s.activeLeaseType != "REPLAY" || s.activeRefID != req.TaskID) {
 		s.mu.Unlock()
+		s.finishCSGSim(simCtrl, 0)
+		s.replayExec.CloseMockListener()
 		http.Error(w, "Conflict: Agent leased by other task", http.StatusConflict)
 		return
 	}
+	doneCh := make(chan struct{})
 	s.activeLeaseType = "REPLAY"
 	s.activeRefID = req.TaskID
+	s.activeCSGSim = simCtrl
+	s.activeDone = doneCh
 	s.mu.Unlock()
+
+	if simOut != nil && simOut.TargetDialAddr != "" {
+		s.replayExec.SetTargetDialOverride(simOut.TargetDialAddr)
+	} else {
+		s.replayExec.SetTargetDialOverride("")
+	}
+	if simOut != nil && simOut.MockCSGServer != nil && s.ebpfMgr != nil && s.ebpfMgr.EgressProxy() != nil {
+		csgIPStr, csgPortU16, hasCSGAddr := csg.ParseCSGAddr(s.resolveEffectiveCSGAddr(req.CSGAddr))
+		mockCSG := simOut.MockCSGServer
+		s.ebpfMgr.EgressProxy().SetCSGHandler(
+			func(origIP net.IP, origPort uint16) bool {
+				if origPort >= csg.DefaultCSGPortMin && origPort <= csg.DefaultCSGPortMax {
+					return true
+				}
+				return hasCSGAddr && origIP != nil && origIP.String() == csgIPStr && origPort == csgPortU16
+			},
+			func(conn net.Conn) {
+				mockCSG.ServeConn(conn)
+			},
+		)
+	}
 
 	// 2. 将 EgressProxy 切换为 REPLAY_MOCK 模式并注入 Mock 数据 (ADR-12, M13)
 	matcher := replay.NewScopedMockMatcher()
@@ -680,8 +746,20 @@ func (s *AgentServer) handleExecuteReplay(w http.ResponseWriter, r *http.Request
 		s.ebpfMgr.SetReplayMock(req.TaskID, matcher, req.ProcessSpec.Downstreams)
 	}
 
-	// 异步执行重放 (与 EgressProxy 共享同一 matcher 实例)
+	// 异步执行重放 (与 EgressProxy 共享同一 matcher 实例，退出时幂等卸载 CSG 桩并释放 REPLAY 租约)
 	go func() {
+		defer func() {
+			s.finishCSGSim(simCtrl, req.TaskID)
+			s.mu.Lock()
+			if s.activeLeaseType == "REPLAY" && s.activeRefID == req.TaskID {
+				s.activeLeaseType = ""
+				s.activeRefID = 0
+				s.activeCSGSim = nil
+				s.activeDone = nil
+			}
+			s.mu.Unlock()
+			close(doneCh)
+		}()
 		_, _ = s.replayExec.ExecuteWithMatcher(context.Background(), req, matcher)
 	}()
 
@@ -706,6 +784,24 @@ func (s *AgentServer) handleGetReplayResult(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	s.mu.Lock()
+	var waitCh chan struct{}
+	if s.activeLeaseType == "REPLAY" && s.activeRefID == taskID {
+		waitCh = s.activeDone
+	}
+	s.mu.Unlock()
+	if waitCh != nil {
+		select {
+		case <-waitCh:
+		case <-r.Context().Done():
+			http.Error(w, "Request cancelled", http.StatusRequestTimeout)
+			return
+		case <-time.After(150 * time.Millisecond):
+			http.Error(w, "Task finalizing", http.StatusNotFound)
+			return
+		}
+	}
+
 	res, ok := s.replayExec.GetResult(taskID)
 	if !ok {
 		http.Error(w, "Task not found", http.StatusNotFound)
@@ -722,11 +818,15 @@ func (s *AgentServer) handleCancelReplay(w http.ResponseWriter, r *http.Request)
 
 	s.replayExec.Cancel(taskID)
 	s.mu.Lock()
+	var sim *csg.SimController
 	if s.activeRefID == taskID {
 		s.activeLeaseType = ""
 		s.activeRefID = 0
+		sim = s.activeCSGSim
+		s.activeCSGSim = nil
 	}
 	s.mu.Unlock()
+	s.finishCSGSim(sim, taskID)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{

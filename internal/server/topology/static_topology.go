@@ -30,30 +30,44 @@ const (
 )
 
 var (
-	ErrModuleServiceNotFound     = errors.New("模块供给服务契约不存在")
-	ErrModuleDependencyNotFound  = errors.New("模块服务依赖关系不存在")
-	ErrAgentNotFound             = errors.New("目标 Agent 不存在")
-	ErrProcessNotFound           = errors.New("目标进程映射不存在")
-	ErrInvalidServiceNameFormat  = errors.New("服务名必须符合 {package}.{serviceName} 点分规范且长度为 1..63 位可见字符")
-	ErrDuplicateModuleService    = errors.New("该服务已被其他功能模块声明提供 (A-05)")
-	ErrDuplicateDependency       = errors.New("当前功能模块已存在相同的服务依赖")
-	ErrSelfDependency            = errors.New("功能模块不能依赖自身提供的服务")
-	ErrServiceHasDependencies    = errors.New("该服务已被其他功能模块作为依赖引用，请先解除依赖关系")
-	ErrInvalidExternalDependency = errors.New("外部服务依赖必须填写外部系统名称或外部服务名称")
-	ErrInvalidTopologyView       = errors.New("静态拓扑视角参数非法，仅允许 LOGICAL 或 PHYSICAL")
-	ErrInvalidListenPort         = errors.New("进程监听端口必须在 0..65535 之间 (0 表示纯客户端无监听端口)")
-	ErrInvalidProcessName        = errors.New("进程名称与命令行匹配模式不能为空")
-	ErrEmptyProcessModules       = errors.New("进程至少需挂载 1 个公共功能模块")
-	ErrInvalidExtraDownstream    = errors.New("补充外部下游端点格式必须为合法 IPv4:Port")
-	ErrDuplicateProcessPort      = errors.New("同一 Agent 下监听端口已被其他进程占用")
-	ErrDuplicateProcessName      = errors.New("同一 Agent 下进程名称已存在")
-	ErrDuplicateModuleBinding    = errors.New("同一部署域内同一功能模块禁止重复挂载到多个进程")
-	ErrAgentHasActiveLease       = errors.New("所属 Agent 当前持有活跃排他租约，禁止变更或删除进程")
-	ErrProcessReferencedByReplay = errors.New("进程仍被历史重放任务引用，禁止删除")
+	ErrModuleServiceNotFound         = errors.New("模块供给服务契约不存在")
+	ErrModuleDependencyNotFound      = errors.New("模块服务依赖关系不存在")
+	ErrAgentNotFound                 = errors.New("目标 Agent 不存在")
+	ErrProcessNotFound               = errors.New("目标进程映射不存在")
+	ErrInvalidServiceNameFormat      = errors.New("服务名必须符合 {package}.{serviceName} 点分规范且长度为 1..63 位可见字符")
+	ErrInvalidProtoServiceNameFormat = errors.New("可选 .pb 服务别名必须符合 {package}.{serviceName} 规范且长度为 1..128 位")
+	ErrDuplicateModuleService        = errors.New("该服务已被其他功能模块声明提供 (A-05)")
+	ErrDuplicateDependency           = errors.New("当前功能模块已存在相同的服务依赖")
+	ErrSelfDependency                = errors.New("功能模块不能依赖自身提供的服务")
+	ErrServiceHasDependencies        = errors.New("该服务已被其他功能模块作为依赖引用，请先解除依赖关系")
+	ErrInvalidExternalDependency     = errors.New("外部服务依赖必须填写外部系统名称或外部服务名称")
+	ErrInvalidTopologyView           = errors.New("静态拓扑视角参数非法，仅允许 LOGICAL 或 PHYSICAL")
+	ErrInvalidListenPort             = errors.New("进程监听端口必须在 0..65535 之间 (0 表示纯客户端无监听端口)")
+	ErrInvalidProcessName            = errors.New("进程名称与命令行匹配模式不能为空")
+	ErrEmptyProcessModules           = errors.New("进程至少需挂载 1 个公共功能模块")
+	ErrInvalidExtraDownstream        = errors.New("补充外部下游端点格式必须为合法 IPv4:Port")
+	ErrDuplicateProcessPort          = errors.New("同一 Agent 下监听端口已被其他进程占用")
+	ErrDuplicateProcessName          = errors.New("同一 Agent 下进程名称已存在")
+	ErrDuplicateModuleBinding        = errors.New("同一部署域内同一功能模块禁止重复挂载到多个进程")
+	ErrAgentHasActiveLease           = errors.New("所属 Agent 当前持有活跃排他租约，禁止变更或删除进程")
+	ErrProcessReferencedByReplay     = errors.New("进程仍被历史重放任务引用，禁止删除")
 )
 
 // serviceNameRegex: 服务名规范 {package}.{serviceName} (1..63 位可见字符)
 var serviceNameRegex = regexp.MustCompile(`^[A-Za-z0-9._-]{1,63}$`)
+var protoServiceNameRegex = regexp.MustCompile(`^[A-Za-z0-9._]{1,128}$`)
+
+// ValidateProtoServiceName 验证可选的 .pb 服务全名格式（允许空串）
+func ValidateProtoServiceName(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", nil
+	}
+	if !protoServiceNameRegex.MatchString(trimmed) {
+		return "", ErrInvalidProtoServiceNameFormat
+	}
+	return trimmed, nil
+}
 
 // ProvideConflictError 全局唯一供给冲突详情错误 (A-05)
 type ProvideConflictError struct {
@@ -74,13 +88,14 @@ func (e *ProvideConflictError) Unwrap() error {
 
 // ModuleServiceInput 模块供给服务新增入参
 type ModuleServiceInput struct {
-	ModuleID        uint64
-	ServiceName     string
-	ContractID      *uint64
-	ImplKey         string
-	DiffIgnorePaths []string
-	Description     string
-	OperatorID      uint
+	ModuleID         uint64
+	ServiceName      string
+	ProtoServiceName string
+	ContractID       *uint64
+	ImplKey          string
+	DiffIgnorePaths  []string
+	Description      string
+	OperatorID       uint
 }
 
 // ModuleDependencyInput 模块依赖下游服务新增入参
@@ -114,11 +129,12 @@ type AvailableServiceDTO struct {
 
 // UpdateModuleServiceInput 更新供给服务入参 (ADR-16 v2.0)
 type UpdateModuleServiceInput struct {
-	ServiceID       uint64
-	ServiceName     *string
-	ImplKey         *string
-	DiffIgnorePaths []string
-	Description     string
+	ServiceID        uint64
+	ServiceName      *string
+	ProtoServiceName *string
+	ImplKey          *string
+	DiffIgnorePaths  []string
+	Description      string
 }
 
 // ProcessInput 进程部署与模块承载映射新增/修改入参
@@ -282,10 +298,16 @@ func CreateModuleService(db *gorm.DB, in ModuleServiceInput) (*models.ModuleServ
 				}
 			}
 
+			protoSvcName, pErr := ValidateProtoServiceName(in.ProtoServiceName)
+			if pErr != nil {
+				return pErr
+			}
+
 			svc := &models.ModuleService{
 				ModuleID:            in.ModuleID,
 				ContractID:          in.ContractID,
 				ServiceName:         publishedName,
+				ProtoServiceName:    protoSvcName,
 				ImplKey:             implKey,
 				IsCustomServiceName: isCustom,
 				ContractServiceName: contract.ServiceName,
@@ -319,6 +341,10 @@ func CreateModuleService(db *gorm.DB, in ModuleServiceInput) (*models.ModuleServ
 	serviceName := strings.TrimSpace(in.ServiceName)
 	if len(serviceName) == 0 || len(serviceName) > 63 || !serviceNameRegex.MatchString(serviceName) {
 		return nil, ErrInvalidServiceNameFormat
+	}
+	protoSvcName, pErr := ValidateProtoServiceName(in.ProtoServiceName)
+	if pErr != nil {
+		return nil, pErr
 	}
 
 	var created *models.ModuleService
@@ -354,11 +380,12 @@ func CreateModuleService(db *gorm.DB, in ModuleServiceInput) (*models.ModuleServ
 		}
 
 		svc := &models.ModuleService{
-			ModuleID:        in.ModuleID,
-			ServiceName:     serviceName,
-			DiffIgnorePaths: datatypes.JSON(diffPathsJSON),
-			Description:     in.Description,
-			CreatedBy:       in.OperatorID,
+			ModuleID:         in.ModuleID,
+			ServiceName:      serviceName,
+			ProtoServiceName: protoSvcName,
+			DiffIgnorePaths:  datatypes.JSON(diffPathsJSON),
+			Description:      in.Description,
+			CreatedBy:        in.OperatorID,
 		}
 
 		if err := tx.Create(svc).Error; err != nil {
@@ -425,6 +452,15 @@ func UpdateModuleServiceWithOptions(db *gorm.DB, in UpdateModuleServiceInput) (*
 			newImplKey = strings.TrimSpace(*in.ImplKey)
 		}
 
+		newProtoSvcName := before.ProtoServiceName
+		if in.ProtoServiceName != nil {
+			validatedProto, pErr := ValidateProtoServiceName(*in.ProtoServiceName)
+			if pErr != nil {
+				return pErr
+			}
+			newProtoSvcName = validatedProto
+		}
+
 		// 独占服务不允许修改服务名或设置 impl_key
 		if before.ContractID == nil {
 			if newServiceName != before.ServiceName {
@@ -434,11 +470,13 @@ func UpdateModuleServiceWithOptions(db *gorm.DB, in UpdateModuleServiceInput) (*
 				return ErrInvalidImplKey
 			}
 			after = before
+			after.ProtoServiceName = newProtoSvcName
 			after.DiffIgnorePaths = datatypes.JSON(diffPathsJSON)
 			after.Description = in.Description
 			return tx.Model(&models.ModuleService{}).Where("id = ?", in.ServiceID).Updates(map[string]interface{}{
-				"diff_ignore_paths": datatypes.JSON(diffPathsJSON),
-				"description":       in.Description,
+				"proto_service_name": newProtoSvcName,
+				"diff_ignore_paths":  datatypes.JSON(diffPathsJSON),
+				"description":        in.Description,
 			}).Error
 		}
 
@@ -506,6 +544,7 @@ func UpdateModuleServiceWithOptions(db *gorm.DB, in UpdateModuleServiceInput) (*
 
 		after = before
 		after.ServiceName = newServiceName
+		after.ProtoServiceName = newProtoSvcName
 		after.ImplKey = newImplKey
 		after.IsCustomServiceName = newIsCustom
 		after.ContractServiceName = contract.ServiceName
@@ -514,6 +553,7 @@ func UpdateModuleServiceWithOptions(db *gorm.DB, in UpdateModuleServiceInput) (*
 
 		return tx.Model(&models.ModuleService{}).Where("id = ?", in.ServiceID).Updates(map[string]interface{}{
 			"service_name":           newServiceName,
+			"proto_service_name":     newProtoSvcName,
 			"impl_key":               newImplKey,
 			"is_custom_service_name": newIsCustom,
 			"diff_ignore_paths":      datatypes.JSON(diffPathsJSON),

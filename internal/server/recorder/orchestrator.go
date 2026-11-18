@@ -169,6 +169,7 @@ func (o *Orchestrator) StartSession(
 
 	epSnapshots, _ := topology.CompileProcessEndpointSnapshots(ctx, o.db, agentIDs, req.TargetProcessIDs)
 	epSnapshotBytes, _ := json.Marshal(epSnapshots)
+	csgSnapshotBytes := o.collectInitialCSGSnapshots(ctx, agentIDs, userID, isAdmin)
 
 	now := time.Now()
 	leasedBytes, _ := json.Marshal(agentIDs)
@@ -185,6 +186,7 @@ func (o *Orchestrator) StartSession(
 		TargetProcessIDs:   datatypes.JSON(targetProcBytes),
 		ProcessSnapshots:   datatypes.JSON(snapshotBytes),
 		EndpointSnapshots:  datatypes.JSON(epSnapshotBytes),
+		CSGSnapshots:       datatypes.JSON(csgSnapshotBytes),
 		ProcessDiagnostics: datatypes.JSON([]byte("[]")),
 		MaxDurationSec:     maxDur,
 		MaxFrames:          maxFrames,
@@ -742,6 +744,8 @@ func (o *Orchestrator) readAgentStream(ctx context.Context, sessionID uint64, ag
 			}
 		case agentproto.EventSessionDrained:
 			log.Printf("[Orchestrator] Agent 会话排空信号: session=%d", sessionID)
+		case agentproto.EventCSGObservation:
+			o.handleCSGObservationPayload(sessionID, payload)
 		}
 	}
 }

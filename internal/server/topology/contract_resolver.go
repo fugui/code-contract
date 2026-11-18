@@ -88,10 +88,16 @@ func LoadContractResolver(ctx context.Context, db *gorm.DB) (*ContractResolver, 
 
 		if svc.ContractID == nil {
 			// 独占服务
-			resolver.exclusiveMap[svcName] = ExclusiveServiceInfo{
+			info := ExclusiveServiceInfo{
 				ServiceID:     svc.ID,
 				ModuleID:      svc.ModuleID,
 				ArchProcessID: archProcID,
+			}
+			resolver.exclusiveMap[svcName] = info
+			if protoName := strings.TrimSpace(svc.ProtoServiceName); protoName != "" && protoName != svcName {
+				if _, exists := resolver.exclusiveMap[protoName]; !exists {
+					resolver.exclusiveMap[protoName] = info
+				}
 			}
 		} else {
 			// 多实现契约下的服务实现
@@ -114,6 +120,11 @@ func LoadContractResolver(ctx context.Context, db *gorm.DB) (*ContractResolver, 
 			}
 			if isCustom && svcName != "" {
 				resolver.aliasedImplMap[svcName] = impl
+			}
+			if protoName := strings.TrimSpace(svc.ProtoServiceName); protoName != "" && protoName != svcName {
+				if _, exists := resolver.aliasedImplMap[protoName]; !exists {
+					resolver.aliasedImplMap[protoName] = impl
+				}
 			}
 		}
 	}
@@ -147,10 +158,17 @@ func (r *ContractResolver) ResolveDestinationFull(
 		return nil, nil
 	}
 
-	// 1. Tier 1: 独占服务
+	// 1. Tier 1: 独占服务 (支持精确名及去 PID 后缀名回退)
 	if excl, ok := r.exclusiveMap[key]; ok {
 		mID := excl.ModuleID
 		return &mID, nil
+	}
+	normKey := StripCSGPIDSuffix(key)
+	if normKey != key {
+		if excl, ok := r.exclusiveMap[normKey]; ok {
+			mID := excl.ModuleID
+			return &mID, nil
+		}
 	}
 
 	// 1b. Tier 1b: 多实现契约的自定义唯一运行期服务名 (如 DH_SyncService)
@@ -159,9 +177,19 @@ func (r *ContractResolver) ResolveDestinationFull(
 		cID := aliased.ContractID
 		return &mID, &cID
 	}
+	if normKey != key {
+		if aliased, ok := r.aliasedImplMap[normKey]; ok {
+			mID := aliased.ModuleID
+			cID := aliased.ContractID
+			return &mID, &cID
+		}
+	}
 
 	// 2. Tier 2: 多实现契约共享服务名（仅匹配未重命名共享契约名的实现 impl）
 	contract, ok := r.contracts[key]
+	if !ok && normKey != key {
+		contract, ok = r.contracts[normKey]
+	}
 	if !ok {
 		return nil, nil
 	}

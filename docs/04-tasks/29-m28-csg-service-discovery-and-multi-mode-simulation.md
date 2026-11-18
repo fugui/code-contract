@@ -5,7 +5,7 @@
 > **所属阶段**: 阶段四（TDD 实施路线与工程作战卡）  
 > **上位基线**: [`ADR-21` (v2.1.0)](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) · [`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (`F-11`~`F-13`, `F-15.5`, `F-27`, `F-33`, `F-34`, `SC-17`) · [`01-system-architecture.md`](../02-design/01-system-architecture.md) · [`02-data-plane-and-cros-rpc-engine.md`](../02-design/02-data-plane-and-cros-rpc-engine.md) (§4~§6) · [`03-architecture-elements-and-topology.md`](../02-design/03-architecture-elements-and-topology.md) (§2.1, §3.4) · [`04-control-plane-and-web-console.md`](../02-design/04-control-plane-and-web-console.md) (§1.2, §1.3, §2.1, §4.11) · [`05-database-schema.md`](../02-design/05-database-schema.md) · [`01-http-api-contract.md`](../03-api/01-http-api-contract.md)  
 > **前置依赖**: `M27`（Proto 四工作台信息架构已交付）  
-> **交付状态**: 📋 待实施（SDD 规范与接口契约已冻结，**零新增数据库表**，维持 `30` 核心业务表 + `contract_settings` = `31` 表）
+> **交付状态**: ✅ 已交付（`M28-P1`~`M28-P4` 全阶段、前端透视/仿真控制台及 `SC-17` 闭环均已实现并通过全量回归验证，**零新增数据库表**，维持 `30` 核心业务表 + `contract_settings` = `31` 表）
 
 ---
 

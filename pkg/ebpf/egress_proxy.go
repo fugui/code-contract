@@ -3,16 +3,19 @@ package ebpf
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"code-contract/pkg/agentproto"
 	"code-contract/pkg/crosrpc"
+	"code-contract/pkg/csgdlink"
 	"code-contract/pkg/replay"
 )
 
@@ -65,11 +68,14 @@ type EgressProxy struct {
 	connSeqGen      uint32
 	closed          chan struct{}
 	statCaptured    int64
+	statDlinkEvents int64
 	mode            int32 // ProxyMode (atomic)
 	activeSessionID atomic.Uint64
 	mockMatcher     *replay.ScopedMockMatcher
 	mockEndpoints   map[string]bool // "IP:Port" -> true
-	draining        int32           // atomic flag: 1 = graceful draining
+	csgMatchFn      func(origIP net.IP, origPort uint16) bool
+	csgServeFn      func(conn net.Conn)
+	draining        int32 // atomic flag: 1 = graceful draining
 }
 
 // NewEgressProxy 创建出站代理，默认为 ModePassthrough 模式
@@ -275,14 +281,19 @@ func (p *EgressProxy) handleConnection(clientConn net.Conn) {
 	connSeq := atomic.AddUint32(&p.connSeqGen, 1)
 
 	// 检查当前模式是否为 REPLAY_MOCK
-	if p.Mode() == ModeReplayMock && p.isMockTarget(origIP, origPort) {
-		// 核心红线：回放 Mock 接管时，绝对禁止向真实 targetConn 发起任何 Dial！
-		// 确保 0 字节外泄到真实网络，直接将请求导入用户态 MockMatcher 并执行头部自愈
-		p.activeConns.Store(clientConn, true)
-		defer p.activeConns.Delete(clientConn)
+	if p.Mode() == ModeReplayMock {
+		if p.tryHandleCSGConn(clientConn, origIP, origPort) {
+			return
+		}
+		if p.isMockTarget(origIP, origPort) {
+			// 核心红线：回放 Mock 接管时，绝对禁止向真实 targetConn 发起任何 Dial！
+			// 确保 0 字节外泄到真实网络，直接将请求导入用户态 MockMatcher 并执行头部自愈
+			p.activeConns.Store(clientConn, true)
+			defer p.activeConns.Delete(clientConn)
 
-		p.handleMockConnection(clientConn, origIP, origPort)
-		return
+			p.handleMockConnection(clientConn, origIP, origPort)
+			return
+		}
 	}
 
 	// PASSTHROUGH 或 CAPTURING 模式：连接真实下游服务
@@ -301,25 +312,62 @@ func (p *EgressProxy) handleConnection(clientConn net.Conn) {
 	}()
 
 	var wg sync.WaitGroup
+	dlinkState := newDlinkConnState()
 	wg.Add(2)
 
 	// 1. Client -> Target (出站请求)
 	go func() {
 		defer wg.Done()
 		defer targetConn.Close()
-		p.relayBidirectional(clientConn, targetConn, processID, pid, clientAddr.IP, origIP, clientPort, origPort, connSeq, true)
+		p.relayBidirectional(clientConn, targetConn, processID, pid, clientAddr.IP, origIP, clientPort, origPort, connSeq, true, dlinkState)
 	}()
 
 	// 2. Target -> Client (出站应答)
 	go func() {
 		defer wg.Done()
-		p.relayBidirectional(targetConn, clientConn, processID, pid, clientAddr.IP, origIP, clientPort, origPort, connSeq, false)
+		p.relayBidirectional(targetConn, clientConn, processID, pid, clientAddr.IP, origIP, clientPort, origPort, connSeq, false, dlinkState)
 		if p.Mode() != ModeReplayMock {
 			_ = clientConn.Close()
 		}
 	}()
 
 	wg.Wait()
+}
+
+type dlinkConnState struct {
+	mu      sync.Mutex
+	decided bool
+	isDlink bool
+	obs     *csgdlink.Observer
+}
+
+func newDlinkConnState() *dlinkConnState {
+	return &dlinkConnState{obs: csgdlink.NewObserver()}
+}
+
+func (s *dlinkConnState) detectOrCheck(chunk []byte) bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.isDlink {
+		return true
+	}
+	if csgdlink.IsDlinkPrefix(chunk) {
+		s.isDlink = true
+		s.decided = true
+		return true
+	}
+	if !s.decided && len(chunk) >= 4 {
+		s.decided = true
+	}
+	return false
+}
+
+// StatDlinkEvents 获取录制期间旁路识别并发射的 dlink 0x08 事件数
+func (p *EgressProxy) StatDlinkEvents() int64 {
+	return atomic.LoadInt64(&p.statDlinkEvents)
 }
 
 // relayBidirectional 双向转发与按需抓包循环 (停录不断连与写前魔术字守卫核心实现)
@@ -331,6 +379,7 @@ func (p *EgressProxy) relayBidirectional(
 	clientPort, origPort uint16,
 	connSeq uint32,
 	isClientToTarget bool,
+	dlinkState *dlinkConnState,
 ) {
 	bufPtr := proxyBufPool.Get().(*[]byte)
 	defer proxyBufPool.Put(bufPtr)
@@ -398,10 +447,16 @@ func (p *EgressProxy) relayBidirectional(
 				return
 			}
 
-			// 若处于 CAPTURING 录制模式且已注入有效会话，按需解析并投递信封流
+			// 若处于 CAPTURING 录制模式且已注入有效会话：
+			// 先判定是否为 CSG "DLNK" 控制面流；若为 "DLNK" 则仅走无侵入 csgdlink.Observer 发射 0x08，
+			// 绝不喂给 crosrpc.StreamFramer 避免脏字节误判。
 			if curMode == ModeCapturing {
 				sessID := p.activeSessionID.Load()
 				if sessID > 0 {
+					if dlinkState.detectOrCheck(buf[:n]) {
+						p.observeDlinkChunk(dlinkState, sessID, processID, pid, clientIP, origIP, clientPort, origPort, connSeq, isClientToTarget, buf[:n])
+						continue
+					}
 					if framer == nil {
 						framer = crosrpc.NewStreamFramer(crosrpc.DefaultMaxCaptureBytes)
 					}
@@ -495,7 +550,116 @@ func (p *EgressProxy) handleMockConnection(clientConn net.Conn, origIP net.IP, o
 	}
 }
 
+// SetCSGHandler injects an in-process CSG dlink interceptor for MOCK_SERVER replay mode.
+// When matchFn matches the NAT original destination, connections are routed directly
+// to serveFn without dialing the real CSG control-plane endpoint.
+func (p *EgressProxy) SetCSGHandler(matchFn func(origIP net.IP, origPort uint16) bool, serveFn func(conn net.Conn)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.csgMatchFn = matchFn
+	p.csgServeFn = serveFn
+}
+
+func (p *EgressProxy) tryHandleCSGConn(clientConn net.Conn, origIP net.IP, origPort uint16) bool {
+	if p.Mode() != ModeReplayMock {
+		return false
+	}
+	p.mu.RLock()
+	matchFn := p.csgMatchFn
+	serveFn := p.csgServeFn
+	p.mu.RUnlock()
+	if matchFn == nil || serveFn == nil {
+		return false
+	}
+	if !matchFn(origIP, origPort) {
+		return false
+	}
+	serveFn(clientConn)
+	return true
+}
+
 // StatCaptured 获取累计捕获帧数
 func (p *EgressProxy) StatCaptured() int64 {
 	return atomic.LoadInt64(&p.statCaptured)
+}
+
+func (p *EgressProxy) observeDlinkChunk(
+	state *dlinkConnState,
+	sessID, processID uint64,
+	pid uint32,
+	clientIP, origIP net.IP,
+	clientPort, origPort uint16,
+	connSeq uint32,
+	isClientToTarget bool,
+	chunk []byte,
+) {
+	if state == nil || state.obs == nil || p.frameSink == nil {
+		return
+	}
+	dir := "csg->client"
+	if isClientToTarget {
+		dir = "client->csg"
+	}
+	events := state.obs.Feed(dir, chunk)
+	if len(events) == 0 {
+		return
+	}
+	nowStr := time.Now().UTC().Format(time.RFC3339)
+	for _, ev := range events {
+		obs := agentproto.CSGObservation{
+			SessionID:   sessID,
+			Direction:   ev.Direction,
+			SubTypeName: ev.SubTypeName,
+			ServiceName: ev.ServiceName,
+			ObservedAt:  nowStr,
+		}
+		for _, inst := range ev.Instances {
+			hostIP, port, _ := csgdlink.ParseAddrIPPort(inst.Addr)
+			obs.Snapshots = append(obs.Snapshots, agentproto.CSGSnapshotRecord{
+				ServiceName: inst.Name64,
+				Addr:        inst.Addr,
+				Transport:   detectCSGTransport(inst.Addr),
+				HostIP:      hostIP,
+				Port:        port,
+				Source:      "DLINK_OBSERVER",
+				ObservedAt:  nowStr,
+			})
+		}
+		payload, err := json.Marshal(obs)
+		if err != nil {
+			continue
+		}
+		header := agentproto.EnvelopeHeader{
+			Magic:           agentproto.EnvelopeMagic,
+			ProtoVer:        agentproto.EnvelopeProtoVer,
+			EventType:       agentproto.EventCSGObservation,
+			SessionOrTaskID: sessID,
+			ProcessID:       processID,
+			CapturedPID:     pid,
+			Direction:       agentproto.DirectionEgress,
+			CapturedAtNs:    time.Now().UnixNano(),
+			SrcPort:         clientPort,
+			DstPort:         origPort,
+			ConnSeq:         connSeq,
+		}
+		header.SetSrcIP(clientIP)
+		header.SetDstIP(origIP)
+		p.frameSink(agentproto.MarshalEnvelope(header, payload))
+		atomic.AddInt64(&p.statDlinkEvents, 1)
+	}
+}
+
+func detectCSGTransport(addr string) string {
+	switch {
+	case csgdlink.IsMeshAddr(addr):
+		return "MESH"
+	case strings.Contains(addr, "dms://"):
+		return "DMS"
+	case strings.Contains(addr, "dpuc://"):
+		return "UC"
+	case strings.Contains(addr, "domain://"):
+		return "DOMAIN"
+	default:
+		return "TCP"
+	}
 }

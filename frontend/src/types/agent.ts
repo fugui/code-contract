@@ -95,11 +95,23 @@ export interface BatchProcessMountReq {
   mounts: BatchProcessMountItem[];
 }
 
+export interface CSGEndpointInfo {
+  pid: number;
+  exe_name?: string;
+  cmdline?: string;
+  listen_ip: string;
+  listen_port: number;
+  source: string;
+}
+
 export interface DiscoveredProcess {
   pid: number;
   listen_port: number;
   cmdline: string;
   exe_name: string;
+  discovery_source?: string; // "PROC_ONLY" | "CSG_RPCMON" | "HYBRID"
+  csg_service_names?: string[];
+  csg_transports?: string[];
 }
 
 export interface HandshakeResp {
@@ -113,4 +125,86 @@ export interface HandshakeResp {
   active_lease_type: string;
   active_ref_id: number;
   uptime_sec: number;
+  csg_endpoints?: CSGEndpointInfo[];
+}
+
+export type CSGReconcileState =
+  | 'MATCHED'
+  | 'UNDECLARED_IN_SSOT'
+  | 'MISSING_IN_LIVE';
+
+export interface CSGPortUsage {
+  ip_addr: string;
+  used: number;
+  total: number;
+}
+
+export interface ReconciledCSGService {
+  service_name: string;
+  addr?: string;
+  transport?: string;
+  host_ip?: string;
+  port?: number;
+  server_pid?: number;
+  server_proc?: string;
+  is_local?: boolean;
+  resolved_by_sub?: boolean;
+  state: CSGReconcileState;
+  ssot_service_id?: number;
+  ssot_module_id?: number;
+  ssot_module_name?: string;
+  ssot_arch_proc_id?: number;
+  ssot_proto_svc?: string;
+  expected_port?: number;
+}
+
+export interface ReconciledCSGSubscription {
+  client_pid: number;
+  client_proc: string;
+  client_addr: string;
+  service_name: string;
+  state: CSGReconcileState;
+}
+
+export interface CSGReconcileSummary {
+  live_service_count: number;
+  matched_count: number;
+  undeclared_count: number;
+  missing_in_live_count: number;
+  live_sub_count: number;
+  undeclared_sub_count: number;
+}
+
+export interface CSGTopologyReconcileResp {
+  agent_id: number;
+  discovery_mode: string;
+  csg_endpoints: CSGEndpointInfo[];
+  port_usages?: CSGPortUsage[];
+  services: ReconciledCSGService[];
+  subscriptions: ReconciledCSGSubscription[];
+  summary: CSGReconcileSummary;
+  filtered_remote_count: number;
+  filtered_transient_count: number;
+  captured_at: string;
+  errors?: string[];
+}
+
+export interface CSGImportBlueprintReq {
+  subsystem_id: number | string;
+  group_id?: number | string;
+  process_group_id?: number | string;
+  csg_addr?: string;
+  service_names?: string[];
+  import_dependencies?: boolean;
+}
+
+export interface CSGImportBlueprintResult {
+  created_arch_processes: number;
+  created_modules: number;
+  created_services: number;
+  skipped_services: number;
+  created_dependencies: number;
+  skipped_dependencies: number;
+  imported_service_names: string[];
+  imported_dependencies: string[];
 }

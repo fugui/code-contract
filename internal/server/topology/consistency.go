@@ -705,7 +705,18 @@ func VerifyProcessObservedCalls(
 	archProcessID uint64,
 	observedCalls []agentproto.ObservedEgressCall,
 ) ([]ObservedViolationDTO, error) {
-	if len(observedCalls) == 0 {
+	return VerifyProcessObservedCallsWithSandbox(ctx, db, archProcessID, observedCalls, nil)
+}
+
+// VerifyProcessObservedCallsWithSandbox 同时校核 eBPF 实测出站边与 CSG Mock 沙箱内的服务订阅记录 (ADR-21, F-27)
+func VerifyProcessObservedCallsWithSandbox(
+	ctx context.Context,
+	db *gorm.DB,
+	archProcessID uint64,
+	observedCalls []agentproto.ObservedEgressCall,
+	sandboxSubscribedSvcs []string,
+) ([]ObservedViolationDTO, error) {
+	if len(observedCalls) == 0 && len(sandboxSubscribedSvcs) == 0 {
 		return nil, nil
 	}
 
@@ -721,24 +732,29 @@ func VerifyProcessObservedCalls(
 	}
 
 	allowedServices := make(map[string]bool)
+	addAllowed := func(raw string) {
+		svc := strings.TrimSpace(raw)
+		if svc != "" {
+			allowedServices[svc] = true
+			allowedServices[StripCSGPIDSuffix(svc)] = true
+		}
+	}
 	if len(modIDs) > 0 {
-		// 2. 加载模块所声明的静态依赖服务 (DEPEND)
+		// 2. 加载模块所声明的静态依赖服务 (DEPEND / DISPATCH)
 		var deps []models.ModuleDependency
-		if err := db.WithContext(ctx).Preload("Service").Where("consumer_module_id IN ?", modIDs).Find(&deps).Error; err != nil {
+		if err := db.WithContext(ctx).Preload("Service").Preload("Contract").Where("consumer_module_id IN ?", modIDs).Find(&deps).Error; err != nil {
 			return nil, fmt.Errorf("查询模块依赖关系失败: %w", err)
 		}
 		for _, dep := range deps {
 			if dep.Service != nil {
-				svc := strings.TrimSpace(dep.Service.ServiceName)
-				if svc != "" {
-					allowedServices[svc] = true
-				}
+				addAllowed(dep.Service.ServiceName)
+				addAllowed(dep.Service.ProtoServiceName)
+			}
+			if dep.Contract != nil {
+				addAllowed(dep.Contract.ServiceName)
 			}
 			if dep.IsExternal && dep.ExternalService != "" {
-				svc := strings.TrimSpace(dep.ExternalService)
-				if svc != "" {
-					allowedServices[svc] = true
-				}
+				addAllowed(dep.ExternalService)
 			}
 		}
 
@@ -748,10 +764,8 @@ func VerifyProcessObservedCalls(
 			return nil, fmt.Errorf("查询模块供给服务失败: %w", err)
 		}
 		for _, p := range provs {
-			svc := strings.TrimSpace(p.ServiceName)
-			if svc != "" {
-				allowedServices[svc] = true
-			}
+			addAllowed(p.ServiceName)
+			addAllowed(p.ProtoServiceName)
 		}
 	}
 
@@ -762,7 +776,7 @@ func VerifyProcessObservedCalls(
 		if svc == "" {
 			continue
 		}
-		if !allowedServices[svc] {
+		if !allowedServices[svc] && !allowedServices[StripCSGPIDSuffix(svc)] {
 			violations = append(violations, ObservedViolationDTO{
 				ServiceName: c.ServiceName,
 				Operation:   c.Operation,
@@ -770,6 +784,28 @@ func VerifyProcessObservedCalls(
 				CallCount:   c.CallCount,
 				MatchStatus: c.MatchStatus,
 				Reason:      fmt.Sprintf("未在标准进程装载模块的静态 DEPEND 契约中报备下游服务 [%s]", c.ServiceName),
+			})
+		}
+	}
+
+	// 5. 审计 CSG Mock 沙箱内捕获到的 SUB 服务订阅列表 (F-27)
+	seenSub := make(map[string]struct{})
+	for _, rawSub := range sandboxSubscribedSvcs {
+		svc := strings.TrimSpace(rawSub)
+		if svc == "" {
+			continue
+		}
+		if _, dup := seenSub[svc]; dup {
+			continue
+		}
+		seenSub[svc] = struct{}{}
+		if !allowedServices[svc] && !allowedServices[StripCSGPIDSuffix(svc)] {
+			violations = append(violations, ObservedViolationDTO{
+				ServiceName: svc,
+				Operation:   "CSG_SUB",
+				CallCount:   1,
+				MatchStatus: "SANDBOX_SUB",
+				Reason:      fmt.Sprintf("CSG Mock 沙箱检出未在静态 DEPEND 契约报备的服务订阅 [%s]", svc),
 			})
 		}
 	}

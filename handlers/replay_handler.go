@@ -144,6 +144,16 @@ func CreateReplayTask(c *gin.Context) {
 
 	task, err := sched.CreateAndExecuteTask(c.Request.Context(), req, userID, isAdmin)
 	if err != nil {
+		var csgConflict *diff.CSGConflictError
+		if errors.As(err, &csgConflict) {
+			c.JSON(http.StatusConflict, gin.H{"code": csgConflict.Code, "error": csgConflict.Message})
+			return
+		}
+		var csgMesh *diff.CSGMeshUnsupportedError
+		if errors.As(err, &csgMesh) {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"code": csgMesh.Code, "error": csgMesh.Message})
+			return
+		}
 		if strings.Contains(err.Error(), "403") {
 			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 			return

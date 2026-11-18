@@ -147,11 +147,12 @@ type ModuleService struct {
 	Module              *Module              `gorm:"foreignKey:ModuleID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE" json:"module,omitempty"`
 	ContractID          *uint64              `gorm:"index:idx_contract_mod_svc_contract" json:"contract_id,omitempty"` // 指向多实现服务契约 (ADR-16)，NULL 表示独占服务 (EXCLUSIVE)
 	Contract            *ServiceContract     `gorm:"foreignKey:ContractID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT" json:"contract,omitempty"`
-	ServiceName         string               `gorm:"size:128;not null" json:"service_name"`                     // 运行期实际发布的 CROS 服务名（独占全局唯一；多实现可共享契约名或自定义唯一名如 DH_SyncService）
-	ImplKey             string               `gorm:"size:64;not null;default:''" json:"impl_key"`               // 多实现时必填身份标识，独占服务恒为空串
-	IsCustomServiceName bool                 `gorm:"not null;default:false" json:"is_custom_service_name"`      // true 表示该多实现服务使用了不同于契约 .pb 名的自定义运行期服务名
-	ContractServiceName string               `gorm:"-" json:"contract_service_name,omitempty"`                  // 多实现时填充关联契约名 (.pb 定义服务名)
-	DiffIgnorePaths     datatypes.JSON       `gorm:"type:jsonb;not null;default:'[]'" json:"diff_ignore_paths"` // 服务级默认回归 Diff 忽略字段路径 []string (F-14)
+	ServiceName         string               `gorm:"size:128;not null" json:"service_name"`                                                        // 运行期实际发布的 CROS 服务名（独占全局唯一；多实现可共享契约名或自定义唯一名如 DH_SyncService）
+	ProtoServiceName    string               `gorm:"size:128;not null;default:'';index:idx_contract_mod_svc_proto_name" json:"proto_service_name"` // 可选 .pb service 定义全名（当运行期 CSG 64B 服务名与 .pb 名不同时作为解码别名前映射）
+	ImplKey             string               `gorm:"size:64;not null;default:''" json:"impl_key"`                                                  // 多实现时必填身份标识，独占服务恒为空串
+	IsCustomServiceName bool                 `gorm:"not null;default:false" json:"is_custom_service_name"`                                         // true 表示该多实现服务使用了不同于契约 .pb 名的自定义运行期服务名
+	ContractServiceName string               `gorm:"-" json:"contract_service_name,omitempty"`                                                     // 多实现时填充关联契约名 (.pb 定义服务名)
+	DiffIgnorePaths     datatypes.JSON       `gorm:"type:jsonb;not null;default:'[]'" json:"diff_ignore_paths"`                                    // 服务级默认回归 Diff 忽略字段路径 []string (F-14)
 	Description         string               `gorm:"type:text" json:"description"`
 	DownstreamCount     int                  `gorm:"-" json:"downstream_count"`               // 被下游模块依赖数量
 	DownstreamModules   []string             `gorm:"-" json:"downstream_modules,omitempty"`   // 被下游模块名称清单

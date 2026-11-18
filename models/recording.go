@@ -43,6 +43,7 @@ type RecordingSession struct {
 	TargetProcessIDs      datatypes.JSON `gorm:"type:jsonb;not null" json:"target_process_ids"`
 	ProcessSnapshots      datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"process_snapshots"`  // []ProcessSnapshotItem 录制时刻快照，解耦后续卸载挂载实例
 	EndpointSnapshots     datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"endpoint_snapshots"` // []EndpointSnapshotItem 录制时刻端点快照字典 (ADR-16 §3.6)
+	CSGSnapshots          datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"csg_snapshots"`      // []agentproto.CSGSnapshotRecord 录制阶段观测到的 CSG 服务地址快照 (ADR-21)
 	ProcessDiagnostics    datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"process_diagnostics"`
 	MaxDurationSec        int            `gorm:"not null;default:1800" json:"max_duration_sec"`
 	MaxFrames             int            `gorm:"not null;default:100000" json:"max_frames"`

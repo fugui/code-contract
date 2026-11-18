@@ -17,6 +17,37 @@ export interface MockTraceEvent {
   peer_addr?: string;
 }
 
+export type CSGReplayStrategy =
+  | 'PASSTHROUGH'
+  | 'CLIENT_INJECT'
+  | 'PUB_STUB'
+  | 'MOCK_SERVER';
+
+export interface CSGResolution {
+  service_name: string;
+  strategy: string;
+  original_addr?: string;
+  effective_addr?: string;
+  resolved_by_sub?: boolean;
+  pub_stub_active?: boolean;
+  mesh_rewritten?: boolean;
+  note?: string;
+}
+
+export interface CSGSandboxReport {
+  strategy: CSGReplayStrategy;
+  csg_addr?: string;
+  mock_csg_addr?: string;
+  resolutions?: CSGResolution[];
+  sandbox_subscribed_svcs?: string[];
+  unpublished_stubs?: string[];
+  mesh_rewrites?: number;
+  real_csg_leak_count: number;
+  cleanup_completed: boolean;
+  error_code?: string;
+  error_message?: string;
+}
+
 export interface ReplayTask {
   id: string;
   task_no: string;
@@ -35,6 +66,8 @@ export interface ReplayTask {
   error_requests: number;
   extra_ignore_paths?: string[];
   mock_events?: MockTraceEvent[];
+  csg_strategy?: CSGReplayStrategy;
+  csg_sandbox_report?: CSGSandboxReport;
   created_at?: string;
   updated_at?: string;
 }

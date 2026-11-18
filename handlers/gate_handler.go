@@ -27,6 +27,8 @@ type GateEvaluateReq struct {
 	GoldenSuiteID       *uint64 `json:"golden_suite_id,omitempty"`
 	TimeoutSeconds      int     `json:"timeout_seconds"`
 	WaitLeaseSeconds    *int    `json:"wait_lease_seconds"`
+	CSGStrategy         string  `json:"csg_strategy"`
+	CSGAddr             string  `json:"csg_addr"`
 }
 
 // GateFailedItemDTO 黄金套件回归失败用例明细
@@ -186,7 +188,7 @@ func EvaluateGate(c *gin.Context) {
 	}
 
 	// 6. 执行同步阻塞式套件回归 (含排他租约有界排队等待)
-	task, err := sched.ExecuteGoldenSuiteSync(
+	task, err := sched.ExecuteGoldenSuiteSyncWithCSG(
 		c.Request.Context(),
 		suite.ID,
 		req.EnvAgentID,
@@ -195,8 +197,20 @@ func EvaluateGate(c *gin.Context) {
 		true,
 		timeoutSec*1000,
 		waitLeaseSec,
+		req.CSGStrategy,
+		req.CSGAddr,
 	)
 	if err != nil {
+		var csgConflict *diff.CSGConflictError
+		if errors.As(err, &csgConflict) {
+			c.JSON(http.StatusConflict, gin.H{"code": csgConflict.Code, "error": csgConflict.Message})
+			return
+		}
+		var csgMesh *diff.CSGMeshUnsupportedError
+		if errors.As(err, &csgMesh) {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"code": csgMesh.Code, "error": csgMesh.Message})
+			return
+		}
 		if errors.Is(err, diff.ErrEnvBusy) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{
 				"gate_status": "GATED_ENV_BUSY",
@@ -230,7 +244,14 @@ func EvaluateGate(c *gin.Context) {
 	if len(task.ObservedEgressCalls) > 0 {
 		_ = json.Unmarshal(task.ObservedEgressCalls, &observedCalls)
 	}
-	violations, _ := topology.VerifyProcessObservedCalls(c.Request.Context(), models.DB, req.TargetArchProcessID, observedCalls)
+	var sandboxSubs []string
+	if len(task.CSGSandboxReport) > 0 {
+		var sbReport agentproto.CSGSandboxReport
+		if err := json.Unmarshal(task.CSGSandboxReport, &sbReport); err == nil {
+			sandboxSubs = sbReport.SandboxSubscribedSvcs
+		}
+	}
+	violations, _ := topology.VerifyProcessObservedCallsWithSandbox(c.Request.Context(), models.DB, req.TargetArchProcessID, observedCalls, sandboxSubs)
 
 	host := c.Request.Host
 	if host == "" {

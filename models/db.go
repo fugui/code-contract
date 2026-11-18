@@ -282,6 +282,9 @@ BEGIN
 	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_git_bundle_mr_publish') THEN
 		ALTER TABLE contract_git_proto_bundles ADD CONSTRAINT chk_contract_git_bundle_mr_publish CHECK (mr_auto_publish IN ('DISABLED','DRAFT_ONLY','AUTO_ACTIVATE'));
 	END IF;
+	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_replay_csg_strategy') THEN
+		ALTER TABLE contract_replay_tasks ADD CONSTRAINT chk_contract_replay_csg_strategy CHECK (csg_strategy IN ('PASSTHROUGH','CLIENT_INJECT','PUB_STUB','MOCK_SERVER'));
+	END IF;
 	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_contract_git_bundles_repo') THEN
 		ALTER TABLE contract_git_proto_bundles ADD CONSTRAINT fk_contract_git_bundles_repo FOREIGN KEY (git_repo_id) REFERENCES contract_git_repos(id) ON DELETE CASCADE;
 	END IF;

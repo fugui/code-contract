@@ -40,6 +40,7 @@ const (
 	EventReplayCompleted  = uint8(0x05) // 重放任务汇总完成
 	EventConnClosed       = uint8(0x06) // 监控连接关闭
 	EventSessionDrained   = uint8(0x07) // 会话积压已完全排空终结信号
+	EventCSGObservation   = uint8(0x08) // EgressProxy dlink 旁路观测到的 CSG SUB_ACK/PUB/NOTIFY 事件
 
 	// RefKind 资产类型
 	RefKindRecordingSession = uint8(0)
@@ -53,10 +54,14 @@ const (
 
 // DiscoveredProcess 宿主机探查到的候选 IPv4 TCP LISTEN 业务进程
 type DiscoveredProcess struct {
-	PID        uint32 `json:"pid"`
-	ListenPort uint16 `json:"listen_port"`
-	Cmdline    string `json:"cmdline"`
-	ExeName    string `json:"exe_name"`
+	PID          uint32   `json:"pid"`
+	ListenPort   uint16   `json:"listen_port"`
+	Cmdline      string   `json:"cmdline"`
+	ExeName      string   `json:"exe_name"`
+	ServiceNames []string `json:"service_names,omitempty"`
+	IsPureClient bool     `json:"is_pure_client,omitempty"`
+	Transports   []string `json:"transports,omitempty"`
+	CSGEndpoint  string   `json:"csg_endpoint,omitempty"`
 }
 
 var (
@@ -67,18 +72,19 @@ var (
 
 // HandshakeResp 握手与心跳双向对账数据载荷
 type HandshakeResp struct {
-	AgentVersion      string    `json:"agent_version"`     // Agent 构建版本号
-	ProtocolVersion   string    `json:"protocol_version"`  // 主协议版本，如 "1.0"
-	BootID            string    `json:"boot_id"`           // Agent 实例重启 UUID
-	StartedAt         time.Time `json:"started_at"`        // 启动时刻
-	KernelVersion     string    `json:"kernel_version"`    // 宿主机内核版本
-	HasEbpfCap        bool      `json:"has_ebpf_cap"`      // 是否具备完整 eBPF 运行权限
-	CapDetail         string    `json:"cap_detail"`        // 权限详情说明
-	ActiveLeaseType   string    `json:"active_lease_type"` // 当前内存持有的租约类型: "" | "RECORDING" | "REPLAY"
-	ActiveRefID       uint64    `json:"active_ref_id"`     // 当前持有的 SessionID 或 TaskID
-	UptimeSec         uint64    `json:"uptime_sec"`        // 运行秒数
-	ArmedProcessCount int       `json:"armed_process_count"`
-	ArmedDigest       string    `json:"armed_digest"`
+	AgentVersion      string            `json:"agent_version"`     // Agent 构建版本号
+	ProtocolVersion   string            `json:"protocol_version"`  // 主协议版本，如 "1.0"
+	BootID            string            `json:"boot_id"`           // Agent 实例重启 UUID
+	StartedAt         time.Time         `json:"started_at"`        // 启动时刻
+	KernelVersion     string            `json:"kernel_version"`    // 宿主机内核版本
+	HasEbpfCap        bool              `json:"has_ebpf_cap"`      // 是否具备完整 eBPF 运行权限
+	CapDetail         string            `json:"cap_detail"`        // 权限详情说明
+	ActiveLeaseType   string            `json:"active_lease_type"` // 当前内存持有的租约类型: "" | "RECORDING" | "REPLAY"
+	ActiveRefID       uint64            `json:"active_ref_id"`     // 当前持有的 SessionID 或 TaskID
+	UptimeSec         uint64            `json:"uptime_sec"`        // 运行秒数
+	ArmedProcessCount int               `json:"armed_process_count"`
+	ArmedDigest       string            `json:"armed_digest"`
+	CSGEndpoints      []CSGEndpointInfo `json:"csg_endpoints,omitempty"`
 }
 
 // ArmStandbyReq 管控端向 Agent 预下发待命规格请求
@@ -146,10 +152,11 @@ type DownstreamEndpoint struct {
 
 // ProcessMonitorSpec 单进程监控元信息（零 .pb Schema 依赖）
 type ProcessMonitorSpec struct {
-	ProcessID   uint64               `json:"process_id"`  // 主控 contract_processes.id
-	ListenPort  uint16               `json:"listen_port"` // 唯一监听端口 (A-02)
-	CmdPattern  string               `json:"cmd_pattern"` // /proc/<pid>/cmdline 匹配表达式
-	Downstreams []DownstreamEndpoint `json:"downstreams"` // 下游端点清单
+	ProcessID   uint64               `json:"process_id"`         // 主控 contract_processes.id
+	ListenPort  uint16               `json:"listen_port"`        // 唯一监听端口 (A-02)
+	CmdPattern  string               `json:"cmd_pattern"`        // /proc/<pid>/cmdline 匹配表达式
+	Downstreams []DownstreamEndpoint `json:"downstreams"`        // 下游端点清单
+	CSGAddr     string               `json:"csg_addr,omitempty"` // 可选 CSG 控制面端点 (<ip>:<port>)
 }
 
 // ProcessDiagStatus 下发监控后的实时定位与存量长连接诊断结果
@@ -195,6 +202,10 @@ type ExecuteReplayReq struct {
 	TaskID              uint64                          `json:"task_id"`
 	ProcessSpec         ProcessMonitorSpec              `json:"process_spec"`
 	TimeoutMs           int                             `json:"timeout_ms"`
+	CSGStrategy         CSGReplayStrategy               `json:"csg_strategy,omitempty"`
+	CSGAddr             string                          `json:"csg_addr,omitempty"`
+	CSGSnapshots        []CSGSnapshotRecord             `json:"csg_snapshots,omitempty"`
+	TargetServices      []string                        `json:"target_services,omitempty"`
 	IngressItems        []ReplayIngressItem             `json:"ingress_items,omitempty"`
 	ScopedEgressMocks   map[uint64][]MockRuleDownstream `json:"scoped_egress_mocks,omitempty"`
 	GlobalFallbackMocks []MockRuleDownstream            `json:"global_fallback_mocks,omitempty"`
@@ -230,4 +241,6 @@ type ReplayTaskResultResp struct {
 	MockMissCount       int                  `json:"mock_miss_count"`
 	ObservedEgressCalls []ObservedEgressCall `json:"observed_egress_calls"`
 	Details             string               `json:"details"`
+	CSGSandboxReport    *CSGSandboxReport    `json:"csg_sandbox_report,omitempty"`
+	ErrorCode           string               `json:"error_code,omitempty"`
 }

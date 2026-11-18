@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -457,10 +458,15 @@ func (r *Registry) Reload() error {
 	if err := r.db.Find(&moduleServices).Error; err == nil {
 		for _, ms := range moduleServices {
 			msName := strings.TrimSpace(ms.ServiceName)
+			if msName == "" {
+				continue
+			}
 			if ms.ContractID != nil && *ms.ContractID > 0 {
-				if contractSvc, ok := contractNameByID[*ms.ContractID]; ok && contractSvc != "" && msName != "" && msName != contractSvc {
+				if contractSvc, ok := contractNameByID[*ms.ContractID]; ok && contractSvc != "" && msName != contractSvc {
 					serviceAliases[msName] = contractSvc
 				}
+			} else if protoSvc := strings.TrimSpace(ms.ProtoServiceName); protoSvc != "" && msName != protoSvc {
+				serviceAliases[msName] = protoSvc
 			}
 			if len(ms.DiffIgnorePaths) > 0 {
 				var paths []string
@@ -1381,23 +1387,57 @@ func (r *Registry) DetectBreakingChangesAgainstActive(name string, candidateByte
 	return DetectBreakingChanges(activeOwn, candidateOwn), nil
 }
 
-// LookupOperation 检索已编译生效的接口元数据（支持自定义运行期服务名通过 LIB 契约别名映射到唯一 .pb 描述符）
+var pidSuffixNormRegex = regexp.MustCompile(`^(.+-\d+)-(\d+)$`)
+
+func stripDecoderPIDSuffix(serviceName string) string {
+	trimmed := strings.TrimSpace(serviceName)
+	if m := pidSuffixNormRegex.FindStringSubmatch(trimmed); len(m) == 3 {
+		return m[1]
+	}
+	return trimmed
+}
+
+// LookupOperation 检索已编译生效的接口元数据（支持自定义运行期服务名、ProtoServiceName 别名及 PID 后缀归一化映射）
 func (r *Registry) LookupOperation(serviceName, operation string) *CompiledOperation {
 	compiled := r.compiled.Load()
 	if compiled == nil {
 		return nil
 	}
-	if op, ok := compiled.Operations[serviceName+":"+operation]; ok {
-		return op
-	}
-	if aliasTarget, ok := compiled.ServiceAliases[serviceName]; ok {
-		if op, ok2 := compiled.Operations[aliasTarget+":"+operation]; ok2 {
-			// 返回克隆副本以绑定当前运行期服务名专属的 DiffIgnorePaths，不污染契约模板快照
+
+	lookupByName := func(candidate string) *CompiledOperation {
+		if op, ok := compiled.Operations[candidate+":"+operation]; ok {
 			cloned := *op
 			cloned.ServiceName = serviceName
-			cloned.ServiceIgnorePaths = compiled.ServiceIgnores[serviceName]
+			if paths, ok2 := compiled.ServiceIgnores[serviceName]; ok2 && len(paths) > 0 {
+				cloned.ServiceIgnorePaths = paths
+			} else if paths, ok2 := compiled.ServiceIgnores[candidate]; ok2 && len(paths) > 0 {
+				cloned.ServiceIgnorePaths = paths
+			}
 			return &cloned
 		}
+		if aliasTarget, ok := compiled.ServiceAliases[candidate]; ok {
+			if op, ok2 := compiled.Operations[aliasTarget+":"+operation]; ok2 {
+				// 返回克隆副本以绑定当前运行期服务名专属的 DiffIgnorePaths，不污染契约模板快照
+				cloned := *op
+				cloned.ServiceName = serviceName
+				if paths, ok3 := compiled.ServiceIgnores[serviceName]; ok3 && len(paths) > 0 {
+					cloned.ServiceIgnorePaths = paths
+				} else if paths, ok3 := compiled.ServiceIgnores[candidate]; ok3 && len(paths) > 0 {
+					cloned.ServiceIgnorePaths = paths
+				} else if paths, ok3 := compiled.ServiceIgnores[aliasTarget]; ok3 && len(paths) > 0 {
+					cloned.ServiceIgnorePaths = paths
+				}
+				return &cloned
+			}
+		}
+		return nil
+	}
+
+	if op := lookupByName(serviceName); op != nil {
+		return op
+	}
+	if norm := stripDecoderPIDSuffix(serviceName); norm != "" && norm != serviceName {
+		return lookupByName(norm)
 	}
 	return nil
 }

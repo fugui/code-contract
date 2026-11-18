@@ -40,6 +40,8 @@ type ReplayTask struct {
 	TimeoutMs           int               `gorm:"not null;default:30000" json:"timeout_ms"`
 	LifecycleState      string            `gorm:"size:32;not null;default:'PENDING';index:idx_contract_replay_state" json:"lifecycle_state"`
 	ResultStatus        string            `gorm:"size:32;not null;default:'';index:idx_contract_replay_result" json:"result_status"`
+	CSGStrategy         string            `gorm:"size:24;not null;default:'PASSTHROUGH';check:chk_contract_replay_csg_strategy,csg_strategy IN ('PASSTHROUGH','CLIENT_INJECT','PUB_STUB','MOCK_SERVER')" json:"csg_strategy"`
+	CSGSandboxReport    datatypes.JSON    `gorm:"type:jsonb" json:"csg_sandbox_report,omitempty"`
 	ViolationCount      int               `gorm:"not null;default:0" json:"violation_count"`
 	TotalRequests       int               `gorm:"not null;default:0" json:"total_requests"`
 	PassedRequests      int               `gorm:"not null;default:0" json:"passed_requests"`

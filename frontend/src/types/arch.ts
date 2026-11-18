@@ -107,6 +107,7 @@ export interface ModuleService {
   module_id: string;
   module?: Module;
   service_name: string;
+  proto_service_name?: string;
   contract_id?: string | number | null;
   impl_key?: string | null;
   is_custom_service_name?: boolean;

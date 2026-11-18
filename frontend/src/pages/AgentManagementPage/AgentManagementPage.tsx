@@ -10,6 +10,7 @@ import { AgentScopeTabs, AgentScopeType } from './AgentScopeTabs';
 import { AgentInstallGuidePane } from './AgentInstallGuidePane';
 import { AgentLeaseStatusBadge } from './AgentLeaseStatusBadge';
 import { AgentProcessMountDrawer } from './AgentProcessMountDrawer';
+import { CSGBlueprintImportDrawer } from './CSGBlueprintImportDrawer';
 
 export interface AgentManagementPageProps {
   initialAgent?: Agent | null;
@@ -64,6 +65,7 @@ export const AgentManagementPage: React.FC<AgentManagementPageProps> = ({
   });
 
   const [mountDrawerOpen, setMountDrawerOpen] = useState(false);
+  const [csgDrawerOpen, setCsgDrawerOpen] = useState(false);
 
   const [unlockModalOpen, setUnlockModalOpen] = useState(false);
   const [unlockAgentId, setUnlockAgentId] = useState<string>('');
@@ -826,6 +828,14 @@ export const AgentManagementPage: React.FC<AgentManagementPageProps> = ({
                       </button>
                       <button
                         type="button"
+                        className="code-btn code-btn--secondary code-btn--xs"
+                        data-testid="open-csg-topology-btn"
+                        onClick={() => setCsgDrawerOpen(true)}
+                      >
+                        🧭 探测 CSG 现网拓扑
+                      </button>
+                      <button
+                        type="button"
                         className="code-btn code-btn--primary code-btn--xs"
                         data-testid="batch-mount-btn"
                         onClick={() => setMountDrawerOpen(true)}
@@ -1073,6 +1083,22 @@ export const AgentManagementPage: React.FC<AgentManagementPageProps> = ({
           agent={selectedAgent}
           existingProcesses={processes}
           onSuccess={() => {
+            void (async () => {
+              const res = await agentApi.getAgent(selectedAgent.id);
+              setProcesses(res.processes ?? []);
+              setSelectedAgent(res.agent);
+            })();
+          }}
+        />
+      )}
+
+      {/* CSG 现网服务探测与蓝图对账抽屉 */}
+      {selectedAgent && (
+        <CSGBlueprintImportDrawer
+          open={csgDrawerOpen}
+          onClose={() => setCsgDrawerOpen(false)}
+          agent={selectedAgent}
+          onImported={() => {
             void (async () => {
               const res = await agentApi.getAgent(selectedAgent.id);
               setProcesses(res.processes ?? []);

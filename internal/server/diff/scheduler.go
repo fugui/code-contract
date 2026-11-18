@@ -1,7 +1,6 @@
 package diff
 
 import (
-	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -44,6 +43,8 @@ type CreateReplayTaskReq struct {
 	ExtraIgnorePaths  []string `json:"extra_ignore_paths"`
 	TimeoutMs         int      `json:"timeout_ms"`
 	TriggerSource     string   `json:"trigger_source"`
+	CSGStrategy       string   `json:"csg_strategy"`
+	CSGAddr           string   `json:"csg_addr"`
 }
 
 // ReplayTaskListQuery 任务列表筛选
@@ -97,6 +98,10 @@ func (s *ReplayScheduler) CreateAndExecuteTask(
 ) (*models.ReplayTask, error) {
 	if len(req.SelectedRecordIDs) == 0 {
 		return nil, errors.New("400 Bad Request: selected_record_ids 不能为空")
+	}
+	strategy, sErr := parseCSGStrategyOrErr(req.CSGStrategy)
+	if sErr != nil {
+		return nil, sErr
 	}
 
 	// 1. 加载 Session 并校验 Anti-IDOR
@@ -234,6 +239,7 @@ func (s *ReplayScheduler) CreateAndExecuteTask(
 		SelectedRecordIDs: datatypes.JSON(selBytes),
 		ExtraIgnorePaths:  datatypes.JSON(ignoreBytes),
 		TimeoutMs:         timeoutMs,
+		CSGStrategy:       string(strategy),
 		LifecycleState:    "ARMED",
 		TotalRequests:     len(records),
 		CreatedBy:         userID,
@@ -256,7 +262,17 @@ func (s *ReplayScheduler) CreateAndExecuteTask(
 
 	// 8. 组装 ScopedMocks 与下发执行
 	procCopy := targetProc
-	go s.executeReplayAsync(task, &procCopy, records, req.ExtraIgnorePaths)
+	if strategy != agentproto.CSGStrategyPassthrough {
+		execReq := s.buildSessionExecReq(task, &procCopy, records, req.CSGAddr)
+		if pErr := postExecuteReplayToAgent(ctx, s.httpClient, procCopy.Agent, execReq); pErr != nil {
+			_ = hub.ReleaseAgentLeases(context.Background(), s.db, []uint64{task.AgentID}, models.AgentLeaseReplay, task.ID)
+			s.markTaskFailed(task.ID, pErr.Error())
+			return nil, pErr
+		}
+		go s.pollAndEvaluateSessionReplay(task, &procCopy, records, req.ExtraIgnorePaths, true)
+	} else {
+		go s.executeReplayAsync(task, &procCopy, records, req.ExtraIgnorePaths, req.CSGAddr)
+	}
 
 	commonAudit.Push(&models.SysAuditLog{
 		CreatedAt:  time.Now(),
@@ -280,19 +296,44 @@ func (s *ReplayScheduler) executeReplayAsync(
 	targetProc *models.Process,
 	records []models.TrafficRecord,
 	extraIgnorePaths []string,
+	csgAddr string,
 ) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(task.TimeoutMs+10000)*time.Millisecond)
 	defer cancel()
 
-	defer func() {
-		// 释放租约
+	execReq := s.buildSessionExecReq(task, targetProc, records, csgAddr)
+	if err := postExecuteReplayToAgent(ctx, s.httpClient, targetProc.Agent, execReq); err != nil {
 		_ = hub.ReleaseAgentLeases(context.Background(), s.db, []uint64{task.AgentID}, models.AgentLeaseReplay, task.ID)
-	}()
+		s.markTaskFailed(task.ID, err.Error())
+		return
+	}
+	s.pollAndEvaluateSessionReplayWithCtx(ctx, task, targetProc, records, extraIgnorePaths)
+}
 
+func (s *ReplayScheduler) pollAndEvaluateSessionReplay(
+	task *models.ReplayTask,
+	targetProc *models.Process,
+	records []models.TrafficRecord,
+	extraIgnorePaths []string,
+	_ bool,
+) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(task.TimeoutMs+10000)*time.Millisecond)
+	defer cancel()
+	s.pollAndEvaluateSessionReplayWithCtx(ctx, task, targetProc, records, extraIgnorePaths)
+}
+
+func (s *ReplayScheduler) buildSessionExecReq(
+	task *models.ReplayTask,
+	targetProc *models.Process,
+	records []models.TrafficRecord,
+	csgAddr string,
+) agentproto.ExecuteReplayReq {
 	// 1. 组装输入帧与下游出站 Mocks
 	var ingressRequests [][]byte
+	var ingressSvcs []string
 	for _, r := range records {
 		ingressRequests = append(ingressRequests, r.RawReqPacket)
+		ingressSvcs = append(ingressSvcs, r.ServiceName)
 	}
 
 	// 检索同批次属于 source_process_id 的 Egress 流量用作 ScopedMock 与历史端点提取
@@ -340,6 +381,7 @@ func (s *ReplayScheduler) executeReplayAsync(
 		ListenPort:  uint16(targetProc.EffectiveListenPort),
 		CmdPattern:  targetProc.CmdPattern,
 		Downstreams: downstreams,
+		CSGAddr:     strings.TrimSpace(csgAddr),
 	}
 
 	// 组装新版成对 ScopedMock 与 IngressItems (支持 DstTag 多实现隔离)
@@ -380,50 +422,37 @@ func (s *ReplayScheduler) executeReplayAsync(
 	}
 	globalFallbackMocks := callgraph.BuildScopedMockRulesWithDstTags(egressRecords, modArchCodes)
 
-	execReq := agentproto.ExecuteReplayReq{
+	strat := agentproto.CSGReplayStrategy(task.CSGStrategy)
+	csgSnaps := loadSessionCSGSnapshots(s.db, task.SessionID)
+	targetSvcs := collectReplayTargetServices(s.db, strat, task.ArchProcessID, ingressSvcs, egressRecords, scopedEgressMocks, csgSnaps)
+
+	return agentproto.ExecuteReplayReq{
 		TaskID:              task.ID,
 		ProcessSpec:         spec,
 		TimeoutMs:           task.TimeoutMs,
+		CSGStrategy:         strat,
+		CSGAddr:             strings.TrimSpace(csgAddr),
+		CSGSnapshots:        csgSnaps,
+		TargetServices:      targetSvcs,
 		IngressRequests:     ingressRequests,
 		EgressMocks:         egressMocks,
 		IngressItems:        ingressItems,
 		ScopedEgressMocks:   scopedEgressMocks,
 		GlobalFallbackMocks: globalFallbackMocks,
 	}
+}
 
-	body, _ := json.Marshal(execReq)
-	url := fmt.Sprintf("%s/agent/v1/replays/execute", targetProc.Agent.Endpoint)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		s.markTaskFailed(task.ID, err.Error())
-		return
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	if targetProc.Agent.ClaimCode != "" {
-		httpReq.Header.Set(agentproto.HeaderClaimCode, targetProc.Agent.ClaimCode)
-	}
-
-	resp, err := s.httpClient.Do(httpReq)
-	if err != nil {
-		s.markTaskFailed(task.ID, fmt.Sprintf("调用 Agent 失败: %v", err))
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		var errResp struct {
-			Error       string `json:"error"`
-			Status      string `json:"status"`
-			DiagMessage string `json:"diag_message"`
-		}
-		_ = json.NewDecoder(resp.Body).Decode(&errResp)
-		msg := errResp.Error
-		if msg == "" {
-			msg = fmt.Sprintf("Agent 返回状态码 %d", resp.StatusCode)
-		}
-		s.markTaskFailed(task.ID, msg)
-		return
-	}
+func (s *ReplayScheduler) pollAndEvaluateSessionReplayWithCtx(
+	ctx context.Context,
+	task *models.ReplayTask,
+	targetProc *models.Process,
+	records []models.TrafficRecord,
+	extraIgnorePaths []string,
+) {
+	defer func() {
+		// 释放租约
+		_ = hub.ReleaseAgentLeases(context.Background(), s.db, []uint64{task.AgentID}, models.AgentLeaseReplay, task.ID)
+	}()
 
 	startedAt := time.Now()
 	s.db.Model(&models.ReplayTask{}).Where("id = ?", task.ID).Updates(map[string]interface{}{
@@ -573,10 +602,10 @@ EVALUATE:
 		observedCalls = result.ObservedEgressCalls
 	}
 	observedBytes, _ := json.Marshal(observedCalls)
-	violations, _ := topology.VerifyProcessObservedCalls(ctx, s.db, task.ArchProcessID, observedCalls)
+	sandboxJSON, violations, _ := verifyObservedWithSandbox(ctx, s.db, task.ArchProcessID, observedCalls, result)
 	violationCount := len(violations)
 
-	s.db.Model(&models.ReplayTask{}).Where("id = ?", task.ID).Updates(map[string]interface{}{
+	updates := map[string]interface{}{
 		"lifecycle_state":       "COMPLETED",
 		"result_status":         finalStatus,
 		"passed_requests":       passedCount,
@@ -585,7 +614,11 @@ EVALUATE:
 		"violation_count":       violationCount,
 		"observed_egress_calls": datatypes.JSON(observedBytes),
 		"finished_at":           &finishedAt,
-	})
+	}
+	if len(sandboxJSON) > 0 {
+		updates["csg_sandbox_report"] = datatypes.JSON(sandboxJSON)
+	}
+	s.db.Model(&models.ReplayTask{}).Where("id = ?", task.ID).Updates(updates)
 }
 
 func (s *ReplayScheduler) markTaskFailed(taskID uint64, msg string) {
@@ -849,6 +882,25 @@ func (s *ReplayScheduler) ExecuteGoldenSuite(
 	isAdmin bool,
 	timeoutMs int,
 ) (*models.ReplayTask, error) {
+	return s.ExecuteGoldenSuiteWithCSG(ctx, suiteID, envAgentID, triggerSource, userID, isAdmin, timeoutMs, "", "")
+}
+
+// ExecuteGoldenSuiteWithCSG 支持指定 CSG 仿真策略与端点触发黄金契约套件脱机回归 (ADR-21)
+func (s *ReplayScheduler) ExecuteGoldenSuiteWithCSG(
+	ctx context.Context,
+	suiteID uint64,
+	envAgentID uint64,
+	triggerSource string,
+	userID uint,
+	isAdmin bool,
+	timeoutMs int,
+	csgStrategy string,
+	csgAddr string,
+) (*models.ReplayTask, error) {
+	strategy, sErr := parseCSGStrategyOrErr(csgStrategy)
+	if sErr != nil {
+		return nil, sErr
+	}
 	// 1. 加载套件及用例
 	var suite models.GoldenSuite
 	if err := s.db.WithContext(ctx).Preload("ArchProcess").Preload("Items", func(db *gorm.DB) *gorm.DB {
@@ -918,6 +970,7 @@ func (s *ReplayScheduler) ExecuteGoldenSuite(
 		SelectedRecordIDs: datatypes.JSON([]byte("[]")),
 		ExtraIgnorePaths:  suite.ExtraIgnorePaths,
 		TimeoutMs:         timeoutMs,
+		CSGStrategy:       string(strategy),
 		LifecycleState:    "ARMED",
 		TotalRequests:     len(suite.Items),
 		CreatedBy:         userID,
@@ -939,10 +992,20 @@ func (s *ReplayScheduler) ExecuteGoldenSuite(
 		return nil, err
 	}
 
-	// 7. 异步执行重放与回归断言
+	// 7. 执行重放与回归断言 (非 PASSTHROUGH 策略同步发送预检请求以即时暴露 409/422)
 	procCopy := targetProc
 	suiteCopy := suite
-	go s.executeGoldenSuiteAsync(task, &procCopy, &suiteCopy, suite.Items)
+	if strategy != agentproto.CSGStrategyPassthrough {
+		execReq := s.buildSuiteExecReq(task, &procCopy, suite.Items, csgAddr)
+		if pErr := postExecuteReplayToAgent(ctx, s.httpClient, procCopy.Agent, execReq); pErr != nil {
+			_ = hub.ReleaseAgentLeases(context.Background(), s.db, []uint64{task.AgentID}, models.AgentLeaseReplay, task.ID)
+			s.markTaskFailed(task.ID, pErr.Error())
+			return nil, pErr
+		}
+		go s.pollGoldenSuiteAsync(task, &procCopy, &suiteCopy, suite.Items)
+	} else {
+		go s.executeGoldenSuiteAsync(task, &procCopy, &suiteCopy, suite.Items, csgAddr)
+	}
 
 	commonAudit.Push(&models.SysAuditLog{
 		CreatedAt:  time.Now(),
@@ -972,6 +1035,26 @@ func (s *ReplayScheduler) ExecuteGoldenSuiteSync(
 	timeoutMs int,
 	waitLeaseSec int,
 ) (*models.ReplayTask, error) {
+	return s.ExecuteGoldenSuiteSyncWithCSG(ctx, suiteID, envAgentID, triggerSource, userID, isAdmin, timeoutMs, waitLeaseSec, "", "")
+}
+
+// ExecuteGoldenSuiteSyncWithCSG 支持指定 CSG 仿真策略同步执行门禁黄金套件回归
+func (s *ReplayScheduler) ExecuteGoldenSuiteSyncWithCSG(
+	ctx context.Context,
+	suiteID uint64,
+	envAgentID uint64,
+	triggerSource string,
+	userID uint,
+	isAdmin bool,
+	timeoutMs int,
+	waitLeaseSec int,
+	csgStrategy string,
+	csgAddr string,
+) (*models.ReplayTask, error) {
+	strategy, sErr := parseCSGStrategyOrErr(csgStrategy)
+	if sErr != nil {
+		return nil, sErr
+	}
 	// 1. 加载套件及用例
 	var suite models.GoldenSuite
 	if err := s.db.WithContext(ctx).Preload("ArchProcess").Preload("Items", func(db *gorm.DB) *gorm.DB {
@@ -1044,6 +1127,7 @@ func (s *ReplayScheduler) ExecuteGoldenSuiteSync(
 		SelectedRecordIDs: datatypes.JSON([]byte("[]")),
 		ExtraIgnorePaths:  suite.ExtraIgnorePaths,
 		TimeoutMs:         timeoutMs,
+		CSGStrategy:       string(strategy),
 		LifecycleState:    "ARMED",
 		TotalRequests:     len(suite.Items),
 		CreatedBy:         userID,
@@ -1095,7 +1179,7 @@ func (s *ReplayScheduler) ExecuteGoldenSuiteSync(
 	// 7. 同步执行重放与回归断言
 	procCopy := targetProc
 	suiteCopy := suite
-	err := s.runGoldenSuiteReplay(ctx, task, &procCopy, &suiteCopy, suite.Items)
+	err := s.runGoldenSuiteReplay(ctx, task, &procCopy, &suiteCopy, suite.Items, csgAddr)
 	if err != nil {
 		return nil, err
 	}
@@ -1103,7 +1187,7 @@ func (s *ReplayScheduler) ExecuteGoldenSuiteSync(
 	return task, nil
 }
 
-func (s *ReplayScheduler) executeGoldenSuiteAsync(
+func (s *ReplayScheduler) pollGoldenSuiteAsync(
 	task *models.ReplayTask,
 	targetProc *models.Process,
 	suite *models.GoldenSuite,
@@ -1111,21 +1195,29 @@ func (s *ReplayScheduler) executeGoldenSuiteAsync(
 ) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(task.TimeoutMs+10000)*time.Millisecond)
 	defer cancel()
-	_ = s.runGoldenSuiteReplay(ctx, task, targetProc, suite, items)
+	_ = s.pollAndEvaluateSuiteReplay(ctx, task, targetProc, suite, items)
 }
 
-func (s *ReplayScheduler) runGoldenSuiteReplay(
-	ctx context.Context,
+func (s *ReplayScheduler) executeGoldenSuiteAsync(
 	task *models.ReplayTask,
 	targetProc *models.Process,
 	suite *models.GoldenSuite,
 	items []models.GoldenSuiteItem,
-) error {
-	defer func() {
-		_ = hub.ReleaseAgentLeases(context.Background(), s.db, []uint64{task.AgentID}, models.AgentLeaseReplay, task.ID)
-	}()
+	csgAddr string,
+) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(task.TimeoutMs+10000)*time.Millisecond)
+	defer cancel()
+	_ = s.runGoldenSuiteReplay(ctx, task, targetProc, suite, items, csgAddr)
+}
 
+func (s *ReplayScheduler) buildSuiteExecReq(
+	task *models.ReplayTask,
+	targetProc *models.Process,
+	items []models.GoldenSuiteItem,
+	csgAddr string,
+) agentproto.ExecuteReplayReq {
 	var ingressRequests [][]byte
+	var ingressSvcs []string
 	var ingressItems []agentproto.ReplayIngressItem
 	scopedEgressMocks := make(map[uint64][]agentproto.MockRuleDownstream)
 	var historyEgressEndpoints []agentproto.DownstreamEndpoint
@@ -1134,6 +1226,7 @@ func (s *ReplayScheduler) runGoldenSuiteReplay(
 
 	for _, item := range items {
 		ingressRequests = append(ingressRequests, item.RawReqPacket)
+		ingressSvcs = append(ingressSvcs, item.ServiceName)
 		ingressItems = append(ingressItems, agentproto.ReplayIngressItem{
 			RecordID: item.ID,
 			RawReq:   item.RawReqPacket,
@@ -1176,49 +1269,55 @@ func (s *ReplayScheduler) runGoldenSuiteReplay(
 		ListenPort:  uint16(targetProc.EffectiveListenPort),
 		CmdPattern:  targetProc.CmdPattern,
 		Downstreams: downstreams,
+		CSGAddr:     strings.TrimSpace(csgAddr),
 	}
 
-	execReq := agentproto.ExecuteReplayReq{
+	strat := agentproto.CSGReplayStrategy(task.CSGStrategy)
+	csgSnaps := mergeSuiteItemCSGSnapshots(items)
+	targetSvcs := collectReplayTargetServices(s.db, strat, task.ArchProcessID, ingressSvcs, nil, scopedEgressMocks, csgSnaps)
+
+	return agentproto.ExecuteReplayReq{
 		TaskID:            task.ID,
 		ProcessSpec:       spec,
 		TimeoutMs:         task.TimeoutMs,
+		CSGStrategy:       strat,
+		CSGAddr:           strings.TrimSpace(csgAddr),
+		CSGSnapshots:      csgSnaps,
+		TargetServices:    targetSvcs,
 		IngressRequests:   ingressRequests,
 		EgressMocks:       egressMocks,
 		IngressItems:      ingressItems,
 		ScopedEgressMocks: scopedEgressMocks,
 	}
+}
 
-	body, _ := json.Marshal(execReq)
-	url := fmt.Sprintf("%s/agent/v1/replays/execute", targetProc.Agent.Endpoint)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
+func (s *ReplayScheduler) runGoldenSuiteReplay(
+	ctx context.Context,
+	task *models.ReplayTask,
+	targetProc *models.Process,
+	suite *models.GoldenSuite,
+	items []models.GoldenSuiteItem,
+	csgAddr string,
+) error {
+	execReq := s.buildSuiteExecReq(task, targetProc, items, csgAddr)
+	if err := postExecuteReplayToAgent(ctx, s.httpClient, targetProc.Agent, execReq); err != nil {
+		_ = hub.ReleaseAgentLeases(context.Background(), s.db, []uint64{task.AgentID}, models.AgentLeaseReplay, task.ID)
 		s.markTaskFailed(task.ID, err.Error())
 		return err
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	if targetProc.Agent.ClaimCode != "" {
-		httpReq.Header.Set(agentproto.HeaderClaimCode, targetProc.Agent.ClaimCode)
-	}
+	return s.pollAndEvaluateSuiteReplay(ctx, task, targetProc, suite, items)
+}
 
-	resp, err := s.httpClient.Do(httpReq)
-	if err != nil {
-		s.markTaskFailed(task.ID, fmt.Sprintf("调用 Agent 失败: %v", err))
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		var errResp struct {
-			Error string `json:"error"`
-		}
-		_ = json.NewDecoder(resp.Body).Decode(&errResp)
-		msg := errResp.Error
-		if msg == "" {
-			msg = fmt.Sprintf("Agent 返回状态码 %d", resp.StatusCode)
-		}
-		s.markTaskFailed(task.ID, msg)
-		return errors.New(msg)
-	}
+func (s *ReplayScheduler) pollAndEvaluateSuiteReplay(
+	ctx context.Context,
+	task *models.ReplayTask,
+	targetProc *models.Process,
+	suite *models.GoldenSuite,
+	items []models.GoldenSuiteItem,
+) error {
+	defer func() {
+		_ = hub.ReleaseAgentLeases(context.Background(), s.db, []uint64{task.AgentID}, models.AgentLeaseReplay, task.ID)
+	}()
 
 	startedAt := time.Now()
 	s.db.Model(&models.ReplayTask{}).Where("id = ?", task.ID).Updates(map[string]interface{}{
@@ -1384,7 +1483,7 @@ EVALUATE_SUITE:
 		observedCalls = result.ObservedEgressCalls
 	}
 	observedBytes, _ := json.Marshal(observedCalls)
-	violations, _ := topology.VerifyProcessObservedCalls(ctx, s.db, task.ArchProcessID, observedCalls)
+	sandboxJSON, violations, _ := verifyObservedWithSandbox(ctx, s.db, task.ArchProcessID, observedCalls, result)
 	violationCount := len(violations)
 
 	task.LifecycleState = "COMPLETED"
@@ -1396,8 +1495,11 @@ EVALUATE_SUITE:
 	task.MockMissCount = mockMissCount
 	task.ViolationCount = violationCount
 	task.ObservedEgressCalls = datatypes.JSON(observedBytes)
+	if len(sandboxJSON) > 0 {
+		task.CSGSandboxReport = datatypes.JSON(sandboxJSON)
+	}
 
-	s.db.Model(&models.ReplayTask{}).Where("id = ?", task.ID).Updates(map[string]interface{}{
+	updates := map[string]interface{}{
 		"lifecycle_state":       "COMPLETED",
 		"result_status":         finalStatus,
 		"finished_at":           &finishedAt,
@@ -1407,7 +1509,11 @@ EVALUATE_SUITE:
 		"mock_miss_count":       mockMissCount,
 		"violation_count":       violationCount,
 		"observed_egress_calls": datatypes.JSON(observedBytes),
-	})
+	}
+	if len(sandboxJSON) > 0 {
+		updates["csg_sandbox_report"] = datatypes.JSON(sandboxJSON)
+	}
+	s.db.Model(&models.ReplayTask{}).Where("id = ?", task.ID).Updates(updates)
 
 	return nil
 }

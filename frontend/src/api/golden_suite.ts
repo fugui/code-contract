@@ -1,5 +1,6 @@
 import { apiRequest } from './client';
 import type {
+  CSGReplayStrategy,
   CurateGoldenSuitePayload,
   CurateGoldenSuiteResponse,
   GoldenSuite,
@@ -89,7 +90,12 @@ export async function deleteGoldenSuite(id: number): Promise<{ message: string }
 
 export async function executeGoldenSuite(
   id: number,
-  payload: { env_agent_id: number; timeout_ms?: number }
+  payload: {
+    env_agent_id: number;
+    timeout_ms?: number;
+    csg_strategy?: CSGReplayStrategy;
+    csg_addr?: string;
+  }
 ): Promise<ReplayTask> {
   return apiRequest<ReplayTask>(`/golden-suites/${id}/execute`, {
     method: 'POST',

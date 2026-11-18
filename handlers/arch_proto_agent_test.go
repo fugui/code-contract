@@ -262,6 +262,8 @@ func RegisterRoutesForTest(r *gin.Engine) {
 		protected.DELETE("/agents/:id", handlers.DeleteAgent)
 		protected.POST("/agents/:id/handshake", handlers.HandshakeAgent)
 		protected.GET("/agents/:id/discover-processes", handlers.DiscoverAgentProcesses)
+		protected.GET("/agents/:id/csg/topology", handlers.GetAgentCSGTopology)
+		protected.POST("/agents/:id/csg/import-blueprint", requireAdmin, handlers.ImportAgentCSGBlueprint)
 		protected.POST("/agents/:id/lease/force-unlock", requireAdmin, handlers.ForceUnlockAgentLease)
 		protected.PUT("/agents/:id/process-mounts", handlers.BatchUpdateProcessMounts)
 		protected.POST("/agents/:id/probes/disarm-all", handlers.DisarmAllProbes)

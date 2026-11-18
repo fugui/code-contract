@@ -22,6 +22,7 @@ type ReplayExecutor struct {
 	taskResults  map[uint64]*agentproto.ReplayTaskResultResp
 	mockListener net.Listener
 	mockPort     uint16
+	dialAddr     string
 }
 
 // NewReplayExecutor 创建重放执行器
@@ -37,6 +38,58 @@ func (e *ReplayExecutor) MockPort() uint16 {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.mockPort
+}
+
+// SetTargetDialOverride 设置入站重放连接目标覆盖地址 (如 CLIENT_INJECT 动态解析到的 ip:port)
+func (e *ReplayExecutor) SetTargetDialOverride(addr string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.dialAddr = addr
+}
+
+// EnsureMockListener 在重放启动前预绑定本地 MockServer 监听端口供 CSG PUB_STUB 注册使用
+func (e *ReplayExecutor) EnsureMockListener() (uint16, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.mockListener != nil && e.mockPort > 0 {
+		return e.mockPort, nil
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, fmt.Errorf("预绑定 MockServer 监听失败: %w", err)
+	}
+	e.mockListener = ln
+	e.mockPort = uint16(ln.Addr().(*net.TCPAddr).Port)
+	return e.mockPort, nil
+}
+
+// CloseMockListener 释放尚未进入 ExecuteWithMatcher 的预绑定 MockListener
+func (e *ReplayExecutor) CloseMockListener() {
+	e.mu.Lock()
+	ln := e.mockListener
+	e.mockListener = nil
+	e.mockPort = 0
+	e.mu.Unlock()
+	if ln != nil {
+		_ = ln.Close()
+	}
+}
+
+// AttachCSGSandboxReport 将 CSG 仿真与 5 出口自洁报告附加到已完成的重放任务结果上
+func (e *ReplayExecutor) AttachCSGSandboxReport(taskID uint64, report *agentproto.CSGSandboxReport, errCode string) {
+	if report == nil && errCode == "" {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	res, ok := e.taskResults[taskID]
+	if !ok || res == nil {
+		return
+	}
+	res.CSGSandboxReport = report
+	if errCode != "" {
+		res.ErrorCode = errCode
+	}
 }
 
 // Execute 执行重放任务
@@ -119,17 +172,30 @@ func (e *ReplayExecutor) ExecuteWithMatcher(ctx context.Context, req agentproto.
 		matcher.SetEndpointTags(epTags)
 	}
 
-	// 2. 启动本地 MockServer
-	mockLn, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return nil, fmt.Errorf("启动 MockServer 失败: %w", err)
-	}
-	defer mockLn.Close()
-
+	// 2. 启动或复用预绑定的本地 MockServer
 	e.mu.Lock()
-	e.mockListener = mockLn
-	e.mockPort = uint16(mockLn.Addr().(*net.TCPAddr).Port)
+	mockLn := e.mockListener
 	e.mu.Unlock()
+	if mockLn == nil {
+		var lErr error
+		mockLn, lErr = net.Listen("tcp", "127.0.0.1:0")
+		if lErr != nil {
+			return nil, fmt.Errorf("启动 MockServer 失败: %w", lErr)
+		}
+		e.mu.Lock()
+		e.mockListener = mockLn
+		e.mockPort = uint16(mockLn.Addr().(*net.TCPAddr).Port)
+		e.mu.Unlock()
+	}
+	defer func() {
+		_ = mockLn.Close()
+		e.mu.Lock()
+		if e.mockListener == mockLn {
+			e.mockListener = nil
+			e.mockPort = 0
+		}
+		e.mu.Unlock()
+	}()
 
 	// 异步监听出站 Mock 连接
 	go func() {
@@ -144,6 +210,12 @@ func (e *ReplayExecutor) ExecuteWithMatcher(ctx context.Context, req agentproto.
 
 	// 3. 连接目标业务进程
 	targetAddr := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(req.ProcessSpec.ListenPort)))
+	e.mu.Lock()
+	overrideAddr := e.dialAddr
+	e.mu.Unlock()
+	if overrideAddr != "" {
+		targetAddr = overrideAddr
+	}
 	dialer := net.Dialer{Timeout: 3 * time.Second}
 	targetConn, err := dialer.DialContext(taskCtx, "tcp", targetAddr)
 	if err != nil {

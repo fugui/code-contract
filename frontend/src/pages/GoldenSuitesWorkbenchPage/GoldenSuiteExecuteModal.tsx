@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { X, Play, AlertCircle } from 'lucide-react';
-import type { Agent, GoldenSuite, Process, ReplayTask } from '../../types';
+import type { Agent, CSGReplayStrategy, GoldenSuite, Process, ReplayTask } from '../../types';
 import { executeGoldenSuite } from '../../api/golden_suite';
 import { useToast } from '../../utils/toast';
 
@@ -24,6 +24,8 @@ export const GoldenSuiteExecuteModal: React.FC<GoldenSuiteExecuteModalProps> = (
   const toast = useToast();
   const [selectedAgentId, setSelectedAgentId] = useState<string | number | undefined>();
   const [timeoutMs, setTimeoutMs] = useState<number>(30000);
+  const [csgStrategy, setCsgStrategy] = useState<CSGReplayStrategy>('PASSTHROUGH');
+  const [csgAddr, setCsgAddr] = useState<string>('');
   const [submitting, setSubmitting] = useState<boolean>(false);
 
   // 筛选出挂载了该套件标准架构进程的候选 Agent (安全兼容 number/string)
@@ -54,6 +56,8 @@ export const GoldenSuiteExecuteModal: React.FC<GoldenSuiteExecuteModalProps> = (
       const task = await executeGoldenSuite(suite.id, {
         env_agent_id: Number(selectedAgentId),
         timeout_ms: timeoutMs,
+        csg_strategy: csgStrategy,
+        csg_addr: csgAddr.trim() || undefined,
       });
 
       toast.success(
@@ -210,6 +214,53 @@ export const GoldenSuiteExecuteModal: React.FC<GoldenSuiteExecuteModalProps> = (
                     fontSize: '13px',
                     borderRadius: '4px',
                     border: '1px solid var(--color-border, #cbd5e1)',
+                  }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, marginBottom: '4px' }}>
+                  CSG 控制面仿真策略 (可选)
+                </label>
+                <select
+                  data-testid="select-suite-csg-strategy"
+                  value={csgStrategy}
+                  onChange={(e) => setCsgStrategy(e.target.value as CSGReplayStrategy)}
+                  style={{
+                    width: '100%',
+                    padding: '7px 10px',
+                    fontSize: '13px',
+                    borderRadius: '4px',
+                    border: '1px solid var(--color-border, #cbd5e1)',
+                    backgroundColor: 'var(--color-bg-primary)',
+                    color: 'var(--color-text-primary)',
+                  }}
+                >
+                  <option value="PASSTHROUGH">PASSTHROUGH（默认直通）</option>
+                  <option value="CLIENT_INJECT">CLIENT_INJECT（Sub 动态寻址）</option>
+                  <option value="PUB_STUB">PUB_STUB（下游空缺注册桩 · Sub==0 门禁）</option>
+                  <option value="MOCK_SERVER">MOCK_SERVER（进程内全隔离沙箱）</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, marginBottom: '4px' }}>
+                  可选 CSG dlink 地址 (csg_addr)
+                </label>
+                <input
+                  type="text"
+                  data-testid="input-suite-csg-addr"
+                  value={csgAddr}
+                  onChange={(e) => setCsgAddr(e.target.value)}
+                  placeholder="留空自动探测 (如 127.0.0.1:31806)"
+                  style={{
+                    width: '100%',
+                    padding: '7px 10px',
+                    fontSize: '13px',
+                    borderRadius: '4px',
+                    border: '1px solid var(--color-border, #cbd5e1)',
+                    backgroundColor: 'var(--color-bg-primary)',
+                    color: 'var(--color-text-primary)',
                   }}
                 />
               </div>

@@ -1,5 +1,5 @@
 import { apiRequest } from './client';
-import type { ReplayTask, ReplayItem, ReplayItemDetailDTO, PaginatedResponse } from '../types';
+import type { CSGReplayStrategy, ReplayTask, ReplayItem, ReplayItemDetailDTO, PaginatedResponse } from '../types';
 
 export async function listReplayTasks(params?: {
   session_id?: string;
@@ -34,6 +34,8 @@ export async function createReplayTask(data: {
   selected_record_ids: (string | number)[];
   extra_ignore_paths?: string[];
   timeout_ms?: number;
+  csg_strategy?: CSGReplayStrategy;
+  csg_addr?: string;
 }) {
   const payload = {
     ...data,
@@ -41,6 +43,8 @@ export async function createReplayTask(data: {
     source_process_id: Number(data.source_process_id || data.target_process_id),
     target_process_id: Number(data.target_process_id),
     selected_record_ids: (data.selected_record_ids ?? []).map((id) => Number(id)),
+    ...(data.csg_strategy ? { csg_strategy: data.csg_strategy } : {}),
+    ...(data.csg_addr ? { csg_addr: data.csg_addr } : {}),
   };
   return apiRequest<ReplayTask>('/replay-tasks', {
     method: 'POST',

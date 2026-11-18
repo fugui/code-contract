@@ -55,19 +55,21 @@ type ModuleReq struct {
 
 // ModuleServiceReq 创建供给服务请求体
 type ModuleServiceReq struct {
-	ServiceName     string      `json:"service_name"`
-	ContractID      *FlexUint64 `json:"contract_id"`
-	ImplKey         string      `json:"impl_key"`
-	DiffIgnorePaths []string    `json:"diff_ignore_paths"`
-	Description     string      `json:"description"`
+	ServiceName      string      `json:"service_name"`
+	ProtoServiceName string      `json:"proto_service_name"`
+	ContractID       *FlexUint64 `json:"contract_id"`
+	ImplKey          string      `json:"impl_key"`
+	DiffIgnorePaths  []string    `json:"diff_ignore_paths"`
+	Description      string      `json:"description"`
 }
 
 // UpdateModuleServiceReq 更新供给服务请求体 (ADR-16 v2.0 支持调整运行期服务名与 impl_key)
 type UpdateModuleServiceReq struct {
-	ServiceName     *string  `json:"service_name"`
-	ImplKey         *string  `json:"impl_key"`
-	DiffIgnorePaths []string `json:"diff_ignore_paths"`
-	Description     string   `json:"description"`
+	ServiceName      *string  `json:"service_name"`
+	ProtoServiceName *string  `json:"proto_service_name"`
+	ImplKey          *string  `json:"impl_key"`
+	DiffIgnorePaths  []string `json:"diff_ignore_paths"`
+	Description      string   `json:"description"`
 }
 
 // ModuleDependencyReq 创建服务依赖请求体
@@ -873,13 +875,14 @@ func CreateModuleService(c *gin.Context) {
 	}
 
 	item, err := topology.CreateModuleService(models.DB, topology.ModuleServiceInput{
-		ModuleID:        moduleID,
-		ServiceName:     req.ServiceName,
-		ContractID:      contractID,
-		ImplKey:         req.ImplKey,
-		DiffIgnorePaths: req.DiffIgnorePaths,
-		Description:     req.Description,
-		OperatorID:      uc.UserID,
+		ModuleID:         moduleID,
+		ServiceName:      req.ServiceName,
+		ProtoServiceName: req.ProtoServiceName,
+		ContractID:       contractID,
+		ImplKey:          req.ImplKey,
+		DiffIgnorePaths:  req.DiffIgnorePaths,
+		Description:      req.Description,
+		OperatorID:       uc.UserID,
 	})
 	if err != nil {
 		if writeArchLayerOrCycleError(c, err) {
@@ -905,7 +908,7 @@ func CreateModuleService(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 			return
 		}
-		if errors.Is(err, topology.ErrInvalidServiceNameFormat) || errors.Is(err, topology.ErrInvalidImplKey) ||
+		if errors.Is(err, topology.ErrInvalidServiceNameFormat) || errors.Is(err, topology.ErrInvalidProtoServiceNameFormat) || errors.Is(err, topology.ErrInvalidImplKey) ||
 			errors.Is(err, topology.ErrContractLibNoProvide) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -934,11 +937,12 @@ func UpdateModuleService(c *gin.Context) {
 	}
 
 	before, after, err := topology.UpdateModuleServiceWithOptions(models.DB, topology.UpdateModuleServiceInput{
-		ServiceID:       serviceID,
-		ServiceName:     req.ServiceName,
-		ImplKey:         req.ImplKey,
-		DiffIgnorePaths: req.DiffIgnorePaths,
-		Description:     req.Description,
+		ServiceID:        serviceID,
+		ServiceName:      req.ServiceName,
+		ProtoServiceName: req.ProtoServiceName,
+		ImplKey:          req.ImplKey,
+		DiffIgnorePaths:  req.DiffIgnorePaths,
+		Description:      req.Description,
 	})
 	if err != nil {
 		if writeArchLayerOrCycleError(c, err) {
@@ -963,7 +967,7 @@ func UpdateModuleService(c *gin.Context) {
 			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 			return
 		}
-		if errors.Is(err, topology.ErrInvalidServiceNameFormat) || errors.Is(err, topology.ErrInvalidImplKey) {
+		if errors.Is(err, topology.ErrInvalidServiceNameFormat) || errors.Is(err, topology.ErrInvalidProtoServiceNameFormat) || errors.Is(err, topology.ErrInvalidImplKey) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
