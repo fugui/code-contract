@@ -1,12 +1,12 @@
 # ADR-21：基于 `@csg-ver` 现网实证的 CSG 服务与依赖拓扑自动发现及多模式仿真测试架构
 
 - **文档编号**：`21-csg-aware-agent-service-discovery-and-replay-mock-adr.md`
-- **文档版本**：v2.0.0（基于 [`csg-ver`](../../../csg-ver/) 端到端原型与 `10.29.92.80:31806` 现网真机验证全面重构）
+- **文档版本**：v2.1.0（基于 [`csg-ver`](../../../csg-ver/) 现网真机验证重构，并与 [`01-cros-rpc-protocol-spec.md`](../07-references/01-cros-rpc-protocol-spec.md) / `pkg/crosrpc` 100% 协议对齐）
 - **日期**：2026-11-18
-- **状态**：📋 待评审 (Proposed — v2.0 全新重构提案，替代 v1.0~v1.9 补丁演进稿)
+- **状态**：📋 待评审 (Proposed — v2.1.0)
 - **验证基线**：[`csg-ver/`](../../../csg-ver/)（含 [`docs/protocol.md`](../../../csg-ver/docs/protocol.md)、[`docs/rpcmonitor.md`](../../../csg-ver/docs/rpcmonitor.md)、`internal/{csgdlink,rpcmon,csgmock,server}`、`native/rpcmon_probe.cpp`、`cmd/{rpcmonitor,csgmockserver,csgserver,csgclient}`，已在本地 E2E 与现网 `10.29.92.80:31806` 实测闭环）
 - **关联特性**：`F-02`（物理进程蓝图与模块服务契约）、`F-05`（实测调用拓扑还原与一致性验证）、`F-08`（进程树选择与就绪诊断）、`F-09` / `F-11`（Agent 采集与出站透明代理）、`F-12`（同构重放编排）、`F-13`（Agent 零 `.pb` 二进制 Mock 匹配与自愈）、`F-23`（主动发包调试）
-- **关联设计**：[`02-data-plane-and-cros-rpc-engine.md`](../02-design/02-data-plane-and-cros-rpc-engine.md)、[`03-architecture-elements-and-topology.md`](../02-design/03-architecture-elements-and-topology.md)、[`05-database-schema.md`](../02-design/05-database-schema.md)
+- **关联设计**：[`01-cros-rpc-protocol-spec.md`](../07-references/01-cros-rpc-protocol-spec.md)、[`02-data-plane-and-cros-rpc-engine.md`](../02-design/02-data-plane-and-cros-rpc-engine.md)、[`03-architecture-elements-and-topology.md`](../02-design/03-architecture-elements-and-topology.md)、[`05-database-schema.md`](../02-design/05-database-schema.md)
 - **关联 ADR**：[`ADR-02`](./02-ebpf-hook-and-dual-subsystem-adr.md)、[`ADR-09`](./09-arch-process-ssot-and-ebpf-premount-standby-adr.md)、[`ADR-11`](./11-single-process-bidirectional-capture-and-recording-ux-adr.md)、[`ADR-16`](./16-multi-implementation-service-contract-adr.md)
 
 ### 修订记录
@@ -14,7 +14,8 @@
 | 版本 | 日期 | 修订说明 |
 | :--- | :--- | :--- |
 | v1.0.0 ~ v1.9.0 | 2026-11-16 ~ 11-17 | 早期探索稿：基于“CSG 无法枚举服务与订阅者”的前置假设设计了种子轮询与单一 eBPF 重启劫持方案，历经 9 轮局部补丁后结构碎片化 |
-| **v2.0.0** | **2026-11-18** | **基于 `@csg-ver` 现网验证推倒重构**：回归「**现网服务自动发现**」与「**现网服务仿真测试**」两大原始诉求，全面吸纳 `@csg-ver` 在真机 `10.29.92.80:31806` 验证通过的四大核心原语（`rpcmon`、`csgdlink`、`csgmock`、`csgclient`/`csgserver`），确立「**`RPCMonitorService` 全量拓扑枚举 + `csgdlink.Sub` 精确端点富化**」双层自动发现引擎，以及「**寻址调用仿真 (`CLIENT_INJECT`) + 受控桩服务注册 (`PUB_STUB`) + 全隔离控制面沙箱 (`MOCK_SERVER`)**」三模渐进式仿真测试架构 |
+| v2.0.0 | 2026-11-18 | **基于 `@csg-ver` 现网验证推倒重构**：回归「**现网服务自动发现**」与「**现网服务仿真测试**」两大原始诉求，确立「`RPCMonitorService` 全量拓扑枚举 + `csgdlink.Sub` 精确端点富化」双层自动发现引擎，以及「`CLIENT_INJECT` + `PUB_STUB` + `MOCK_SERVER`」三模渐进式仿真测试架构 |
+| **v2.1.0** | **2026-11-18** | **与 `01-cros-rpc-protocol-spec.md` (`pkg/crosrpc`) 全面协议对齐核验**：1. 新增 §3.6「控制面 `dlink` 与数据面 `CROS RPC` 双平面协议关系及字段级对齐矩阵」；2. **彻底清除 `@csg-ver` 中的两处临时演示协议**（剔除 `internal/hello` 的 4B 长度前缀帧与 `internal/rpcmon/transport.go` 的 12B `"RMON"` `0x524D4F4E` 私有帧），将 `pkg/rpcmon` 的 TCP 服务端/客户端统一建立在 **`pkg/crosrpc` 标准帧（`24B RPC_COMM_HEAD_S "CSE.TCP"\x01` + `256B V05 RPC_REQ_HEAD_S` / `200B V04 RPC_RSP_HEAD_S` + Protobuf Payload，按 `ascServiceName = "RPCMonitorService-RPCMonitorService"` 与 `ascOperation = "GetRpc*"` 分发）** 之上；3. `MockCSGServer.StartMonitor` 自动将 `RPCMonitorService-RPCMonitorService` 注册进自身 CSG 实例表，实现「`csgdlink.Sub` 发现地址 ➔ `pkg/crosrpc` 标准报文调用」的 100% 真实协议闭环 |
 
 ---
 
@@ -238,19 +239,40 @@ message GetRpcClientDetailInfoResponse {
 > 2. **真机 `serverAddr` 仅含 IP，需 `csgdlink.Sub` 补齐端口**：真机 `GetRpcServerDetailInfo` 返回的 `serverAddr` 通常只有节点 IP（如 `"10.29.92.80"` 或跨板 `"10.1.126.150"`），而非完整 `tcp://ipv4:ip:port`。这正是我们需要 **「`rpcmon` 全量拉取目录 + `csgdlink.Sub` 按需解析 `acSvcInstAddr` 端口」** 双层协同的根本原因。
 > 3. **为什么采用独立 `rpcmon_probe` 子进程而非在 Agent 内嵌 CGO**：真机上 `DophiServer` 发布的 `RPCMonitorService-RPCMonitorService` 走 DOPRA SDK 内部传输（依赖 `libcroscppapi.so`、`libdophimesh.so`、`libSSPAFplat.so` 等十余个专有动态库及 `PlatformInit(false)` 运行时）。`@csg-ver` 将其封装为独立的 ~170 行只读 C++ 探针 `rpcmon_probe`，由 Go 侧 `rpcmon.NativeBackend` 通过 `exec.CommandContext` 按需拉起并解析其 stdout JSON（自动跳过 shell 环境初始化前缀日志直到首个 `{`）。这样既 **100% 跑通了真机全量枚举**，又让 `code-contract-agent` 保持 **100% 纯 Go 单二进制（零 CGO、零专有 `.so` 强耦合、探针退出即彻底释放 CSG 连接与内存）**！
 
-### 3.5 从 `@csg-ver` 原型升级至 `code-contract` 生产包的 7 项完备性收口
+### 3.5 从 `@csg-ver` 原型升级至 `code-contract` 生产包的 8 项完备性收口
 
-对照 [`csg-ver/docs/protocol.md` §9（Mock 与真实 CSG 的已知偏差）](../../../csg-ver/docs/protocol.md)，将 `csg-ver/internal/{csgdlink,csgmock,rpcmon}` 迁入 `code-contract/pkg/` 时一次性收口以下 7 项细节：
+对照 [`csg-ver/docs/protocol.md` §1/§9](../../../csg-ver/docs/protocol.md) 与 [`csg-ver/docs/rpcmonitor.md` §2](../../../csg-ver/docs/rpcmonitor.md)，将 `csg-ver` 迁入 `code-contract/pkg/` 时一次性收口以下 8 项细节（特别是**将 `@csg-ver` 演示数据面协议统一替换为 `code-contract` 已实现的真实 `pkg/crosrpc` 协议**）：
 
 | # | `@csg-ver` 原型简化点 | `code-contract` 生产级实现收口方式 |
 | :---: | :--- | :--- |
-| 1 | `MockCSGServer` 的 `SUB_ACK.uiSubLen` 填 `0` | 填 `uint32(len(matched) * csgdlink.ServiceInstLen)`（与真机 `csgSubCreateAckMsg` 一致）；客户端解析继续以 `uiSvcInstCount` 为准兼容两者 |
-| 2 | `csgdlink.Client.roundTrip` 遇到异步 `NOTIFY` 帧会报 `unexpected subtype` | 在 `roundTrip` 循环中识别 `got.Type == MsgTypeNotify`，调用可选回调 `OnNotify` 后继续等待 `got.Type == MsgTypeReply && got.CorrID == corrID` |
-| 3 | `CString` 使用 `strings.TrimRight(string(b), "\x00")` | 改为在首个 `\x00` 处截断（`bytes.IndexByte(b, 0)`），防止 C 结构体 `\0` 之后未清零的栈内存残留污染字符串 |
-| 4 | `CLIENT_ID` 请求未填 `uiRealProcId`；通用 ACK 写 4B | `ClientID` 请求偏移 `0..3` 写入 `uint32(pid)`（使 `RPCMonitorService` 准确显示客户端 PID）；`PUB_ACK`/`UNPUB_ACK`/`UNSUB_ACK` 统一返回标准 8B `CSG_COMM_ACK_MSG_S` |
-| 5 | `MockCSGServer` 未处理 `0xFF02`、`6`、`7`、`8` 子类型 | 补齐 `UNREGISTER (0xFF02)`、`SESSION_ID_GET (6)`、`GET_BIND_ADDR (7, 128B full)`、`FREE_BIND_ADDR (8)`，支撑完整 DOPRA C++ 业务进程启动 |
-| 6 | 发布者断链后 `MockCSGServer.reg` 未自动清理 | 在 `handleConn` 的 `defer` 中按断开会话的 `clientID` 自动清理其发布的 `reg` 条目（对齐真机 `csgServerLinkFaultProc`） |
-| 7 | `internal/rpcmon/pb` 依赖 `google.golang.org/protobuf`（含 `protoregistry`） | `pkg/rpcmon` 采用纯 Go 标准库实现 `RMON` 帧与 `GetRpc*Response` 的极简 Protobuf Wire 编解码（仅 3 个简单 Message），使 `cmd/agent` **零 `protoregistry` 依赖**，100% 通过 `cmd/agent/deps_test.go` |
+| 1 | **数据面临时使用 `hello`（4B 长度前缀）与 `RMON`（12B `0x524D4F4E` 帧，`opcode=1..5`）** | **全面统一为真实 CROS RPC 协议 (`pkg/crosrpc`)**：`@csg-ver` 因独立建仓未引入 `pkg/crosrpc` 才临时自定义了 `hello` 与 `RMON` 帧；合入 `code-contract` 后，无论是业务服务仿真（`CLIENT_INJECT`/`PUB_STUB`）还是 `pkg/rpcmon` 的 TCP 监控查询，**数据面 100% 采用 [`01-cros-rpc-protocol-spec.md`](../07-references/01-cros-rpc-protocol-spec.md) 标准帧（`24B RPC_COMM_HEAD_S "CSE.TCP"\x01` + `256B V05 RPC_REQ_HEAD_S` / `200B V04 RPC_RSP_HEAD_S` + Protobuf Payload，按 `ascServiceName = "RPCMonitorService-RPCMonitorService"` 与 `ascOperation = "GetRpc*"` 分发）**，彻底废弃 `hello` 与 `RMON` 私有帧 |
+| 2 | `MockCSGServer.StartMonitor` 仅开启独立端口，未注册进 CSG 表 | `MockCSGServer.StartMonitor(addr)` 启动标准 `pkg/crosrpc` 监听的同时，自动将 `"RPCMonitorService-RPCMonitorService"` $\rightarrow$ `"tcp://ipv4:" + monAddr` 写入自身 CSG 实例表 `reg`，使客户端先经 `csgdlink.Sub("RPCMonitorService-RPCMonitorService")` 寻址、再发 CROS RPC 请求，与真机 `DophiServer` 100% 同构 |
+| 3 | `MockCSGServer` 的 `SUB_ACK.uiSubLen` 填 `0` | 填 `uint32(len(matched) * csgdlink.ServiceInstLen)`（与真机 `csgSubCreateAckMsg` 一致）；客户端解析继续以 `uiSvcInstCount` 为准兼容两者 |
+| 4 | `csgdlink.Client.roundTrip` 遇到异步 `NOTIFY` 帧会报 `unexpected subtype` | 在 `roundTrip` 循环中识别 `got.Type == MsgTypeNotify`，调用可选回调 `OnNotify` 后继续等待 `got.Type == MsgTypeReply && got.CorrID == corrID` |
+| 5 | `CString` 使用 `strings.TrimRight(string(b), "\x00")` | 改为在首个 `\x00` 处截断（`bytes.IndexByte(b, 0)`），防止 C 结构体 `\0` 之后未清零的栈内存残留污染字符串 |
+| 6 | `CLIENT_ID` 请求未填 `uiRealProcId`；通用 ACK 写 4B | `ClientID` 请求偏移 `0..3` 写入 `uint32(pid)`（使 `RPCMonitorService` 准确显示客户端 PID）；`PUB_ACK`/`UNPUB_ACK`/`UNSUB_ACK` 统一返回标准 8B `CSG_COMM_ACK_MSG_S` |
+| 7 | `MockCSGServer` 未处理 `0xFF02`、`6`、`7`、`8` 子类型，断链未清 `reg` | 补齐 `UNREGISTER (0xFF02)`、`SESSION_ID_GET (6)`、`GET_BIND_ADDR (7, 128B full)`、`FREE_BIND_ADDR (8)`；在 `ServeConn` 的 `defer` 中按断开会话的 `clientID` 自动清理其发布的 `reg` 条目（对齐真机 `csgServerLinkFaultProc`） |
+| 8 | `internal/rpcmon/pb` 依赖 `google.golang.org/protobuf`（传递引入 `protoregistry`） | `pkg/rpcmon` 对 `RPCMonitorServiceMsg.proto` 的 3 个简单响应结构采用纯 Go 标准库实现 Protobuf Wire 编解码（见 §9.2），使 `cmd/agent` **零 `protoregistry` 依赖**，100% 通过 `cmd/agent/deps_test.go` |
+
+### 3.6 控制面 `dlink` 与数据面 `CROS RPC` (`01-cros-rpc-protocol-spec.md`) 协议对齐矩阵
+
+为确保本 ADR 与此前冻结并实现的 [`01-cros-rpc-protocol-spec.md`](../07-references/01-cros-rpc-protocol-spec.md) 及 [`pkg/crosrpc`](../../pkg/crosrpc/) 完全自洽，明确双平面协议职责与跨层字段映射如下：
+
+1. **双平面正交分工（同一业务进程的两条通信链路）**：
+   - **控制面链路（DOPRA `dlink` 协议，`pkg/csgdlink`）**：魔术字 `0x444C4E4B`（`"DLNK"`），定长 `32B` 帧头 `DDM_DLINK_MSG_HEAD_S`；仅用于业务进程与 CSG（`DophiServer` 端口 `31800+userId`）之间的注册、订阅与端口申请。
+   - **数据面链路（DOPHI `CROS RPC` 协议，`pkg/crosrpc`）**：魔术字 `"CSE.TCP"` + `1B ucProtocol`，定长 `24B` 公共头 `RPC_COMM_HEAD_S` + 会话头（`RPC_REQ_HEAD_S` V01 `160B` ~ V05 `256B`、`RPC_RSP_HEAD_S` V01 `156B` ~ V04 `200B`、`RPC_MNG_HEAD_S` `88B`）+ `0..N` 扩展头 + Protobuf Payload；用于客户端拿到 `SUB_ACK` 返回的 `tcp://ipv4:<ip>:<port>` 后发起的实际 RPC 调用（**含对 `RPCMonitorService-RPCMonitorService` 的调用**）。
+   - **`EgressProxy` 分流无冲突保证**：`pkg/crosrpc.StreamFramer` 严格校验 `"CSE.TCP"` + `ucProtocol <= 1` + `ValidateCommHead`，因此透传 `EgressProxy` 的 `"DLNK"` 控制面报文在 `StreamFramer` 中天然被视为非 CROS 流跳过（零伪帧）；而 `csgdlink.Observer` 仅解析首包匹配 `"DLNK"` 的连接，二者完全正交。
+
+2. **跨协议核心字段逐项对齐表**：
+
+| `01-cros-rpc-protocol-spec.md` / `pkg/crosrpc` 字段 | CROS RPC 偏移与定义 | CSG (`pkg/csgdlink` / `pkg/rpcmon`) 对应字段 | 对齐核验结论 |
+| :--- | :--- | :--- | :--- |
+| **`RPC_COMM_HEAD_S.ucProtocol`**<br>(`RPC_TRANSPORT_TYPE_E`, `pkg/crosrpc/constants.go:32-39`) | 公共头偏移 `7` (`uint8`)：<br>`0=DEFAULT, 1=TCP, 2=DMS, 3=UC, 4=MESH, 5=DOMAIN, 6=FRPC, 7=CUSTOMIZE` | - `SUB` 请求偏移 `72..78` `aucSubTransType[7]` 下标 `0..5`；<br>- `GET_BIND_ADDR_ACK` 偏移 `8..11` `enProtocol` | ✅ **完全一致**：枚举值 `0..5`（`1=TCP`, `4=MESH`, `5=DOMAIN`）在两套头文件中同源定义 |
+| **`RPC_REQ/RSP_HEAD_S.ascServiceName[64]`**<br>(`pkg/crosrpc/session_head.go:37, 183`) | Req 会话头偏移 `8..71`（整包 `32..95`）；Rsp V03/V04 偏移 `56..119`，`CHAR[64]` | - `CSG_SERVICE_INST_INFO_S.acServiceName[64]`（偏移 `184..247`）；<br>- `SUB.acSubName[64]`（偏移 `8..71`）；<br>- `RpcServerDetailInfo.serverName` / `RpcClientDetailInfo.serverName` | ✅ **线上字节 100% 同一**：均由 `CrosService::serviceName` 填充。<br>⚠️ **同步修正 `A-07`**：CSG 场景下该 64B 字符串按 `<ClassName[:31]>-<svrName[:31]>` 拼接（含 `-`、无 `.proto` `package`），故由 `ModuleService.service_name` 存线网 64B 名，新增 `proto_service_name` 映射 `.pb` 的 `{package}.{serviceName}` |
+| **`RPC_REQ/RSP_HEAD_S.ascOperation[64]`**<br>(`pkg/crosrpc/session_head.go:38, 184`) | Req 会话头偏移 `72..135`（整包 `96..159`）；Rsp V03/V04 偏移 `120..183`，`CHAR[64]` | `RPCMonitorService.proto` (`uService`) 及业务 `.proto` 中的 `interface` / `rpc` 方法名（如 `"GetRpcServerDetailInfo"`） | ✅ **完全一致**：方法名字符串直接相等 |
+| **`RPC_REQ_HEAD_S.uiSessionId`**<br>(`01-cros-rpc-protocol-spec.md` §6.1, `session_head.go:42`) | Req 会话头偏移 `140..143`（整包 `164..167`，`UINT32`） | CSG 控制面 `SESSION_ID_GET (usSubType=6 -> 1006)` 应答 `CSG_SESSION_ID_ACK_MSG_S.uiSessionId` | ✅ **完全一致**：CROS 请求头中的 FRPC 会话 ID 即由 CSG 子类型 `6` 分配 |
+| **`RPC_RSP_HEAD_S.uiSvrInstId` & `RPC_REQ_HEAD_S.uiDst2ndAddrId`**<br>(`01-cros-rpc-protocol-spec.md` §6.1/§6.2) | Req 会话头偏移 `4..7`；Rsp V02+ 偏移 `24..27` (`UINT32`) | CSG 实例地址 `tcp://ipv4:<ip>:<port>[:<svr_inst_id>]` 的可选尾段 `<svr_inst_id>` | ✅ **完全一致**：对应实例级二级寻址与实例 ID |
+| **`RPC_MNG_HEAD_S.acProcName[64]`**<br>(`01-cros-rpc-protocol-spec.md` §6.3, `session_head.go:235`) | MNG 会话头（`ucMsgType=5/6/7`）偏移 `8..71`（整包 `32..95`，`CHAR[64]`） | `RPCMonitorService` 的 `RpcServerDetailInfo.procName` / `RpcClientDetailInfo.procName` | ✅ **完全一致**：数据面建连握手上报的 `acProcName` 与控制面 `RPCMonitorService` 汇报的 `procName` 同为该业务进程名 |
 
 ---
 
@@ -421,7 +443,7 @@ flowchart TB
 | `code-contract` 目标路径 | 对应 `@csg-ver` 原型路径 | 核心职责 | 依赖约束 (`deps_test.go`) |
 | :--- | :--- | :--- | :--- |
 | `pkg/csgdlink/`<br>(`protocol.go`, `instance.go`, `client.go`, `observer.go`) | `internal/csgdlink/` | dlink 32B 帧头、248B 实例与 10 类控制面消息/2 类 `NOTIFY` 编解码；纯 Go `Client`（支持只读发现与受控 `Pub`/`Unpub`）；旁路流式 `Observer` | **纯 Go 标准库**（零第三方依赖） |
-| `pkg/rpcmon/`<br>(`model.go`, `wire.go`, `transport.go`, `native.go`, `server.go`, `report.go`) | `internal/rpcmon/` + `proto/sw/rpc/` | `Snapshot` / `ServerEntry` / `ClientEntry` / `PortUsage` 模型；`Backend` 接口；`NativeBackend`（调用 `rpcmon_probe` 解析 JSON）与 `E2EBackend`（`RMON` 帧 + 手写极简 Protobuf Wire 编解码） | **纯 Go 标准库**（不引入 `protoc-gen-go` 生成的 `protoregistry`，确保 `cmd/agent` 100% 合规） |
+| `pkg/rpcmon/`<br>(`model.go`, `wire.go`, `cros_transport.go`, `native.go`, `server.go`, `report.go`) | `internal/rpcmon/` + `proto/sw/rpc/` | `Snapshot` / `ServerEntry` / `ClientEntry` / `PortUsage` 模型；`Backend` 接口；`NativeBackend`（调用 `rpcmon_probe` 解析 JSON）与 `CrosTCPBackend`（基于 `pkg/crosrpc` 标准 `"CSE.TCP"` 帧 + 手写极简 Protobuf Wire 编解码，淘汰 `@csg-ver` 的临时 `RMON` 帧） | 仅依赖 `pkg/crosrpc`、`pkg/csgdlink` 与标准库（不引入 `protoc-gen-go` 生成的 `protoregistry`，确保 `cmd/agent` 100% 合规） |
 | `pkg/csgmock/`<br>(`mockserver.go`) | `internal/csgmock/mockserver.go` | 内存态 `MockCSGServer`（支持预载快照、动态 `PUB/SUB/GET_BIND_ADDR`、`ServeConn` 进程内接入与独立监听、实现 `rpcmon.Provider`） | 仅依赖 `pkg/csgdlink`、`pkg/rpcmon` 与标准库；**严禁依赖 `pkg/ebpf`** |
 | `scripts/csg/`<br>(`rpcmon_probe.cpp`, `build-native-probe.sh`) | `native/rpcmon_probe.cpp` + `scripts/build-native-probe.sh` | 真机只读 C++ 探针源码与一键编译脚本（在装有 `~/SW` SDK 的目标机编译产出 `rpcmon_probe` 二进制供 Agent 调用） | 独立辅助二进制，不与 Go 二进制静态链接 |
 | `internal/agent/csg/`<br>(`discoverer.go`, `sim_controller.go`, `locate.go`) | `cmd/rpcmonitor` + `cmd/csgclient` + `cmd/csgserver` | Agent 侧双层自动发现融合器（`rpcmon` + `csgdlink.Sub` + `ProcScanner`）与三模仿真测试编排器（`CLIENT_INJECT` / `PUB_STUB` / `MOCK_SERVER`） | 位于 `internal/agent/`，可组合 `pkg/{csgdlink,rpcmon,csgmock,ebpf,replay,agentproto}` |
@@ -1122,7 +1144,7 @@ func (c *Client) roundTrip(subType uint16, payload []byte, wantAck uint16, timeo
 }
 ```
 
-### 9.2 `pkg/rpcmon/rpcmon.go` — 零 `protoregistry` 依赖的统一监控模型与 Wire 编解码
+### 9.2 `pkg/rpcmon/rpcmon.go` — 基于 `pkg/crosrpc` 标准帧与零 `protoregistry` 依赖的统一监控实现
 
 ```go
 package rpcmon
@@ -1134,32 +1156,28 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
+	"os"
 	"os/exec"
+	"sync/atomic"
 	"time"
+
+	"code-contract/pkg/crosrpc"
 )
 
 const (
-	FrameMagic   uint32 = 0x524D4F4E // "RMON"
-	FrameVersion uint8  = 1
-	FrameHeadLen        = 12
-	MaxBodyLen          = 16 << 20
+	// ServiceName 为 DophiServer 在 CSG 中发布的 64B 运行期服务名 (CrosService.cpp:76)
+	ServiceName = "RPCMonitorService-RPCMonitorService"
 
-	StatusOK       uint16 = 0
-	StatusBadOp    uint16 = 1
-	StatusInternal uint16 = 2
+	OpGetRpcPortInfo         = "GetRpcPortInfo"
+	OpGetRpcServerNumInfo    = "GetRpcServerNumInfo"
+	OpGetRpcServerDetailInfo = "GetRpcServerDetailInfo"
+	OpGetRpcClientNumInfo    = "GetRpcClientNumInfo"
+	OpGetRpcClientDetailInfo = "GetRpcClientDetailInfo"
 )
 
-type Op uint8
-
-const (
-	OpPortInfo     Op = 1
-	OpServerNum    Op = 2
-	OpServerDetail Op = 3
-	OpClientNum    Op = 4
-	OpClientDetail Op = 5
-)
+// VoidTypePayload 对应 swp.pg.VoidType { required bool value = 1; } 的 2 字节 Protobuf Wire 编码
+var VoidTypePayload = []byte{0x08, 0x00}
 
 type PortUsage struct {
 	IPAddr string `json:"ipAddr"`
@@ -1247,7 +1265,75 @@ func BuildReport(ctx context.Context, b Backend, op string) (*Report, error) {
 	return rep, nil
 }
 
-// --- 纯 Go 零依赖 Protobuf Wire 编解码 (完全兼容 RPCMonitorServiceMsg.proto & BasicTypeMsg.proto) ---
+// --- 1. 标准 CROS RPC 报文封装 (100% 遵循 01-cros-rpc-protocol-spec.md 与 pkg/crosrpc) ---
+
+// BuildCrosReqPacket 构造标准 CROS RPC V05 请求报文 (24B RPC_COMM_HEAD_S + 256B RPC_REQ_HEAD_S + Payload)
+func BuildCrosReqPacket(sno uint64, serviceName, operation string, payload []byte) []byte {
+	const reqHeadLen = 256 // V05 RPC_REQ_HEAD_S
+	comm := crosrpc.CommHead{
+		TransportProto: crosrpc.TransportTCP,
+		SNO:            sno,
+		Length:         uint32(reqHeadLen + len(payload)),
+		HeadLen:        reqHeadLen,
+		MsgType:        crosrpc.MsgTypeReq,
+		IsPacked:       1,
+	}
+	copy(comm.Magic[:], []byte(crosrpc.MagicPrefix))
+
+	pkt := make([]byte, crosrpc.CommHeadLen+reqHeadLen+len(payload))
+	copy(pkt[:crosrpc.CommHeadLen], comm.Marshal())
+
+	sh := pkt[crosrpc.CommHeadLen : crosrpc.CommHeadLen+reqHeadLen]
+	binary.BigEndian.PutUint16(sh[0:2], 5) // usMsgStructVer = V05
+	binary.BigEndian.PutUint16(sh[2:4], reqHeadLen)
+	copy(sh[8:72], []byte(serviceName))
+	copy(sh[72:136], []byte(operation))
+	sh[136] = crosrpc.ReqTypeSync
+	binary.BigEndian.PutUint64(sh[248:256], uint64(time.Now().UnixNano()))
+
+	copy(pkt[crosrpc.CommHeadLen+reqHeadLen:], payload)
+	return pkt
+}
+
+// BuildCrosRspPacket 构造标准 CROS RPC V04 应答报文 (24B RPC_COMM_HEAD_S + 200B RPC_RSP_HEAD_S + Payload)
+func BuildCrosRspPacket(req *crosrpc.ParsedPacket, statusCode uint64, payload []byte) []byte {
+	const rspHeadLen = 200 // V04 RPC_RSP_HEAD_S
+	comm := crosrpc.CommHead{
+		TransportProto: crosrpc.TransportTCP,
+		SNO:            req.Comm.SNO,
+		Length:         uint32(rspHeadLen + len(payload)),
+		HeadLen:        rspHeadLen,
+		MsgType:        crosrpc.MsgTypeRsp,
+		IsPacked:       1,
+	}
+	copy(comm.Magic[:], []byte(crosrpc.MagicPrefix))
+
+	pkt := make([]byte, crosrpc.CommHeadLen+rspHeadLen+len(payload))
+	copy(pkt[:crosrpc.CommHeadLen], comm.Marshal())
+
+	sh := pkt[crosrpc.CommHeadLen : crosrpc.CommHeadLen+rspHeadLen]
+	binary.BigEndian.PutUint16(sh[0:2], 4) // usMsgStructVer = V04
+	binary.BigEndian.PutUint16(sh[2:4], rspHeadLen)
+	binary.BigEndian.PutUint32(sh[4:8], uint32(statusCode))
+	if req.Req != nil {
+		copy(sh[8:24], req.Req.TraceBuff[:])
+		if req.Req.SendTimeStamp != nil {
+			binary.BigEndian.PutUint64(sh[32:40], *req.Req.SendTimeStamp)
+		}
+		copy(sh[56:120], []byte(req.Req.ServiceName))
+		copy(sh[120:184], []byte(req.Req.Operation))
+	}
+	nowNs := uint64(time.Now().UnixNano())
+	binary.BigEndian.PutUint64(sh[40:48], nowNs)
+	binary.BigEndian.PutUint64(sh[48:56], nowNs)
+	binary.BigEndian.PutUint64(sh[184:192], statusCode)
+	binary.BigEndian.PutUint16(sh[192:194], 1)
+
+	copy(pkt[crosrpc.CommHeadLen+rspHeadLen:], payload)
+	return pkt
+}
+
+// --- 2. 纯 Go 零依赖 Protobuf Wire 编解码 (完全兼容 RPCMonitorServiceMsg.proto & BasicTypeMsg.proto) ---
 
 func appendVarint(b []byte, v uint64) []byte {
 	var buf [binary.MaxVarintLen64]byte
@@ -1472,7 +1558,7 @@ func walkProtoFields(b []byte, fn func(fieldNum uint32, wireType uint8, val uint
 	return nil
 }
 
-// --- RMON E2E Server / Backend & Native Probe Backend ---
+// --- 3. CROS RPC TCP Server & Client Backend (使用 pkg/crosrpc.StreamFramer & ParsePacket) ---
 
 type Server struct {
 	provider Provider
@@ -1494,94 +1580,69 @@ func (s *Server) Serve(ln net.Listener) error {
 
 func (s *Server) handleConn(conn net.Conn) {
 	defer conn.Close()
+	framer := crosrpc.NewStreamFramer(crosrpc.DefaultMaxCaptureBytes)
+	buf := make([]byte, 32768)
 	for {
-		op, _, _, err := readRMONFrame(conn)
+		n, err := conn.Read(buf)
+		if n > 0 {
+			frames, fErr := framer.Feed(buf[:n])
+			if fErr != nil {
+				return
+			}
+			for _, f := range frames {
+				parsed, pErr := crosrpc.ParsePacket(f.Data)
+				if pErr != nil || parsed.Req == nil {
+					continue
+				}
+				snap := s.provider.Snapshot()
+				ts := snap.Timestamp
+				if ts == 0 {
+					ts = time.Now().Unix()
+				}
+				var payload []byte
+				statusCode := uint64(0)
+				switch parsed.Req.Operation {
+				case OpGetRpcPortInfo:
+					payload = EncodePortInfoResponse(snap.Ports, ts)
+				case OpGetRpcServerNumInfo:
+					payload = EncodeUInt32Type(uint32(len(snap.Servers)))
+				case OpGetRpcServerDetailInfo:
+					payload = EncodeServerDetailResponse(snap.Servers, ts)
+				case OpGetRpcClientNumInfo:
+					payload = EncodeUInt32Type(uint32(len(snap.Clients)))
+				case OpGetRpcClientDetailInfo:
+					payload = EncodeClientDetailResponse(snap.Clients, ts)
+				default:
+					statusCode = 1
+				}
+				rspPkt := BuildCrosRspPacket(parsed, statusCode, payload)
+				if _, wErr := conn.Write(rspPkt); wErr != nil {
+					return
+				}
+			}
+		}
 		if err != nil {
 			return
 		}
-		snap := s.provider.Snapshot()
-		ts := snap.Timestamp
-		if ts == 0 {
-			ts = time.Now().Unix()
-		}
-		var body []byte
-		status := StatusOK
-		switch op {
-		case OpPortInfo:
-			body = EncodePortInfoResponse(snap.Ports, ts)
-		case OpServerNum:
-			body = EncodeUInt32Type(uint32(len(snap.Servers)))
-		case OpServerDetail:
-			body = EncodeServerDetailResponse(snap.Servers, ts)
-		case OpClientNum:
-			body = EncodeUInt32Type(uint32(len(snap.Clients)))
-		case OpClientDetail:
-			body = EncodeClientDetailResponse(snap.Clients, ts)
-		default:
-			status = StatusBadOp
-		}
-		if err := writeRMONFrame(conn, op, status, body); err != nil {
-			return
-		}
 	}
 }
 
-func writeRMONFrame(w io.Writer, op Op, status uint16, body []byte) error {
-	head := make([]byte, FrameHeadLen)
-	binary.BigEndian.PutUint32(head[0:4], FrameMagic)
-	head[4] = FrameVersion
-	head[5] = uint8(op)
-	binary.BigEndian.PutUint16(head[6:8], status)
-	binary.BigEndian.PutUint32(head[8:12], uint32(len(body)))
-	if _, err := w.Write(head); err != nil {
-		return err
-	}
-	if len(body) > 0 {
-		_, err := w.Write(body)
-		return err
-	}
-	return nil
-}
-
-func readRMONFrame(r io.Reader) (Op, uint16, []byte, error) {
-	head := make([]byte, FrameHeadLen)
-	if _, err := io.ReadFull(r, head); err != nil {
-		return 0, 0, nil, err
-	}
-	if binary.BigEndian.Uint32(head[0:4]) != FrameMagic || head[4] != FrameVersion {
-		return 0, 0, nil, errors.New("rpcmon: bad RMON frame header")
-	}
-	op := Op(head[5])
-	status := binary.BigEndian.Uint16(head[6:8])
-	n := binary.BigEndian.Uint32(head[8:12])
-	if n == 0 {
-		return op, status, nil, nil
-	}
-	if n > MaxBodyLen {
-		return 0, 0, nil, errors.New("rpcmon: RMON frame too large")
-	}
-	body := make([]byte, n)
-	if _, err := io.ReadFull(r, body); err != nil {
-		return 0, 0, nil, err
-	}
-	return op, status, body, nil
-}
-
-type e2eBackend struct {
+type crosTCPBackend struct {
 	addr    string
 	timeout time.Duration
+	snoGen  uint64
 }
 
-func NewE2E(addr string, timeout time.Duration) Backend {
+func NewCrosTCP(addr string, timeout time.Duration) Backend {
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
-	return &e2eBackend{addr: addr, timeout: timeout}
+	return &crosTCPBackend{addr: addr, timeout: timeout}
 }
 
-func (b *e2eBackend) Close() error { return nil }
+func (b *crosTCPBackend) Close() error { return nil }
 
-func (b *e2eBackend) call(ctx context.Context, op Op) ([]byte, error) {
+func (b *crosTCPBackend) call(ctx context.Context, operation string) ([]byte, error) {
 	d := net.Dialer{Timeout: b.timeout}
 	conn, err := d.DialContext(ctx, "tcp", b.addr)
 	if err != nil {
@@ -1589,21 +1650,44 @@ func (b *e2eBackend) call(ctx context.Context, op Op) ([]byte, error) {
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(b.timeout))
-	if err := writeRMONFrame(conn, op, StatusOK, nil); err != nil {
+
+	sno := atomic.AddUint64(&b.snoGen, 1)
+	reqPkt := BuildCrosReqPacket(sno, ServiceName, operation, VoidTypePayload)
+	if _, err := conn.Write(reqPkt); err != nil {
 		return nil, err
 	}
-	gotOp, status, body, err := readRMONFrame(conn)
-	if err != nil {
-		return nil, err
+
+	framer := crosrpc.NewStreamFramer(crosrpc.DefaultMaxCaptureBytes)
+	buf := make([]byte, 32768)
+	for {
+		n, err := conn.Read(buf)
+		if n > 0 {
+			frames, fErr := framer.Feed(buf[:n])
+			if fErr != nil {
+				return nil, fErr
+			}
+			for _, f := range frames {
+				parsed, pErr := crosrpc.ParsePacket(f.Data)
+				if pErr != nil || parsed.Rsp == nil {
+					continue
+				}
+				if parsed.Comm.SNO != sno {
+					continue
+				}
+				if parsed.Rsp.StatusCode != 0 {
+					return nil, fmt.Errorf("rpcmon: %s status=%d", operation, parsed.Rsp.StatusCode)
+				}
+				return f.Data[parsed.PayloadOffset:], nil
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
-	if gotOp != op || status != StatusOK {
-		return nil, fmt.Errorf("rpcmon: op=%d status=%d", gotOp, status)
-	}
-	return body, nil
 }
 
-func (b *e2eBackend) FetchSnapshot(ctx context.Context) (Snapshot, error) {
-	portBytes, err := b.call(ctx, OpPortInfo)
+func (b *crosTCPBackend) FetchSnapshot(ctx context.Context) (Snapshot, error) {
+	portBytes, err := b.call(ctx, OpGetRpcPortInfo)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -1611,7 +1695,7 @@ func (b *e2eBackend) FetchSnapshot(ctx context.Context) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
-	svrBytes, err := b.call(ctx, OpServerDetail)
+	svrBytes, err := b.call(ctx, OpGetRpcServerDetailInfo)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -1622,7 +1706,7 @@ func (b *e2eBackend) FetchSnapshot(ctx context.Context) (Snapshot, error) {
 	if ts2 > 0 {
 		ts = ts2
 	}
-	cliBytes, err := b.call(ctx, OpClientDetail)
+	cliBytes, err := b.call(ctx, OpGetRpcClientDetailInfo)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -1804,16 +1888,25 @@ func (m *MockCSGServer) ListenAddr() string {
 	return m.ln.Addr().String()
 }
 
+// StartMonitor 启动基于标准 pkg/crosrpc 的 RPCMonitorService 监听，并自动注册进自身 CSG 实例表
 func (m *MockCSGServer) StartMonitor(addr string) (string, error) {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return "", err
 	}
 	m.monLn = ln
+	monAddr := ln.Addr().String()
+	m.regLock.Lock()
+	m.putInstanceLocked(csgdlink.Instance{
+		ProcID: uint32(os.Getpid()),
+		Addr:   "tcp://ipv4:" + monAddr,
+		Name64: rpcmon.ServiceName,
+	})
+	m.regLock.Unlock()
 	go func() {
 		_ = rpcmon.NewServer(m).Serve(ln)
 	}()
-	return ln.Addr().String(), nil
+	return monAddr, nil
 }
 
 func (m *MockCSGServer) Close() error {
