@@ -12,7 +12,22 @@ export const CommHeadBitmapCard: React.FC<CommHeadBitmapCardProps> = ({ commHead
         <div className="code-anatomy-card__title">① 24B 公共头位图与校验 (CommHead)</div>
         <div className="code-anatomy-card__tags">
           <span className="code-badge code-badge--info">{commHead.magicAscii}</span>
-          <span className="code-badge code-badge--secondary">{commHead.transportName}</span>
+          {commHead.transportProtocol === 4 || commHead.transportName?.includes('MESH') ? (
+            <span
+              className="code-badge"
+              style={{
+                background: 'rgba(168, 85, 247, 0.15)',
+                color: 'var(--color-primary-hover, #9333ea)',
+                border: '1px solid rgba(168, 85, 247, 0.3)',
+                fontWeight: 600,
+              }}
+              data-testid="comm-head-transport-mesh-badge"
+            >
+              {commHead.transportName || 'MESH (dophi_mesh)'}
+            </span>
+          ) : (
+            <span className="code-badge code-badge--secondary">{commHead.transportName}</span>
+          )}
           <span className="code-badge code-badge--primary">{commHead.msgTypeName}</span>
         </div>
       </div>

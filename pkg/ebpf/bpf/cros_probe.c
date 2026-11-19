@@ -2,8 +2,14 @@
 
 #include <linux/bpf.h>
 #include <linux/types.h>
+#include <linux/ptrace.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
+
+#ifndef __TARGET_ARCH_x86
+#define __TARGET_ARCH_x86
+#endif
+#include <bpf/bpf_tracing.h>
 
 #define AF_INET 2
 #define IPPROTO_TCP 6
@@ -104,8 +110,31 @@ typedef struct {
     __u16 pad;
 } conn_observe_event;
 
+#define DRT_HEADER_LEN 40
+#define MAX_DRT_CHUNK_SIZE 4096
+
+struct drt_msg_entry {
+    __u64 pc_msg;
+    __u32 ui_msg_len;
+    __u32 ui_reserved;
+};
+
+typedef struct {
+    __u64 session_id;
+    __u64 process_id;
+    __u64 timestamp_ns;
+    __u64 handle;
+    __u32 pid;
+    __u32 data_len;
+    __u8  is_truncated;
+    __u8  pad[3];
+    __u8  hdr40[DRT_HEADER_LEN];
+    __u8  data[MAX_DRT_CHUNK_SIZE];
+} drt_uprobe_event;
+
 const ing_data_event *__unused_ide __attribute__((unused));
 const conn_observe_event *__unused_coe __attribute__((unused));
+const drt_uprobe_event *__unused_due __attribute__((unused));
 
 struct trace_event_raw_sys_enter {
     __u64 unused;
@@ -174,6 +203,11 @@ struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
     __uint(max_entries, 16 * 1024 * 1024); // 16MB
 } ing_ringbuf SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_RINGBUF);
+    __uint(max_entries, 16 * 1024 * 1024); // 16MB
+} drt_ringbuf SEC(".maps");
 
 struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
@@ -509,6 +543,68 @@ int trace_sys_enter_close(struct trace_event_raw_sys_enter *ctx) {
 SEC("tracepoint/sched/sched_process_exec")
 int cros_sched_exec(void *ctx) {
     // 捕获新进程启动，配合用户态 2s 巡检
+    return 0;
+}
+
+// DRT_WriteBulk Uprobe: dophi_mesh 数据面写侧旁路采集 (ADR-23)
+SEC("uprobe/DRT_WriteBulk")
+int cros_drt_write_bulk(struct pt_regs *ctx) {
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u32 pid = (__u32)(pid_tgid >> 32);
+
+    target_proc *tp = bpf_map_lookup_elem(&target_pids_map, &pid);
+    if (!tp || tp->session_id == 0) {
+        return 0;
+    }
+
+    __u64 handle = (__u64)PT_REGS_PARM1(ctx);
+    __u32 msg_num = (__u32)PT_REGS_PARM2(ctx);
+    __u64 ast_ptr = (__u64)PT_REGS_PARM3(ctx);
+
+    if (msg_num < 2 || ast_ptr == 0) {
+        return 0;
+    }
+
+    struct drt_msg_entry entries[2];
+    __builtin_memset(&entries, 0, sizeof(entries));
+    if (bpf_probe_read_user(&entries, sizeof(entries), (void *)ast_ptr) != 0) {
+        return 0;
+    }
+
+    __u32 payload_len = entries[1].ui_msg_len;
+    __u64 payload_ptr = entries[1].pc_msg;
+    if (payload_len == 0 || payload_ptr == 0) {
+        return 0;
+    }
+
+    drt_uprobe_event *evt = bpf_ringbuf_reserve(&drt_ringbuf, sizeof(*evt), 0);
+    if (!evt) {
+        incr_stat(STAT_RINGBUF_DROPS);
+        return 0;
+    }
+
+    evt->session_id = tp->session_id;
+    evt->process_id = tp->process_id;
+    evt->timestamp_ns = bpf_ktime_get_ns();
+    evt->handle = handle;
+    evt->pid = pid;
+    evt->is_truncated = 0;
+    evt->pad[0] = 0; evt->pad[1] = 0; evt->pad[2] = 0;
+
+    if (entries[0].pc_msg != 0 && entries[0].ui_msg_len >= DRT_HEADER_LEN) {
+        bpf_probe_read_user(evt->hdr40, DRT_HEADER_LEN, (void *)entries[0].pc_msg);
+    } else {
+        __builtin_memset(evt->hdr40, 0, DRT_HEADER_LEN);
+    }
+
+    __u32 chunk_len = payload_len > MAX_DRT_CHUNK_SIZE ? MAX_DRT_CHUNK_SIZE : payload_len;
+    if (payload_len > MAX_DRT_CHUNK_SIZE) {
+        evt->is_truncated = 1;
+    }
+    evt->data_len = chunk_len;
+    bpf_probe_read_user(evt->data, chunk_len, (void *)payload_ptr);
+
+    bpf_ringbuf_submit(evt, 0);
     return 0;
 }
 

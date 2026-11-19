@@ -48,7 +48,19 @@ func TestAgentDependencies_NoGormNoDynamicPBNoServer(t *testing.T) {
 		}
 	})
 
-	cmd := exec.Command("go", "list", "-deps", "./cmd/agent", "./pkg/crosrpc", "./pkg/agentproto", "./pkg/ebpf", "./pkg/replay", "./pkg/csgdlink", "./pkg/rpcmon", "./pkg/csgmock")
+	t.Run("Transport_NoCGO", func(t *testing.T) {
+		c := exec.Command("go", "list", "-f", "{{.CgoFiles}}", "./pkg/transport")
+		c.Dir = "../.."
+		out, err := c.CombinedOutput()
+		if err != nil {
+			t.Fatalf("go list ./pkg/transport failed: %v\n%s", err, string(out))
+		}
+		if trimmed := strings.TrimSpace(string(out)); trimmed != "[]" && trimmed != "" {
+			t.Fatalf("FORBIDDEN CGO detected in pkg/transport: %s", trimmed)
+		}
+	})
+
+	cmd := exec.Command("go", "list", "-deps", "./cmd/agent", "./pkg/crosrpc", "./pkg/agentproto", "./pkg/ebpf", "./pkg/replay", "./pkg/csgdlink", "./pkg/rpcmon", "./pkg/csgmock", "./pkg/transport")
 	cmd.Dir = "../.." // code-contract root
 	out, err := cmd.CombinedOutput()
 	if err != nil {

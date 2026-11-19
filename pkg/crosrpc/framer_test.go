@@ -90,3 +90,37 @@ func TestFramer_WriteAt_FirstByteArrivalTimestampAndCoalesced(t *testing.T) {
 		t.Errorf("frame B CapturedAtNs expected 650, got %d", framesCoalesced[1].CapturedAtNs)
 	}
 }
+
+func TestStreamFramer_DefaultRejectsMeshProto4FalsePositive(t *testing.T) {
+	framer := NewStreamFramer(8192)
+
+	// Construct random TCP noise that happens to contain "CSE.TCP\x04" (ucProtocol=4)
+	noise := []byte("random-noise-before-")
+	pseudoMagic := append([]byte(MagicPrefix), TransportMesh) // "CSE.TCP\x04"
+	pseudoBody := make([]byte, 100)
+	noiseWithPseudo := append(noise, pseudoMagic...)
+	noiseWithPseudo = append(noiseWithPseudo, pseudoBody...)
+
+	frames := framer.WriteAt(noiseWithPseudo, 1000)
+	if len(frames) != 0 {
+		t.Fatalf("StreamFramer must treat ucProtocol=4 in raw TCP stream as false positive, got %d frames", len(frames))
+	}
+
+	// Follow with valid TCP frame (ucProtocol=1)
+	validPkt := make([]byte, CommHeadLen+160)
+	copy(validPkt[0:7], []byte(MagicPrefix))
+	validPkt[7] = TransportTCP
+	binary.BigEndian.PutUint64(validPkt[8:16], 12345)
+	binary.BigEndian.PutUint32(validPkt[16:20], 160)
+	binary.BigEndian.PutUint16(validPkt[20:22], 160)
+	validPkt[22] = MsgTypeReq
+	validPkt[23] = 0
+
+	framesValid := framer.WriteAt(validPkt, 2000)
+	if len(framesValid) != 1 {
+		t.Fatalf("expected 1 frame after aligning with real TCP frame, got %d", len(framesValid))
+	}
+	if framesValid[0].Data[7] != TransportTCP {
+		t.Errorf("expected frame ucProtocol == TransportTCP (1), got %d", framesValid[0].Data[7])
+	}
+}

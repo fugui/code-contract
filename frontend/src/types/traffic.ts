@@ -111,6 +111,7 @@ export interface TrafficRecordSummary {
   conn_key?: string;
   conn_index?: number;
   direction: 'INGRESS' | 'EGRESS';
+  transport_proto?: number;
   exchange_type: 'UNARY' | 'STREAM_RSP' | 'ONEWAY' | 'REQ_ONLY' | 'RSP_ORPHAN' | 'MNG';
   src_addr?: string;
   dst_addr?: string;

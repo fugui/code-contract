@@ -667,3 +667,26 @@ func TestOrchestrator_ProcessSnapshotHydration(t *testing.T) {
 		t.Errorf("期望 ListenPort 为 9001，实际为 %d", snap.ListenPort)
 	}
 }
+
+func TestPacketAnatomy_MapsTransportProto4ToMesh(t *testing.T) {
+	raw := buildCrosReqFrame(1001, crosrpc.ReqTypeSync, "com.mesh.Service", "Op", []byte("payload"))
+	raw[7] = crosrpc.TransportMesh // 4
+
+	dto, err := BuildSingleFrameSide(raw, false, true, false, 1, nil)
+	if err != nil {
+		t.Fatalf("BuildSingleFrameSide failed: %v", err)
+	}
+	if dto.CommHead.TransportProtocol != 4 {
+		t.Errorf("expected TransportProtocol 4, got %d", dto.CommHead.TransportProtocol)
+	}
+	if dto.CommHead.TransportName != "RPC_TRANSPORT_MESH" {
+		t.Errorf("expected TransportName RPC_TRANSPORT_MESH, got %s", dto.CommHead.TransportName)
+	}
+	if len(dto.CommHead.Segments) == 0 {
+		t.Fatalf("expected CommHead.Segments not empty")
+	}
+	expectedSegmentDisplay := `"CSE.TCP" + MESH(4)`
+	if dto.CommHead.Segments[0].DisplayValue != expectedSegmentDisplay {
+		t.Errorf("expected segment 0 DisplayValue %s, got %s", expectedSegmentDisplay, dto.CommHead.Segments[0].DisplayValue)
+	}
+}

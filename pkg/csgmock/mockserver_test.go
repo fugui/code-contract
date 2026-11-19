@@ -273,3 +273,64 @@ func TestMockCSGServer_CleanOnConnDrop_AndZeroRealLeak(t *testing.T) {
 	}
 	t.Fatalf("expected MockCSGServer to clean up reg & sessions on conn drop, got %+v", mock.Snapshot())
 }
+
+func TestMockCSGServer_MeshOnlySub_ReceivesRewrittenTCPAndStubInstance(t *testing.T) {
+	mock := csgmock.NewMockCSGServer("127.0.0.1:0")
+	if err := mock.Start(); err != nil {
+		t.Fatalf("mock.Start failed: %v", err)
+	}
+	defer mock.Close()
+
+	// 1. Seed a pure dophi_mesh instance
+	mock.SeedInstance(csgdlink.Instance{
+		ClientID: 10,
+		ProcID:   1001,
+		Addr:     "dophi_mesh://ipv4:10.0.0.1:28001",
+		Name64:   "MeshSvc-MeshSvc",
+	})
+
+	// 2. Publish a local stub directly on TCP
+	mock.SeedInstance(csgdlink.Instance{
+		ClientID: 20,
+		ProcID:   2001,
+		Addr:     "tcp://ipv4:127.0.0.1:39001",
+		Name64:   "StubSvc-StubSvc",
+	})
+
+	mock.EnableMeshToTCPRewrite(true)
+
+	subClient, err := csgdlink.Dial(mock.Addr(), 2*time.Second)
+	if err != nil {
+		t.Fatalf("subClient dial failed: %v", err)
+	}
+	defer subClient.Close()
+	_, _ = subClient.Register(2 * time.Second)
+	_, _ = subClient.ClientID(2 * time.Second)
+
+	var meshTrans [7]byte
+	meshTrans[4] = 1 // Only MESH
+
+	// Pure Mesh SUB for MeshSvc
+	insts1, err := subClient.SubWithTrans("MeshSvc-MeshSvc", meshTrans, 2*time.Second)
+	if err != nil {
+		t.Fatalf("SubWithTrans for MeshSvc failed: %v", err)
+	}
+	if len(insts1) != 1 {
+		t.Fatalf("expected 1 instance for MeshSvc, got %d", len(insts1))
+	}
+	if insts1[0].Addr != "tcp://ipv4:10.0.0.1:28001" {
+		t.Fatalf("expected rewritten tcp addr, got %s", insts1[0].Addr)
+	}
+
+	// Pure Mesh SUB for StubSvc (published as tcp://)
+	insts2, err := subClient.SubWithTrans("StubSvc-StubSvc", meshTrans, 2*time.Second)
+	if err != nil {
+		t.Fatalf("SubWithTrans for StubSvc failed: %v", err)
+	}
+	if len(insts2) != 1 {
+		t.Fatalf("expected 1 instance for StubSvc, got %d", len(insts2))
+	}
+	if insts2[0].Addr != "tcp://ipv4:127.0.0.1:39001" {
+		t.Fatalf("expected tcp stub addr, got %s", insts2[0].Addr)
+	}
+}

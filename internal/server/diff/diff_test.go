@@ -748,3 +748,34 @@ func TestValidateReplayProcessCompatibility_MultiImplIngress(t *testing.T) {
 		t.Fatalf("期望错误为 ErrIncompatibleReplayTargetModule, got: %v", err)
 	}
 }
+
+func TestDiffEngine_CrossTransportMeshExpectedVsTCPActual_Pass(t *testing.T) {
+	payload := []byte("cross_transport_json_or_pb_payload_content")
+
+	var traceExp, traceAct [16]byte
+	copy(traceExp[:], []byte("trace_mesh_00001"))
+	copy(traceAct[:], []byte("trace_tcp_000002"))
+
+	// Expected response: recorded on dophi_mesh (TransportMesh = 4)
+	expectedPkt := buildRspPacketWithAllTiming(
+		1001, 0, traceExp, 1700000001, 1700000005, 1700000010, 1700000003, payload,
+	)
+	expectedPkt[7] = crosrpc.TransportMesh // 4
+
+	// Actual response: replayed over TCP (TransportTCP = 1)
+	actualPkt := buildRspPacketWithAllTiming(
+		9999, 0, traceAct, 1700000099, 1700000105, 1700000120, 1700000102, payload,
+	)
+	actualPkt[7] = crosrpc.TransportTCP // 1
+
+	diffResult, payloadIdentical, err := DiffLayer1Header(expectedPkt, actualPkt)
+	if err != nil {
+		t.Fatalf("DiffLayer1Header failed: %v", err)
+	}
+	if diffResult.Status != models.ReplayResultPass {
+		t.Errorf("expected cross-transport diff to PASS, got %s: %s", diffResult.Status, diffResult.FailureReason)
+	}
+	if !payloadIdentical {
+		t.Errorf("expected payloadIdentical == true for matching payload bytes")
+	}
+}

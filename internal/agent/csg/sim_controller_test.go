@@ -245,3 +245,55 @@ func TestSimController_MockServer_ZeroLeakAndSandboxReport(t *testing.T) {
 		t.Fatalf("expected SandboxSubscribedSvcs [DownstreamSvc-DownstreamSvc], got %+v", rep.SandboxSubscribedSvcs)
 	}
 }
+
+func TestSimController_MockServer_AllowsMeshToTCPRewriteWithout422(t *testing.T) {
+	ctrl := csg.NewSimController()
+	out, err := ctrl.Prepare(context.Background(), csg.SimPrepareInput{
+		Strategy:     agentproto.CSGStrategyMockServer,
+		CSGAddr:      "127.0.0.1:49999",
+		MockDataPort: 19101,
+		Snapshots: []agentproto.CSGSnapshotRecord{
+			{
+				ServiceName: "PureMeshSvc-PureMeshSvc",
+				Addr:        "dophi_mesh://ipv4:192.168.1.50:41001",
+				Transport:   "MESH",
+			},
+		},
+		Timeout: 2 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("Prepare MOCK_SERVER failed: %v", err)
+	}
+	defer ctrl.Cleanup()
+
+	serverSide, clientSide := net.Pipe()
+	go out.MockCSGServer.ServeConn(serverSide)
+
+	dlinkCli := csgdlink.NewClient(clientSide)
+	_, _ = dlinkCli.Register(2 * time.Second)
+	_, _ = dlinkCli.ClientID(2 * time.Second)
+
+	var meshTrans [7]byte
+	meshTrans[4] = 1 // ONLY MESH (Trans[1] == 0)
+
+	insts, err := dlinkCli.SubWithTrans("PureMeshSvc-PureMeshSvc", meshTrans, 2*time.Second)
+	if err != nil {
+		t.Fatalf("SubWithTrans pure mesh failed: %v", err)
+	}
+	_ = dlinkCli.Close()
+
+	if len(insts) != 1 || insts[0].Addr != "tcp://ipv4:192.168.1.50:41001" {
+		t.Fatalf("expected Mesh->TCP rewritten address, got %+v", insts)
+	}
+
+	rep := ctrl.Report()
+	if rep == nil {
+		t.Fatalf("expected non-nil report")
+	}
+	if rep.ErrorCode != "" {
+		t.Fatalf("expected ErrorCode to be empty, got %s: %s", rep.ErrorCode, rep.ErrorMessage)
+	}
+	if rep.MeshRewrites != 1 {
+		t.Fatalf("expected MeshRewrites == 1, got %d", rep.MeshRewrites)
+	}
+}

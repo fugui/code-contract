@@ -1,5 +1,14 @@
 import type { ArchProcess } from './arch';
 
+export interface TransportDriverCapability {
+  name: string;
+  transports: string[];
+  transport_code: number;
+  capabilities: number;
+  is_available: boolean;
+  unavailable_reason?: string;
+}
+
 export interface Agent {
   id: string;
   name: string;
@@ -19,6 +28,7 @@ export interface Agent {
   kernel_version?: string;
   has_ebpf_cap?: boolean;
   cap_detail?: string;
+  transport_drivers?: TransportDriverCapability[];
   lease_type: 'RECORDING' | 'REPLAY' | '';
   lease_ref_id?: string;
   lease_holder_id?: string;
@@ -125,6 +135,7 @@ export interface HandshakeResp {
   active_lease_type: string;
   active_ref_id: number;
   uptime_sec: number;
+  transport_drivers?: TransportDriverCapability[];
   csg_endpoints?: CSGEndpointInfo[];
 }
 

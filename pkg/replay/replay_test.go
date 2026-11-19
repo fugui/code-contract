@@ -555,3 +555,110 @@ func TestReplayExecutor_CollectsObservedEgressCalls_HitAndMiss(t *testing.T) {
 		t.Errorf("expected to observe FraudService:Check in ObservedEgressCalls")
 	}
 }
+
+func TestNormalizeFrameTransportForTCP_MeshToTCP_ImmutableOriginal(t *testing.T) {
+	orig := buildTestReqPacket(1001, "com.demo.Test", "Op", crosrpc.ReqTypeSync, [16]byte{}, 0, []byte("mesh_req"))
+	orig[7] = crosrpc.TransportMesh // 4
+
+	normalized := NormalizeFrameTransportForTCP(orig)
+	if normalized[7] != crosrpc.TransportTCP {
+		t.Fatalf("expected normalized[7] == TransportTCP (1), got %d", normalized[7])
+	}
+	if orig[7] != crosrpc.TransportMesh {
+		t.Fatalf("expected original[7] to remain immutable TransportMesh (4), got %d", orig[7])
+	}
+
+	// When already TCP, returns original slice without copying
+	tcpPkt := buildTestReqPacket(1002, "com.demo.Test", "Op", crosrpc.ReqTypeSync, [16]byte{}, 0, []byte("tcp_req"))
+	tcpPkt[7] = crosrpc.TransportTCP
+	normTCP := NormalizeFrameTransportForTCP(tcpPkt)
+	if &normTCP[0] != &tcpPkt[0] {
+		t.Fatalf("expected same slice pointer for already-TCP frame")
+	}
+}
+
+func TestHealResponseFrames_NormalizesMeshProtoToTCP(t *testing.T) {
+	liveReq := buildTestReqPacket(0xCAFE, "com.demo.Test", "Op", crosrpc.ReqTypeSync, [16]byte{}, 0, []byte("live_req"))
+	liveReq[7] = crosrpc.TransportTCP
+
+	mockRsp := buildTestRspPacket(0x1111, crosrpc.MsgTypeRsp, 200, "com.demo.Test", "Op", 0, []byte("mock_rsp"))
+	mockRsp[7] = crosrpc.TransportMesh // 4
+
+	healedFrames, err := HealResponseFrames(liveReq, [][]byte{mockRsp})
+	if err != nil {
+		t.Fatalf("HealResponseFrames failed: %v", err)
+	}
+	if len(healedFrames) != 1 {
+		t.Fatalf("expected 1 healed frame, got %d", len(healedFrames))
+	}
+	if healedFrames[0][7] != crosrpc.TransportTCP {
+		t.Errorf("expected healedFrames[0][7] == TransportTCP (1), got %d", healedFrames[0][7])
+	}
+	if mockRsp[7] != crosrpc.TransportMesh {
+		t.Errorf("expected original mockRsp[7] to remain TransportMesh (4), got %d", mockRsp[7])
+	}
+}
+
+func TestReplayExecutor_MeshRecordedAssetReplayedOverTCP_Pass(t *testing.T) {
+	// Spin up target TCP server that expects TransportTCP (1) on wire
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen failed: %v", err)
+	}
+	defer ln.Close()
+	targetPort := uint16(ln.Addr().(*net.TCPAddr).Port)
+
+	var receivedProto uint8
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		buf := make([]byte, 4096)
+		n, err := conn.Read(buf)
+		if err != nil {
+			return
+		}
+		if n >= 24 {
+			receivedProto = buf[7]
+			sno := binary.BigEndian.Uint64(buf[8:16])
+			rsp := buildTestRspPacket(sno, crosrpc.MsgTypeRsp, 200, "com.mesh.Echo", "EchoOp", 0, []byte("echo_mesh_ok"))
+			_, _ = conn.Write(rsp)
+		}
+	}()
+
+	executor := NewReplayExecutor()
+	// Ingress request recorded with TransportMesh (4)
+	meshReq := buildTestReqPacket(8888, "com.mesh.Echo", "EchoOp", crosrpc.ReqTypeSync, [16]byte{}, 0, []byte("mesh_body"))
+	meshReq[7] = crosrpc.TransportMesh
+
+	execReq := agentproto.ExecuteReplayReq{
+		TaskID: 7777,
+		ProcessSpec: agentproto.ProcessMonitorSpec{
+			ProcessID:  10,
+			ListenPort: targetPort,
+		},
+		TimeoutMs: 2000,
+		IngressItems: []agentproto.ReplayIngressItem{
+			{RecordID: 1, RawReq: meshReq},
+		},
+	}
+
+	result, err := executor.Execute(context.Background(), execReq)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if result.Status != "PASS" {
+		t.Fatalf("expected status PASS, got %s, details: %s", result.Status, result.Details)
+	}
+	if result.PassedRequests != 1 {
+		t.Fatalf("expected 1 passed request, got %d", result.PassedRequests)
+	}
+	if receivedProto != crosrpc.TransportTCP {
+		t.Fatalf("target TCP server expected proto 1 (TCP), but received %d", receivedProto)
+	}
+	if meshReq[7] != crosrpc.TransportMesh {
+		t.Fatalf("original meshReq asset was mutated, expected 4, got %d", meshReq[7])
+	}
+}

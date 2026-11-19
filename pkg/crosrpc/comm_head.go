@@ -3,6 +3,7 @@ package crosrpc
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 )
 
 // CommHead CROS RPC 24 字节定长公共消息头 (RPC_COMM_HEAD_S)
@@ -52,8 +53,8 @@ func ValidateCommHead(h CommHead) error {
 		return ErrInvalidMagic
 	}
 
-	// 2. 传输协议限定 TCP 明文底座 (1) 或缺省 (0)
-	if h.TransportProto > 1 {
+	// 2. 传输协议限定在合法范围 [0, TransportCustomize (7)]
+	if h.TransportProto > TransportCustomize {
 		return ErrInvalidTransport
 	}
 
@@ -89,4 +90,52 @@ func ValidateCommHead(h CommHead) error {
 	}
 
 	return nil
+}
+
+// TransportProtoName 返回 CROS RPC 传输层协议全名
+func TransportProtoName(proto uint8) string {
+	switch proto {
+	case TransportDefault:
+		return "RPC_TRANSPORT_DEFAULT"
+	case TransportTCP:
+		return "RPC_TRANSPORT_TCP"
+	case TransportDMS:
+		return "RPC_TRANSPORT_DMS"
+	case TransportUC:
+		return "RPC_TRANSPORT_UC"
+	case TransportMesh:
+		return "RPC_TRANSPORT_MESH"
+	case TransportDomain:
+		return "RPC_TRANSPORT_DOMAIN"
+	case TransportFRPC:
+		return "RPC_TRANSPORT_FRPC"
+	case TransportCustomize:
+		return "RPC_TRANSPORT_CUSTOMIZE"
+	default:
+		return fmt.Sprintf("RPC_TRANSPORT_UNKNOWN(%d)", proto)
+	}
+}
+
+// TransportProtoShortLabel 返回 CROS RPC 传输层协议短标识（如 "TCP(1)", "MESH(4)"）
+func TransportProtoShortLabel(proto uint8) string {
+	switch proto {
+	case TransportDefault:
+		return "DEFAULT(0)"
+	case TransportTCP:
+		return "TCP(1)"
+	case TransportDMS:
+		return "DMS(2)"
+	case TransportUC:
+		return "UC(3)"
+	case TransportMesh:
+		return "MESH(4)"
+	case TransportDomain:
+		return "DOMAIN(5)"
+	case TransportFRPC:
+		return "FRPC(6)"
+	case TransportCustomize:
+		return "CUSTOMIZE(7)"
+	default:
+		return fmt.Sprintf("UNKNOWN(%d)", proto)
+	}
 }

@@ -24,6 +24,7 @@ import (
 	"code-contract/pkg/crosrpc"
 	"code-contract/pkg/ebpf"
 	"code-contract/pkg/replay"
+	"code-contract/pkg/transport"
 
 	"github.com/gorilla/websocket"
 )
@@ -47,30 +48,31 @@ type AgentServerConfig struct {
 
 // AgentServer code-contract-agent HTTP REST + WebSocket 二进制数据面服务端
 type AgentServer struct {
-	mu              sync.Mutex
-	cfg             AgentServerConfig
-	allowPrefixes   []netip.Prefix
-	claimCode       string
-	bootID          string
-	startedAt       time.Time
-	buffer          *BoundedSessionBuffer
-	ebpfMgr         *ebpf.Manager
-	replayExec      *replay.ReplayExecutor
-	procScanner     *ebpf.ProcScanner
-	activeLeaseType string
-	activeRefID     uint64
-	lastContactAt   time.Time
-	wsActive        int32
-	httpServer      *http.Server
-	listener        net.Listener
-	watchdogStop    chan struct{}
-	upgrader        websocket.Upgrader
-	armedRevision   uint64
-	armedDigest     string
-	armedProcesses  []agentproto.ProcessMonitorSpec
-	latestDiags     []agentproto.ProcessDiagStatus
-	activeCSGSim    *csg.SimController
-	activeDone      chan struct{}
+	mu                sync.Mutex
+	cfg               AgentServerConfig
+	allowPrefixes     []netip.Prefix
+	claimCode         string
+	bootID            string
+	startedAt         time.Time
+	buffer            *BoundedSessionBuffer
+	ebpfMgr           *ebpf.Manager
+	replayExec        *replay.ReplayExecutor
+	procScanner       *ebpf.ProcScanner
+	activeLeaseType   string
+	activeRefID       uint64
+	lastContactAt     time.Time
+	wsActive          int32
+	httpServer        *http.Server
+	listener          net.Listener
+	watchdogStop      chan struct{}
+	upgrader          websocket.Upgrader
+	armedRevision     uint64
+	armedDigest       string
+	armedProcesses    []agentproto.ProcessMonitorSpec
+	latestDiags       []agentproto.ProcessDiagStatus
+	activeCSGSim      *csg.SimController
+	activeDone        chan struct{}
+	transportRegistry *transport.Registry
 }
 
 // NewAgentServer 构造 Agent 服务端实例
@@ -173,7 +175,19 @@ func NewAgentServer(cfg AgentServerConfig) (*AgentServer, error) {
 	}
 	s.ebpfMgr = ebpf.NewManager(ebpfConfig)
 
+	s.transportRegistry = transport.NewRegistry()
+	_ = s.transportRegistry.Register(transport.NewTCPDriver(s.ebpfMgr))
+	_ = s.transportRegistry.Register(transport.NewDRTUprobeDriver(s.ebpfMgr, transport.DRTUprobeConfig{
+		ProcRoot:      s.cfg.ProcRoot,
+		PayloadOffset: 0,
+	}))
+
 	return s, nil
+}
+
+// TransportRegistry 获取传输驱动注册表
+func (s *AgentServer) TransportRegistry() *transport.Registry {
+	return s.transportRegistry
 }
 
 // ClaimCode 获取当前认领码
@@ -279,6 +293,9 @@ func (s *AgentServer) PurgeAll() {
 	s.mu.Lock()
 	if s.ebpfMgr != nil {
 		s.ebpfMgr.PurgeAllMonitors()
+	}
+	if s.transportRegistry != nil {
+		_ = s.transportRegistry.CloseAll()
 	}
 	if s.replayExec != nil && s.activeRefID > 0 {
 		s.replayExec.Cancel(s.activeRefID)
@@ -430,6 +447,11 @@ func (s *AgentServer) handleHandshake(w http.ResponseWriter, r *http.Request) {
 
 	csgEps := s.locateCSGEndpoints()
 
+	var transDrivers []agentproto.TransportDriverCapability
+	if s.transportRegistry != nil {
+		transDrivers = s.transportRegistry.Capabilities()
+	}
+
 	resp := agentproto.HandshakeResp{
 		AgentVersion:      s.cfg.AgentVersion,
 		ProtocolVersion:   agentproto.ProtocolVersion,
@@ -444,6 +466,7 @@ func (s *AgentServer) handleHandshake(w http.ResponseWriter, r *http.Request) {
 		ArmedProcessCount: armedCount,
 		ArmedDigest:       armedDigest,
 		CSGEndpoints:      csgEps,
+		TransportDrivers:  transDrivers,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -497,6 +520,33 @@ func (s *AgentServer) handleSyncMonitors(w http.ResponseWriter, r *http.Request)
 		log.Printf("[Agent] [❌ 下发监控失败 (HTTP 503)]: %v (SessionID=%d)", err, req.SessionID)
 		http.Error(w, fmt.Sprintf("下发监控失败: %v", err), http.StatusServiceUnavailable)
 		return
+	}
+
+	if s.transportRegistry != nil {
+		pidMap := make(map[uint64]uint32)
+		for _, d := range diags {
+			pidMap[d.ProcessID] = d.ResolvedPID
+		}
+		var targetProcs []transport.TargetProcess
+		for _, p := range req.Processes {
+			targetProcs = append(targetProcs, transport.TargetProcess{
+				ProcessID:   p.ProcessID,
+				PID:         pidMap[p.ProcessID],
+				ListenPort:  p.ListenPort,
+				CmdPattern:  p.CmdPattern,
+				Downstreams: p.Downstreams,
+			})
+		}
+		sink := transport.FrameSinkFunc(func(h agentproto.EnvelopeHeader, payload []byte) error {
+			s.buffer.Push(agentproto.MarshalEnvelope(h, payload))
+			return nil
+		})
+		_ = s.transportRegistry.StartCapture(r.Context(), transport.CaptureSpec{
+			SessionOrTaskID: req.SessionID,
+			RefKind:         agentproto.RefKindRecordingSession,
+			Processes:       targetProcs,
+			Sink:            sink,
+		})
 	}
 
 	log.Printf("[Agent] [✓ 监控下发成功]: SessionID=%d, 诊断进程数=%d", req.SessionID, len(diags))
@@ -571,6 +621,11 @@ func (s *AgentServer) handleRemoveProcessMonitor(w http.ResponseWriter, r *http.
 		return
 	}
 
+	if s.transportRegistry != nil {
+		sessID, _ := strconv.ParseUint(r.PathValue("sessionId"), 10, 64)
+		_ = s.transportRegistry.RemoveTarget(sessID, procID)
+	}
+
 	if rem == 0 {
 		s.mu.Lock()
 		s.activeLeaseType = ""
@@ -609,6 +664,10 @@ func (s *AgentServer) handleStopMonitor(w http.ResponseWriter, r *http.Request) 
 	oldRefID := s.activeRefID
 	s.activeLeaseType = ""
 	s.activeRefID = 0
+
+	if s.transportRegistry != nil {
+		_ = s.transportRegistry.StopCapture(r.Context(), oldRefID)
+	}
 
 	log.Printf("[Agent] [✓ 停录完成]: SessionID=%d, 捕获总帧数=%d, 丢帧=%d, 恢复 ARMED 待命状态", oldRefID, total, dropped)
 

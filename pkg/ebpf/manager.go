@@ -954,3 +954,33 @@ func (m *Manager) GetStats() (bypassedSelf, ringbufDrops, redirected int64) {
 func (m *Manager) IngressReader() *GapAwareIngressReader {
 	return m.ingressReader
 }
+
+// DRTUprobeProgram 返回 DRT_WriteBulk uprobe 对应的 eBPF 程序 (ADR-23)
+func (m *Manager) DRTUprobeProgram() *ebpf.Program {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.objs == nil {
+		return nil
+	}
+	return m.objs.CrosDrtWriteBulk
+}
+
+// DRTRingbufMap 返回 dophi_mesh 采集专用的 RingBuf BPF Map (ADR-23)
+func (m *Manager) DRTRingbufMap() *ebpf.Map {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.objs == nil {
+		return nil
+	}
+	return m.objs.DrtRingbuf
+}
+
+// EnsureAttached 确保内核探针与 BPF 对象已加载
+func (m *Manager) EnsureAttached() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.attached && m.objs != nil {
+		return nil
+	}
+	return m.attachLocked()
+}

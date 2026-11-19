@@ -1,7 +1,9 @@
 package agentproto
 
 import (
+	"encoding/json"
 	"testing"
+	"time"
 )
 
 func TestComputeArmedDigest(t *testing.T) {
@@ -75,5 +77,56 @@ func TestComputeArmedDigest(t *testing.T) {
 	d3 := ComputeArmedDigest(specs3)
 	if d3 == d1 {
 		t.Fatalf("modified spec must yield different digest")
+	}
+}
+
+func TestHandshakeResp_TransportDriversJSONRoundtrip(t *testing.T) {
+	resp := HandshakeResp{
+		AgentVersion:    "v1.10.0",
+		ProtocolVersion: ProtocolVersion,
+		BootID:          "boot-uuid-1234",
+		StartedAt:       time.Now().UTC(),
+		KernelVersion:   "6.8.0-generic",
+		HasEbpfCap:      true,
+		CapDetail:       "CAP_BPF+CAP_NET_RAW",
+		TransportDrivers: []TransportDriverCapability{
+			{
+				Name:          "builtin-tcp",
+				Version:       "1.0.0",
+				Transports:    []string{"tcp"},
+				TransportCode: 1,
+				Capabilities:  CapDiscover | CapCapture | CapInject | CapStub,
+				Available:     true,
+			},
+			{
+				Name:          "builtin-drt-uprobe",
+				Version:       "1.0.0",
+				Transports:    []string{"dophi_mesh", "mesh"},
+				TransportCode: 4,
+				Capabilities:  CapDiscover | CapCapture,
+				Available:     true,
+				Detail:        "libdopra.so detected with DRT_WriteBulk",
+			},
+		},
+	}
+
+	data, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatalf("json.Marshal failed: %v", err)
+	}
+
+	var decoded HandshakeResp
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal failed: %v", err)
+	}
+
+	if len(decoded.TransportDrivers) != 2 {
+		t.Fatalf("expected 2 transport drivers, got %d", len(decoded.TransportDrivers))
+	}
+	if decoded.TransportDrivers[0].Name != "builtin-tcp" || decoded.TransportDrivers[0].TransportCode != 1 {
+		t.Errorf("driver 0 mismatch: %+v", decoded.TransportDrivers[0])
+	}
+	if decoded.TransportDrivers[1].Name != "builtin-drt-uprobe" || decoded.TransportDrivers[1].TransportCode != 4 {
+		t.Errorf("driver 1 mismatch: %+v", decoded.TransportDrivers[1])
 	}
 }

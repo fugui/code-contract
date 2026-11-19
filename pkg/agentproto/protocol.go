@@ -50,7 +50,24 @@ const (
 	HeaderClaimCode         = "X-Claim-Code"
 	HeaderExpectedLeaseType = "X-Expected-Lease-Type"
 	HeaderExpectedLeaseRef  = "X-Expected-Lease-Ref"
+
+	// 传输驱动能力位图 (ADR-22 v2.0)
+	CapDiscover = uint32(1 << 0) // 1: 发现/进程定位
+	CapCapture  = uint32(1 << 1) // 2: 流量采集
+	CapInject   = uint32(1 << 2) // 4: 流量注入
+	CapStub     = uint32(1 << 3) // 8: 仿真桩发布
 )
+
+// TransportDriverCapability Agent 传输驱动元信息与宿主机实时就绪声明 (ADR-22 v2.0)
+type TransportDriverCapability struct {
+	Name          string   `json:"name"`           // "builtin-tcp" | "builtin-drt-uprobe"
+	Version       string   `json:"version"`        // "1.0.0"
+	Transports    []string `json:"transports"`     // ["tcp"] | ["dophi_mesh", "mesh"]
+	TransportCode uint8    `json:"transport_code"` // 1 (TCP) | 4 (MESH)
+	Capabilities  uint32   `json:"capabilities"`   // 位图: 1=Discover | 2=Capture | 4=Inject | 8=Stub
+	Available     bool     `json:"available"`      // 宿主机是否满足运行条件（如探测到 libdopra.so 与 CAP_BPF）
+	Detail        string   `json:"detail,omitempty"`
+}
 
 // DiscoveredProcess 宿主机探查到的候选 IPv4 TCP LISTEN 业务进程
 type DiscoveredProcess struct {
@@ -72,19 +89,20 @@ var (
 
 // HandshakeResp 握手与心跳双向对账数据载荷
 type HandshakeResp struct {
-	AgentVersion      string            `json:"agent_version"`     // Agent 构建版本号
-	ProtocolVersion   string            `json:"protocol_version"`  // 主协议版本，如 "1.0"
-	BootID            string            `json:"boot_id"`           // Agent 实例重启 UUID
-	StartedAt         time.Time         `json:"started_at"`        // 启动时刻
-	KernelVersion     string            `json:"kernel_version"`    // 宿主机内核版本
-	HasEbpfCap        bool              `json:"has_ebpf_cap"`      // 是否具备完整 eBPF 运行权限
-	CapDetail         string            `json:"cap_detail"`        // 权限详情说明
-	ActiveLeaseType   string            `json:"active_lease_type"` // 当前内存持有的租约类型: "" | "RECORDING" | "REPLAY"
-	ActiveRefID       uint64            `json:"active_ref_id"`     // 当前持有的 SessionID 或 TaskID
-	UptimeSec         uint64            `json:"uptime_sec"`        // 运行秒数
-	ArmedProcessCount int               `json:"armed_process_count"`
-	ArmedDigest       string            `json:"armed_digest"`
-	CSGEndpoints      []CSGEndpointInfo `json:"csg_endpoints,omitempty"`
+	AgentVersion      string                      `json:"agent_version"`     // Agent 构建版本号
+	ProtocolVersion   string                      `json:"protocol_version"`  // 主协议版本，如 "1.0"
+	BootID            string                      `json:"boot_id"`           // Agent 实例重启 UUID
+	StartedAt         time.Time                   `json:"started_at"`        // 启动时刻
+	KernelVersion     string                      `json:"kernel_version"`    // 宿主机内核版本
+	HasEbpfCap        bool                        `json:"has_ebpf_cap"`      // 是否具备完整 eBPF 运行权限
+	CapDetail         string                      `json:"cap_detail"`        // 权限详情说明
+	ActiveLeaseType   string                      `json:"active_lease_type"` // 当前内存持有的租约类型: "" | "RECORDING" | "REPLAY"
+	ActiveRefID       uint64                      `json:"active_ref_id"`     // 当前持有的 SessionID 或 TaskID
+	UptimeSec         uint64                      `json:"uptime_sec"`        // 运行秒数
+	ArmedProcessCount int                         `json:"armed_process_count"`
+	ArmedDigest       string                      `json:"armed_digest"`
+	CSGEndpoints      []CSGEndpointInfo           `json:"csg_endpoints,omitempty"`
+	TransportDrivers  []TransportDriverCapability `json:"transport_drivers,omitempty"`
 }
 
 // ArmStandbyReq 管控端向 Agent 预下发待命规格请求

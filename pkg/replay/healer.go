@@ -11,6 +11,17 @@ var (
 	ErrFrameTooShort = errors.New("crosrpc frame length below minimum header")
 )
 
+// NormalizeFrameTransportForTCP 在发送副本中将 ucProtocol 归一化为 TCP (1)，原切片保持不可变
+func NormalizeFrameTransportForTCP(frame []byte) []byte {
+	if len(frame) >= crosrpc.CommHeadLen && frame[7] > crosrpc.TransportTCP {
+		cp := make([]byte, len(frame))
+		copy(cp, frame)
+		cp[7] = crosrpc.TransportTCP
+		return cp
+	}
+	return frame
+}
+
 // HealSingleResponseFrame 基于当前实时下游请求帧 liveReq，对单帧录制应答帧 mockRsp 执行表驱动原地头部自愈覆写
 func HealSingleResponseFrame(liveReq []byte, mockRsp []byte) ([]byte, error) {
 	if len(liveReq) < crosrpc.CommHeadLen || len(mockRsp) < crosrpc.CommHeadLen {
@@ -18,6 +29,10 @@ func HealSingleResponseFrame(liveReq []byte, mockRsp []byte) ([]byte, error) {
 	}
 	healed := make([]byte, len(mockRsp))
 	copy(healed, mockRsp)
+
+	if healed[7] > crosrpc.TransportTCP {
+		healed[7] = crosrpc.TransportTCP
+	}
 
 	// 1. 覆写公共头偏移 8..15 的 8B 大端请求序列号 ullSNO
 	copy(healed[8:16], liveReq[8:16])

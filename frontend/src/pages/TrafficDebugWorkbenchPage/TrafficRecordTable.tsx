@@ -70,7 +70,25 @@ export const TrafficRecordTable: React.FC<TrafficRecordTableProps> = ({
                       </span>
                     </td>
                     <td>
-                      <span className="code-badge code-badge--info">{r.exchange_type}</span>
+                      <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                        <span className="code-badge code-badge--info">{r.exchange_type}</span>
+                        {r.transport_proto === 4 && (
+                          <span
+                            className="code-badge"
+                            style={{
+                              background: 'rgba(168, 85, 247, 0.15)',
+                              color: 'var(--color-primary-hover, #9333ea)',
+                              border: '1px solid rgba(168, 85, 247, 0.3)',
+                              fontWeight: 600,
+                              fontSize: '10px',
+                            }}
+                            data-testid={`badge-transport-mesh-${r.id}`}
+                            title="dophi_mesh (uprobe 采集)"
+                          >
+                            MESH
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="code-font-mono">
                       <span

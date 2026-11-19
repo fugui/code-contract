@@ -288,8 +288,6 @@ func (c *SimController) prepareMockServerLocked(_ context.Context, in SimPrepare
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		c.meshOnlySvcs = appendUniqueString(c.meshOnlySvcs, serviceName)
-		c.errCode = ErrCodeDataPlaneMeshUnsupported
-		c.errMsg = fmt.Sprintf("被测进程仅发起纯 dophi_mesh 订阅 (%s)，未开启 TCP 传输", serviceName)
 	})
 
 	seeded := make(map[string]struct{})

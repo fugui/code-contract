@@ -69,9 +69,9 @@ func TestValidateCommHeadBoundaries(t *testing.T) {
 		t.Fatalf("预期 ErrInvalidMagic，实际: %v", err)
 	}
 
-	// 3. 非法传输协议 (> 1)
+	// 3. 非法传输协议 (> 7)
 	badTransport := reqHead
-	badTransport.TransportProto = 2
+	badTransport.TransportProto = 8
 	if err := ValidateCommHead(badTransport); err != ErrInvalidTransport {
 		t.Fatalf("预期 ErrInvalidTransport，实际: %v", err)
 	}
@@ -515,5 +515,76 @@ func TestStreamFramer_NonCrosTrafficBoundedMemory_AndMidStreamResync(t *testing.
 	}
 	if !bytes.Equal(frames[0].Data, validReqPkt) {
 		t.Fatalf("切出的数据切片与原请求帧逐字节不一致")
+	}
+}
+
+func TestValidateCommHead_AllowsTransport0To7_RejectsAbove7(t *testing.T) {
+	for proto := uint8(0); proto <= TransportCustomize; proto++ {
+		h := CommHead{
+			TransportProto: proto,
+			SNO:            100,
+			Length:         200,
+			HeadLen:        160,
+			MsgType:        MsgTypeReq,
+			IsPacked:       1,
+		}
+		copy(h.Magic[:], []byte(MagicPrefix))
+		if err := ValidateCommHead(h); err != nil {
+			t.Errorf("expected proto %d to be valid, got %v", proto, err)
+		}
+		if name := TransportProtoName(proto); name == "" {
+			t.Errorf("expected non-empty name for proto %d", proto)
+		}
+		if label := TransportProtoShortLabel(proto); label == "" {
+			t.Errorf("expected non-empty label for proto %d", proto)
+		}
+	}
+
+	// Above 7 should be rejected
+	for proto := uint8(8); proto <= 10; proto++ {
+		h := CommHead{
+			TransportProto: proto,
+			SNO:            100,
+			Length:         200,
+			HeadLen:        160,
+			MsgType:        MsgTypeReq,
+			IsPacked:       1,
+		}
+		copy(h.Magic[:], []byte(MagicPrefix))
+		if err := ValidateCommHead(h); err != ErrInvalidTransport {
+			t.Errorf("expected proto %d to return ErrInvalidTransport, got %v", proto, err)
+		}
+	}
+}
+
+func TestParsePacket_AndSplitFrames_MeshProtocol4(t *testing.T) {
+	reqPayload := []byte("mesh-grpc-protobuf-payload")
+	pkt := buildValidReqPacket("com.mesh.OrderService", "PayOrder", reqPayload)
+	// Modify transport to TransportMesh (4)
+	pkt[7] = TransportMesh
+
+	parsed, err := ParsePacket(pkt)
+	if err != nil {
+		t.Fatalf("ParsePacket failed on TransportMesh (4): %v", err)
+	}
+	if parsed.Comm.TransportProto != TransportMesh {
+		t.Errorf("expected Comm.TransportProto == TransportMesh (4), got %d", parsed.Comm.TransportProto)
+	}
+	extractedPayload := pkt[parsed.PayloadOffset : parsed.PayloadOffset+parsed.PayloadLen]
+	if string(extractedPayload) != string(reqPayload) {
+		t.Errorf("expected payload %q, got %q", reqPayload, extractedPayload)
+	}
+
+	// Concatenate two mesh frames
+	concat := append(append([]byte{}, pkt...), pkt...)
+	frames, err := SplitFrames(concat)
+	if err != nil {
+		t.Fatalf("SplitFrames failed on mesh frames: %v", err)
+	}
+	if len(frames) != 2 {
+		t.Fatalf("expected 2 frames, got %d", len(frames))
+	}
+	if frames[0][7] != TransportMesh || frames[1][7] != TransportMesh {
+		t.Errorf("expected TransportMesh (4) in both frames, got %d and %d", frames[0][7], frames[1][7])
 	}
 }

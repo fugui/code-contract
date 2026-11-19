@@ -48,6 +48,21 @@ type cros_probeConnTuple struct {
 	StreamOffTx uint64
 }
 
+type cros_probeDrtUprobeEvent struct {
+	_           structs.HostLayout
+	SessionId   uint64
+	ProcessId   uint64
+	TimestampNs uint64
+	Handle      uint64
+	Pid         uint32
+	DataLen     uint32
+	IsTruncated uint8
+	Pad         [3]uint8
+	Hdr40       [40]uint8
+	Data        [4096]uint8
+	_           [4]byte
+}
+
 type cros_probeDsKey struct {
 	_         structs.HostLayout
 	ProcessId uint64
@@ -124,12 +139,14 @@ const (
 	cros_probeMapConnectObserveRingbuf  = "connect_observe_ringbuf"
 	cros_probeMapCookieOrigDstMap       = "cookie_orig_dst_map"
 	cros_probeMapDownstreamRulesMap     = "downstream_rules_map"
+	cros_probeMapDrtRingbuf             = "drt_ringbuf"
 	cros_probeMapEbpfStatsMap           = "ebpf_stats_map"
 	cros_probeMapIngConnMap             = "ing_conn_map"
 	cros_probeMapIngRingbuf             = "ing_ringbuf"
 	cros_probeMapNatTupleMap            = "nat_tuple_map"
 	cros_probeMapTargetPidsMap          = "target_pids_map"
 	cros_probeProgCrosConnect4          = "cros_connect4"
+	cros_probeProgCrosDrtWriteBulk      = "cros_drt_write_bulk"
 	cros_probeProgCrosSchedExec         = "cros_sched_exec"
 	cros_probeProgCrosSockOps           = "cros_sock_ops"
 	cros_probeProgTraceSysEnterClose    = "trace_sys_enter_close"
@@ -144,6 +161,7 @@ const (
 	cros_probeProgTraceSysExitSendto    = "trace_sys_exit_sendto"
 	cros_probeProgTraceSysExitWrite     = "trace_sys_exit_write"
 	cros_probeVarUnusedCoe              = "__unused_coe"
+	cros_probeVarUnusedDue              = "__unused_due"
 	cros_probeVarUnusedIde              = "__unused_ide"
 )
 
@@ -190,6 +208,7 @@ type cros_probeSpecs struct {
 // It can be passed ebpf.CollectionSpec.Assign.
 type cros_probeProgramSpecs struct {
 	CrosConnect4          *ebpf.ProgramSpec `ebpf:"cros_connect4"`
+	CrosDrtWriteBulk      *ebpf.ProgramSpec `ebpf:"cros_drt_write_bulk"`
 	CrosSchedExec         *ebpf.ProgramSpec `ebpf:"cros_sched_exec"`
 	CrosSockOps           *ebpf.ProgramSpec `ebpf:"cros_sock_ops"`
 	TraceSysEnterClose    *ebpf.ProgramSpec `ebpf:"trace_sys_enter_close"`
@@ -214,6 +233,7 @@ type cros_probeMapSpecs struct {
 	ConnectObserveRingbuf *ebpf.MapSpec `ebpf:"connect_observe_ringbuf"`
 	CookieOrigDstMap      *ebpf.MapSpec `ebpf:"cookie_orig_dst_map"`
 	DownstreamRulesMap    *ebpf.MapSpec `ebpf:"downstream_rules_map"`
+	DrtRingbuf            *ebpf.MapSpec `ebpf:"drt_ringbuf"`
 	EbpfStatsMap          *ebpf.MapSpec `ebpf:"ebpf_stats_map"`
 	IngConnMap            *ebpf.MapSpec `ebpf:"ing_conn_map"`
 	IngRingbuf            *ebpf.MapSpec `ebpf:"ing_ringbuf"`
@@ -226,6 +246,7 @@ type cros_probeMapSpecs struct {
 // It can be passed ebpf.CollectionSpec.Assign.
 type cros_probeVariableSpecs struct {
 	UnusedCoe *ebpf.VariableSpec `ebpf:"__unused_coe"`
+	UnusedDue *ebpf.VariableSpec `ebpf:"__unused_due"`
 	UnusedIde *ebpf.VariableSpec `ebpf:"__unused_ide"`
 }
 
@@ -254,6 +275,7 @@ type cros_probeMaps struct {
 	ConnectObserveRingbuf *ebpf.Map `ebpf:"connect_observe_ringbuf"`
 	CookieOrigDstMap      *ebpf.Map `ebpf:"cookie_orig_dst_map"`
 	DownstreamRulesMap    *ebpf.Map `ebpf:"downstream_rules_map"`
+	DrtRingbuf            *ebpf.Map `ebpf:"drt_ringbuf"`
 	EbpfStatsMap          *ebpf.Map `ebpf:"ebpf_stats_map"`
 	IngConnMap            *ebpf.Map `ebpf:"ing_conn_map"`
 	IngRingbuf            *ebpf.Map `ebpf:"ing_ringbuf"`
@@ -268,6 +290,7 @@ func (m *cros_probeMaps) Close() error {
 		m.ConnectObserveRingbuf,
 		m.CookieOrigDstMap,
 		m.DownstreamRulesMap,
+		m.DrtRingbuf,
 		m.EbpfStatsMap,
 		m.IngConnMap,
 		m.IngRingbuf,
@@ -281,6 +304,7 @@ func (m *cros_probeMaps) Close() error {
 // It can be passed to loadCros_probeObjects or ebpf.CollectionSpec.LoadAndAssign.
 type cros_probeVariables struct {
 	UnusedCoe *ebpf.Variable `ebpf:"__unused_coe"`
+	UnusedDue *ebpf.Variable `ebpf:"__unused_due"`
 	UnusedIde *ebpf.Variable `ebpf:"__unused_ide"`
 }
 
@@ -289,6 +313,7 @@ type cros_probeVariables struct {
 // It can be passed to loadCros_probeObjects or ebpf.CollectionSpec.LoadAndAssign.
 type cros_probePrograms struct {
 	CrosConnect4          *ebpf.Program `ebpf:"cros_connect4"`
+	CrosDrtWriteBulk      *ebpf.Program `ebpf:"cros_drt_write_bulk"`
 	CrosSchedExec         *ebpf.Program `ebpf:"cros_sched_exec"`
 	CrosSockOps           *ebpf.Program `ebpf:"cros_sock_ops"`
 	TraceSysEnterClose    *ebpf.Program `ebpf:"trace_sys_enter_close"`
@@ -307,6 +332,7 @@ type cros_probePrograms struct {
 func (p *cros_probePrograms) Close() error {
 	return _Cros_probeClose(
 		p.CrosConnect4,
+		p.CrosDrtWriteBulk,
 		p.CrosSchedExec,
 		p.CrosSockOps,
 		p.TraceSysEnterClose,

@@ -112,3 +112,64 @@ func TestEnvelopeHeaderMarshalUnmarshal(t *testing.T) {
 		t.Fatalf("截断载荷期望 ErrPayloadLengthMismatch，实际得到: %v", err)
 	}
 }
+
+func TestEnvelopeHeader_Offset26TransportProto_56BytesBackwardCompat(t *testing.T) {
+	rawPayload := []byte("MESH-TRAFFIC-PAYLOAD")
+
+	// 1. 验证 TransportProto=4 (Mesh) 序列化与反序列化
+	hMesh := EnvelopeHeader{
+		Magic:           EnvelopeMagic,
+		ProtoVer:        EnvelopeProtoVer,
+		EventType:       EventTrafficFrame,
+		SessionOrTaskID: 101,
+		ProcessID:       202,
+		CapturedPID:     303,
+		Direction:       DirectionIngress,
+		Flags:           0,
+		TransportProto:  4, // MESH
+		Reserved:        0,
+		CapturedAtNs:    99887766,
+		SrcPort:         1234,
+		DstPort:         5678,
+		ConnSeq:         1,
+	}
+
+	buf := MarshalEnvelope(hMesh, rawPayload)
+	if len(buf) != EnvelopeHeaderLen+len(rawPayload) {
+		t.Fatalf("envelope length mismatch: expected %d, got %d", EnvelopeHeaderLen+len(rawPayload), len(buf))
+	}
+	if buf[26] != 4 {
+		t.Fatalf("expected offset 26 to be TransportProto=4, got %d", buf[26])
+	}
+	if buf[27] != 0 {
+		t.Fatalf("expected offset 27 to be Reserved=0, got %d", buf[27])
+	}
+
+	decoded, payload, err := UnmarshalEnvelope(buf)
+	if err != nil {
+		t.Fatalf("UnmarshalEnvelope failed: %v", err)
+	}
+	if decoded.TransportProto != 4 {
+		t.Fatalf("expected decoded TransportProto == 4, got %d", decoded.TransportProto)
+	}
+	if decoded.Reserved != 0 {
+		t.Fatalf("expected decoded Reserved == 0, got %d", decoded.Reserved)
+	}
+	if !bytes.Equal(payload, rawPayload) {
+		t.Fatalf("payload mismatch")
+	}
+
+	// 2. 向后兼容验证：旧版本写入 offset 26..27 全 0
+	bufLegacy := make([]byte, EnvelopeHeaderLen+len(rawPayload))
+	copy(bufLegacy, buf)
+	bufLegacy[26] = 0
+	bufLegacy[27] = 0
+
+	decodedLegacy, _, err := UnmarshalEnvelope(bufLegacy)
+	if err != nil {
+		t.Fatalf("UnmarshalEnvelope on legacy packet failed: %v", err)
+	}
+	if decodedLegacy.TransportProto != 0 {
+		t.Fatalf("legacy packet expected TransportProto == 0, got %d", decodedLegacy.TransportProto)
+	}
+}

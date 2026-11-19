@@ -15,7 +15,8 @@ type EnvelopeHeader struct {
 	CapturedPID     uint32  `json:"captured_pid"`       // 20..23 (BE)
 	Direction       uint8   `json:"direction"`          // 24 (1=INGRESS, 2=EGRESS)
 	Flags           uint8   `json:"flags"`              // 25
-	Reserved        uint16  `json:"reserved"`           // 26..27 (0)
+	TransportProto  uint8   `json:"transport_proto"`    // 26 (0/1=TCP, 4=MESH)
+	Reserved        uint8   `json:"reserved"`           // 27 (0)
 	CapturedAtNs    int64   `json:"captured_at_ns"`     // 28..35 (BE)
 	SrcIPv4         [4]byte `json:"src_ipv4"`           // 36..39
 	DstIPv4         [4]byte `json:"dst_ipv4"`           // 40..43
@@ -36,7 +37,8 @@ func (h EnvelopeHeader) Marshal() []byte {
 	binary.BigEndian.PutUint32(buf[20:24], h.CapturedPID)
 	buf[24] = h.Direction
 	buf[25] = h.Flags
-	binary.BigEndian.PutUint16(buf[26:28], h.Reserved)
+	buf[26] = h.TransportProto
+	buf[27] = h.Reserved
 	binary.BigEndian.PutUint64(buf[28:36], uint64(h.CapturedAtNs))
 	copy(buf[36:40], h.SrcIPv4[:])
 	copy(buf[40:44], h.DstIPv4[:])
@@ -116,7 +118,8 @@ func UnmarshalEnvelope(data []byte) (EnvelopeHeader, []byte, error) {
 		CapturedPID:     binary.BigEndian.Uint32(data[20:24]),
 		Direction:       data[24],
 		Flags:           data[25],
-		Reserved:        binary.BigEndian.Uint16(data[26:28]),
+		TransportProto:  data[26],
+		Reserved:        data[27],
 		CapturedAtNs:    int64(binary.BigEndian.Uint64(data[28:36])),
 		SrcPort:         binary.BigEndian.Uint16(data[44:46]),
 		DstPort:         binary.BigEndian.Uint16(data[46:48]),

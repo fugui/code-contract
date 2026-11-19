@@ -269,3 +269,57 @@ func TestBoundedSessionBufferBackpressureAndGracePurge(t *testing.T) {
 		t.Errorf("expected lease cleared after empty expected lease heartbeat, got %s, %d", leaseTypeAfter, refIDAfter)
 	}
 }
+
+func TestAgentServer_HandshakeReportsTransportDrivers(t *testing.T) {
+	cfg := AgentServerConfig{
+		ListenAddr: "127.0.0.1:0",
+	}
+	srv, err := NewAgentServer(cfg)
+	if err != nil {
+		t.Fatalf("NewAgentServer failed: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/agent/v1/handshake", nil)
+	req.RemoteAddr = "127.0.0.1:12345"
+	rec := httptest.NewRecorder()
+
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", rec.Code)
+	}
+
+	var resp agentproto.HandshakeResp
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to unmarshal HandshakeResp: %v", err)
+	}
+
+	if len(resp.TransportDrivers) == 0 {
+		t.Fatalf("expected non-empty TransportDrivers in HandshakeResp, got 0")
+	}
+
+	foundTCP := false
+	foundDRT := false
+	for _, td := range resp.TransportDrivers {
+		if td.Name == "builtin-tcp" && td.TransportCode == 1 {
+			foundTCP = true
+			if td.Capabilities == 0 {
+				t.Errorf("expected non-zero capabilities for builtin-tcp")
+			}
+		}
+		if td.Name == "builtin-drt-uprobe" && td.TransportCode == 4 {
+			foundDRT = true
+			if td.Capabilities == 0 {
+				t.Errorf("expected non-zero capabilities for builtin-drt-uprobe")
+			}
+		}
+	}
+	if !foundTCP {
+		t.Errorf("expected to find builtin-tcp driver in HandshakeResp, got %+v", resp.TransportDrivers)
+	}
+	if !foundDRT {
+		t.Errorf("expected to find builtin-drt-uprobe driver in HandshakeResp, got %+v", resp.TransportDrivers)
+	}
+}

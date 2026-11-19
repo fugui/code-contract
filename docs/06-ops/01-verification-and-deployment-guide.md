@@ -182,3 +182,37 @@ make build && make seed
    - `code-bench/config.yaml`：确认网关节点已切换为 `gateways.contract`（指向 `http://127.0.0.1:8091`），且 `docs.path` 指向 `/home/fugui/codes/code-contract/docs`。
 3. **浏览器 JWT 会话刷新**：
    - 完成数据库角色切换与服务重启后，请**退出当前门户登录并重新登录**（或清除浏览器 `localStorage` Token），确保新签发的 JWT 声明中携带最新 `contract_admin` 角色。
+
+---
+
+## 7. dophi_mesh 数据面 Uprobe 采集与 D7 偏移核验指南 (ADR-22 & ADR-23)
+
+### 7.1 D7 首 24B `:x64` 现网核验配方与偏移固化
+
+在具备 `dophi_mesh` 真实业务进程的宿主机上，通过纯只读 ftrace 或 bpftrace 对 `DRT_WriteBulk` 挂针，探查 `astMsg[0]` (40B 环头) 与 `astMsg[1]` 业务载荷前 24 字节：
+
+```bash
+# 1. 定位运行中业务进程映射的 libdopra.so 路径与 PID
+PID=$(pgrep -f "dophi_mesh_proc" | head -n 1)
+LIBDOPRA=$(grep "libdopra.so" /proc/$PID/maps | awk '{print $6}' | head -n 1)
+echo "PID: $PID, Library: $LIBDOPRA"
+
+# 2. 计算 DRT_WriteBulk 符号偏移
+OFF=$(readelf -W -s "$LIBDOPRA" | grep "DRT_WriteBulk" | awk '{print "0x"$2}')
+echo "DRT_WriteBulk offset: $OFF"
+
+# 3. 通过 ftrace 只读挂针核验 astMsg[1] 二进制前 24B (验证 "CSE.TCP" 锚定)
+cd /sys/kernel/tracing
+echo "p:$LIBDOPRA:$OFF +0(+16(%dx)):x64 +8(+16(%dx)):x64 +16(+16(%dx)):x64" > uprobe_events
+echo 1 > events/uprobes/enable
+head -n 20 trace_pipe
+echo 0 > events/uprobes/enable
+echo "" > uprobe_events
+```
+
+### 7.2 默认配置与固化
+
+- **Agent 默认策略**：`payload_offset = 0`（自适应模式，自动检测前 64 字节内的 `"CSE.TCP"` 魔术字并精准对齐，抗私有子头偏移漂移）；
+- **静态配置覆盖**：若特定环境带有固定长度私有报头 $N$（如 `16` 或 `24`），可通过 Agent 启动参数 `--drt-payload-offset=N` 显式固定；
+- **探针卫生保障**：待命期（`ARMED`）探针挂载数恒为 `0`；仅在开录时按目标 PID 挂载匿名 `perf_event_open`，停录、取消、异常退出（五出口）100% 幂等卸载，零 tracefs 残留。
+

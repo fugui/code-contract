@@ -321,3 +321,109 @@ func TestAssembler_SlowTrackDecode_SeqNo_PeerProc_AndBizError(t *testing.T) {
 		t.Errorf("biz_status_summary 期望 code=4009，实际为 %v", meta["biz_status_summary"])
 	}
 }
+
+func TestExchangeAssembler_PersistsTransportProto4Mesh_ZeroDDL(t *testing.T) {
+	db := testdb.SetupIsolatedDB(t, config.ServiceName)
+	if err := models.SetupWithDB(db); err != nil {
+		t.Fatalf("SetupWithDB failed: %v", err)
+	}
+
+	cfg := &AssemblerConfig{
+		WorkerShards:    1,
+		BatchSize:       10,
+		FlushInterval:   20 * time.Millisecond,
+		DefaultTimeout:  5 * time.Second,
+		MaxPendingLimit: 100,
+	}
+	assembler := NewExchangeAssembler(db, nil, nil, nil, nil, cfg)
+	defer assembler.Close()
+
+	sessionID := uint64(9901)
+	processID := uint64(55)
+	pid := uint32(12345)
+
+	srcIP := net.ParseIP("10.0.0.1").To4()
+	dstIP := net.ParseIP("10.0.0.2").To4()
+	srcPort := uint16(50001)
+	dstPort := uint16(50002)
+
+	// 1. Ingress Request with TransportProto = 4 (Mesh)
+	reqPkt := make([]byte, crosrpc.CommHeadLen+160+20)
+	copy(reqPkt[0:7], []byte(crosrpc.MagicPrefix))
+	reqPkt[7] = crosrpc.TransportMesh // 4
+	binary.BigEndian.PutUint64(reqPkt[8:16], 889900)
+	binary.BigEndian.PutUint32(reqPkt[16:20], 180)
+	binary.BigEndian.PutUint16(reqPkt[20:22], 160)
+	reqPkt[22] = crosrpc.MsgTypeReq
+	reqPkt[23] = 1
+	copy(reqPkt[24+8:24+72], []byte("MeshOrderService\x00"))
+	copy(reqPkt[24+72:24+136], []byte("CreateMeshOrder\x00"))
+	copy(reqPkt[24+160:], []byte("mesh_protobuf_binary"))
+
+	reqEnv := agentproto.EnvelopeHeader{
+		Magic:           agentproto.EnvelopeMagic,
+		ProtoVer:        agentproto.EnvelopeProtoVer,
+		EventType:       agentproto.EventTrafficFrame,
+		SessionOrTaskID: sessionID,
+		ProcessID:       processID,
+		CapturedPID:     pid,
+		Direction:       agentproto.DirectionIngress,
+		Flags:           0,
+		TransportProto:  4, // MESH declared on envelope
+		CapturedAtNs:    time.Now().UnixNano(),
+		SrcPort:         srcPort,
+		DstPort:         dstPort,
+		ConnSeq:         1,
+	}
+	copy(reqEnv.SrcIPv4[:], srcIP)
+	copy(reqEnv.DstIPv4[:], dstIP)
+
+	assembler.Feed(1, reqEnv, reqPkt)
+
+	// 2. Ingress Response (matching SNO 889900)
+	rspPkt := make([]byte, crosrpc.CommHeadLen+156+10)
+	copy(rspPkt[0:7], []byte(crosrpc.MagicPrefix))
+	rspPkt[7] = crosrpc.TransportMesh // 4
+	binary.BigEndian.PutUint64(rspPkt[8:16], 889900)
+	binary.BigEndian.PutUint32(rspPkt[16:20], 166)
+	binary.BigEndian.PutUint16(rspPkt[20:22], 156)
+	rspPkt[22] = crosrpc.MsgTypeRsp
+	rspPkt[23] = 1
+	copy(rspPkt[24+8:24+72], []byte("MeshOrderService\x00"))
+	copy(rspPkt[24+72:24+136], []byte("CreateMeshOrder\x00"))
+	copy(rspPkt[24+156:], []byte("mesh_rsp_ok"))
+
+	rspEnv := agentproto.EnvelopeHeader{
+		Magic:           agentproto.EnvelopeMagic,
+		ProtoVer:        agentproto.EnvelopeProtoVer,
+		EventType:       agentproto.EventTrafficFrame,
+		SessionOrTaskID: sessionID,
+		ProcessID:       processID,
+		CapturedPID:     pid,
+		Direction:       agentproto.DirectionEgress,
+		Flags:           0,
+		TransportProto:  4, // MESH
+		CapturedAtNs:    time.Now().UnixNano() + 1000000,
+		SrcPort:         dstPort,
+		DstPort:         srcPort,
+		ConnSeq:         1,
+	}
+	copy(rspEnv.SrcIPv4[:], dstIP)
+	copy(rspEnv.DstIPv4[:], srcIP)
+
+	assembler.Feed(1, rspEnv, rspPkt)
+
+	assembler.Flush()
+
+	var record models.TrafficRecord
+	if err := db.Where("session_id = ? AND sno = ?", sessionID, 889900).First(&record).Error; err != nil {
+		t.Fatalf("failed to find persisted traffic record: %v", err)
+	}
+
+	if record.TransportProto != 4 {
+		t.Errorf("expected record.TransportProto == 4 (MESH), got %d", record.TransportProto)
+	}
+	if record.ExchangeType != models.ExchangeUnary {
+		t.Errorf("expected ExchangeUnary, got %s", record.ExchangeType)
+	}
+}

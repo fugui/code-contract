@@ -521,7 +521,7 @@ func (w *assemblerWorker) processFrame(agentID uint64, env agentproto.EnvelopeHe
 			direction:       dirStr,
 			srcAddr:         fmt.Sprintf("%s:%d", env.SrcIP().String(), env.SrcPort),
 			dstAddr:         fmt.Sprintf("%s:%d", env.DstIP().String(), env.DstPort),
-			transportProto:  comm.TransportProto,
+			transportProto:  resolveTransportProto(env.TransportProto, comm.TransportProto),
 			sno:             comm.SNO,
 			reqType:         comm.MsgType,
 			isPacked:        comm.IsPacked,
@@ -642,7 +642,7 @@ func (w *assemblerWorker) buildSingleRecord(
 		SrcAddr:         fmt.Sprintf("%s:%d", env.SrcIP().String(), env.SrcPort),
 		DstAddr:         fmt.Sprintf("%s:%d", env.DstIP().String(), env.DstPort),
 		ReqCapturedAtNs: env.CapturedAtNs,
-		TransportProto:  comm.TransportProto,
+		TransportProto:  resolveTransportProto(env.TransportProto, comm.TransportProto),
 		SNO:             models.U64Numeric(comm.SNO),
 		IsPacked:        comm.IsPacked,
 		IsTruncated:     isTruncated,
@@ -1049,4 +1049,15 @@ func (a *ExchangeAssembler) Close() {
 	for _, w := range a.workers {
 		close(w.stopCh)
 	}
+}
+
+// resolveTransportProto 优先采用 EnvelopeHeader 声明的传输协议（如 4=MESH），缺省回退到 CommHead 或 TCP (1)
+func resolveTransportProto(envProto, commProto uint8) uint8 {
+	if envProto > 0 {
+		return envProto
+	}
+	if commProto > 0 {
+		return commProto
+	}
+	return crosrpc.TransportTCP
 }

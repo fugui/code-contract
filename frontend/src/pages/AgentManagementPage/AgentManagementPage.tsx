@@ -752,6 +752,26 @@ export const AgentManagementPage: React.FC<AgentManagementPageProps> = ({
                     >
                       {selectedAgent.has_ebpf_cap ? '🟢 eBPF 特权就绪' : '🔴 缺少 eBPF 特权'}
                     </span>
+                    {selectedAgent.transport_drivers && selectedAgent.transport_drivers.length > 0 && selectedAgent.transport_drivers.map((td) => (
+                      <span
+                        key={td.name}
+                        className="code-badge"
+                        style={{
+                          fontSize: '0.75rem',
+                          background: td.is_available ? 'rgba(34, 197, 94, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+                          color: td.is_available ? 'var(--color-success)' : 'var(--color-danger)',
+                          border: td.is_available ? '1px solid var(--color-success)' : '1px solid var(--color-danger)',
+                        }}
+                        title={td.is_available ? `${td.name} 可用: ${td.transports.join(', ')}` : (td.unavailable_reason || '不可用')}
+                        data-testid={`driver-cap-${td.name}`}
+                      >
+                        {td.name === 'builtin-tcp'
+                          ? (td.is_available ? 'TCP ✓' : 'TCP ✗')
+                          : td.name === 'builtin-drt-uprobe'
+                          ? (td.is_available ? 'dophi_mesh (uprobe) ✓' : 'dophi_mesh ✗')
+                          : `${td.name} ${td.is_available ? '✓' : '✗'}`}
+                      </span>
+                    ))}
                     {selectedAgent.fallback_agent_id && (
                       <span
                         className="code-badge"

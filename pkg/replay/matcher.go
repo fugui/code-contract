@@ -354,6 +354,9 @@ func (m *ScopedMockMatcher) MatchAndHealWithDstTag(liveReq []byte, dstAddr, dstT
 			healed := make([]byte, len(rawMng))
 			copy(healed, rawMng)
 			copy(healed[8:16], liveReq[8:16]) // 覆写 SNO
+			if healed[7] > crosrpc.TransportTCP {
+				healed[7] = crosrpc.TransportTCP
+			}
 			m.mockHitCount++
 			return &MatchResult{
 				Result:         MatchHitMng,

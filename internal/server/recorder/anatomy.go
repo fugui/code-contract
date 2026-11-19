@@ -209,7 +209,7 @@ func BuildSingleFrameSide(
 	commHeadDTO := CommHeadAnatomyDTO{
 		MagicAscii:        "CSE.TCP",
 		TransportProtocol: int(comm.TransportProto),
-		TransportName:     "RPC_TRANSPORT_TCP",
+		TransportName:     crosrpc.TransportProtoName(comm.TransportProto),
 		SNODec:            fmt.Sprintf("%d", comm.SNO),
 		SNOHex:            fmt.Sprintf("0x%016x", comm.SNO),
 		UILength:          int(comm.Length),
@@ -230,7 +230,7 @@ func BuildSingleFrameSide(
 
 	if len(raw) >= 24 {
 		commHeadDTO.Segments = []ByteSliceSegment{
-			{OffsetStart: 0, ByteLength: 8, FieldName: "unMagicInfo", RawHex: formatHex(raw[0:8]), DisplayValue: `"CSE.TCP" + TCP(1)`},
+			{OffsetStart: 0, ByteLength: 8, FieldName: "unMagicInfo", RawHex: formatHex(raw[0:8]), DisplayValue: fmt.Sprintf("\"CSE.TCP\" + %s", crosrpc.TransportProtoShortLabel(comm.TransportProto))},
 			{OffsetStart: 8, ByteLength: 8, FieldName: "ullSNO", RawHex: formatHex(raw[8:16]), DisplayValue: fmt.Sprintf("0x%016x", comm.SNO)},
 			{OffsetStart: 16, ByteLength: 4, FieldName: "uiLength", RawHex: formatHex(raw[16:20]), DisplayValue: fmt.Sprintf("%d", comm.Length)},
 			{OffsetStart: 20, ByteLength: 2, FieldName: "usHeadLen", RawHex: formatHex(raw[20:22]), DisplayValue: fmt.Sprintf("%d", comm.HeadLen)},

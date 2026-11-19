@@ -235,7 +235,8 @@ func (e *ReplayExecutor) ExecuteWithMatcher(ctx context.Context, req agentproto.
 
 	// 发送前置 MNG 消息
 	for _, mng := range req.MngMocks {
-		if _, err := targetConn.Write(mng); err != nil {
+		mngToSend := NormalizeFrameTransportForTCP(mng)
+		if _, err := targetConn.Write(mngToSend); err != nil {
 			res := &agentproto.ReplayTaskResultResp{
 				TaskID:  req.TaskID,
 				Status:  "ERROR",
@@ -284,7 +285,8 @@ func (e *ReplayExecutor) ExecuteWithMatcher(ctx context.Context, req agentproto.
 
 		matcher.SetActiveRecordID(item.recordID)
 
-		if _, err := targetConn.Write(item.rawReq); err != nil {
+		reqToSend := NormalizeFrameTransportForTCP(item.rawReq)
+		if _, err := targetConn.Write(reqToSend); err != nil {
 			res := &agentproto.ReplayTaskResultResp{
 				TaskID:         req.TaskID,
 				Status:         "ERROR",

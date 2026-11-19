@@ -366,7 +366,7 @@ func (m *MockCSGServer) handleSub(conn net.Conn, f csgdlink.Frame, body []byte) 
 			Addr:   "tcp://ipv4:" + monAddr,
 			Name64: rpcmon.ServiceName,
 		}
-		if transMatches(cand.Addr, cand.Addr, req.Trans) {
+		if transMatches(cand.Addr, cand.Addr, req.Trans, rewrite) {
 			matched = append(matched, cand)
 		}
 	}
@@ -467,7 +467,7 @@ func matchInstances(reg map[string]regEntry, target string, trans [7]byte, rewri
 				atomic.AddInt64(meshRewriteCounter, 1)
 			}
 		}
-		if !transMatches(inst.Addr, outInst.Addr, trans) {
+		if !transMatches(inst.Addr, outInst.Addr, trans, rewriteMeshTCP) {
 			continue
 		}
 		out = append(out, outInst)
@@ -475,7 +475,7 @@ func matchInstances(reg map[string]regEntry, target string, trans [7]byte, rewri
 	return out
 }
 
-func transMatches(origAddr, effectiveAddr string, trans [7]byte) bool {
+func transMatches(origAddr, effectiveAddr string, trans [7]byte, rewriteMeshTCP bool) bool {
 	anyRequested := false
 	for i := 0; i < 6; i++ {
 		if trans[i] != 0 {
@@ -484,6 +484,9 @@ func transMatches(origAddr, effectiveAddr string, trans [7]byte) bool {
 		}
 	}
 	if !anyRequested || trans[0] != 0 {
+		return true
+	}
+	if rewriteMeshTCP && csgdlink.IsTCPAddr(effectiveAddr) && trans[4] != 0 {
 		return true
 	}
 	if csgdlink.IsMeshAddr(origAddr) && trans[4] != 0 {
