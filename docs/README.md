@@ -78,7 +78,8 @@ docs/
 │   ├── 18-proto-full-lifecycle-and-git-mr-governance-adr.md            # ADR-18：废弃未落地的 code-proto 与 protohub 后，Proto 全生命周期与 Git/MR 协同治理架构决策
 │   ├── 19-proto-contract-ia-unbundling-and-four-workbenches-adr.md     # ADR-19：Proto 契约控制台信息架构拆解与四工作台正交拆分架构决策 (5 组 13 项菜单 + 无损深链重定向)
 │   ├── 20-module-rebranding-*-to-code-contract-adr.md       # ADR-20：[已实施] 模块正式更名为 code-contract 的战略演进与全仓干净重构方案 (v1.2.0)
-│   └── 21-csg-aware-agent-service-discovery-and-replay-mock-adr.md     # ADR-21：[已采纳] 基于 @csg-ver 现网实证的 CSG 服务与依赖拓扑自动发现及多模式仿真测试架构 (v2.1.0)
+│   ├── 21-csg-aware-agent-service-discovery-and-replay-mock-adr.md     # ADR-21：[已采纳] 基于 @csg-ver 现网实证的 CSG 服务与依赖拓扑自动发现及多模式仿真测试架构 (v2.1.0)
+│   └── 22-pluggable-transport-driver-and-mesh-capture-adr.md           # ADR-22：[已采纳] Agent 可插拔传输层驱动架构 (Pluggable Transport Driver) 与 dophi_mesh 旁路镜像采集设计 (v1.0.0)
 ├── 06-ops/          # 交付与验证：双模联调、物理隔离数据库测试与生产环境单二进制部署手册
 │   └── 01-verification-and-deployment-guide.md    # 联调验证、自动化回归测试与生产部署操作指南
 └── 07-references/   # 外部参考与上位契约基准：协议包规范、字节字典与领域标准文档
