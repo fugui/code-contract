@@ -1,11 +1,11 @@
 # 架构与活体契约治理 (`code-contract`) 数据面引擎与 CROS RPC 协议栈设计
 
 - **文档编号**：`02-data-plane-and-cros-rpc-engine.md`
-- **文档版本**：v1.6.0
-- **更新日期**：2026-11-18
+- **文档版本**：v1.7.0
+- **更新日期**：2026-11-19
 - **归属阶段**：阶段二：系统架构与数据模型设计 (`02-design`)
-- **状态**：M1~M27 已交付；ADR-21 v2.1.0 (M28) SDD 详细设计定稿
-- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.22.0)、[`01-cros-rpc-protocol-spec.md`](../07-references/01-cros-rpc-protocol-spec.md) (v1.0.0)、[`01-system-architecture.md`](./01-system-architecture.md) (v1.9.0)、[`09-arch-process-ssot-and-ebpf-premount-standby-adr.md`](../05-adr/09-arch-process-ssot-and-ebpf-premount-standby-adr.md) (ADR-09 v1.1.0)、[`11-single-process-bidirectional-capture-and-recording-ux-adr.md`](../05-adr/11-single-process-bidirectional-capture-and-recording-ux-adr.md) (ADR-11 v1.0.0)、[`12-packet-causality-call-tree-and-sequence-ux-adr.md`](../05-adr/12-packet-causality-call-tree-and-sequence-ux-adr.md) (ADR-12 v1.0.0)、[`21-csg-aware-agent-service-discovery-and-replay-mock-adr.md`](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (ADR-21 v2.1.0)
+- **状态**：M1~M28 已交付；ADR-22 v2.0.0 & ADR-23 v1.1.0 (M29) SDD 详细设计定稿
+- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.24.0)、[`01-cros-rpc-protocol-spec.md`](../07-references/01-cros-rpc-protocol-spec.md) (v1.0.0)、[`01-system-architecture.md`](./01-system-architecture.md) (v1.10.0)、[`09-arch-process-ssot-and-ebpf-premount-standby-adr.md`](../05-adr/09-arch-process-ssot-and-ebpf-premount-standby-adr.md) (ADR-09 v1.1.0)、[`11-single-process-bidirectional-capture-and-recording-ux-adr.md`](../05-adr/11-single-process-bidirectional-capture-and-recording-ux-adr.md) (ADR-11 v1.0.0)、[`12-packet-causality-call-tree-and-sequence-ux-adr.md`](../05-adr/12-packet-causality-call-tree-and-sequence-ux-adr.md) (ADR-12 v1.0.0)、[`21-csg-aware-agent-service-discovery-and-replay-mock-adr.md`](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (ADR-21 v2.1.0)、[`22-pluggable-transport-driver-and-mesh-capture-adr.md`](../05-adr/22-pluggable-transport-driver-and-mesh-capture-adr.md) (ADR-22 v2.0.0)、[`23-dophi-mesh-uprobe-bypass-capture-adr.md`](../05-adr/23-dophi-mesh-uprobe-bypass-capture-adr.md) (ADR-23 v1.1.0)
 
 ### 修订记录
 
@@ -13,6 +13,7 @@
 | :--- | :--- | :--- |
 | v1.5.0 | 2026-11-04 | 依据 ADR-11 / ADR-12 对齐全出站透明代理、`StreamFramer` SIMD 紧缩、首字节定戳与 `ScopedMockMatcher` 因果池设计 |
 | v1.6.0 | 2026-11-18 | **依据 ADR-21 (v2.1.0 / M28) 增补 CSG 控制面协议栈、双层自动发现与三模仿真测试引擎设计**：新增 §4（`pkg/csgdlink` 32B 帧头/248B 实例/`Observer` 与 `pkg/rpcmon` 基于 `pkg/crosrpc` 标准帧及零 `protoregistry` Wire 编解码）、§5（`internal/agent/csg/discoverer.go` 多租户定位、L1/L2/L3 融合与跨板 LDC 隔离）及 §6（`pkg/csgmock.MockCSGServer` 与 `SimulationController` `CLIENT_INJECT`/`PUB_STUB`/`MOCK_SERVER` 状态机及五出口清理） |
+| v1.7.0 | 2026-11-19 | **依据 ADR-22 (v2.0.0) 与 ADR-23 (v1.1.0 / M29) 增补纯 Go 可插拔传输驱动与 `dophi_mesh` 采集 ➔ TCP 重放跨传输闭环设计**：1. 更新 §1.1 `ValidateCommHead` 放宽 `ucProtocol ∈ [0..7]`（含 `TransportMesh=4`）同时保持 §1.2 TCP `StreamFramer` 默认 `<= 1` 防伪帧隔离；2. 更新 §3.1/§3.3 `ReplayExecutor` 与 `HealSingleResponseFrame` 发送副本 `ucProtocol (4 -> 1)` 原地归一化；3. 更新 §6 `MockCSGServer` / `SimController` `MOCK_SERVER` 模式放行 `dophi_mesh://` 改写 `tcp://`（取消 `422` 误阻断）；4. 新增 **§7 纯 Go 可插拔传输驱动层 (`pkg/transport`) 与 `builtin-drt-uprobe` 内核 uprobe 采集引擎**（`debug/elf` `.dynsym` 解析、`uprobe/DRT_WriteBulk` + `drt_ringbuf`、方向/四元组相关性归一化与五出口探针卫生） |
 
 ---
 
@@ -37,7 +38,13 @@ const (
 	MaxExtendHeadType    = 63                      // RPC_EXTEND_HEAD_TYPE_BUTT
 
 	TransportDefault     = uint8(0)                // RPC_TRANSPORT_DEFAULT
-	TransportTCP         = uint8(1)                // RPC_TRANSPORT_TCP (本系统主要覆盖底座)
+	TransportTCP         = uint8(1)                // RPC_TRANSPORT_TCP (builtin-tcp 底座)
+	TransportDMS         = uint8(2)                // RPC_TRANSPORT_DMS
+	TransportUC          = uint8(3)                // RPC_TRANSPORT_UC
+	TransportMesh        = uint8(4)                // RPC_TRANSPORT_MESH (dophi_mesh / builtin-drt-uprobe 底座, ADR-22/23)
+	TransportDomain      = uint8(5)                // RPC_TRANSPORT_DOMAIN
+	TransportFRPC        = uint8(6)                // RPC_TRANSPORT_FRPC
+	TransportCustomize   = uint8(7)                // RPC_TRANSPORT_CUSTOMIZE (合法枚举上界)
 
 	MsgTypeReq           = uint8(2)                // RPC_MSG_TYPE_REQ
 	MsgTypeRsp           = uint8(3)                // RPC_MSG_TYPE_RSP
@@ -57,7 +64,7 @@ const (
 ```
 
 公共消息头线性偏移（Wire Offset `0..23`）合法性判定谓词 `ValidateCommHead(h CommHead)` 必须同时满足：
-1. **魔术字与传输协议匹配**：`bytes.Equal(raw[0:7], []byte("CSE.TCP"))` 且 `h.TransportProto <= 1`（严格限定 TCP 明文底座 `0x01` 或缺省 `0x00`，杜绝未纳管非 TCP 杂散报文伪同步）；
+1. **魔术字与传输协议匹配（`ADR-22 v2.0 D2` 演进）**：`bytes.Equal(raw[0:7], []byte("CSE.TCP"))` 且 **`h.TransportProto <= TransportCustomize (7)`**，全面放行 `ucProtocol = 4 (TransportMesh)` 等合法 CROS 传输协议枚举，使 `ParsePacket`、`SplitFrames`、`ExchangeAssembler`、`Anatomy`、`Decoder`、`Diff` 与 `ScopedMockMatcher` 100% 传输无关；同时提供 `TransportProtoName(proto uint8) string` 辅助映射；
 2. **消息类型合法**：`2 <= h.MsgType && h.MsgType < 15`；
 3. **最小会话头下界**：
    - `MsgType == 2 (REQ)`：`h.HeadLen >= 160`（`RPC_REQ_HEAD_V1_S` 最小长度）；
@@ -92,7 +99,7 @@ stateDiagram-v2
 > [!TIP]
 > **合法超大包流式排空 (`DrainOversize`) 与中途挂载双重重同步防伪造机制**：
 > 1. 当 `uiLength` 符合 CROS RPC 规范（`<= 32MB`）但超过单帧落盘阈值（默认 `4MB`）时，绝不能直接清空缓冲重扫魔术字。`DrainOversize` 精确按 `remainingToDiscard` 计数丢弃尾部字节，保证内存峰值不超过 `4MB` 的同时，使下一条报文完美对齐偏移 `0`；
-> 2. 当在既有活跃长连接中途开启录制闸门（`PASSTHROUGH -> CAPTURING`）时，首片到达字节可能位于上一帧的半包尾部。`StreamFramer` 在扫描到 `"CSE.TCP"` 后**必须继续通过 `ValidateCommHead` 的全套协议头不变量核验**（`TransportProto <= 1`、`MsgType ∈ [2, 14]`、各消息类型的最小 `HeadLen` 下界以及 `HeadLen <= Length <= MaxPayloadLen + HeadLen`），若任一谓词不满足则仅滑窗前进 1 字节继续重同步，彻底杜绝业务二进制载荷偶现 `"CSE.TCP"` 字面量导致的伪分帧。
+> 2. **TCP 无边界流防伪帧隔离（`ADR-22 v2.0 D2`）**：当在既有活跃 TCP 长连接中途开启录制闸门（`PASSTHROUGH -> CAPTURING`）或透传 PostgreSQL/HTTP 等非 CROS TCP 连接时，首片到达字节可能位于半包尾部或业务二进制载荷偶现 `"CSE.TCP"` 字面量。尽管 `ValidateCommHead` 已放宽至 `ucProtocol ∈ [0..7]` 以支持离散的 `dophi_mesh` 帧，**面向无边界 TCP 字节流的 `StreamFramer` 滑窗对齐守卫默认继续严格限定 `f.buf[7] <= TransportTCP (1)`**（随后再执行 `ValidateCommHead` 全套协议头不变量核验：`MsgType ∈ [2, 14]`、各消息类型最小 `HeadLen` 下界以及 `HeadLen <= Length <= MaxPayloadLen + HeadLen`），若任一谓词不满足则滑窗前进 1 字节继续重同步，确保既有 TCP 采集 0 假阳性伪帧且 0 退化。
 
 ### 1.3 多版本会话头（`#pragma pack(4)`）与扩展头长度驱动解析器
 
@@ -365,8 +372,8 @@ flowchart LR
    - **Mock 资产合格性门禁**：主控下发前严格剔除 `is_truncated == true`（超限截断帧）与 `exchange_type == 'REQ_ONLY'`（录制期挂起未等到应答帧）的记录，确保下发的下游 Mock 均为协议合规且分片完整的二进制数据。
 2. **连接注入、按 `RecordID` 切换局部 Mock 池与多连接会话还原 (`ADR-12`)**：
    - Agent 注入器通过 `/proc/net/tcp` 探知目标进程绑定的实际监听地址（如特定网卡 IP 或 `127.0.0.1`）及 `ListenPort` 建立 TCP 注入连接（注入协程 `pid == agent_pid`，不受重定向影响）；
-   - 若录制会话中存在前置 `MNG` 管理消息帧（A-08），注入器按原连接时序先发送入站 MNG 帧；
-   - 按 `ExecuteReplayReq.IngressItems` 顺序逐条执行注入（若旧调用方仅传入平铺 `IngressRequests` 则自动包装为虚拟递增 `RecordID` 保持 100% 向后兼容）：**每发送一条 `IngressItem` 前，立即调用 `matcher.SetActiveRecordID(item.RecordID)` 将局部 Mock 匹配焦点切换至当前入口请求的因果闭包**，随后写入 `item.RawReq` 并在连接 `StreamFramer` 中等待相同 `ullSNO` 的应答帧（若收到 `ucMsgType == 4 (RSP_SEG)` 则持续收集各分片直至收到终结帧，单请求最长等待 `TimeoutMs` 默认 `30s`）。
+   - 若录制会话中存在前置 `MNG` 管理消息帧（A-08），注入器按原连接时序先发送入站 MNG 帧（发送副本经 `NormalizeFrameTransportForTCP` 归一化）；
+   - 按 `ExecuteReplayReq.IngressItems` 顺序逐条执行注入（若旧调用方仅传入平铺 `IngressRequests` 则自动包装为虚拟递增 `RecordID` 保持 100% 向后兼容）：**每发送一条 `IngressItem` 前，立即调用 `matcher.SetActiveRecordID(item.RecordID)` 将局部 Mock 匹配焦点切换至当前入口请求的因果闭包，并对待发副本执行 `NormalizeFrameTransportForTCP(item.RawReq)`（若录制自 `dophi_mesh` 即 `buf[7] == 4`，仅在发送副本中原地改写为 `1 (TransportTCP)`，绝不修改原始录制切片）**，随后写入 TCP 连接并在 `StreamFramer` 中等待相同 `ullSNO` 的应答帧（若收到 `ucMsgType == 4 (RSP_SEG)` 则持续收集各分片直至收到终结帧，单请求最长等待 `TimeoutMs` 默认 `30s`）。
 
 ### 3.2 分层作用域与双级无 Schema 二进制 Mock 匹配算法 (`ScopedMockMatcher`)
 
@@ -441,6 +448,22 @@ var (
 	ErrFrameTooShort = errors.New("crosrpc frame length below minimum header")
 )
 
+// NormalizeFrameTransportForTCP 针对经 TCP 重放发送的 CROS 帧副本执行跨传输协议归一化 (ADR-22 v2.0 D5):
+// 若原始录制帧的 ucProtocol (偏移 7) 为非 TCP (如 4 = TransportMesh)，在返回副本中原地改写为 1 (TransportTCP)，
+// 原始录制资产切片始终保持不可变。
+func NormalizeFrameTransportForTCP(frame []byte) []byte {
+	if len(frame) < crosrpc.CommHeadLen {
+		return frame
+	}
+	if frame[7] <= crosrpc.TransportTCP {
+		return frame
+	}
+	cp := make([]byte, len(frame))
+	copy(cp, frame)
+	cp[7] = crosrpc.TransportTCP
+	return cp
+}
+
 // HealSingleResponseFrame 基于当前实时下游请求帧 liveReq，对单帧录制应答帧 mockRsp 执行表驱动原地头部自愈覆写
 func HealSingleResponseFrame(liveReq []byte, mockRsp []byte) ([]byte, error) {
 	if len(liveReq) < crosrpc.CommHeadLen || len(mockRsp) < crosrpc.CommHeadLen {
@@ -448,6 +471,11 @@ func HealSingleResponseFrame(liveReq []byte, mockRsp []byte) ([]byte, error) {
 	}
 	healed := make([]byte, len(mockRsp))
 	copy(healed, mockRsp)
+
+	// 0. 跨传输归一化 (ADR-22 v2.0 D5): 录制自 dophi_mesh (4) 的应答经 TCP Mock 回包时将副本 ucProtocol 归一化为 TCP (1)
+	if healed[7] > crosrpc.TransportTCP {
+		healed[7] = crosrpc.TransportTCP
+	}
 
 	// 1. 覆写公共头偏移 8..15 的 8B 大端请求序列号 ullSNO
 	copy(healed[8:16], liveReq[8:16])
@@ -572,12 +600,171 @@ func HealSingleResponseFrame(liveReq []byte, mockRsp []byte) ([]byte, error) {
    - 实现完整 10 类 dlink/CSG 控制面消息 + 断链自动清理 `sessions`/`reg`（对齐 `csgServerLinkFaultProc`）+ 原生实现 `rpcmon.Provider`；
    - `StartMonitor(addr)` 在开启 `pkg/crosrpc` 标准 `rpcmon.Server` 监听的同时自动向 `reg` 写入 `"RPCMonitorService-RPCMonitorService"` -> `"tcp://ipv4:" + monAddr`，实现与真机 `DophiServer` 100% 同构的自注册与 `SUB` 寻址；
    - **双通路接入**：支持通过 `ServeConn(conn)` 由 `EgressProxy` 在 `REPLAY_MOCK` 下对 `[31800, 31900]`/`"DLNK"` 连接进行进程内透明接管，亦支持独立 `-addr/-monitor` 端口供容器/无特权降级使用。
-2. **快照预载、`Mesh->TCP` 重写与 PID 后缀归一化 (`Config`)**：
+2. **快照预载、`Mesh->TCP` 无缝改写放行与 PID 后缀归一化 (`Config`, `ADR-22 v2.0 D5`)**：
    - 初始化预载 `Preload []csgdlink.Instance`（源自录制 `csg_snapshots` 或发现快照）；
-   - 处理 `SUB` 时校验 7B `aucSubTransType`：若仅 `Trans[4]==1 && Trans[1]==0`（纯 `dophi_mesh://` 请求），触发 `OnMeshOnlySub` 并返回快速失败诊断 `CSG_DATAPLANE_MESH_UNSUPPORTED`；
-   - 若支持 `TCP`：先精确匹配 `req.Name`，未命中时按正则 `^(.+-\d+)-(\d+)$` 查 `normIndex` 并在返回实例中回显请求的 `Name64`（通过客户端 `strcmp`）；开启 `RewriteMeshToTCP` 时自动将快照 `dophi_mesh://ipv4:IP:PORT` 重写为 `tcp://ipv4:IP:PORT`（**保留原 `IP:PORT` 对齐 `@dst_tag`**）；
+   - **Mesh➔TCP 重放全放行策略（依据 ADR-22 现网实证 F4：Mock 阶段全部业务进程均支持 `tcp://`，只需 CSG 返回 `tcp://` 地址）**：
+     - 处理 `SUB` 时，开启 `EnableMeshToTCPRewrite(true)` 后，先精确匹配 `req.Name`，未命中时按正则 `^(.+-\d+)-(\d+)$` 查 `normIndex` 并在返回实例中回显请求的 `Name64`（通过客户端 `strcmp`）；
+     - 凡快照地址为 `dophi_mesh://ipv4:IP:PORT` 时，自动重写为 `tcp://ipv4:IP:PORT`（**保留原 `IP:PORT` 对齐 `@dst_tag`**）并递增 `meshRewrites` 计数；
+     - `transMatches` 在 `rewriteMeshTCP == true` 时同时放行客户端 `Trans[1]==1` 与 `Trans[4]==1`（包括纯 `dophi_mesh` 订阅命中已改写或本地桩 `tcp://` 地址）；
+     - **`SimController` 取消 `MOCK_SERVER` 模式下 `meshOnlySubHook` 将 `errCode` 置为 `422 CSG_DATAPLANE_MESH_UNSUPPORTED` 的旧阻断限制**，改为仅在 `CSGSandboxReport` 中忠实记录 `MeshRewrites` 与观测到的纯 Mesh 订阅服务列表供审计追溯；
    - `PUB`/`UNPUB` 仅在沙箱内存 `reg` 增删并累计 `pubSwallowed`（绝不外泄真实 CSG）；`GET_BIND_ADDR` 仅固定分配 `cfg.FixedBindPort`（若端口冲突返错）。
 3. **三模仿真测试数据面配合规则 (`CLIENT_INJECT` / `PUB_STUB` / `MOCK_SERVER`)**：
-   - **`CLIENT_INJECT`**：`ReplayExecutor` 注入前经只读 `csgdlink.Sub` 解析被测服务在线 `tcp://ipv4:ip:port` 后拨号发送 `MngMocks` 与 `IngressItems`（纯 `mesh` 报 `422 CSG_DATAPLANE_MESH_UNSUPPORTED`），无静态 `ListenPort` 依赖；
-   - **`PUB_STUB`**：Agent 逐一对下游服务执行前置 `Sub(svc)` 门禁（任意在线返回 `409 CSG_SERVICE_ALREADY_PUBLISHED`），全部缺席时启动本地 TCP `MockListener` 并执行 `Pub(svc, "tcp://ipv4:"+mockAddr)`，下游请求直达 `ScopedMockMatcher` 执行分层匹配与 `ullSNO` 自愈（严禁 `GET_BIND_ADDR`）；
-   - **`MOCK_SERVER`**：`EgressProxy` 分流 `"DLNK"` 控制面至 `MockCSGServer`，数据面由 `ScopedMockMatcher` 拦截自愈；重放结束与异常取消/超时/进程退出时执行 **5 出口原子自洁**，将 `MockCSGServer.Snapshot()` 导出至 `ReplayTaskResultResp.CSGSandboxReport`。
+   - **`CLIENT_INJECT`**：`ReplayExecutor` 注入前经只读 `csgdlink.Sub` 解析被测服务在线 `tcp://ipv4:ip:port` 后拨号发送经 `NormalizeFrameTransportForTCP` 归一化的 `MngMocks` 与 `IngressItems`（若现网目标仅发布纯 `dophi_mesh://` 且无 TCP 监听端口，仍返回 `422 CSG_DATAPLANE_MESH_UNSUPPORTED` 提示切至 `MOCK_SERVER`），无静态 `ListenPort` 依赖；
+   - **`PUB_STUB`**：Agent 逐一对下游服务执行前置 `Sub(svc)` 门禁（任意在线返回 `409 CSG_SERVICE_ALREADY_PUBLISHED`），全部缺席时启动本地 TCP `MockListener` 并执行 `Pub(svc, "tcp://ipv4:"+mockAddr)`，下游请求直达 `ScopedMockMatcher` 执行分层匹配、`ucProtocol (4->1)` 归一化与 `ullSNO` 自愈（严禁 `GET_BIND_ADDR`）；
+   - **`MOCK_SERVER`**：`EgressProxy` 分流 `"DLNK"` 控制面至 `MockCSGServer`（自动将 `dophi_mesh://` 改写为 `tcp://` 返回），数据面由 `ScopedMockMatcher` 拦截自愈（自动将 `ucProtocol: 4 -> 1` 归一化）；重放结束与异常取消/超时/进程退出时执行 **5 出口原子自洁**，将 `MockCSGServer.Snapshot()` 导出至 `ReplayTaskResultResp.CSGSandboxReport`。
+
+---
+
+## 7. 纯 Go 可插拔传输驱动层 (`pkg/transport`) 与 `builtin-drt-uprobe` 采集引擎 (`ADR-22 v2.0` & `ADR-23 v1.1` / M29)
+
+依据 [`ADR-22` (v2.0.0)](../05-adr/22-pluggable-transport-driver-and-mesh-capture-adr.md) 与 [`ADR-23` (v1.1.0)](../05-adr/23-dophi-mesh-uprobe-bypass-capture-adr.md) 现网实证与否决结论（`libdophimesh.so` 钩子仅限本进程内生效无法跨进程旁路监听 P2P Mesh 流量，已永久否决 `plugin_transport.so` / CGO / 外部子进程宿主方案；Mock 阶段全部进程支持 `tcp://`，无需共享内存环写注入/桩），数据面 Agent 采用 **100% 纯 Go (`CGO_ENABLED=0`) 单二进制可插拔传输驱动架构**。
+
+### 7.1 纯 Go `pkg/transport` 驱动抽象、注册表与 `builtin-tcp` 封装 (`driver.go` / `registry.go` / `tcp_driver.go`)
+
+```go
+package transport
+
+import (
+	"context"
+
+	"code-contract/pkg/agentproto"
+)
+
+// Capability 传输驱动能力位图
+type Capability uint32
+
+const (
+	CapDiscover Capability = 1 << iota // 1<<0: 传输层端点辅助发现
+	CapCapture                         // 1<<1: 只读旁路采集
+	CapInject                          // 1<<2: 主动注入 CROS 请求帧 (TCP)
+	CapStub                            // 1<<3: 下游 Mock 桩替身 (TCP)
+)
+
+// DriverInfo 驱动元信息与能力声明（直接映射 HandshakeResp.TransportDrivers）
+type DriverInfo struct {
+	Name          string     `json:"name"`           // "builtin-tcp" | "builtin-drt-uprobe"
+	Version       string     `json:"version"`        // "1.0.0"
+	Transports    []string   `json:"transports"`     // ["tcp"] | ["dophi_mesh", "mesh"]
+	TransportCode uint8      `json:"transport_code"` // 1 (TCP) | 4 (MESH)
+	Capabilities  Capability `json:"capabilities"`
+	Available     bool       `json:"available"`      // 宿主机是否满足运行条件（如 CAP_BPF 与 libdopra.so）
+	Detail        string     `json:"detail,omitempty"`
+}
+
+// TargetProcess 单个被监控目标进程的运行时解析信息
+type TargetProcess struct {
+	ProcessID  uint64                        `json:"process_id"`
+	PID        uint32                        `json:"pid"`
+	ListenPort uint16                        `json:"listen_port"` // 纯 Mesh 或纯客户端进程为 0
+	CmdPattern string                        `json:"cmd_pattern"`
+	Spec       agentproto.ProcessMonitorSpec `json:"spec"`
+}
+
+// CaptureSpec 开启旁路采集的下推过滤规格
+type CaptureSpec struct {
+	SessionID      uint64
+	MaxFrameBytes  int
+	MaxBufferBytes int
+	Targets        []TargetProcess
+}
+
+// FrameSink 采集帧统一回调（直接产出 56B EnvelopeHeader + CROS 原始帧推入 BoundedSessionBuffer）
+type FrameSink func(envelopeBytes []byte)
+
+// Driver 底层传输驱动统一接口（builtin-tcp 与 builtin-drt-uprobe 共同实现）
+type Driver interface {
+	Info() DriverInfo
+	StartCapture(ctx context.Context, spec CaptureSpec) error
+	StopCapture(ctx context.Context, sessionID uint64) error
+	Close() error // 五出口幂等清理
+}
+```
+
+1. **`Registry` 统一编排与五出口生命周期**：
+   - `AgentServer` 启动时向 `transport.Registry` 注册内置 `builtin-tcp`（封装既有 `pkg/ebpf.Manager` + `EgressProxy`，声明 `CapDiscover | CapCapture | CapInject | CapStub`、`TransportCode = 1`）与 `builtin-drt-uprobe`（声明 `CapCapture`、`TransportCode = 4`）；
+   - `GET /agent/v1/handshake` 调用 `Registry.Capabilities()` 动态填充 `HandshakeResp.TransportDrivers`（实时报告两类驱动在当前宿主机的可用性及诊断信息）；
+   - `PUT /agent/v1/monitors/sync` 在按 `/proc` 定位到各目标进程 `PID` 后（含 `ListenPort == 0` 的纯 `dophi_mesh://` 进程，按 `CmdPattern` 与 CSG 发现 PID 定位），统一分发至 `Registry.StartCapture(ctx, spec)`：
+     - `builtin-tcp` 接管 TCP 入站读写钩子预热与 `EgressProxy` `CAPTURING` 闸门；
+     - `builtin-drt-uprobe` 扫描各目标 PID 的 `/proc/<pid>/maps`，凡映射了 `libdopra.so` 的目标进程均按需挂载 `DRT_WriteBulk` uprobe（同一目标进程若同时存在 TCP 与 Mesh 流量，两个驱动天然正交并行采集，绝不互相干扰）；
+   - `POST /agent/v1/monitors/:sessionId/stop`、`DELETE .../processes/:processId`、`/agent/v1/purge`、5 分钟心跳失联看门狗及 `SIGINT/SIGTERM` 五大出口统一调用 `Registry.StopCapture` / `Registry.CloseAll()` 保证全部驱动幂等卸载；
+   - **编译期防腐红线**：`./pkg/transport` 纳入 `cmd/agent/deps_test.go` 九包守卫，严格保证 `CGO_ENABLED=0`、零 DB、零 `dynamicpb` / `protoregistry` / `protocompile`。
+
+### 7.2 ELF `.dynsym` 动态符号解析器 (`pkg/transport/drt_symbols.go`)
+
+1. **进程映射定位 (`/proc/<pid>/maps` 纯 Go 解析)**：
+   - 给定目标 `PID`（及可选测试根目录 `procRoot`），逐行扫描 `/proc/<pid>/maps` 中具 `r-xp`（可执行）权限且路径名匹配 `libdopra.so`（含带版本后缀 `libdopra.so.*` 或实验室私有副本路径）的映射行；
+   - 去重提取宿主文件系统绝对路径（支持同机多版本/私有副本按 `(inode, path)` 独立缓存解析结果，避免不同测试副本互相污染）。
+2. **标准库 `debug/elf` 偏移提取（零外部 `readelf`、strip 容错）**：
+   - 使用 Go 标准库 `debug/elf.Open(soPath)` 读取 `.dynsym`（回退 `.symtab`），查找以下导出符号：
+     - **`DRT_WriteBulk`**（必须命中，写侧唯一热点，实证偏移如 `0x218d00`）；
+     - **`DRT_ReadLen`** / **`DRT_ReadNoCheckLen`**（可选命中，供单进程录制且对端未纳管时按需开启读侧 `uprobe + uretprobe`）；
+   - 文件偏移换算公式（兼容 PIE / 共享库不同 `PT_LOAD` 基址）：遍历 `ef.Progs` 找到包含 `sym.Value` 的 `PT_LOAD` 可执行段（`prog.Vaddr <= sym.Value < prog.Vaddr + prog.Memsz`），计算 **`fileOffset = sym.Value - prog.Vaddr + prog.Off`**，确保传递给 `cilium/ebpf` `link.OpenExecutable(soPath).Uprobe(..., &link.UprobeOptions{Offset: fileOffset, PID: int(pid)})` 100% 精准命中。
+
+### 7.3 `uprobe/DRT_WriteBulk` 内核采集路径与 `drt_ringbuf` (`pkg/ebpf/bpf/cros_probe.c` 增量)
+
+基于 [`ADR-23`](../05-adr/23-dophi-mesh-uprobe-bypass-capture-adr.md) 五项现网硬事实（`MESH_Send` 恒为 2-entry `DRT_MSG_S` bulk = `[40B 环头][二进制 CROS 载荷]`，x86_64 System V ABI：`RDI=handle, RSI=uiMsgNum, RDX=astMsg[]`），在 `pkg/ebpf/bpf/cros_probe.c` 中增量引入：
+
+```c
+// DRT_MSG_S 16B 结构体布局 (drt_client.h:117, 实证对齐)
+struct drt_msg_entry {
+    __u64 pc_msg;      // +0: char* 缓冲区指针
+    __u32 ui_msg_len;  // +8: 消息字节长度
+    __u32 ui_reserved; // +12: 对齐保留
+};
+
+#define DRT_RING_HDR_MAX   40
+#define DRT_PAYLOAD_MAX    32768 // 单事件最大二进制拷贝 32KB (与 ing_ringbuf 对齐，防 verifier 栈/内存溢出)
+
+struct drt_uprobe_event {
+    __u64 session_id;
+    __u64 process_id;
+    __u64 timestamp_ns;
+    __u64 drt_handle;
+    __u32 pid;
+    __u32 ring_hdr_len;
+    __u32 payload_orig_len; // 原始业务载荷长度 (若 > DRT_PAYLOAD_MAX 标记截断)
+    __u32 payload_cap_len;  // 实际拷贝入 RingBuf 字节数
+    __u8  direction_hint;   // 0=WRITE_BULK (由用户态结合 ucMsgType 与关联表归一化), 1=READ_RET
+    __u8  truncated;        // 1=超单次事件上限截断
+    __u16 reserved;
+    __u8  ring_hdr[DRT_RING_HDR_MAX]; // astMsg[0] 40B 环管理头
+    __u8  payload[DRT_PAYLOAD_MAX];   // astMsg[1] 完整二进制 CROS 帧 (含 \x00 不截断)
+};
+
+// 独立 16MB RingBuf (BPF_MAP_TYPE_RINGBUF)，单次 bpf_probe_read_user 直达用户态 mmap
+struct {
+    __uint(type, BPF_MAP_TYPE_RINGBUF);
+    __uint(max_entries, 16 * 1024 * 1024);
+} drt_ringbuf SEC(".maps");
+```
+
+1. **快路径过滤与单次二进制拷贝**：
+   - 入口先查 `target_pids_map[pid]`：若未纳管或 `tp->session_id == 0`，`< 50ns` 直接返回 `0`；
+   - 读取 `PT_REGS_PARM1/2/3(ctx)`；校验 `msg_num >= 2 && ast_ptr != 0`；
+   - `bpf_probe_read_user(&entries, sizeof(entries), (void *)ast_ptr)` 一次取回 `astMsg[0..1]`（32B）；
+   - 使用 `bpf_ringbuf_reserve(&drt_ringbuf, ...)` 直接在环形缓冲原地申请记录空间，分别 `bpf_probe_read_user` 拷贝 `entries[0]`（最多 40B 环管理头）与 `entries[1]`（完整二进制 CROS 帧，含 `\x00` 字节绝不截断），`bpf_ringbuf_submit` 提交；若 RingBuf 瞬时满载则递增 `stat_ringbuf_drops` 绝不阻塞业务进程；
+2. **可选读侧 `DRT_ReadLen / DRT_ReadNoCheckLen` 按需补全 (`ADR-23 D3`)**：
+   - 默认仅挂写侧 `uprobe/DRT_WriteBulk`（规避 `uretprobe` 栈帧陷页开销）；
+   - 当会话仅勾选单个进程且其对端进程不在本机 `target_pids_map` 监控集时，按需附加 `uprobe/DRT_ReadLen`（在 per-tid BPF Hash Map 暂存输出缓冲区指针）+ `uretprobe/DRT_ReadLen`（函数返回且读出字节数 `> 0` 时拷贝已填充载荷入 `drt_ringbuf`，标记 `direction_hint = 1`）。
+
+### 7.4 D7 偏移校准、双向交换相关性归一化与探针卫生 (`pkg/transport/drt_uprobe_driver.go`)
+
+1. **D7 载荷偏移校准 (`PayloadOffset`)**：
+   - 支持显式配置 `--drt-payload-offset`（默认 `-1` 自动探测，或由现网 D7 `:x64` 门禁实测固化为固定常量 `0` 或 $N$）；
+   - 消费 `drt_ringbuf` 事件时，在 `payload[0 : min(len, 64)]` 内按配置偏移或 `bytes.Index(..., "CSE.TCP")` 定位标准 CROS 帧起点并调用 `crosrpc.ParsePacket` 验证（合法 `ucProtocol == 4 (TransportMesh)` 或 `0`）；非 CROS 内部心跳/管理噪声帧静默丢弃。
+2. **双向交换相关性投影与 `ADR-11` 方向不变量（确保主控 `ExchangeAssembler` 100% 聚合单行往返）**：
+   - `ExchangeAssembler` 依据 `(SessionID, ProcessID, Direction, ConnKey, ullSNO)` 将一条 `REQ` 与对应 `RSP/RSP_SEG` 聚合成单行 `TrafficRecord`。而在 `dophi_mesh` 写侧单点捕获下，`REQ` 由调用方进程 $A$ 写入 `DRT_WriteBulk`，`RSP` 由应答方进程 $B$ 写入 `DRT_WriteBulk`；
+   - 因此 `DRTUprobeDriver` 维护一个有界内存关联表 `inflightReqs`（按 `(ullSNO, ServiceName)` 或环头通道字段索引，带 30s TTL 与 10,000 条容量上限），执行如下确定性投影：
+     - **当监控进程 $A$ 写入 `ucMsgType == 2 (REQ)`**：
+       1. 对调用方 $A$（`proc_A`）：封装并投递 **`Direction = DirectionEgress (2)`**、`(Src = Endpoint(A), Dst = Endpoint(B), ConnSeq = chanID, TransportProto = 4)` 的 `REQ` 信封，并在 `inflightReqs[(sno, svcName)]` 记下 `{CallerProc: proc_A, CallerPID: pid_A, ServerProc: proc_B, ConnTuple, ChanSeq}`；
+       2. 若目标服务 `ReqHead.ServiceName`（或 40B 环头目标 PID）归属同机监控中的服务端进程 $B$（`proc_B`）：同步以恒定四元组 `(Src = Endpoint(A), Dst = Endpoint(B), ConnSeq = chanID)` 为 $B$ 投递 **`Direction = DirectionIngress (1)`** 的 `REQ` 信封；
+     - **当监控进程 $B$ 写入 `ucMsgType ∈ {3, 4} (RSP / RSP_SEG)`**：
+       1. 检索 `inflightReqs[(sno, svcName)]` 还原恒定四元组 `(Src = Endpoint(A), Dst = Endpoint(B), ConnSeq = chanID)`（未命中则按当前 `B` 与 `DRT_HANDLE` 合成稳定虚拟端点 `127.0.0.1:0` + `ConnSeq = hash(handle)`）；
+       2. 对服务端 $B$（`proc_B`）：投递 **`Direction = DirectionIngress (1)`** 的 `RSP` 信封（与先前的 `INGRESS REQ` 在主控精确配对）；
+       3. 若调用方 $A$（`proc_A`）也在本次监控集内：同步以相同四元组与 `ConnSeq` 为 $A$ 投递 **`Direction = DirectionEgress (2)`** 的 `RSP` 信封（与先前的 `EGRESS REQ` 在主控精确配对）；收到终结 `ucMsgType == 3 (RSP)` 后回收 `inflightReqs` 条目；
+     - **单进程读侧补全 (`direction_hint == 1`)**：若仅监控单进程且开启了读侧 `uretprobe`，读到的 `REQ` 直接标 `DirectionIngress (1)`、读到的 `RSP` 直接标 `DirectionEgress (2)`，与该进程自身写侧的 `RSP (INGRESS)` / `REQ (EGRESS)` 共享同一 `(ConnTuple, ConnSeq)` 完成配对；
+   - 所有产出的 56B `EnvelopeHeader` 均在偏移 `26` 写入 `TransportProto = crosrpc.TransportMesh (4)`，经同一 `BoundedSessionBuffer`（64MB）与 `/agent/v1/stream` 推送至主控。
+3. **探针卫生三原则与五出口负控闭环 (`ADR-23 D5`)**：
+   - ① **`ARMED` 待命期 0 uprobe 挂载**：`ArmStandby` 仅预挂 TCP 低频钩子，绝不挂载任何 `DRT_WriteBulk` uprobe，平时业务零陷页损耗；
+   - ② **PID 级匿名 `bpf_link` 零 tracefs 污染**：通过 `link.UprobeOptions{Offset, PID}` 使用内核匿名 `perf_event_open(pid)` FD 挂载，不修改 `/sys/kernel/tracing/uprobe_events`，宿主机其他非监控进程不触发 uprobe 陷页；
+   - ③ **五出口幂等清理与负控门禁**：停录 (`StopCapture`)、单进程移除、取消、`/purge`、5m Watchdog 失联与 `SIGINT/SIGTERM` 均幂等 `Close()` 全部 uprobe `link.Link` 与 `drt_ringbuf` Reader，单测强制执行摘针后负控断言（再发流量事件数恒为 `0`）。

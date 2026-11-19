@@ -1,11 +1,11 @@
 # 架构与活体契约治理 (`code-contract`) 管理面服务、微前端控制台与回归断言设计
 
 - **文档编号**：`04-control-plane-and-web-console.md`
-- **文档版本**：v1.13.0
-- **更新日期**：2026-11-18
+- **文档版本**：v1.14.0
+- **更新日期**：2026-11-19
 - **归属阶段**：阶段二：系统架构与数据模型设计 (`02-design`)
-- **状态**：M1~M27 已交付；ADR-21 v2.1.0 (M28) SDD 详细设计定稿
-- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.22.0)、[`01-system-architecture.md`](./01-system-architecture.md) (v1.9.0)、[`02-data-plane-and-cros-rpc-engine.md`](./02-data-plane-and-cros-rpc-engine.md) (v1.6.0)、[`03-architecture-elements-and-topology.md`](./03-architecture-elements-and-topology.md) (v1.10.0)、[`07-console-ia-restructuring-and-workflow-workbench-adr.md`](../05-adr/07-console-ia-restructuring-and-workflow-workbench-adr.md) (ADR-07)、[`08-recording-drawer-and-process-tree-selection-adr.md`](../05-adr/08-recording-drawer-and-process-tree-selection-adr.md) (ADR-08)、[`09-arch-process-ssot-and-ebpf-premount-standby-adr.md`](../05-adr/09-arch-process-ssot-and-ebpf-premount-standby-adr.md) (ADR-09 v1.1.0)、[`10-enhanced-proto-schema-file-management-adr.md`](../05-adr/10-enhanced-proto-schema-file-management-adr.md) (ADR-10 v1.1.0)、[`11-single-process-bidirectional-capture-and-recording-ux-adr.md`](../05-adr/11-single-process-bidirectional-capture-and-recording-ux-adr.md) (ADR-11 v1.0.0)、[`12-packet-causality-call-tree-and-sequence-ux-adr.md`](../05-adr/12-packet-causality-call-tree-and-sequence-ux-adr.md) (ADR-12 v1.0.0)、[`15-scalable-topology-focus-and-layout-persistence-adr.md`](../05-adr/15-scalable-topology-focus-and-layout-persistence-adr.md) (ADR-15 v1.3.0)、[`16-multi-implementation-service-contract-adr.md`](../05-adr/16-multi-implementation-service-contract-adr.md) (ADR-16 v2.0.0)、[`17-topology-single-layer-drilldown-and-layout-ux-adr.md`](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md) (ADR-17 v1.1.0)、[`18-proto-full-lifecycle-and-git-mr-governance-adr.md`](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (ADR-18 v1.3.0)、[`19-proto-contract-ia-unbundling-and-four-workbenches-adr.md`](../05-adr/19-proto-contract-ia-unbundling-and-four-workbenches-adr.md) (ADR-19 v1.0.0)、[`21-csg-aware-agent-service-discovery-and-replay-mock-adr.md`](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (ADR-21 v2.1.0)
+- **状态**：M1~M28 已交付；ADR-22 v2.0.0 & ADR-23 v1.1.0 (M29) SDD 详细设计定稿
+- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.24.0)、[`01-system-architecture.md`](./01-system-architecture.md) (v1.10.0)、[`02-data-plane-and-cros-rpc-engine.md`](./02-data-plane-and-cros-rpc-engine.md) (v1.7.0)、[`03-architecture-elements-and-topology.md`](./03-architecture-elements-and-topology.md) (v1.10.0)、[`07-console-ia-restructuring-and-workflow-workbench-adr.md`](../05-adr/07-console-ia-restructuring-and-workflow-workbench-adr.md) (ADR-07)、[`08-recording-drawer-and-process-tree-selection-adr.md`](../05-adr/08-recording-drawer-and-process-tree-selection-adr.md) (ADR-08)、[`09-arch-process-ssot-and-ebpf-premount-standby-adr.md`](../05-adr/09-arch-process-ssot-and-ebpf-premount-standby-adr.md) (ADR-09 v1.1.0)、[`10-enhanced-proto-schema-file-management-adr.md`](../05-adr/10-enhanced-proto-schema-file-management-adr.md) (ADR-10 v1.1.0)、[`11-single-process-bidirectional-capture-and-recording-ux-adr.md`](../05-adr/11-single-process-bidirectional-capture-and-recording-ux-adr.md) (ADR-11 v1.0.0)、[`12-packet-causality-call-tree-and-sequence-ux-adr.md`](../05-adr/12-packet-causality-call-tree-and-sequence-ux-adr.md) (ADR-12 v1.0.0)、[`15-scalable-topology-focus-and-layout-persistence-adr.md`](../05-adr/15-scalable-topology-focus-and-layout-persistence-adr.md) (ADR-15 v1.3.0)、[`16-multi-implementation-service-contract-adr.md`](../05-adr/16-multi-implementation-service-contract-adr.md) (ADR-16 v2.0.0)、[`17-topology-single-layer-drilldown-and-layout-ux-adr.md`](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md) (ADR-17 v1.1.0)、[`18-proto-full-lifecycle-and-git-mr-governance-adr.md`](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (ADR-18 v1.3.0)、[`19-proto-contract-ia-unbundling-and-four-workbenches-adr.md`](../05-adr/19-proto-contract-ia-unbundling-and-four-workbenches-adr.md) (ADR-19 v1.0.0)、[`21-csg-aware-agent-service-discovery-and-replay-mock-adr.md`](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (ADR-21 v2.1.0)、[`22-pluggable-transport-driver-and-mesh-capture-adr.md`](../05-adr/22-pluggable-transport-driver-and-mesh-capture-adr.md) (ADR-22 v2.0.0)、[`23-dophi-mesh-uprobe-bypass-capture-adr.md`](../05-adr/23-dophi-mesh-uprobe-bypass-capture-adr.md) (ADR-23 v1.1.0)
 
 ### 修订记录
 
@@ -18,6 +18,7 @@
 | `v1.11.0` | `2026-11-13` | Architecture Team | 依据 [`ADR-18` (`v1.2.0`)](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (`M22~M26`) 检视修订 Monorepo Bundles、原位评论、定向 SSE 与跨机 `code-notifier` |
 | `v1.12.0` | `2026-11-15` | Architecture Team | 依据 [`ADR-19` (`v1.0.0`)](../05-adr/19-proto-contract-ia-unbundling-and-four-workbenches-adr.md) (`M27`) 拆解重构 Proto 控制台信息架构 |
 | `v1.13.0` | `2026-11-18` | Architecture Team | **依据 [`ADR-21` (`v2.1.0`)](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (`M28`) 增补 CSG 控制面协同编排与前端工作台设计**：1. 更新 §1.2 录制期 `csg_snapshots` 固化、`EVENT_CSG_OBSERVATION` 接收与 §1.3 重放调度器四档 `csg_strategy`（`PASSTHROUGH`/`CLIENT_INJECT`/`PUB_STUB`/`MOCK_SERVER`）及 `CSGSandboxReport` 门禁订阅核验；2. 更新 §2.1 `decoder.Registry` 加载 `ModuleService.proto_service_name` 至 `ServiceAliases` 及 PID 后缀归一化解码；3. 新增 §4.11 `/agents` CSG 现网拓扑透视与一键蓝图导入抽屉 & `/replay` 四档 CSG 仿真策略选择器完整 TypeScript 契约 |
+| `v1.14.0` | `2026-11-19` | Architecture Team | **依据 [`ADR-22` (`v2.0.0`)](../05-adr/22-pluggable-transport-driver-and-mesh-capture-adr.md) 与 [`ADR-23` (`v1.1.0`)](../05-adr/23-dophi-mesh-uprobe-bypass-capture-adr.md) (`M29`) 同步多传输协议解析与跨传输重放控制面设计**：1. 更新 §1.2 `ExchangeAssembler` 通过 `resolveTransportProto(env.TransportProto, comm.TransportProto)` 零 DDL 迁移落盘 `transport_proto = 1 \| 4`；2. 更新 §1.3 重放调度器对 Mesh 录制批次经 `MOCK_SERVER` / `PUB_STUB` 改道 TCP 无缝放行；3. 更新 §4.3 `CommHeadAnatomyDTO` 精确映射 `4 -> "RPC_TRANSPORT_MESH"` (`"CSE.TCP" + MESH(4)`) 与 §4.11 `HandshakeResp.transport_drivers` 驱动能力展示 |
 
 ---
 
@@ -143,6 +144,7 @@ flowchart LR
        - 若收到 Agent 投递的 `EVENT_CONN_CLOSED` 连接关闭事件，立即刷空该连接的所有挂起请求，置为 `exchange_type = 'REQ_ONLY'` 落盘；
        - 连接中途切入捕获到的无头孤立应答以 `exchange_type = 'RSP_ORPHAN'` 落盘（`raw_req_packet = nil`）；连接管理帧以 `exchange_type = 'MNG'` 归档；
        - 每个 Worker 设立最大 `10000` 条挂起请求预算，防止慢连接恶意泄漏内存；
+   - **多传输底座协议解析与零 DDL 迁移归档（`ADR-22 v2.0 D3`）**：`ExchangeAssembler` 在 `processFrame` 与 `buildSingleRecord` 中执行 `resolveTransportProto(env.TransportProto, comm.TransportProto)`（优先取 56B 信封偏移 `26` 的 `TransportProto`，为 `0` 时回退 `comm.TransportProto`，仍为 `0` 缺省 `1 = TCP`），直接写入既有列 `contract_traffic_records.transport_proto`（`1 = TCP`、`4 = MESH`），全链路解码、因果树与拓扑一致性比对 100% 传输无关；
    - **微批写入**：每凑满 `200` 条往返记录或每 `200ms` 触发一次 GORM `CreateInBatches` 分区表写入。
 
 ### 1.3 跨 Agent 同构重放调度器、CSG 三模策略编排与多请求明细持久化 (`diff.ReplayScheduler`)
@@ -150,7 +152,7 @@ flowchart LR
 1. **权限、快照解耦同构兼容性、就绪硬门禁、CSG 策略适配与排他租约校验**：
    - 校验选定的 `INGRESS` 往返记录均属于同一 `session_id` 与同一源进程 `source_process_id`，且 `is_replayable == true`（`raw_req_packet` 非空且未被 4MB 截断）；
    - 调用基于 `session.ProcessSnapshots` 与统一 `ContractResolver` 解耦的 `topology.ValidateReplayProcessCompatibility`（即使源环境 Agent 日后已卸载原挂载实例亦不受阻碍；针对多实现服务契约的 `INGRESS` 流量，按录制时源进程快照 `sourceSnap` 中承载的具体实现模块 `M_impl` 核验目标进程同构性，[`ADR-16`](../05-adr/16-multi-implementation-service-contract-adr.md)），校验发起人对录制素材与目标进程 `target_process_id` 所属环境 Agent 的权限及模块同构性（**当 `csg_strategy == CLIENT_INJECT` 时允许目标 `listen_port == 0` 动态寻址；`PASSTHROUGH` 等静态端口模式仍要求 `listen_port > 0`**）；
-   - **CSG 仿真策略校验与快照装配（`ADR-21`）**：校验入参 `csg_strategy ∈ {PASSTHROUGH, CLIENT_INJECT, PUB_STUB, MOCK_SERVER}`（空值默认 `PASSTHROUGH`），持久写入 `contract_replay_tasks.csg_strategy`；从录制会话 `session.CSGSnapshots`（或黄金套件明细 `item.CSGSnapshots`）读取固化快照列表填入 `ExecuteReplayReq.CSGSnapshots` 与可选 `CSGAddr`；若 Agent 预检或执行返回 `CSG_SERVICE_ALREADY_PUBLISHED`，主控原子释放租约并将错误映射为 **`409 Conflict`** 透传；若返回 `CSG_DATAPLANE_MESH_UNSUPPORTED`，映射为 **`422 Unprocessable Entity`** 明确提示；
+   - **CSG 仿真策略校验与跨传输 (`Mesh ➔ TCP`) 快照装配（`ADR-21` / `ADR-22 v2.0 D5`）**：校验入参 `csg_strategy ∈ {PASSTHROUGH, CLIENT_INJECT, PUB_STUB, MOCK_SERVER}`（空值默认 `PASSTHROUGH`），持久写入 `contract_replay_tasks.csg_strategy`；从录制会话 `session.CSGSnapshots`（或黄金套件明细 `item.CSGSnapshots`）读取固化快照列表填入 `ExecuteReplayReq.CSGSnapshots` 与可选 `CSGAddr`；对于录制自 `dophi_mesh`（`transport_proto = 4`）的资产，主控原样下发二进制录制帧（不改动原始数据库记录），由 Agent 侧 `MockCSGServer` 改写 `dophi_mesh:// -> tcp://` 放行并在 `ReplayExecutor` / `HealResponseFrames` TCP 发送副本中原地将 `ucProtocol (4 -> 1)` 归一化，回收后 `DiffLayer1Header`（对 `ucProtocol` 传输层差异不判错，仅比对 `MsgType`、`StatusCode`、`RspMsgNo` 与 Payload）自动完成跨传输回归比对；若 Agent 预检返回 `CSG_SERVICE_ALREADY_PUBLISHED`，主控原子释放租约并映射为 **`409 Conflict`** 透传；仅当 `CLIENT_INJECT` 遇现网目标仅发布纯 `dophi_mesh://` 且无 TCP 监听返回 `CSG_DATAPLANE_MESH_UNSUPPORTED` 时，映射为 **`422 Unprocessable Entity`** 明确提示切换 `MOCK_SERVER`；
    - **重放零外泄前置硬门禁与历史 `EGRESS` 端点自动并集（[`ADR-11`](../05-adr/11-single-process-bidirectional-capture-and-recording-ux-adr.md) & [`ADR-16`](../05-adr/16-multi-implementation-service-contract-adr.md)）**：主控自动取「`CompileProcessDownstreams(target)` 静态推导下游端点（含展开 `DISPATCH` 多实现契约的全部实现进程端点并标记 `dst_tag = ArchProcess.Code`）$\cup$ 源录制批次中该源进程实测捕获的全部 `EGRESS` 记录 `DstAddr (IP:Port)`」合并写入 `ExecuteReplayReq.ProcessSpec.Downstreams`（附带 `CSGServiceNames`）；实时核验目标进程就绪态（若处于 `WAITING_PROC` 或非豁免模式下持有指向 Mock 端点集的 `NEED_RECONNECT` 直连，**拒绝启动返 `409 Conflict`**）；
    - 对目标进程所属 Agent 获取 `REPLAY` 排他租约（冲突立即返回 `409 Conflict`）。
 2. **重放生命周期状态机、CSG 三模协同与 `CSGSandboxReport` 回收**：
@@ -547,15 +549,15 @@ export interface ByteSliceSegment {
   offsetStart: number;       // 起始字节偏移，如 0, 8, 16, 20, 22, 23
   byteLength: number;        // 字节长度
   fieldName: string;         // 如 "unMagicInfo", "ullSNO", "uiLength", "usHeadLen"
-  rawHex: string;            // 如 "43 53 45 2E 54 43 50 01"
-  displayValue: string;      // 如 '"CSE.TCP" + TCP(1)' 或 "0x000000010009A2B3"
+  rawHex: string;            // 如 "43 53 45 2E 54 43 50 01" 或 "43 53 45 2E 54 43 50 04"
+  displayValue: string;      // 如 '"CSE.TCP" + TCP(1)'、'"CSE.TCP" + MESH(4)' 或 "0x000000010009A2B3"
 }
 
 /** ① 第一段：24B 公共头偏移位图与校验概览 */
 export interface CommHeadAnatomyDTO {
   magicAscii: string;        // "CSE.TCP"
-  transportProtocol: number; // 1 = TCP
-  transportName: string;     // "RPC_TRANSPORT_TCP"
+  transportProtocol: number; // 0 = DEFAULT, 1 = TCP, 4 = MESH (dophi_mesh), ..., 7 = CUSTOMIZE
+  transportName: string;     // "RPC_TRANSPORT_TCP" | "RPC_TRANSPORT_MESH" | ...
   snoDec: string;            // uint64 十进制字符串
   snoHex: string;            // "0x000000010009a2b3"
   uiLength: number;
@@ -1458,8 +1460,21 @@ export interface StaticComplianceDTO {
      - `PUB_STUB`（模式二 · 缺席下游桩注册，前置在线冲突提示 `409 CSG_SERVICE_ALREADY_PUBLISHED`）；
      - `MOCK_SERVER`（模式三 · 控制面/数据面全隔离沙箱，可在重放结果详情中查看 `CSGSandboxReport` 被测进程沙箱期发布的 `Servers` 与订阅的 `Clients` 轨迹）；
    - 所有组件 100% 遵循 `theme.css` `--color-*` 语义 Token、禁止内联固定色值与 `any` 类型。
+3. **传输驱动能力透视与 `dophi_mesh` 解剖徽标 (`ADR-22 v2.0` & `ADR-23 v1.1` / M29)**：
+   - `/agents` 右栏头部读取 `HandshakeResp.transport_drivers`（`TransportDriverCapabilityDTO[]`）展示当前宿主机传输驱动就绪胶囊（`builtin-tcp`、`builtin-drt-uprobe` 及不可用原因提示）；
+   - `/debug` 列表与报文解剖抽屉依据 `transport_proto === 4` 渲染 `MESH (dophi_mesh)` 语义徽标，`/replay` 报告抽屉在 `MOCK_SERVER` 模式下展示 `mesh_rewrites` 改写计数且不误标 `422` 失败。
 
 ```typescript
+export interface TransportDriverCapabilityDTO {
+  name: 'builtin-tcp' | 'builtin-drt-uprobe' | string;
+  version: string;
+  transports: string[];
+  transport_code: number; // 1 = TCP, 4 = MESH
+  capabilities: number;   // bitmask: 1=Discover | 2=Capture | 4=Inject | 8=Stub
+  available: boolean;
+  detail?: string;
+}
+
 export type CSGReplayStrategy = 'PASSTHROUGH' | 'CLIENT_INJECT' | 'PUB_STUB' | 'MOCK_SERVER';
 export type CSGReconcileState = 'MATCHED' | 'UNDECLARED_IN_SSOT' | 'MISSING_IN_LIVE';
 
