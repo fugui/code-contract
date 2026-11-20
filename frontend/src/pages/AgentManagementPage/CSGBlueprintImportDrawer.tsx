@@ -217,6 +217,11 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
     ? report.summary.live_sub_count ??
       (report.summary.sub_matched_count ?? 0) + (report.summary.sub_undeclared_count ?? 0)
     : 0;
+  const isProcOnlyDegraded =
+    Boolean(report) &&
+    (report?.discovery_mode || 'PROC_ONLY') === 'PROC_ONLY' &&
+    liveServiceCount === 0;
+  const isMeshOnlyMonitorErr = discoveryErrors.some((e) => e.includes('dophi_mesh://'));
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', padding: '4px 0' }}>
@@ -377,6 +382,59 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
             </div>
           )}
 
+          {isProcOnlyDegraded && (
+            <div
+              data-testid="csg-proc-only-degraded-banner"
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '6px',
+                padding: '12px',
+                borderRadius: '6px',
+                backgroundColor: 'color-mix(in srgb, var(--color-warning) 10%, transparent)',
+                border: '1px solid var(--color-warning)',
+                color: 'var(--color-text-primary)',
+                fontSize: '12px',
+                lineHeight: 1.5,
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  fontWeight: 600,
+                  color: 'var(--color-warning)',
+                }}
+              >
+                <AlertTriangle size={14} />
+                <span>
+                  {isMeshOnlyMonitorErr
+                    ? '当前现网 RPCMonitorService 仅发布 dophi_mesh://，需启用只读原生探针 (NATIVE_PROBE)'
+                    : 'L2 CSG 服务枚举未生效（当前停留在 PROC_ONLY 降级模式）'}
+                </span>
+              </div>
+              <div style={{ color: 'var(--color-text-secondary)' }}>
+                {isMeshOnlyMonitorErr ? (
+                  <>
+                    现网 <code>RPCMonitorService-RPCMonitorService</code> 未暴露 <code>tcp://</code>{' '}
+                    监听端口，CrosTCP 无法直连，配置 <code>--csg-monitor-addr</code> 亦不可用。请在目标宿主机按{' '}
+                    <code>scripts/csg/build-native-probe.sh</code> 编译只读探针{' '}
+                    <code>rpcmon_probe</code>，放置于 Agent 同目录 / <code>/usr/local/bin/rpcmon_probe</code>
+                    （支持热发现），或在启动 <code>code-contract-agent</code> 时传入{' '}
+                    <code>--csg-probe-bin &lt;路径&gt; --csg-addr &lt;ip:port&gt;</code> 后重试。
+                  </>
+                ) : (
+                  <>
+                    未通过 <code>CROSTCP_RPCMON</code> 或 <code>NATIVE_PROBE</code> 获取到现网 CSG 服务目录。若现网为{' '}
+                    <code>dophi_mesh://</code> 协议，请在目标宿主机编译 <code>rpcmon_probe</code> 并配置{' '}
+                    <code>--csg-probe-bin</code>（或放入 Agent 同目录自动发现），同时确认候选 CSG 控制面端点可达。
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+
           <div
             style={{
               display: 'grid',
@@ -501,7 +559,29 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
                           )}
                         </td>
                         <td style={{ padding: '8px 10px', color: 'var(--color-text-secondary)' }}>
-                          <div>{svc.transport || '-'}</div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            {svc.transport === 'MESH' ? (
+                              <span
+                                data-testid="csg-transport-badge-MESH"
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  padding: '1px 6px',
+                                  borderRadius: '4px',
+                                  fontSize: '11px',
+                                  fontWeight: 600,
+                                  color: 'var(--color-accent-primary)',
+                                  backgroundColor:
+                                    'color-mix(in srgb, var(--color-accent-primary) 12%, transparent)',
+                                  border: '1px solid var(--color-accent-primary)',
+                                }}
+                              >
+                                dophi_mesh
+                              </span>
+                            ) : (
+                              <span>{svc.transport || '-'}</span>
+                            )}
+                          </div>
                           <div style={{ fontSize: '12px', fontFamily: 'monospace' }}>
                             {svc.addr || (svc.expected_port ? `expected:${svc.expected_port}` : '-')}
                           </div>

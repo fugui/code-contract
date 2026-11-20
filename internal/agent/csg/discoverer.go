@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,15 +19,17 @@ const defaultSubEnrichBudget = 8 * time.Second
 
 // DiscovererConfig configures L1 (/proc) + L2 (rpcmon & dlink Sub->Unsub) fusion.
 type DiscovererConfig struct {
-	Locate           LocateOptions
-	MonitorAddr      string
-	CSGAddr          string
-	ProbeBin         string
-	ProbeAllowedDirs []string
-	LocalIPs         []string
-	LocalPIDs        []agentproto.DiscoveredProcess
-	SubEnrich        bool
-	SubTimeout       time.Duration
+	Locate              LocateOptions
+	MonitorAddr         string
+	CSGAddr             string
+	ProbeBin            string
+	ProbeAllowedDirs    []string
+	AutoDiscoverProbe   bool
+	AutoProbeSearchDirs []string
+	LocalIPs            []string
+	LocalPIDs           []agentproto.DiscoveredProcess
+	SubEnrich           bool
+	SubTimeout          time.Duration
 }
 
 // DiscoverAndFuse executes dual-layer CSG topology discovery and returns both
@@ -55,9 +58,32 @@ func DiscoverAndFuse(ctx context.Context, cfg DiscovererConfig) (*agentproto.CSG
 	var monRep *rpcmon.Report
 	var monErr error
 	monitorAddr := strings.TrimSpace(cfg.MonitorAddr)
-	if monitorAddr == "" && strings.TrimSpace(cfg.ProbeBin) == "" && csgAddr != "" {
-		monitorAddr = resolveMonitorAddrViaDlink(ctx, csgAddr, cfg.SubTimeout)
+	probeBin := strings.TrimSpace(cfg.ProbeBin)
+	var meshMonitorAddr string
+	var dlinkResolveErr error
+
+	if monitorAddr == "" && probeBin == "" && csgAddr != "" {
+		monitorAddr, meshMonitorAddr, dlinkResolveErr = resolveMonitorAddrViaDlink(ctx, csgAddr, cfg.SubTimeout)
+		if monitorAddr == "" && cfg.AutoDiscoverProbe {
+			probeBin = rpcmon.AutoDiscoverProbeBin(cfg.ProbeAllowedDirs, cfg.AutoProbeSearchDirs...)
+		}
 	}
+
+	runNativeProbe := func(bin string) (*rpcmon.Report, error) {
+		csgArg := csgAddr
+		if !strings.HasPrefix(csgArg, "ipv4:") {
+			csgArg = "ipv4:" + csgArg
+		}
+		backend := rpcmon.NewNative(rpcmon.NativeConfig{
+			ProbeBin:    bin,
+			CSGAddr:     csgArg,
+			AllowedDirs: cfg.ProbeAllowedDirs,
+			Timeout:     15 * time.Second,
+		})
+		defer func() { _ = backend.Close() }()
+		return rpcmon.Fetch(ctx, backend, "all")
+	}
+
 	switch {
 	case monitorAddr != "":
 		backend, err := rpcmon.NewCrosTCP(monitorAddr, cfg.SubTimeout)
@@ -70,22 +96,36 @@ func DiscoverAndFuse(ctx context.Context, cfg DiscovererConfig) (*agentproto.CSG
 				report.DiscoveryMode = "CROSTCP_RPCMON"
 			}
 		}
-	case strings.TrimSpace(cfg.ProbeBin) != "" && csgAddr != "":
-		csgArg := csgAddr
-		if !strings.HasPrefix(csgArg, "ipv4:") {
-			csgArg = "ipv4:" + csgArg
+		if monErr != nil && csgAddr != "" {
+			fallbackBin := probeBin
+			if fallbackBin == "" && cfg.AutoDiscoverProbe {
+				fallbackBin = rpcmon.AutoDiscoverProbeBin(cfg.ProbeAllowedDirs, cfg.AutoProbeSearchDirs...)
+			}
+			if fallbackBin != "" {
+				report.Errors = append(report.Errors, fmt.Sprintf("CrosTCP rpcmon(%s) 失败，已自动回退至 NATIVE_PROBE: %v", monitorAddr, monErr))
+				monRep, monErr = runNativeProbe(fallbackBin)
+				if monErr == nil {
+					report.DiscoveryMode = "NATIVE_PROBE"
+				}
+			}
 		}
-		backend := rpcmon.NewNative(rpcmon.NativeConfig{
-			ProbeBin:    cfg.ProbeBin,
-			CSGAddr:     csgArg,
-			AllowedDirs: cfg.ProbeAllowedDirs,
-			Timeout:     15 * time.Second,
-		})
-		defer func() { _ = backend.Close() }()
-		monRep, monErr = rpcmon.Fetch(ctx, backend, "all")
+	case probeBin != "" && csgAddr != "":
+		monRep, monErr = runNativeProbe(probeBin)
 		if monErr == nil {
 			report.DiscoveryMode = "NATIVE_PROBE"
 		}
+	case meshMonitorAddr != "":
+		report.Errors = append(report.Errors, fmt.Sprintf(
+			"L2 发现降级为 PROC_ONLY：%s 在 CSG(%s) 仅发布了 dophi_mesh:// 实例 (%s)，CrosTCP 无法直连；请编译只读探针 scripts/csg/build-native-probe.sh 并通过 --csg-probe-bin 指定（或放置于 Agent 同目录 /usr/local/bin/rpcmon_probe）以启用 NATIVE_PROBE",
+			rpcmon.ServiceName, csgAddr, meshMonitorAddr,
+		))
+	case dlinkResolveErr != nil:
+		report.Errors = append(report.Errors, fmt.Sprintf(
+			"L2 发现降级为 PROC_ONLY：经 CSG(%s) 自动解析 %s 失败: %v",
+			csgAddr, rpcmon.ServiceName, dlinkResolveErr,
+		))
+	case csgAddr == "" && len(endpoints) == 0:
+		report.Errors = append(report.Errors, "L2 发现降级为 PROC_ONLY：未在本机发现可用 CSG 控制面端点，请在 Agent 启动参数指定 --csg-addr")
 	}
 	if monErr != nil {
 		report.Errors = append(report.Errors, monErr.Error())
@@ -186,16 +226,35 @@ func DiscoverAndFuse(ctx context.Context, cfg DiscovererConfig) (*agentproto.CSG
 	}
 
 	// Fuse L2 local servers and local clients into L1 discovered processes.
+	procRoot := strings.TrimSpace(cfg.Locate.ProcRoot)
+	if procRoot == "" {
+		procRoot = "/proc"
+	}
 	ensureProc := func(pid uint32, procName string) *agentproto.DiscoveredProcess {
 		if existing, ok := procByPID[pid]; ok {
 			if existing.ExeName == "" && procName != "" {
 				existing.ExeName = procName
 			}
+			if existing.Cmdline == "" {
+				meta := readProcMeta(filepath.Join(procRoot, strconv.FormatUint(uint64(pid), 10)), pid)
+				if meta.cmdline != "" {
+					existing.Cmdline = meta.cmdline
+				}
+				if existing.ExeName == "" && meta.exeName != "" {
+					existing.ExeName = meta.exeName
+				}
+			}
 			return existing
+		}
+		meta := readProcMeta(filepath.Join(procRoot, strconv.FormatUint(uint64(pid), 10)), pid)
+		exeName := procName
+		if exeName == "" {
+			exeName = meta.exeName
 		}
 		np := &agentproto.DiscoveredProcess{
 			PID:         pid,
-			ExeName:     procName,
+			ExeName:     exeName,
+			Cmdline:     meta.cmdline,
 			CSGEndpoint: csgAddr,
 		}
 		procByPID[pid] = np
@@ -208,7 +267,7 @@ func DiscoverAndFuse(ctx context.Context, cfg DiscovererConfig) (*agentproto.CSG
 			continue
 		}
 		p := ensureProc(svc.ServerPID, svc.ServerProc)
-		if p.ListenPort == 0 && svc.Port > 0 {
+		if p.ListenPort == 0 && svc.Port > 0 && svc.Transport != "MESH" {
 			p.ListenPort = svc.Port
 		}
 		p.IsPureClient = false
@@ -240,18 +299,37 @@ func DiscoverAndFuse(ctx context.Context, cfg DiscovererConfig) (*agentproto.CSG
 	return report, fused, nil
 }
 
-func resolveMonitorAddrViaDlink(ctx context.Context, csgAddr string, timeout time.Duration) string {
-	if ctx.Err() != nil || strings.TrimSpace(csgAddr) == "" {
-		return ""
+func resolveMonitorAddrViaDlink(ctx context.Context, csgAddr string, timeout time.Duration) (tcpAddr string, meshAddr string, err error) {
+	if ctx.Err() != nil {
+		return "", "", ctx.Err()
+	}
+	if strings.TrimSpace(csgAddr) == "" {
+		return "", "", fmt.Errorf("empty CSG address")
 	}
 	if timeout <= 0 || timeout > 2*time.Second {
 		timeout = 2 * time.Second
 	}
-	hp, err := csgdlink.ResolveServiceTCP(csgAddr, rpcmon.ServiceName, timeout)
+	insts, err := csgdlink.ResolveServiceInstances(csgAddr, rpcmon.ServiceName, timeout)
 	if err != nil {
-		return ""
+		return "", "", err
 	}
-	return hp
+	for _, inst := range insts {
+		if csgdlink.IsTCPAddr(inst.Addr) {
+			if hp, ok := csgdlink.ParseTCPTarget(inst.Addr); ok {
+				return hp, "", nil
+			}
+		}
+		if meshAddr == "" && csgdlink.IsMeshAddr(inst.Addr) {
+			meshAddr = inst.Addr
+		}
+	}
+	if meshAddr != "" {
+		return "", meshAddr, nil
+	}
+	if len(insts) > 0 {
+		return "", "", fmt.Errorf("service %s has no tcp:// instance (%s)", rpcmon.ServiceName, insts[0].Addr)
+	}
+	return "", "", fmt.Errorf("service %s not published on %s", rpcmon.ServiceName, csgAddr)
 }
 
 func locateForConfig(cfg DiscovererConfig) []agentproto.CSGEndpointInfo {
@@ -296,9 +374,10 @@ func enrichServicesByDlinkSub(ctx context.Context, csgAddr string, timeout time.
 		byName[name] = append(byName[name], i)
 	}
 
+	enrichedNames := 0
 	for _, name := range names {
 		if err := enrichCtx.Err(); err != nil {
-			return err
+			return fmt.Errorf("enriched %d/%d services before timeout: %w", enrichedNames, len(names), err)
 		}
 		insts, err := client.Sub(name, cappedOpTimeout(enrichCtx, timeout))
 		unsubTimeout := timeout
@@ -306,11 +385,12 @@ func enrichServicesByDlinkSub(ctx context.Context, csgAddr string, timeout time.
 			unsubTimeout = time.Second
 		}
 		if unsubErr := client.Unsub(name, unsubTimeout); unsubErr != nil {
-			return fmt.Errorf("unsub %s: %w", name, unsubErr)
+			return fmt.Errorf("unsub %s (enriched %d/%d): %w", name, enrichedNames, len(names), unsubErr)
 		}
 		if err != nil || len(insts) == 0 {
 			continue
 		}
+		enrichedNames++
 		for _, idx := range byName[name] {
 			match := matchBestInstance(services[idx], insts)
 			services[idx].ClientID = match.ClientID

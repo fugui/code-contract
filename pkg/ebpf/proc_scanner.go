@@ -157,7 +157,9 @@ func (s *ProcScanner) FindPIDByCmd(cmdPattern string) (uint32, error) {
 		cmdline := string(bytes.ReplaceAll(cmdBytes, []byte{0}, []byte{' '}))
 		exePath := filepath.Join(s.root, entry.Name(), "exe")
 		exeName, _ := os.Readlink(exePath)
-		if strings.Contains(cmdline, cmdPattern) || strings.Contains(exeName, cmdPattern) {
+		commBytes, _ := os.ReadFile(filepath.Join(s.root, entry.Name(), "comm"))
+		commName := strings.TrimSpace(string(commBytes))
+		if strings.Contains(cmdline, cmdPattern) || strings.Contains(exeName, cmdPattern) || (commName != "" && strings.Contains(commName, cmdPattern)) {
 			return pid, nil
 		}
 	}

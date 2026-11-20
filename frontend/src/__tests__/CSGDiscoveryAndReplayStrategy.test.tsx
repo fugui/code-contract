@@ -168,6 +168,8 @@ describe('M28 CSG Discovery, Blueprint Import & 3-Mode Simulation Console', () =
     expect(adminHtml).toContain('现网未上线 (MISSING_IN_LIVE)');
     expect(adminHtml).toContain('OrderServiceImpl-OrderService');
     expect(adminHtml).toContain('LedgerServiceImpl-LedgerService');
+    expect(adminHtml).toContain('csg-transport-badge-MESH');
+    expect(adminHtml).toContain('dophi_mesh');
     expect(adminHtml).toContain('LegacyAudit-0');
     expect(adminHtml).toContain('csg-endpoints-selector');
     expect(adminHtml).toContain('127.0.0.1:31806');
@@ -198,6 +200,62 @@ describe('M28 CSG Discovery, Blueprint Import & 3-Mode Simulation Console', () =
 
     expect(nonAdminHtml).toContain('csg-admin-only-notice');
     expect(nonAdminHtml).not.toContain('csg-import-blueprint-btn');
+  });
+
+  it('renders explicit PROC_ONLY mesh degradation banner when L2 discovery is unavailable', () => {
+    const degradedReport: CSGTopologyReconcileResp = {
+      agent_id: 10,
+      discovery_mode: 'PROC_ONLY',
+      csg_endpoints: [
+        {
+          pid: 4100,
+          exe_name: 'DophiServer',
+          listen_ip: '10.29.92.80',
+          listen_port: 31805,
+          source: 'PROC_LISTEN',
+        },
+      ],
+      services: [],
+      subscriptions: [],
+      summary: {
+        live_service_count: 0,
+        matched_count: 0,
+        undeclared_count: 0,
+        missing_in_live_count: 0,
+        live_sub_count: 0,
+      },
+      filtered_remote_count: 0,
+      filtered_transient_count: 0,
+      captured_at: '2026-11-20T00:00:00Z',
+      errors: [
+        'L2 发现降级为 PROC_ONLY：RPCMonitorService-RPCMonitorService 在 CSG(10.29.92.80:31805) 仅发布了 dophi_mesh:// 实例 (dophi_mesh://ipv4:10.29.92.80:16000)，CrosTCP 无法直连',
+      ],
+    };
+
+    const html = renderToString(
+      <MemoryRouter>
+        <ModuleUserProvider
+          value={{
+            user: adminUser,
+            loadingUser: false,
+            isEmbedded: false,
+            reloadUser: async () => {},
+          }}
+        >
+          <CSGBlueprintImportContent
+            agent={dummyAgent}
+            initialReport={degradedReport}
+            initialSubsystems={dummySubsystems}
+          />
+        </ModuleUserProvider>
+      </MemoryRouter>
+    );
+
+    expect(html).toContain('csg-discovery-errors-banner');
+    expect(html).toContain('csg-proc-only-degraded-banner');
+    expect(html).toContain('dophi_mesh://');
+    expect(html).toContain('rpcmon_probe');
+    expect(html).toContain('--csg-probe-bin');
   });
 
   it('renders all 4 csg_strategy options in ReplayTaskCreatorModal and GoldenSuiteExecuteModal', () => {

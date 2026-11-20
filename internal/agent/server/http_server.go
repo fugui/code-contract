@@ -483,7 +483,7 @@ func (s *AgentServer) handleDiscoverProcesses(w http.ResponseWriter, r *http.Req
 		procs = []agentproto.DiscoveredProcess{}
 	}
 
-	if _, fused, err := s.discoverCSGAndFuse(r.Context(), r.URL.Query().Get("csg_addr"), procs); err == nil && len(fused) > 0 {
+	if _, fused, err := s.discoverCSGAndFuse(r.Context(), r.URL.Query().Get("csg_addr"), procs, true); err == nil && len(fused) > 0 {
 		procs = fused
 	}
 

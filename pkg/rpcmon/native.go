@@ -83,7 +83,7 @@ func ValidateNativeConfig(cfg NativeConfig) (string, error) {
 				continue
 			}
 			rel, err := filepath.Rel(absDir, absPath)
-			if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+			if err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
 				allowed = true
 				break
 			}
@@ -99,6 +99,61 @@ func ValidateNativeConfig(cfg NativeConfig) (string, error) {
 		}
 	}
 	return absPath, nil
+}
+
+// DefaultProbeBinaryName is the fixed filename of the read-only DOPRA probe executable.
+const DefaultProbeBinaryName = "rpcmon_probe"
+
+// DefaultProbeSearchDirs returns the standard controlled directories searched when
+// auto-discovering a prebuilt read-only rpcmon_probe binary.
+func DefaultProbeSearchDirs() []string {
+	dirs := make([]string, 0, 4)
+	if exePath, err := os.Executable(); err == nil && exePath != "" {
+		if dir := filepath.Dir(exePath); dir != "" {
+			dirs = append(dirs, dir)
+		}
+	}
+	dirs = append(dirs, "/opt/code-contract/bin", "/usr/local/bin")
+	return dirs
+}
+
+// AutoDiscoverProbeBin searches controlled directories for a valid, non-symlink executable
+// named "rpcmon_probe". When allowedDirs is non-empty, discovery is strictly confined to
+// allowedDirs; otherwise extraSearchDirs (or DefaultProbeSearchDirs when omitted) are scanned.
+func AutoDiscoverProbeBin(allowedDirs []string, extraSearchDirs ...string) string {
+	var searchDirs []string
+	if len(allowedDirs) > 0 {
+		searchDirs = append(searchDirs, allowedDirs...)
+	} else if len(extraSearchDirs) > 0 {
+		searchDirs = append(searchDirs, extraSearchDirs...)
+	} else {
+		searchDirs = DefaultProbeSearchDirs()
+	}
+
+	seen := make(map[string]struct{}, len(searchDirs))
+	for _, dir := range searchDirs {
+		trimmed := strings.TrimSpace(dir)
+		if trimmed == "" {
+			continue
+		}
+		absDir, err := filepath.Abs(filepath.Clean(trimmed))
+		if err != nil {
+			continue
+		}
+		if _, dup := seen[absDir]; dup {
+			continue
+		}
+		seen[absDir] = struct{}{}
+
+		candidate := filepath.Join(absDir, DefaultProbeBinaryName)
+		if validated, err := ValidateNativeConfig(NativeConfig{
+			ProbeBin:    candidate,
+			AllowedDirs: allowedDirs,
+		}); err == nil {
+			return validated
+		}
+	}
+	return ""
 }
 
 // ValidateCSGArg strictly validates a CSG address passed to rpcmon_probe as ipv4:<ip>:<port>.

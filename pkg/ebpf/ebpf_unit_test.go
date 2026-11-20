@@ -110,6 +110,12 @@ func TestProcScannerPIDResolveAndEstablishedConns(t *testing.T) {
 	peerPID, err := scanner.FindPeerPIDForLocalPort(49153)
 	// 在模拟目录中对端不是监听端口，但验证反查接口运行无异常
 	_ = peerPID
+
+	// 5. 纯 dophi_mesh / 纯客户端进程 (listenPort=0) 支持通过 /proc/<pid>/comm 反查 PID
+	pidByComm, err := scanner.FindPIDByPortAndCmd(0, "payment-svc")
+	if err != nil || pidByComm != 101 {
+		t.Errorf("FindPIDByPortAndCmd(0, 'payment-svc') = (%d, %v), want (101, nil)", pidByComm, err)
+	}
 }
 
 // mockCapabilityChecker 模拟特权探测

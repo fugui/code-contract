@@ -518,7 +518,11 @@ func ImportCSGBlueprint(db *gorm.DB, in CSGBlueprintImportInput) (*CSGBlueprintI
 
 		for _, ls := range selectedSvcs {
 			procHint := firstNonEmpty(ls.ServerProc, "csg_svc_"+strconv.FormatUint(uint64(ls.ServerPID), 10))
-			_, mod, err := ensureProcessAndModule(procHint, ls.Port)
+			listenPort := ls.Port
+			if strings.EqualFold(strings.TrimSpace(ls.Transport), "MESH") {
+				listenPort = 0
+			}
+			_, mod, err := ensureProcessAndModule(procHint, listenPort)
 			if err != nil {
 				return err
 			}

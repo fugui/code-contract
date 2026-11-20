@@ -179,3 +179,88 @@ func TestReconcileLiveCSGWithSSOT_ThreeStates(t *testing.T) {
 		t.Fatalf("expected 2 reconciled subscriptions (1 UNDECLARED + 1 MISSING_IN_LIVE), got %+v", reconciled.Subscriptions)
 	}
 }
+
+func TestImportCSGBlueprint_MeshServiceKeepsZeroTCPListenPort(t *testing.T) {
+	if os.Getenv("TEST_DB_DSN") == "" {
+		t.Skip("TEST_DB_DSN 未配置，跳过隔离数据库测试")
+	}
+
+	db := testdb.SetupIsolatedDB(t, config.ServiceName)
+	if err := models.SetupWithDB(db); err != nil {
+		t.Fatalf("SetupWithDB failed: %v", err)
+	}
+
+	agent := models.Agent{
+		Name:     "csg-mesh-agent",
+		Endpoint: "http://127.0.0.1:9992",
+		Status:   models.AgentStatusOnline,
+		Scope:    models.ScopeShared,
+	}
+	if err := db.Create(&agent).Error; err != nil {
+		t.Fatalf("create agent failed: %v", err)
+	}
+	subsys := models.Subsystem{Code: "mesh_sub", Name: "MeshSub"}
+	if err := db.Create(&subsys).Error; err != nil {
+		t.Fatalf("create subsystem failed: %v", err)
+	}
+
+	res, err := topology.ImportCSGBlueprint(db, topology.CSGBlueprintImportInput{
+		AgentID:            agent.ID,
+		SubsystemID:        subsys.ID,
+		ImportDependencies: true,
+		OperatorID:         1,
+		Live: &agentproto.CSGTopologyReport{
+			DiscoveryMode: "NATIVE_PROBE",
+			Services: []agentproto.CSGServiceInfo{
+				{
+					ServiceName: "MeshOnlySvc-MeshOnlySvc",
+					Addr:        "dophi_mesh://ipv4:10.29.92.80:16000",
+					Transport:   "MESH",
+					HostIP:      "10.29.92.80",
+					Port:        16000,
+					ServerPID:   7701,
+					ServerProc:  "mesh_only_svr",
+					IsLocal:     true,
+				},
+				{
+					ServiceName: "TcpSvc-TcpSvc",
+					Addr:        "tcp://ipv4:10.29.92.80:18080",
+					Transport:   "TCP",
+					HostIP:      "10.29.92.80",
+					Port:        18080,
+					ServerPID:   7702,
+					ServerProc:  "tcp_svr",
+					IsLocal:     true,
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ImportCSGBlueprint failed: %v", err)
+	}
+	if res.CreatedServices != 2 || res.CreatedProcesses != 2 {
+		t.Fatalf("unexpected import result: %+v", res)
+	}
+
+	var apMesh, apTCP models.ArchProcess
+	if err := db.Where("code = ?", "mesh_only_svr").First(&apMesh).Error; err != nil {
+		t.Fatalf("find apMesh failed: %v", err)
+	}
+	if err := db.Where("code = ?", "tcp_svr").First(&apTCP).Error; err != nil {
+		t.Fatalf("find apTCP failed: %v", err)
+	}
+	if apMesh.DefaultListenPort != 0 {
+		t.Fatalf("expected MESH ArchProcess DefaultListenPort=0, got %d", apMesh.DefaultListenPort)
+	}
+	if apTCP.DefaultListenPort != 18080 {
+		t.Fatalf("expected TCP ArchProcess DefaultListenPort=18080, got %d", apTCP.DefaultListenPort)
+	}
+
+	var mountMesh models.Process
+	if err := db.Where("agent_id = ? AND arch_process_id = ?", agent.ID, apMesh.ID).First(&mountMesh).Error; err != nil {
+		t.Fatalf("find mountMesh failed: %v", err)
+	}
+	if mountMesh.EffectiveListenPort != 0 {
+		t.Fatalf("expected MESH Process EffectiveListenPort=0, got %d", mountMesh.EffectiveListenPort)
+	}
+}

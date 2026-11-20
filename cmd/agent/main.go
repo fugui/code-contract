@@ -14,6 +14,7 @@ import (
 
 	"code-contract/internal/agent/server"
 	"code-contract/pkg/ebpf"
+	"code-contract/pkg/rpcmon"
 	"code-contract/pkg/version"
 )
 
@@ -126,19 +127,20 @@ func main() {
 	defaultAllowIPs := resolveDefaultAllowIPs()
 
 	var (
-		listenAddr     = flag.String("listen", "0.0.0.0:9091", "Agent 监听地址 (IP:Port)")
-		allowIPsStr    = flag.String("allow-ips", defaultAllowIPs, "允许访问的主控 IP/CIDR 白名单 (逗号分隔)")
-		claimCode      = flag.String("claim-code", "", "预设认领码 (留空自动生成一次性认领码)")
-		claimFile      = flag.String("claim-code-file", "", "认领码保存路径 (如 /var/run/code-contract/claim.token)")
-		maxBufferMB    = flag.Int64("max-buffer-mb", 64, "单个活跃会话有界缓冲上限 (MB)")
-		procRoot       = flag.String("proc-root", "/proc", "宿主机 procfs 挂载路径")
-		showVersion    = flag.Bool("version", false, "显示版本信息并退出")
-		doctor         = flag.Bool("doctor", false, "执行环境与内核特权就绪体检诊断并退出")
-		check          = flag.Bool("check", false, "执行环境与内核特权就绪体检诊断并退出 (等同于 --doctor)")
-		requireCaps    = flag.Bool("require-caps", false, "是否强制要求必须具备 eBPF 内核特权，若缺少则拒绝启动")
-		csgAddr        = flag.String("csg-addr", os.Getenv("CONTRACT_AGENT_CSG_ADDR"), "可选预设 CSG 控制面端点 (<ip>:<port>，支持逗号分隔)")
-		csgMonitorAddr = flag.String("csg-monitor-addr", os.Getenv("CONTRACT_AGENT_CSG_MONITOR_ADDR"), "可选预设 RPCMonitorService CrosTCP 端点 (<ip>:<port>)")
-		csgProbeBin    = flag.String("csg-probe-bin", os.Getenv("CONTRACT_AGENT_CSG_PROBE_BIN"), "可选真机只读 rpcmon_probe 二进制白名单路径")
+		listenAddr         = flag.String("listen", "0.0.0.0:9091", "Agent 监听地址 (IP:Port)")
+		allowIPsStr        = flag.String("allow-ips", defaultAllowIPs, "允许访问的主控 IP/CIDR 白名单 (逗号分隔)")
+		claimCode          = flag.String("claim-code", "", "预设认领码 (留空自动生成一次性认领码)")
+		claimFile          = flag.String("claim-code-file", "", "认领码保存路径 (如 /var/run/code-contract/claim.token)")
+		maxBufferMB        = flag.Int64("max-buffer-mb", 64, "单个活跃会话有界缓冲上限 (MB)")
+		procRoot           = flag.String("proc-root", "/proc", "宿主机 procfs 挂载路径")
+		showVersion        = flag.Bool("version", false, "显示版本信息并退出")
+		doctor             = flag.Bool("doctor", false, "执行环境与内核特权就绪体检诊断并退出")
+		check              = flag.Bool("check", false, "执行环境与内核特权就绪体检诊断并退出 (等同于 --doctor)")
+		requireCaps        = flag.Bool("require-caps", false, "是否强制要求必须具备 eBPF 内核特权，若缺少则拒绝启动")
+		csgAddr            = flag.String("csg-addr", os.Getenv("CONTRACT_AGENT_CSG_ADDR"), "可选预设 CSG 控制面端点 (<ip>:<port>，支持逗号分隔)")
+		csgMonitorAddr     = flag.String("csg-monitor-addr", os.Getenv("CONTRACT_AGENT_CSG_MONITOR_ADDR"), "可选预设 RPCMonitorService CrosTCP 端点 (<ip>:<port>)")
+		csgProbeBin        = flag.String("csg-probe-bin", os.Getenv("CONTRACT_AGENT_CSG_PROBE_BIN"), "可选真机只读 rpcmon_probe 二进制路径 (未指定时自动探测同目录及标准白名单目录)")
+		csgProbeAllowedStr = flag.String("csg-probe-allowed-dirs", os.Getenv("CONTRACT_AGENT_CSG_PROBE_ALLOWED_DIRS"), "可选 rpcmon_probe 允许目录白名单 (逗号分隔)")
 	)
 	flag.Parse()
 
@@ -171,6 +173,22 @@ func main() {
 		}
 	}
 
+	var probeAllowedDirs []string
+	for _, part := range strings.Split(*csgProbeAllowedStr, ",") {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			probeAllowedDirs = append(probeAllowedDirs, trimmed)
+		}
+	}
+
+	resolvedProbeBin := strings.TrimSpace(*csgProbeBin)
+	autoDiscoveredProbe := false
+	if resolvedProbeBin == "" {
+		if detected := rpcmon.AutoDiscoverProbeBin(probeAllowedDirs); detected != "" {
+			resolvedProbeBin = detected
+			autoDiscoveredProbe = true
+		}
+	}
+
 	cfg := server.AgentServerConfig{
 		ListenAddr:            *listenAddr,
 		AllowIPs:              allowIPs,
@@ -181,7 +199,8 @@ func main() {
 		ProcRoot:              *procRoot,
 		CSGAddrs:              csgAddrs,
 		CSGMonitorAddr:        strings.TrimSpace(*csgMonitorAddr),
-		CSGProbeBin:           strings.TrimSpace(*csgProbeBin),
+		CSGProbeBin:           resolvedProbeBin,
+		CSGProbeAllowedDirs:   probeAllowedDirs,
 	}
 
 	srv, err := server.NewAgentServer(cfg)
@@ -193,7 +212,12 @@ func main() {
 	log.Printf("[Agent] 监听地址: %s, 白名单: %v", *listenAddr, allowIPs)
 	log.Printf("[Agent] 认领码 (ClaimCode): %s", srv.ClaimCode())
 	log.Printf("[Agent] 实例 BootID: %s", srv.BootID())
-	log.Printf("[Agent] CSG 发现配置: csg_addrs=%v, monitor_addr=%q, probe_bin=%q", cfg.CSGAddrs, cfg.CSGMonitorAddr, cfg.CSGProbeBin)
+	log.Printf("[Agent] CSG 发现配置: csg_addrs=%v, monitor_addr=%q, probe_bin=%q, probe_allowed_dirs=%v", cfg.CSGAddrs, cfg.CSGMonitorAddr, cfg.CSGProbeBin, cfg.CSGProbeAllowedDirs)
+	if autoDiscoveredProbe {
+		log.Printf("[Agent] [✓] 自动发现只读 CSG 探针 (NATIVE_PROBE 就绪): %s", resolvedProbeBin)
+	} else if resolvedProbeBin == "" && cfg.CSGMonitorAddr == "" {
+		log.Printf("[Agent] [ℹ️] 未配置 --csg-probe-bin 且标准目录未检测到 rpcmon_probe；若现网 RPCMonitorService 仅使用 dophi_mesh://，请按 scripts/csg/build-native-probe.sh 编译探针并放入 Agent 同目录或通过 --csg-probe-bin 指定")
+	}
 
 	// 启动特权自检与显式横幅输出
 	if srv.EbpfManager() != nil {

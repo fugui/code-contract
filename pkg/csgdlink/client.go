@@ -258,34 +258,44 @@ func (c *Client) roundTrip(subType uint16, payload []byte, wantAck uint16, timeo
 	}
 }
 
-// ResolveServiceTCP dials csgAddr, queries serviceName via Sub, immediately Unsubs,
-// and returns the first advertised tcp:// target in host:port form.
-func ResolveServiceTCP(csgAddr, serviceName string, timeout time.Duration) (string, error) {
+// ResolveServiceInstances dials csgAddr, queries serviceName via Sub across both TCP and
+// dophi_mesh transports, immediately Unsubs, and returns all advertised instances.
+func ResolveServiceInstances(csgAddr, serviceName string, timeout time.Duration) ([]Instance, error) {
 	if strings.TrimSpace(csgAddr) == "" {
-		return "", fmt.Errorf("csgdlink: empty CSG address")
+		return nil, fmt.Errorf("csgdlink: empty CSG address")
 	}
 	if strings.TrimSpace(serviceName) == "" {
-		return "", fmt.Errorf("csgdlink: empty service name")
+		return nil, fmt.Errorf("csgdlink: empty service name")
 	}
 	if timeout <= 0 {
 		timeout = 3 * time.Second
 	}
 	cli, err := Dial(csgAddr, timeout)
 	if err != nil {
-		return "", fmt.Errorf("csgdlink: dial %s failed: %w", csgAddr, err)
+		return nil, fmt.Errorf("csgdlink: dial %s failed: %w", csgAddr, err)
 	}
 	defer func() { _ = cli.Close() }()
 
 	if _, err := cli.Register(timeout); err != nil {
-		return "", fmt.Errorf("csgdlink: register failed: %w", err)
+		return nil, fmt.Errorf("csgdlink: register failed: %w", err)
 	}
 	if _, err := cli.ClientID(timeout); err != nil {
-		return "", fmt.Errorf("csgdlink: client_id failed: %w", err)
+		return nil, fmt.Errorf("csgdlink: client_id failed: %w", err)
 	}
 	insts, err := cli.Sub(serviceName, timeout)
 	_ = cli.Unsub(serviceName, timeout)
 	if err != nil {
-		return "", fmt.Errorf("csgdlink: sub %s failed: %w", serviceName, err)
+		return nil, fmt.Errorf("csgdlink: sub %s failed: %w", serviceName, err)
+	}
+	return insts, nil
+}
+
+// ResolveServiceTCP dials csgAddr, queries serviceName via Sub, immediately Unsubs,
+// and returns the first advertised tcp:// target in host:port form.
+func ResolveServiceTCP(csgAddr, serviceName string, timeout time.Duration) (string, error) {
+	insts, err := ResolveServiceInstances(csgAddr, serviceName, timeout)
+	if err != nil {
+		return "", err
 	}
 	for _, inst := range insts {
 		if IsTCPAddr(inst.Addr) {

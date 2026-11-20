@@ -184,3 +184,37 @@ JSON
 		t.Fatalf("unexpected native probe report: %+v", rep)
 	}
 }
+
+func TestAutoDiscoverProbeBin_AllowlistAndSymlinkRejection(t *testing.T) {
+	allowedDir := t.TempDir()
+	otherDir := t.TempDir()
+	symlinkDir := t.TempDir()
+
+	otherBin := filepath.Join(otherDir, rpcmon.DefaultProbeBinaryName)
+	if err := os.WriteFile(otherBin, []byte("#!/bin/sh\necho '{}'\n"), 0o755); err != nil {
+		t.Fatalf("write otherBin failed: %v", err)
+	}
+
+	// Symlink named rpcmon_probe in symlinkDir must be rejected.
+	if err := os.Symlink(otherBin, filepath.Join(symlinkDir, rpcmon.DefaultProbeBinaryName)); err != nil {
+		t.Fatalf("symlink failed: %v", err)
+	}
+	if got := rpcmon.AutoDiscoverProbeBin(nil, symlinkDir); got != "" {
+		t.Fatalf("expected symlink probe to be ignored, got %q", got)
+	}
+
+	// When allowedDirs is set, binaries outside allowedDirs must not be discovered.
+	if got := rpcmon.AutoDiscoverProbeBin([]string{allowedDir}, otherDir); got != "" {
+		t.Fatalf("expected outside-allowlist probe to be ignored, got %q", got)
+	}
+
+	// Valid executable inside allowedDir must be discovered.
+	allowedBin := filepath.Join(allowedDir, rpcmon.DefaultProbeBinaryName)
+	if err := os.WriteFile(allowedBin, []byte("#!/bin/sh\necho '{}'\n"), 0o755); err != nil {
+		t.Fatalf("write allowedBin failed: %v", err)
+	}
+	got := rpcmon.AutoDiscoverProbeBin([]string{allowedDir}, otherDir)
+	if got != allowedBin {
+		t.Fatalf("AutoDiscoverProbeBin = %q, want %q", got, allowedBin)
+	}
+}

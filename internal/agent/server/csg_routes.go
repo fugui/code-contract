@@ -11,6 +11,7 @@ import (
 
 	"code-contract/internal/agent/csg"
 	"code-contract/pkg/agentproto"
+	"code-contract/pkg/rpcmon"
 )
 
 func (s *AgentServer) locateCSGEndpoints() []agentproto.CSGEndpointInfo {
@@ -38,25 +39,31 @@ func (s *AgentServer) resolveEffectiveCSGAddr(explicit string) string {
 	return ""
 }
 
-func (s *AgentServer) discoverCSGAndFuse(ctx context.Context, explicitCSGAddr string, l1Procs []agentproto.DiscoveredProcess) (*agentproto.CSGTopologyReport, []agentproto.DiscoveredProcess, error) {
+func (s *AgentServer) discoverCSGAndFuse(ctx context.Context, explicitCSGAddr string, l1Procs []agentproto.DiscoveredProcess, subEnrich bool) (*agentproto.CSGTopologyReport, []agentproto.DiscoveredProcess, error) {
 	csgAddr := s.resolveEffectiveCSGAddr(explicitCSGAddr)
 	return csg.DiscoverAndFuse(ctx, csg.DiscovererConfig{
 		Locate: csg.LocateOptions{
 			CLICSGAddrs: s.cfg.CSGAddrs,
 			ProcRoot:    s.cfg.ProcRoot,
 		},
-		MonitorAddr:      s.cfg.CSGMonitorAddr,
-		CSGAddr:          csgAddr,
-		ProbeBin:         s.cfg.CSGProbeBin,
-		ProbeAllowedDirs: s.cfg.CSGProbeAllowedDirs,
-		LocalPIDs:        l1Procs,
-		SubEnrich:        csgAddr != "",
+		MonitorAddr:         s.cfg.CSGMonitorAddr,
+		CSGAddr:             csgAddr,
+		ProbeBin:            s.cfg.CSGProbeBin,
+		ProbeAllowedDirs:    s.cfg.CSGProbeAllowedDirs,
+		AutoDiscoverProbe:   true,
+		AutoProbeSearchDirs: rpcmon.DefaultProbeSearchDirs(),
+		LocalPIDs:           l1Procs,
+		SubEnrich:           subEnrich && csgAddr != "",
 	})
 }
 
 func (s *AgentServer) handleCSGTopology(w http.ResponseWriter, r *http.Request) {
 	procs, l1Err := s.procScanner.ScanListenProcesses()
-	rep, _, err := s.discoverCSGAndFuse(r.Context(), r.URL.Query().Get("csg_addr"), procs)
+	subEnrich := true
+	if raw := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("sub_enrich"))); raw == "0" || raw == "false" {
+		subEnrich = false
+	}
+	rep, _, err := s.discoverCSGAndFuse(r.Context(), r.URL.Query().Get("csg_addr"), procs, subEnrich)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("CSG 拓扑发现失败: %v", err), http.StatusInternalServerError)
 		return

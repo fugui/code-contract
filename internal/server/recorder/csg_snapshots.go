@@ -24,11 +24,17 @@ func (o *Orchestrator) collectInitialCSGSnapshots(ctx context.Context, agentIDs 
 	if o.db != nil && len(agentIDs) > 0 {
 		var agents []models.Agent
 		if err := o.db.WithContext(ctx).Where("id IN ?", agentIDs).Find(&agents).Error; err == nil {
-			client := o.httpClient
-			if client == nil {
-				client = &http.Client{Timeout: 5 * time.Second}
+			baseClient := o.httpClient
+			snapshotClient := &http.Client{
+				Timeout: 15 * time.Second,
+				CheckRedirect: func(req *http.Request, via []*http.Request) error {
+					return http.ErrUseLastResponse
+				},
 			}
-			subCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			if baseClient != nil {
+				snapshotClient.Transport = baseClient.Transport
+			}
+			subCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 			defer cancel()
 
 			for _, ag := range agents {
@@ -42,13 +48,17 @@ func (o *Orchestrator) collectInitialCSGSnapshots(ctx context.Context, agentIDs 
 				if ag.ClaimCode != "" {
 					req.Header.Set(agentproto.HeaderClaimCode, ag.ClaimCode)
 				}
-				resp, err := client.Do(req)
+				resp, err := snapshotClient.Do(req)
 				if err != nil || resp == nil {
+					log.Printf("[Orchestrator] 采集 Agent#%d (%s) 初始 CSG 快照失败: %v", ag.ID, ag.Endpoint, err)
 					continue
 				}
 				if resp.StatusCode == http.StatusOK {
 					var rep agentproto.CSGTopologyReport
 					if decErr := json.NewDecoder(resp.Body).Decode(&rep); decErr == nil {
+						if len(rep.Services) == 0 && len(rep.Errors) > 0 {
+							log.Printf("[Orchestrator] Agent#%d 初始 CSG 快照为空 (mode=%s): %v", ag.ID, rep.DiscoveryMode, rep.Errors)
+						}
 						for _, svc := range rep.Services {
 							key := svc.ServiceName + "|" + svc.Addr
 							if _, ok := seen[key]; ok {
