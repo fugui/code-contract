@@ -27,6 +27,7 @@ import {
   setupFetchInterceptor,
   useTheme,
 } from '@code/common';
+import './index.css';
 import { apiRequest } from './api/client';
 import {
   MODULE_BASE_PATH,
@@ -55,7 +56,6 @@ import AgentManagementPage from './pages/AgentManagementPage';
 import AdminSettingsPage from './pages/AdminSettingsPage';
 import { GoldenSuitesWorkbenchPage } from './pages/GoldenSuitesWorkbenchPage';
 import type { CurrentUserProfile } from './types';
-import './index.css';
 
 // 安装全局 fetch 拦截器：在微前端嵌入模式下自动将 /api/* 重写为 /<MODULE_KEY>/api/* 并注入 Bearer Token
 if (typeof window !== 'undefined') {

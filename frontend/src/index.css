@@ -1,3 +1,5 @@
+@import '@code/common/src/styles/theme.css';
+
 /* ==========================================================================
    Code-Template 模块专属样式（严格遵循 Flat BEM 命名与 --color-* 语义 Token 规范）
    严禁硬编码绝对色值，全面兼容暗黑 (Dark) 与亮色 (Light) 主题模式
