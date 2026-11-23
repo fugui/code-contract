@@ -210,7 +210,7 @@ func TestImportCSGBlueprint_MeshServiceKeepsZeroTCPListenPort(t *testing.T) {
 		ImportDependencies: true,
 		OperatorID:         1,
 		Live: &agentproto.CSGTopologyReport{
-			DiscoveryMode: "NATIVE_PROBE",
+			DiscoveryMode: "CROSMESH_RPCMON",
 			Services: []agentproto.CSGServiceInfo{
 				{
 					ServiceName: "MeshOnlySvc-MeshOnlySvc",

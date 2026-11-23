@@ -11,7 +11,6 @@ import (
 
 	"code-contract/internal/agent/csg"
 	"code-contract/pkg/agentproto"
-	"code-contract/pkg/rpcmon"
 )
 
 func (s *AgentServer) locateCSGEndpoints() []agentproto.CSGEndpointInfo {
@@ -46,14 +45,10 @@ func (s *AgentServer) discoverCSGAndFuse(ctx context.Context, explicitCSGAddr st
 			CLICSGAddrs: s.cfg.CSGAddrs,
 			ProcRoot:    s.cfg.ProcRoot,
 		},
-		MonitorAddr:         s.cfg.CSGMonitorAddr,
-		CSGAddr:             csgAddr,
-		ProbeBin:            s.cfg.CSGProbeBin,
-		ProbeAllowedDirs:    s.cfg.CSGProbeAllowedDirs,
-		AutoDiscoverProbe:   true,
-		AutoProbeSearchDirs: rpcmon.DefaultProbeSearchDirs(),
-		LocalPIDs:           l1Procs,
-		SubEnrich:           subEnrich && csgAddr != "",
+		MonitorAddr: s.cfg.CSGMonitorAddr,
+		CSGAddr:     csgAddr,
+		LocalPIDs:   l1Procs,
+		SubEnrich:   subEnrich && csgAddr != "",
 	})
 }
 

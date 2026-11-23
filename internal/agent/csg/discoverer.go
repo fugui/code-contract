@@ -19,17 +19,13 @@ const defaultSubEnrichBudget = 8 * time.Second
 
 // DiscovererConfig configures L1 (/proc) + L2 (rpcmon & dlink Sub->Unsub) fusion.
 type DiscovererConfig struct {
-	Locate              LocateOptions
-	MonitorAddr         string
-	CSGAddr             string
-	ProbeBin            string
-	ProbeAllowedDirs    []string
-	AutoDiscoverProbe   bool
-	AutoProbeSearchDirs []string
-	LocalIPs            []string
-	LocalPIDs           []agentproto.DiscoveredProcess
-	SubEnrich           bool
-	SubTimeout          time.Duration
+	Locate     LocateOptions
+	MonitorAddr string
+	CSGAddr    string
+	LocalIPs   []string
+	LocalPIDs  []agentproto.DiscoveredProcess
+	SubEnrich  bool
+	SubTimeout time.Duration
 }
 
 // DiscoverAndFuse executes dual-layer CSG topology discovery and returns both
@@ -57,74 +53,72 @@ func DiscoverAndFuse(ctx context.Context, cfg DiscovererConfig) (*agentproto.CSG
 
 	var monRep *rpcmon.Report
 	var monErr error
-	monitorAddr := strings.TrimSpace(cfg.MonitorAddr)
-	probeBin := strings.TrimSpace(cfg.ProbeBin)
-	var meshMonitorAddr string
-	var dlinkResolveErr error
+	explicitMonitor := strings.TrimSpace(cfg.MonitorAddr)
 
-	if monitorAddr == "" && probeBin == "" && csgAddr != "" {
-		monitorAddr, meshMonitorAddr, dlinkResolveErr = resolveMonitorAddrViaDlink(ctx, csgAddr, cfg.SubTimeout)
-		if monitorAddr == "" && cfg.AutoDiscoverProbe {
-			probeBin = rpcmon.AutoDiscoverProbeBin(cfg.ProbeAllowedDirs, cfg.AutoProbeSearchDirs...)
+	fetchWithBackend := func(backend rpcmon.Backend, mode string) (*rpcmon.Report, error) {
+		defer func() { _ = backend.Close() }()
+		rep, err := rpcmon.Fetch(ctx, backend, "all")
+		if err == nil {
+			report.DiscoveryMode = mode
 		}
+		return rep, err
 	}
 
-	runNativeProbe := func(bin string) (*rpcmon.Report, error) {
-		csgArg := csgAddr
-		if !strings.HasPrefix(csgArg, "ipv4:") {
-			csgArg = "ipv4:" + csgArg
+	fetchTCP := func(addr string) (*rpcmon.Report, error) {
+		backend, err := rpcmon.NewCrosTCP(addr, cfg.SubTimeout)
+		if err != nil {
+			return nil, err
 		}
-		backend := rpcmon.NewNative(rpcmon.NativeConfig{
-			ProbeBin:    bin,
-			CSGAddr:     csgArg,
-			AllowedDirs: cfg.ProbeAllowedDirs,
-			Timeout:     15 * time.Second,
-		})
-		defer func() { _ = backend.Close() }()
-		return rpcmon.Fetch(ctx, backend, "all")
+		return fetchWithBackend(backend, "CROSTCP_RPCMON")
+	}
+
+	fetchMesh := func(addr string) (*rpcmon.Report, error) {
+		backend, err := rpcmon.NewCrosMesh(addr, cfg.SubTimeout)
+		if err != nil {
+			return nil, err
+		}
+		return fetchWithBackend(backend, "CROSMESH_RPCMON")
 	}
 
 	switch {
-	case monitorAddr != "":
-		backend, err := rpcmon.NewCrosTCP(monitorAddr, cfg.SubTimeout)
-		if err != nil {
-			monErr = err
+	case explicitMonitor != "":
+		if csgdlink.IsMeshAddr(explicitMonitor) {
+			monRep, monErr = fetchMesh(explicitMonitor)
+			if monErr != nil {
+				monErr = fmt.Errorf("dophi_mesh rpcmon(%s) 失败: %w", explicitMonitor, monErr)
+			}
 		} else {
-			defer func() { _ = backend.Close() }()
-			monRep, monErr = rpcmon.Fetch(ctx, backend, "all")
-			if monErr == nil {
-				report.DiscoveryMode = "CROSTCP_RPCMON"
+			monRep, monErr = fetchTCP(explicitMonitor)
+			if monErr != nil {
+				monErr = fmt.Errorf("CrosTCP rpcmon(%s) 失败: %w", explicitMonitor, monErr)
 			}
 		}
-		if monErr != nil && csgAddr != "" {
-			fallbackBin := probeBin
-			if fallbackBin == "" && cfg.AutoDiscoverProbe {
-				fallbackBin = rpcmon.AutoDiscoverProbeBin(cfg.ProbeAllowedDirs, cfg.AutoProbeSearchDirs...)
-			}
-			if fallbackBin != "" {
-				report.Errors = append(report.Errors, fmt.Sprintf("CrosTCP rpcmon(%s) 失败，已自动回退至 NATIVE_PROBE: %v", monitorAddr, monErr))
-				monRep, monErr = runNativeProbe(fallbackBin)
-				if monErr == nil {
-					report.DiscoveryMode = "NATIVE_PROBE"
+	case csgAddr != "":
+		tcpAddr, meshAddr, dlinkResolveErr := resolveMonitorAddrViaDlink(ctx, csgAddr, cfg.SubTimeout)
+		switch {
+		case tcpAddr != "":
+			monRep, monErr = fetchTCP(tcpAddr)
+			if monErr != nil && meshAddr != "" {
+				report.Errors = append(report.Errors, fmt.Sprintf("CrosTCP rpcmon(%s) 失败，自动回退 dophi_mesh(%s): %v", tcpAddr, meshAddr, monErr))
+				monRep, monErr = fetchMesh(meshAddr)
+				if monErr != nil {
+					monErr = fmt.Errorf("dophi_mesh rpcmon(%s) 经 CSG(%s) 失败: %w", meshAddr, csgAddr, monErr)
 				}
+			} else if monErr != nil {
+				monErr = fmt.Errorf("CrosTCP rpcmon(%s) 经 CSG(%s) 失败: %w", tcpAddr, csgAddr, monErr)
 			}
+		case meshAddr != "":
+			monRep, monErr = fetchMesh(meshAddr)
+			if monErr != nil {
+				monErr = fmt.Errorf("L2 发现降级为 PROC_ONLY：经 CSG(%s) 解析 %s 为 %s，纯 Go dophi_mesh 查询失败: %w", csgAddr, rpcmon.ServiceName, meshAddr, monErr)
+			}
+		case dlinkResolveErr != nil:
+			report.Errors = append(report.Errors, fmt.Sprintf(
+				"L2 发现降级为 PROC_ONLY：经 CSG(%s) 自动解析 %s 失败: %v",
+				csgAddr, rpcmon.ServiceName, dlinkResolveErr,
+			))
 		}
-	case probeBin != "" && csgAddr != "":
-		monRep, monErr = runNativeProbe(probeBin)
-		if monErr == nil {
-			report.DiscoveryMode = "NATIVE_PROBE"
-		}
-	case meshMonitorAddr != "":
-		report.Errors = append(report.Errors, fmt.Sprintf(
-			"L2 发现降级为 PROC_ONLY：%s 在 CSG(%s) 仅发布了 dophi_mesh:// 实例 (%s)，CrosTCP 无法直连；请编译只读探针 scripts/csg/build-native-probe.sh 并通过 --csg-probe-bin 指定（或放置于 Agent 同目录 /usr/local/bin/rpcmon_probe）以启用 NATIVE_PROBE",
-			rpcmon.ServiceName, csgAddr, meshMonitorAddr,
-		))
-	case dlinkResolveErr != nil:
-		report.Errors = append(report.Errors, fmt.Sprintf(
-			"L2 发现降级为 PROC_ONLY：经 CSG(%s) 自动解析 %s 失败: %v",
-			csgAddr, rpcmon.ServiceName, dlinkResolveErr,
-		))
-	case csgAddr == "" && len(endpoints) == 0:
+	default:
 		report.Errors = append(report.Errors, "L2 发现降级为 PROC_ONLY：未在本机发现可用 CSG 控制面端点，请在 Agent 启动参数指定 --csg-addr")
 	}
 	if monErr != nil {

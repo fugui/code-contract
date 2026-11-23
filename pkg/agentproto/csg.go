@@ -111,7 +111,7 @@ type CSGSubscription struct {
 // CSGTopologyReport is the fused dual-layer Agent CSG discovery output (L2 rpcmon + dlink + L1 /proc).
 type CSGTopologyReport struct {
 	CSGEndpoints         []CSGEndpointInfo `json:"csg_endpoints"`
-	DiscoveryMode        string            `json:"discovery_mode"` // "CROSTCP_RPCMON", "NATIVE_PROBE", "PROC_ONLY"
+	DiscoveryMode        string            `json:"discovery_mode"` // "CROSTCP_RPCMON", "CROSMESH_RPCMON", "PROC_ONLY"
 	PortUsages           []CSGPortUsage    `json:"port_usages,omitempty"`
 	Services             []CSGServiceInfo  `json:"services"`
 	Subscriptions        []CSGSubscription `json:"subscriptions"`

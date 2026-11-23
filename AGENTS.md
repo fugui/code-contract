@@ -35,13 +35,12 @@ code-contract/
 ├── cmd/agent/           # 数据面 Agent 入口 code-contract-agent（零数据库、零 .pb / protoregistry、零 CGO 依赖）
 ├── pkg/crosrpc/         # CROS RPC 分帧与头解析库（主控、Agent 与 rpcmon 共用）
 ├── pkg/csgdlink/        # CSG/dlink 控制面 32B 帧栈、只读发现与 Observer（纯 Go 标准库）
-├── pkg/rpcmon/          # RPCMonitorService 统一监控模型、CrosTCP 传输（pkg/crosrpc + 手写 Wire）与探针适配
+├── pkg/rpcmon/          # RPCMonitorService 统一监控模型、纯 Go CrosTCP & CrosMesh（128B HELLO + 40B 数据头 + 手写 Wire）
 ├── pkg/csgmock/         # 内存态 MockCSGServer 控制面沙箱（实现 rpcmon.Provider，禁依 pkg/ebpf）
 ├── pkg/ebpf/            # Agent 嵌入式 cilium/ebpf 采集引擎（含 Socket eBPF 与 uprobe/DRT_WriteBulk）
 ├── pkg/transport/       # Agent 纯 Go 可插拔传输驱动抽象 (Driver/Registry)、builtin-tcp 与 builtin-drt-uprobe (ADR-22/23)
 ├── pkg/replay/          # Agent 二进制 Mock 匹配、ucProtocol (4->1) 归一化与 ullSNO 自愈
 ├── internal/agent/csg/  # Agent 侧 CSG 双层自动发现融合器与三模仿真控制器
-├── scripts/csg/         # 真机只读 C++ 探针源码 rpcmon_probe.cpp 与独立编译脚本 build-native-probe.sh
 ├── config/              # 配置加载与模块常量定义
 ├── models/              # GORM 数据模型（强制 contract_ 表前缀隔离，30 核心表 + contract_settings）
 ├── handlers/            # HTTP 控制器、RBAC 守卫、审计 Diff 与 *_test.go 隔离单测
@@ -49,7 +48,7 @@ code-contract/
 ```
 
 * **本模块专有架构红线（阶段二已冻结，详见 [`docs/02-design/`](docs/02-design/)）**：
-  1. **主从物理防腐（`cmd/agent/deps_test.go`）**：`cmd/agent` 及 `pkg/{crosrpc,agentproto,csgdlink,rpcmon,csgmock,ebpf,transport,replay}`（九包）严禁引入 `gorm`、`pgx`、数据库连接、`dynamicpb`、`protoregistry`、`protocompile`、`go-git` 或 CGO（`pkg/rpcmon` 采用手写纯 Go Wire 编解码，严禁依赖 `google.golang.org/protobuf`；`pkg/transport` 使用 Go 标准库 `debug/elf` 解析 `.dynsym`，**永久禁止外部 `.so` 传输插件与 `readelf`/`nm` 调用**）；真机 `rpcmon_probe` 仅允许以受控白名单路径+合法 `ipv4:<ip>:<port>` 参数调用只读外部二进制（严禁 CGO 与拼接 Shell 命令）；主控 `cmd/server` 以非特权运行，严禁直接挂载 eBPF 或跨网发重放包。
+  1. **主从物理防腐（`cmd/agent/deps_test.go`）**：`cmd/agent` 及 `pkg/{crosrpc,agentproto,csgdlink,rpcmon,csgmock,ebpf,transport,replay}`（九包）严禁引入 `gorm`、`pgx`、数据库连接、`dynamicpb`、`protoregistry`、`protocompile`、`go-git` 或 CGO（`pkg/rpcmon` 采用手写纯 Go Wire 编解码、纯 Go `CrosTCP` 及纯 Go `CrosMesh` 128B HELLO 四次握手 + 40B 数据头直连现网，严禁依赖 `google.golang.org/protobuf` 与外部 C++ 探针子进程；`pkg/transport` 使用 Go 标准库 `debug/elf` 解析 `.dynsym`，**永久禁止外部 `.so` 传输插件与 `readelf`/`nm` 调用**）；Agent 全栈保持 100% 纯 Go 单二进制；主控 `cmd/server` 以非特权运行，严禁直接挂载 eBPF 或跨网发重放包。
   2. **协议与契约唯一性**：仅处理 DOPHI `CROS RPC` 应用层协议 + Protobuf Payload；底层传输通过纯 Go `pkg/transport.Driver` 支持内置 `builtin-tcp`（`ucProtocol=1`，Socket eBPF，`StreamFramer` 保持 `<=1` 防伪帧）与 `builtin-drt-uprobe`（`ucProtocol=4`，`libdopra.so:DRT_WriteBulk` 内核 uprobe，[`ADR-22`](docs/05-adr/22-pluggable-transport-driver-and-mesh-capture-adr.md) & [`ADR-23`](docs/05-adr/23-dophi-mesh-uprobe-bypass-capture-adr.md)）；**仿真重放统一收敛至 `tcp://`**（`MOCK_SERVER` 改写 `dophi_mesh:// -> tcp://` 并放行订阅，`ReplayExecutor`/`HealResponseFrames` 在 TCP 发送副本中将 `ucProtocol: 4 -> 1` 归一化，仅 `CLIENT_INJECT` 目标在线纯 Mesh 无 TCP 监听时返 `422 CSG_DATAPLANE_MESH_UNSUPPORTED`）；`ModuleService.service_name` 以线上 `ascServiceName` / CSG 64B `acServiceName` 为准（支持 `{package}.{serviceName}` 与 `<ClassName[:31]>-<svrName[:31]>` 含 `-` 格式，可选 `proto_service_name` 注入 `ServiceAliases` 并支持 `^(.+-\d+)-(\d+)$` PID 归一化）；独占契约（`EXCLUSIVE`）`PROVIDE` 全局唯一，多实现契约（`MULTI_IMPL`，由 `CONTRACT_LIB` 接口库模块定义）按 `(contract_id, impl_key)` 唯一且共享契约名实现必须两两分属不同 `ArchProcess`（[`ADR-16`](docs/05-adr/16-multi-implementation-service-contract-adr.md)）。
   3. **公私域隔离与 Agent 动态排他租约**：三级架构元素与 `.pb` 为全局唯一公共 SSOT（现网 CSG 导入 `POST /api/agents/:id/csg/import-blueprint` 严格限 `contract_admin`）；`Agent` 与 `RecordingSession` 严格区分 `SHARED`（团队共享）与 `PRIVATE`（仅 `owner_id` 本人可见与操作，横向越权返 `403`）；同一台 `Agent` 同一时刻仅允许 1 名用户持有 1 项录制或重放排他租约（并发争抢返 `409 Conflict`）；`contract_traffic_records` 强制采用单次往返一行双模持久化（`raw_req_packet` + `raw_rsp_packet` `bytea` 与 `payload_json` `jsonb`）。
   4. **重放零外泄、真实 CSG 零污染与探针卫生**：重放 `MOCK_MISS` 严禁转发至真实下游；**严禁在任何模式下向真实 CSG 发送 `GET_BIND_ADDR (7)` / `FREE_BIND_ADDR (8)` 推进生产端口游标**，`PUB_STUB` 必须通过前置 `Sub==0` 门禁（在线冲突返 `409 CSG_SERVICE_ALREADY_PUBLISHED`）；`ARMED` 待命期 **0 uprobe 挂载**（仅 `CAPTURING` 期间按目标 PID 匿名 `perf_event_open` 挂载，零 tracefs 污染）；在正常完成、取消、`/purge`、主控失联满 5 分钟或收到退出信号五个出口，Agent 必须幂等卸载全部 eBPF / uprobe 探针与监听端口、`Unpub` 全部 `PUB_STUB` 桩并关闭 `MockCSGServer`。

@@ -107,12 +107,16 @@ func NewCrosTCP(addr string, timeout time.Duration) (Backend, error) {
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
-	conn, err := net.DialTimeout("tcp", addr, timeout)
+	dialAddr := addr
+	if normalized, err := normalizeHostPortTarget(addr); err == nil {
+		dialAddr = normalized
+	}
+	conn, err := net.DialTimeout("tcp", dialAddr, timeout)
 	if err != nil {
 		return nil, err
 	}
 	return &CrosTCPBackend{
-		addr:    addr,
+		addr:    dialAddr,
 		timeout: timeout,
 		conn:    conn,
 		framer:  crosrpc.NewStreamFramer(crosrpc.DefaultMaxCaptureBytes),

@@ -701,7 +701,7 @@ func TestFetchAgentCSGTopology_ExceedsHeartbeatTimeout(t *testing.T) {
 		time.Sleep(hub.HeartbeatTimeout + 200*time.Millisecond)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(agentproto.CSGTopologyReport{
-			DiscoveryMode: "NATIVE_PROBE",
+			DiscoveryMode: "CROSMESH_RPCMON",
 			Services: []agentproto.CSGServiceInfo{
 				{ServiceName: "SlowProbeSvc-SlowProbeSvc", IsLocal: true},
 			},
@@ -724,7 +724,7 @@ func TestFetchAgentCSGTopology_ExceedsHeartbeatTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected FetchAgentCSGTopology to tolerate >HeartbeatTimeout latency, got err: %v", err)
 	}
-	if rep.DiscoveryMode != "NATIVE_PROBE" || len(rep.Services) != 1 {
+	if rep.DiscoveryMode != "CROSMESH_RPCMON" || len(rep.Services) != 1 {
 		t.Fatalf("unexpected topology report: %+v", rep)
 	}
 }

@@ -41,8 +41,6 @@ type AgentServerConfig struct {
 	ProcRoot              string
 	CapabilityChecker     ebpf.CapabilityChecker
 	CSGAddrs              []string
-	CSGProbeBin           string
-	CSGProbeAllowedDirs   []string
 	CSGMonitorAddr        string
 }
 

@@ -254,8 +254,9 @@ describe('M28 CSG Discovery, Blueprint Import & 3-Mode Simulation Console', () =
     expect(html).toContain('csg-discovery-errors-banner');
     expect(html).toContain('csg-proc-only-degraded-banner');
     expect(html).toContain('dophi_mesh://');
-    expect(html).toContain('rpcmon_probe');
-    expect(html).toContain('--csg-probe-bin');
+    expect(html).toContain('CROSMESH_RPCMON');
+    expect(html).not.toContain('rpcmon_probe');
+    expect(html).not.toContain('--csg-probe-bin');
   });
 
   it('renders all 4 csg_strategy options in ReplayTaskCreatorModal and GoldenSuiteExecuteModal', () => {

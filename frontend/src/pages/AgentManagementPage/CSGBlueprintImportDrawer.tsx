@@ -410,25 +410,23 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
                 <AlertTriangle size={14} />
                 <span>
                   {isMeshOnlyMonitorErr
-                    ? '当前现网 RPCMonitorService 仅发布 dophi_mesh://，需启用只读原生探针 (NATIVE_PROBE)'
+                    ? 'L2 dophi_mesh:// 纯 Go 发现失败（当前停留在 PROC_ONLY 降级模式）'
                     : 'L2 CSG 服务枚举未生效（当前停留在 PROC_ONLY 降级模式）'}
                 </span>
               </div>
               <div style={{ color: 'var(--color-text-secondary)' }}>
                 {isMeshOnlyMonitorErr ? (
                   <>
-                    现网 <code>RPCMonitorService-RPCMonitorService</code> 未暴露 <code>tcp://</code>{' '}
-                    监听端口，CrosTCP 无法直连，配置 <code>--csg-monitor-addr</code> 亦不可用。请在目标宿主机按{' '}
-                    <code>scripts/csg/build-native-probe.sh</code> 编译只读探针{' '}
-                    <code>rpcmon_probe</code>，放置于 Agent 同目录 / <code>/usr/local/bin/rpcmon_probe</code>
-                    （支持热发现），或在启动 <code>code-contract-agent</code> 时传入{' '}
-                    <code>--csg-probe-bin &lt;路径&gt; --csg-addr &lt;ip:port&gt;</code> 后重试。
+                    Agent 已通过 CSG 发现 <code>RPCMonitorService-RPCMonitorService</code> 的{' '}
+                    <code>dophi_mesh://</code> 端点，但纯 Go Mesh 查询（<code>CROSMESH_RPCMON</code>）失败。请检查对应{' '}
+                    <code>dophi_mesh://</code> 端口网络连通性，并确认目标环境未启用未支持的 SSP/SECLINK 加密；若已知监控端点，也可在 Agent 启动时通过{' '}
+                    <code>--csg-monitor-addr</code> 指定。
                   </>
                 ) : (
                   <>
-                    未通过 <code>CROSTCP_RPCMON</code> 或 <code>NATIVE_PROBE</code> 获取到现网 CSG 服务目录。若现网为{' '}
-                    <code>dophi_mesh://</code> 协议，请在目标宿主机编译 <code>rpcmon_probe</code> 并配置{' '}
-                    <code>--csg-probe-bin</code>（或放入 Agent 同目录自动发现），同时确认候选 CSG 控制面端点可达。
+                    未通过 <code>CROSMESH_RPCMON</code> 或 <code>CROSTCP_RPCMON</code> 获取到现网 CSG 服务目录。请检查目标 CSG 控制面端点可达性、确认{' '}
+                    <code>RPCMonitorService-RPCMonitorService</code> 已在线发布，或通过 Agent 启动参数{' '}
+                    <code>--csg-addr</code> / <code>--csg-monitor-addr</code> 显式指定后重试。
                   </>
                 )}
               </div>

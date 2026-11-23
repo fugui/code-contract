@@ -396,18 +396,26 @@ func TestDiscoverAndFuse_BareIPRemoteLDCFilteredAndSubEnrichBackfillsAddr(t *tes
 	}
 }
 
-func TestDiscoverAndFuse_MeshOnlyMonitor_SurfacesExplicitErrorWithoutProbe(t *testing.T) {
+func TestDiscoverAndFuse_MeshMonitorUnreachable_SurfacesExplicitError(t *testing.T) {
 	mockCSG := csgmock.NewMockCSGServer("127.0.0.1:0")
 	if err := mockCSG.Start(); err != nil {
 		t.Fatalf("mockCSG.Start failed: %v", err)
 	}
 	defer mockCSG.Close()
 
+	// Pick an unused local TCP port so dialing mesh fails deterministically.
+	unusedLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen temp failed: %v", err)
+	}
+	unusedAddr := unusedLn.Addr().String()
+	_ = unusedLn.Close()
+
 	// Real-world scenario: CSG publishes RPCMonitorService ONLY via dophi_mesh:// (no tcp://).
 	mockCSG.SeedInstance(csgdlink.Instance{
 		ClientID: 1,
 		ProcID:   4001,
-		Addr:     "dophi_mesh://ipv4:127.0.0.1:16000",
+		Addr:     "dophi_mesh://ipv4:" + unusedAddr,
 		Name64:   rpcmon.ServiceName,
 	})
 
@@ -415,10 +423,9 @@ func TestDiscoverAndFuse_MeshOnlyMonitor_SurfacesExplicitErrorWithoutProbe(t *te
 	defer cancel()
 
 	report, _, err := csg.DiscoverAndFuse(ctx, csg.DiscovererConfig{
-		Locate:            csg.LocateOptions{ProcRoot: t.TempDir()},
-		CSGAddr:           mockCSG.Addr(),
-		AutoDiscoverProbe: false,
-		LocalIPs:          []string{"127.0.0.1"},
+		Locate:   csg.LocateOptions{ProcRoot: t.TempDir()},
+		CSGAddr:  mockCSG.Addr(),
+		LocalIPs: []string{"127.0.0.1"},
 	})
 	if err != nil {
 		t.Fatalf("DiscoverAndFuse returned error: %v", err)
@@ -427,25 +434,45 @@ func TestDiscoverAndFuse_MeshOnlyMonitor_SurfacesExplicitErrorWithoutProbe(t *te
 		t.Fatalf("DiscoveryMode = %q, want PROC_ONLY", report.DiscoveryMode)
 	}
 	if len(report.Errors) == 0 {
-		t.Fatalf("expected non-empty report.Errors explaining mesh-only RPCMonitorService degradation")
+		t.Fatalf("expected non-empty report.Errors explaining unreachable dophi_mesh:// RPCMonitorService")
 	}
 	joined := strings.Join(report.Errors, " | ")
-	if !strings.Contains(joined, "dophi_mesh://") || !strings.Contains(joined, "--csg-probe-bin") {
-		t.Fatalf("expected error to mention dophi_mesh:// and --csg-probe-bin, got: %s", joined)
+	if !strings.Contains(joined, "dophi_mesh://") || !strings.Contains(joined, unusedAddr) {
+		t.Fatalf("expected error to mention dophi_mesh:// and %s, got: %s", unusedAddr, joined)
 	}
 }
 
-func TestDiscoverAndFuse_MeshOnlyMonitor_AutoDiscoversNativeProbeAndFusesMeshProc(t *testing.T) {
+func TestDiscoverAndFuse_MeshOnlyMonitor_AutoUsesPureGoCrosMeshAndFusesMeshProc(t *testing.T) {
 	mockCSG := csgmock.NewMockCSGServer("127.0.0.1:0")
 	if err := mockCSG.Start(); err != nil {
 		t.Fatalf("mockCSG.Start failed: %v", err)
 	}
 	defer mockCSG.Close()
 
+	meshLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen mesh rpcmon failed: %v", err)
+	}
+	defer meshLn.Close()
+
+	snap := rpcmon.Snapshot{
+		Ports: []rpcmon.PortUsage{{IPAddr: "127.0.0.1", Used: 12, Total: 1200}},
+		Servers: []rpcmon.ServerEntry{
+			{ProcName: "optl_mesh_svr", Pid: 7788, ServerName: "OptlMeshSvc-OptlMeshSvc", ServerAddr: "127.0.0.1"},
+		},
+		Clients: []rpcmon.ClientEntry{
+			{ProcName: "optl_mesh_cli", Pid: 7789, ClientAddr: "127.0.0.1", ServerName: "OptlMeshSvc-OptlMeshSvc"},
+		},
+	}
+	go func() {
+		_ = rpcmon.NewServer(&scaleSnapshotProvider{snap: snap}).ServeMesh(meshLn)
+	}()
+
+	// CSG publishes RPCMonitorService ONLY via dophi_mesh:// (no tcp://) and no MonitorAddr configured.
 	mockCSG.SeedInstance(csgdlink.Instance{
 		ClientID: 1,
 		ProcID:   4001,
-		Addr:     "dophi_mesh://ipv4:127.0.0.1:16000",
+		Addr:     "dophi_mesh://ipv4:" + meshLn.Addr().String(),
 		Name64:   rpcmon.ServiceName,
 	})
 	mockCSG.SeedInstance(csgdlink.Instance{
@@ -470,41 +497,23 @@ func TestDiscoverAndFuse_MeshOnlyMonitor_AutoDiscoversNativeProbeAndFusesMeshPro
 		t.Fatalf("write cmdline failed: %v", err)
 	}
 
-	probeDir := t.TempDir()
-	probeBin := filepath.Join(probeDir, rpcmon.DefaultProbeBinaryName)
-	script := `#!/bin/sh
-cat <<'JSON'
-{
-  "portInfo": [{"ipAddr": "127.0.0.1", "uiPortUsed": 12, "uiPortTotal": 1200}],
-  "servers": [{"procName": "optl_mesh_svr", "pid": 7788, "serverName": "OptlMeshSvc-OptlMeshSvc", "serverAddr": "127.0.0.1"}],
-  "clients": [{"procName": "optl_mesh_cli", "pid": 7789, "clientAddr": "127.0.0.1", "serverName": "OptlMeshSvc-OptlMeshSvc"}],
-  "serverNum": 1,
-  "clientNum": 1,
-  "timestamp": 1794961000
-}
-JSON
-`
-	if err := os.WriteFile(probeBin, []byte(script), 0o755); err != nil {
-		t.Fatalf("write fake rpcmon_probe failed: %v", err)
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	report, fusedProcs, err := csg.DiscoverAndFuse(ctx, csg.DiscovererConfig{
-		Locate:              csg.LocateOptions{ProcRoot: procRoot},
-		CSGAddr:             mockCSG.Addr(),
-		ProbeAllowedDirs:    []string{probeDir},
-		AutoDiscoverProbe:   true,
-		AutoProbeSearchDirs: []string{probeDir},
-		LocalIPs:            []string{"127.0.0.1"},
-		SubEnrich:           true,
+		Locate:    csg.LocateOptions{ProcRoot: procRoot},
+		CSGAddr:   mockCSG.Addr(),
+		LocalIPs:  []string{"127.0.0.1"},
+		SubEnrich: true,
 	})
 	if err != nil {
 		t.Fatalf("DiscoverAndFuse failed: %v", err)
 	}
-	if report.DiscoveryMode != "NATIVE_PROBE" {
-		t.Fatalf("DiscoveryMode = %q, want NATIVE_PROBE (errors=%v)", report.DiscoveryMode, report.Errors)
+	if report.DiscoveryMode != "CROSMESH_RPCMON" {
+		t.Fatalf("DiscoveryMode = %q, want CROSMESH_RPCMON (errors=%v)", report.DiscoveryMode, report.Errors)
+	}
+	if len(report.Errors) != 0 {
+		t.Fatalf("expected 0 errors on CROSMESH_RPCMON success, got: %v", report.Errors)
 	}
 	if len(report.Services) != 1 || report.Services[0].Transport != "MESH" || report.Services[0].Addr != "dophi_mesh://ipv4:127.0.0.1:16000" {
 		t.Fatalf("unexpected mesh service: %+v", report.Services)
