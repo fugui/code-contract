@@ -14,7 +14,7 @@
 1. **Step 1 - 测试先行 (Red)**：按当前作战卡 `§2 TDD 先行测试矩阵` 编写测试函数。数据库单测强制调用 `testdb.SetupIsolatedDB(t)`（`TEST_DB_DSN` 仅指向 `postgres` 管理库）；内核探针测试强制加 `//go:build linux && ebpf` 标签隔离；测试内临时服务一律绑定 `127.0.0.1`。
 2. **Step 2 - 精简实现 (Green)**：严格按设计文档与 API 契约落地代码：
    - **后端**：13 张核心表 + `contract_settings` 强制 `contract_` 前缀；严禁 `_ = err` 忽略错误；受保护写接口完整接入 RBAC / 公私域 Anti-IDOR 守卫与 `commonAudit` 字段级 Diff 审计。
-   - **数据面防腐**：`cmd/agent` 及 `pkg/{crosrpc,agentproto,ebpf,replay}` 严禁引入 `gorm`、`dynamicpb`/`protoregistry` 或 `os/exec`；`MOCK_MISS` 严禁转发至真实下游。
+   - **数据面防腐**：`cmd/agent` 及 `pkg/{crosrpc,agentproto,csgdlink,rpcmon,csgmock,ebpf,transport,replay}`（九包）严禁引入 `gorm`、`pgx`、`dynamicpb`/`protoregistry`、`protocompile`、`go-git`、CGO 或外部 C++ 探针子进程；`MOCK_MISS` 严禁转发至真实下游。
    - **前端**：仅使用 `--color-*` 语义 Token 与 Flat BEM 类名（禁硬编码 `#fff`/`#000` 及静态内联 `style`）；统一 5 页滑窗 URL 分页（`15/25/50/100`，默认 `25`）；全仓零 `any`、零 `dangerouslySetInnerHTML`/`innerHTML`、零原生 `alert`/`confirm`。
 3. **Step 3 - 门禁验收与交付 (Verify & Push)**：
    - 逐条执行当前作战卡 `§3 验收门禁命令 (AC)` 及 `make test`、`make lint`、`make build && make clean`，确保 100% 零错误零警告；

@@ -224,6 +224,9 @@ func readMeshFrame(reader *bufio.Reader) (meshFrame, error) {
 	if dh.HeadSize != MeshDataHeadLen {
 		return meshFrame{}, fmt.Errorf("rpcmon: unexpected mesh data head size %d", dh.HeadSize)
 	}
+	if dh.SecHeadLen != 0 || dh.MacLen != 0 {
+		return meshFrame{}, fmt.Errorf("rpcmon: encrypted mesh data frame (sec_head=%d mac=%d) unsupported in pure-Go mode", dh.SecHeadLen, dh.MacLen)
+	}
 	if int(dh.MessageSize) > crosrpc.DefaultMaxCaptureBytes {
 		return meshFrame{}, fmt.Errorf("rpcmon: mesh frame size %d exceeds max limit %d", dh.MessageSize, crosrpc.DefaultMaxCaptureBytes)
 	}

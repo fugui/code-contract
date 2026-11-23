@@ -1,9 +1,9 @@
 # M28 作战卡：CSG 现网服务/依赖自动发现与多模式仿真测试闭环
 
-> **文档版本**: v1.0.0  
-> **更新日期**: `2026-11-18`  
+> **文档版本**: v1.1.0  
+> **更新日期**: `2026-11-23`  
 > **所属阶段**: 阶段四（TDD 实施路线与工程作战卡）  
-> **上位基线**: [`ADR-21` (v2.1.0)](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) · [`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (`F-11`~`F-13`, `F-15.5`, `F-27`, `F-33`, `F-34`, `SC-17`) · [`01-system-architecture.md`](../02-design/01-system-architecture.md) · [`02-data-plane-and-cros-rpc-engine.md`](../02-design/02-data-plane-and-cros-rpc-engine.md) (§4~§6) · [`03-architecture-elements-and-topology.md`](../02-design/03-architecture-elements-and-topology.md) (§2.1, §3.4) · [`04-control-plane-and-web-console.md`](../02-design/04-control-plane-and-web-console.md) (§1.2, §1.3, §2.1, §4.11) · [`05-database-schema.md`](../02-design/05-database-schema.md) · [`01-http-api-contract.md`](../03-api/01-http-api-contract.md)  
+> **上位基线**: [`ADR-21` (v2.2.0)](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) · [`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (`F-11`~`F-13`, `F-15.5`, `F-27`, `F-33`, `F-34`, `SC-17`) · [`01-system-architecture.md`](../02-design/01-system-architecture.md) · [`02-data-plane-and-cros-rpc-engine.md`](../02-design/02-data-plane-and-cros-rpc-engine.md) (§4~§6) · [`03-architecture-elements-and-topology.md`](../02-design/03-architecture-elements-and-topology.md) (§2.1, §3.4) · [`04-control-plane-and-web-console.md`](../02-design/04-control-plane-and-web-console.md) (§1.2, §1.3, §2.1, §4.11) · [`05-database-schema.md`](../02-design/05-database-schema.md) · [`01-http-api-contract.md`](../03-api/01-http-api-contract.md)  
 > **前置依赖**: `M27`（Proto 四工作台信息架构已交付）  
 > **交付状态**: ✅ 已交付（`M28-P1`~`M28-P4` 全阶段、前端透视/仿真控制台及 `SC-17` 闭环均已实现并通过全量回归验证，**零新增数据库表**，维持 `30` 核心业务表 + `contract_settings` = `31` 表）
 
@@ -31,7 +31,7 @@
 
 ```mermaid
 flowchart LR
-    P1["M28-P1: 协议与沙箱底座<br/>pkg/csgdlink, pkg/rpcmon,<br/>pkg/csgmock, scripts/csg,<br/>deps_test.go 八包守卫"] --> P2["M28-P2: 双层自动发现与蓝图导入<br/>LocateCSGEndpoints / DiscoverAndFuse,<br/>跨板 LDC 过滤, 三态对账,<br/>POST .../csg/import-blueprint"]
+    P1["M28-P1: 协议与沙箱底座<br/>pkg/csgdlink, pkg/rpcmon,<br/>pkg/csgmock,<br/>deps_test.go 守卫"] --> P2["M28-P2: 双层自动发现与蓝图导入<br/>LocateCSGEndpoints / DiscoverAndFuse,<br/>跨板 LDC 过滤, 三态对账,<br/>POST .../csg/import-blueprint"]
     P1 --> P3["M28-P3: 64B 映射与录制快照<br/>proto_service_name + ServiceAliases,<br/>EgressProxy Observer (0x08),<br/>Session/GoldenSuiteItem csg_snapshots"]
     P2 --> P4["M28-P4: 三模仿真与控制台交付<br/>CLIENT_INJECT / PUB_STUB / MOCK_SERVER,<br/>5 出口自洁, CSGSandboxReport,<br/>/agents 蓝图抽屉 + /replay 策略选择器"]
     P3 --> P4
@@ -39,7 +39,7 @@ flowchart LR
 
 | 子阶段 | 核心范围 | 前置依赖 | 核心质量门禁 |
 | :--- | :--- | :--- | :--- |
-| **`M28-P1`** | `pkg/csgdlink`、`pkg/rpcmon`（标准 `pkg/crosrpc` + 手写 Wire）、`pkg/csgmock`、`scripts/csg`、`deps_test.go` | 无 | `go test -race ./pkg/{csgdlink,rpcmon,csgmock}/...` + `@csg-ver/scripts/e2e.sh` 等价 Go 闭环 + `deps_test.go` 全绿 |
+| **`M28-P1`** | `pkg/csgdlink`、`pkg/rpcmon`（纯 Go `CrosTCP` + 纯 Go `CrosMesh` 128B HELLO + 40B 数据头 + 手写 Wire）、`pkg/csgmock`、`deps_test.go` | 无 | `go test -race ./pkg/{csgdlink,rpcmon,csgmock}/...` + `@csg-ver/scripts/e2e.sh` 等价 Go 闭环 + `deps_test.go` 全绿 |
 | **`M28-P2`** | `internal/agent/csg/locate.go` & `discoverer.go`、Agent `/discover` & `/csg/topology`、Server 三态对账 & `import-blueprint` | `M28-P1` | `709 Server / 724 Client` 真机同构跨板 LDC 夹具全绿 + `testdb` `import-blueprint` RBAC/幂等/审计全绿 |
 | **`M28-P3`** | `models` 轻量加列（0 新表）、`decoder.Registry.Reload()` `ServiceAliases` + PID 归一化、`csgdlink.Observer` (`0x08`) | `M28-P1` | `64B` 名解码与 Diff 100% 命中 + 混跑 `"DLNK"` 录制零 `StreamFramer` 报错 + `csg_snapshots` 落盘单测全绿 |
 | **`M28-P4`** | `internal/agent/csg/sim_controller.go`（三模策略 + 五出口清理）、`diff.ReplayScheduler` / `F-27`、`frontend` UI 与 Vitest | `M28-P2`, `M28-P3` | 三模 E2E 单测全绿 + 前端 Vitest / Token 扫描全绿 + `SC-17` & `make test && make lint && make build` 零警告 |
@@ -51,9 +51,8 @@ flowchart LR
 | 分层 | 目标文件路径 | 职责与核心约束 |
 | :--- | :--- | :--- |
 | **Agent 协议/沙箱包** | `pkg/csgdlink/{protocol,instance,client,observer}.go`<br>`pkg/csgdlink/csgdlink_test.go` | 纯 Go 标准库：32B `DDM_DLINK_MSG_HEAD_S`、248B `CSG_SERVICE_INST_INFO_S`（`CString` 首个 `\x00` 截断）、10 类控制消息 + 2 类 `NOTIFY`、`Client`（`OnNotify` 回调 + `Sub` 立即 `Unsub`）、`RewriteMeshAddrToTCP` 与旁路 `Observer` |
-| **Agent 监控通信包** | `pkg/rpcmon/{model,wire,cros_transport,native,server,report}.go`<br>`pkg/rpcmon/rpcmon_test.go` | 统一 `Snapshot` / `Provider` / `Backend`；纯 Go 手写 Wire 编解码 `RPCMonitorServiceMsg.proto`；基于 `pkg/crosrpc` 标准帧实现 `CrosTCPBackend` 与 `Server`（零 `RMON` 帧）；`NativeBackend`（受控白名单路径 + `^ipv4:[0-9.]+:[0-9]{1,5}$` 参数调用 `rpcmon_probe` 解析 JSON） |
+| **Agent 监控通信包** | `pkg/rpcmon/{model,wire,cros_transport,mesh_protocol,mesh_transport,server,report}.go`<br>`pkg/rpcmon/rpcmon_test.go` | 统一 `Snapshot` / `Provider` / `Backend`；纯 Go 手写 Wire 编解码 `RPCMonitorServiceMsg.proto`；基于 `pkg/crosrpc` 标准帧实现 `CrosTCPBackend` 与 `Server`（零 `RMON` 帧）；纯 Go `CrosMeshBackend` & `Server.ServeMesh`（4 次 128B `MESH_SEC_HELLO` 握手 + 40B `MESH_MSG_DATA_HEAD_S` + CROS `ucProtocol=4`，彻底移除外部 C++ 探针） |
 | **Agent 控制面沙箱** | `pkg/csgmock/mockserver.go`<br>`pkg/csgmock/mockserver_test.go` | 内存态 `MockCSGServer`：预载 `Preload`、`SUB` 按 `^(.+-\d+)-(\d+)$` 模板匹配与 `RewriteMeshToTCP`（保留原 `IP:PORT`）、`Mesh-only SUB` 触发 `OnMeshOnlySub`、`PUB`/`UNPUB` 吞吐、`GET_BIND_ADDR` 固定端口、`ServeConn` 进程内分流、`defer` 断链清理与 `Snapshot() rpcmon.Snapshot`（禁依 `pkg/ebpf`） |
-| **真机只读探针资产** | `scripts/csg/rpcmon_probe.cpp`<br>`scripts/csg/build-native-probe.sh` | 从 `@csg-ver/native/` 迁入的 ~170 行只读 C++ 探针源码与编译脚本；独立编译产出，不静态链接进 Go 二进制 |
 | **Agent 核心发现与仿真** | `internal/agent/csg/{locate,discoverer,sim_controller}.go`<br>`internal/agent/csg/*_test.go`<br>`internal/agent/server/http_server.go`<br>`pkg/agentproto/protocol.go`<br>`pkg/replay/executor.go`<br>`cmd/agent/deps_test.go` | 多租户 `[31800, 31900]` 定位、`DiscoverAndFuse` 跨板 LDC 过滤、`/agent/v1/csg/topology`、增强 `/discover`/`/handshake`/`/monitors/sync`/`/replays/execute`/`/replays/:taskId/result`；三模仿真编排 + 五出口清理；`deps_test.go` 纳入 `./pkg/csgdlink`、`./pkg/rpcmon`、`./pkg/csgmock` |
 | **Server 数据模型与解码** | `models/{db,arch,recording,replay,golden_suite}.go`<br>`internal/server/decoder/registry.go`<br>`internal/server/hub/agent_client.go`<br>`internal/server/topology/csg_reconcile.go`<br>`internal/server/recorder/orchestrator.go`<br>`internal/server/diff/scheduler.go` | 0 新表：4 张既有表轻量加列迁移与约束；`Reload()` 将 `ProtoServiceName` 注入 `ServiceAliases` 并归一化 PID 后缀；消费 `0x08 EVENT_CSG_OBSERVATION` 更新 `csg_snapshots`；三态对账与 `import-blueprint` 单事务构建；`ReplayScheduler` / `F-27` 透传 `csg_strategy` 与审计 `csg_sandbox_report` |
 | **Server API 控制器** | `handlers/{arch,agent,recording,replay,golden_suite,gate}_handler.go`<br>`handlers/csg_discovery_handler.go`<br>`handlers/routes.go`<br>`handlers/*_test.go` | `GET /api/agents/:id/csg/topology`（`ScopeReadGuard`）、`POST /api/agents/:id/csg/import-blueprint`（`AdminOnly` + `commonAudit`）、`ModuleService` 可选 `proto_service_name`、`ReplayTask`/`GoldenSuite`/`GateEvaluate` 扩展及 `409 CSG_SERVICE_ALREADY_PUBLISHED` / `422 CSG_DATAPLANE_MESH_UNSUPPORTED` 映射 |
@@ -73,7 +72,7 @@ flowchart LR
 2. **`pkg/rpcmon` 与 `pkg/crosrpc` 对齐规范**：
    - **彻底废除 12B 私有 `"RMON"` 帧**：`CrosTCPBackend` 与 `Server` 直接使用 `crosrpc.StreamFramer` 解析请求、使用 `BuildCrosReqPacket` / `BuildCrosRspPacket` 构造 `24B "CSE.TCP"\x01` + `V05 Req` (`256B`) / `V04 Rsp` (`200B`) 帧，依据 `ascServiceName = "RPCMonitorService-RPCMonitorService"` 与 5 个标准 `OpGetRpc*` 分发；
    - **纯 Go Wire 编解码**：按 `RPCMonitorServiceMsg.proto` 字段编号手写 `Encode*/Decode*` 函数，严禁导入 `google.golang.org/protobuf` 运行时；
-   - **`NativeBackend` 安全调用守卫**：执行 `rpcmon_probe` 前核验可执行路径位于白名单且非符号链接，参数严格正则校验 `^ipv4:[0-9.]+:[0-9]{1,5}$`，丢弃 DOPRA stdout 环境初始化杂音，从首个 `{` 起反序列化 JSON。
+   - **纯 Go `CrosMeshBackend` 与安全边界**：实现 4 次 128B `MESH_SEC_HELLO_MSG_INFO_S` (`0xEFBC`) 握手与 40B `MESH_MSG_DATA_HEAD_S` (`0x2019AAAA`) 数据头封装（内层 CROS `ucProtocol=4`），单连接复用查询全部 5 个接口，首个 NUL 截断防栈污染，显式拦截 `sec_opt != 0` 加密与 `0x2019BBBB` 批量帧，彻底移除外部 C++ 探针子进程。
 3. **`pkg/csgmock.MockCSGServer` 规范**：
    - 支持全量 10 类消息 + `NOTIFY`；`ServeConn` `defer` 按连接会话 `clientID` 清理发布的 `reg` 实例（对齐 `csgServerLinkFaultProc`）；
    - `StartMonitor(addr)` 启动标准 `rpcmon.Server` 后自动向 `reg` 注册 `"RPCMonitorService-RPCMonitorService"` -> `"tcp://ipv4:" + monAddr`；
@@ -122,7 +121,7 @@ flowchart LR
 | 阶段 | 测试文件 | 核心测试用例与必须验证的断言 |
 | :--- | :--- | :--- |
 | **`M28-P1`** | `pkg/csgdlink/csgdlink_test.go` | `TestDlinkFrameAndInstanceCodec`（32B BE 头/248B 实例/`CString` 首 `\x00` 截断）、`TestDlinkClient_NotifyInterleavedInRoundTrip`（`NOTIFY` 不打断 `REPLY` 配对）、`TestDlinkObserver_NonIntrusiveSubAckCapture` |
-| **`M28-P1`** | `pkg/rpcmon/rpcmon_test.go` | `TestWireCodec_PortServerClientRoundtrip_ZeroProtoregistry`、`TestCrosTCPBackend_StandardCrosFrameOverLoopback`（100% 验证 `"CSE.TCP"\x01` + `V05`/`V04` + 5 Op 分发，零 `"RMON"` 帧）、`TestNativeBackend_ArgAllowlistAndJsonPrefixSkip`（非法 `csg_addr` 不触发进程执行；前置 DOPRA 日志跳过） |
+| **`M28-P1`** | `pkg/rpcmon/rpcmon_test.go` | `TestWireCodec_PortServerClientRoundtrip_ZeroProtoregistry`、`TestCrosTCPBackend_StandardCrosFrameOverLoopback`（100% 验证 `"CSE.TCP"\x01` + `V05`/`V04` + 5 Op 分发，零 `"RMON"` 帧）、`TestMeshProtocol_HelloAndDataHeadRoundTrip_FirstNulTruncation`、`TestCrosMeshBackend_HandshakeAndAll5OpsReuseConn`、`TestCrosMeshBackend_RejectsEncryptedSecOptAndBatchFrame` |
 | **`M28-P1`** | `pkg/csgmock/mockserver_test.go` | `TestMockCSGServer_E2E_PubSubCrosRPC_AndRpcmonAll`（**1:1 复刻 `@csg-ver/scripts/e2e.sh` 闭环**：启动 `MockCSGServer` + 模拟 `PUB` 服务 + 模拟 `SUB`+CROS RPC 客户端 + `rpcmon.BuildReport("all")` 断言 `ServerNum=1, ClientNum=1, Ports=1`）、`TestMockCSGServer_PidSuffixMatchAndMeshRewritePreservesAddr`、`TestMockCSGServer_CleanOnConnDrop_AndZeroRealLeak` |
 | **`M28-P1`** | `cmd/agent/deps_test.go` | `TestAgentDependencies_NoGormNoDynamicPBNoServer`（将 `./pkg/csgdlink`、`./pkg/rpcmon`、`./pkg/csgmock` 纳入检查清单，断言零 `gorm`/`pgx`/`dynamicpb`/`protoregistry`/`protocompile`/`go-git`/`sqlite`） |
 | **`M28-P2`** | `internal/agent/csg/discoverer_test.go` | `TestLocateCSGEndpoints_MultiTenantPriority`、`TestDiscoverAndFuse_709Servers724Clients_RemoteLDCFiltered`（构造 265 本机 + 442 跨板 `10.1.126.150` + 724 订阅真机同构夹具，断言跨板 100% 隔离、纯客户端与 `dophi_mesh://` 进程精确补齐、剔除 `rpcmon_probe` 自身订阅） |

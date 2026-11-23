@@ -1,14 +1,14 @@
 # ADR-21：基于 `@csg-ver` 现网实证的 CSG 服务与依赖拓扑自动发现及多模式仿真测试架构
 
 - **文档编号**：`21-csg-aware-agent-service-discovery-and-replay-mock-adr.md`
-- **文档版本**：v2.1.0（基于 [`csg-ver`](../../../csg-ver/) 现网真机验证重构，并与 [`01-cros-rpc-protocol-spec.md`](../07-references/01-cros-rpc-protocol-spec.md) / `pkg/crosrpc` 100% 协议对齐）
-- **日期**：2026-11-18
-- **状态**：✅ 已采纳 (Accepted — v2.1.0)
-- **验证基线**：[`csg-ver/`](../../../csg-ver/)（含 [`docs/protocol.md`](../../../csg-ver/docs/protocol.md)、[`docs/rpcmonitor.md`](../../../csg-ver/docs/rpcmonitor.md)、`internal/{csgdlink,rpcmon,csgmock,server}`、`native/rpcmon_probe.cpp`、`cmd/{rpcmonitor,csgmockserver,csgserver,csgclient}`，已在本地 E2E 与现网 `10.29.92.80:31806` 实测闭环）
-- **关联特性**：`F-02`（物理进程蓝图与模块服务契约）、`F-05`（实测调用拓扑还原与一致性验证）、`F-08`（进程树选择与就绪诊断）、`F-09` / `F-11`（Agent 采集与出站透明代理）、`F-12`（同构重放编排）、`F-13`（Agent 零 `.pb` 二进制 Mock 匹配与自愈）、`F-23`（主动发包调试）、`F-33`（CSG 现网服务与依赖双层自动发现及蓝图导入）、`F-34`（CSG 三模渐进式仿真测试架构）
+- **文档版本**：v2.2.0（基于 [`csg-ver`](../../../csg-ver/) 现网真机验证重构，与 [`01-cros-rpc-protocol-spec.md`](../07-references/01-cros-rpc-protocol-spec.md) / `pkg/crosrpc` 100% 协议对齐，并落地纯 Go `CrosMeshBackend` 128B HELLO + 40B 数据头闭环，彻底移除外部 C++ 探针）
+- **日期**：2026-11-23
+- **状态**：✅ 已采纳并演进 (Accepted — v2.2.0)
+- **验证基线**：[`csg-ver/`](../../../csg-ver/)（含 [`docs/protocol.md`](../../../csg-ver/docs/protocol.md)、[`docs/rpcmonitor.md`](../../../csg-ver/docs/rpcmonitor.md)、`internal/{csgdlink,rpcmon,csgmock,server}`、`cmd/{rpcmonitor,csgmockserver,csgserver,csgclient}`，已在本地 E2E 与现网 `10.29.92.80:31806` 实测闭环；原型期 C++ 探针已被纯 Go `pkg/rpcmon.CrosMeshBackend` 全面取代）
+- **关联特性**：`F-02`（物理进程蓝图与模块服务契约）、`F-05`（实测调用拓扑还原与一致性验证）、`F-08`（进程树选择与就绪诊断）、`F-09` / `F-11`（Agent 采集与出站透明代理）、`F-12`（同构重放编排）、`F-13`（Agent 零 `.pb` 二进制 Mock 匹配与自愈）、`F-23`（主动发包调试）、`F-33`（CSG 现网服务与依赖双层自动发现及蓝图导入）、`F-34`（CSG 三模渐进式仿真测试架构）、`F-35`（纯 Go 可插拔传输驱动与 `dophi_mesh` 采集 ➔ TCP 重放闭环）
 - **关联设计**：[`01-cros-rpc-protocol-spec.md`](../07-references/01-cros-rpc-protocol-spec.md)、[`01-system-architecture.md`](../02-design/01-system-architecture.md)、[`02-data-plane-and-cros-rpc-engine.md`](../02-design/02-data-plane-and-cros-rpc-engine.md)、[`03-architecture-elements-and-topology.md`](../02-design/03-architecture-elements-and-topology.md)、[`04-control-plane-and-web-console.md`](../02-design/04-control-plane-and-web-console.md)、[`05-database-schema.md`](../02-design/05-database-schema.md)
-- **关联任务卡**：[`29-m28-csg-service-discovery-and-multi-mode-simulation.md`](../04-tasks/29-m28-csg-service-discovery-and-multi-mode-simulation.md)
-- **关联 ADR**：[`ADR-02`](./02-ebpf-hook-and-dual-subsystem-adr.md)、[`ADR-09`](./09-arch-process-ssot-and-ebpf-premount-standby-adr.md)、[`ADR-11`](./11-single-process-bidirectional-capture-and-recording-ux-adr.md)、[`ADR-16`](./16-multi-implementation-service-contract-adr.md)
+- **关联任务卡**：[`29-m28-csg-service-discovery-and-multi-mode-simulation.md`](../04-tasks/29-m28-csg-service-discovery-and-multi-mode-simulation.md)、[`30-m29-pluggable-transport-and-mesh-uprobe-capture.md`](../04-tasks/30-m29-pluggable-transport-and-mesh-uprobe-capture.md)
+- **关联 ADR**：[`ADR-02`](./02-ebpf-hook-and-dual-subsystem-adr.md)、[`ADR-09`](./09-arch-process-ssot-and-ebpf-premount-standby-adr.md)、[`ADR-11`](./11-single-process-bidirectional-capture-and-recording-ux-adr.md)、[`ADR-16`](./16-multi-implementation-service-contract-adr.md)、[`ADR-22`](./22-pluggable-transport-driver-and-mesh-capture-adr.md)、[`ADR-23`](./23-dophi-mesh-uprobe-bypass-capture-adr.md)
 
 ### 修订记录
 
@@ -16,7 +16,8 @@
 | :--- | :--- | :--- |
 | v1.0.0 ~ v1.9.0 | 2026-11-16 ~ 11-17 | 早期探索稿：基于“CSG 无法枚举服务与订阅者”的前置假设设计了种子轮询与单一 eBPF 重启劫持方案，历经 9 轮局部补丁后结构碎片化 |
 | v2.0.0 | 2026-11-18 | **基于 `@csg-ver` 现网验证推倒重构**：回归「**现网服务自动发现**」与「**现网服务仿真测试**」两大原始诉求，确立「`RPCMonitorService` 全量拓扑枚举 + `csgdlink.Sub` 精确端点富化」双层自动发现引擎，以及「`CLIENT_INJECT` + `PUB_STUB` + `MOCK_SERVER`」三模渐进式仿真测试架构 |
-| **v2.1.0** | **2026-11-18** | **与 `01-cros-rpc-protocol-spec.md` (`pkg/crosrpc`) 全面协议对齐核验**：1. 新增 §3.6「控制面 `dlink` 与数据面 `CROS RPC` 双平面协议关系及字段级对齐矩阵」；2. **彻底清除 `@csg-ver` 中的两处临时演示协议**（剔除 `internal/hello` 的 4B 长度前缀帧与 `internal/rpcmon/transport.go` 的 12B `"RMON"` `0x524D4F4E` 私有帧），将 `pkg/rpcmon` 的 TCP 服务端/客户端统一建立在 **`pkg/crosrpc` 标准帧（`24B RPC_COMM_HEAD_S "CSE.TCP"\x01` + `256B V05 RPC_REQ_HEAD_S` / `200B V04 RPC_RSP_HEAD_S` + Protobuf Payload，按 `ascServiceName = "RPCMonitorService-RPCMonitorService"` 与 `ascOperation = "GetRpc*"` 分发）** 之上；3. `MockCSGServer.StartMonitor` 自动将 `RPCMonitorService-RPCMonitorService` 注册进自身 CSG 实例表，实现「`csgdlink.Sub` 发现地址 ➔ `pkg/crosrpc` 标准报文调用」的 100% 真实协议闭环。**评审通过，正式进入 SDD 详细设计、API 契约冻结与 M28 任务拆解阶段。** |
+| v2.1.0 | 2026-11-18 | **与 `01-cros-rpc-protocol-spec.md` (`pkg/crosrpc`) 全面协议对齐核验**：1. 新增 §3.6「控制面 `dlink` 与数据面 `CROS RPC` 双平面协议关系及字段级对齐矩阵」；2. **彻底清除 `@csg-ver` 中的两处临时演示协议**（剔除 `internal/hello` 的 4B 长度前缀帧与 `internal/rpcmon/transport.go` 的 12B `"RMON"` `0x524D4F4E` 私有帧），将 `pkg/rpcmon` 的 TCP 服务端/客户端统一建立在 **`pkg/crosrpc` 标准帧（`24B RPC_COMM_HEAD_S "CSE.TCP"\x01` + `256B V05 RPC_REQ_HEAD_S` / `200B V04 RPC_RSP_HEAD_S` + Protobuf Payload，按 `ascServiceName = "RPCMonitorService-RPCMonitorService"` 与 `ascOperation = "GetRpc*"` 分发）** 之上；3. `MockCSGServer.StartMonitor` 自动将 `RPCMonitorService-RPCMonitorService` 注册进自身 CSG 实例表，实现「`csgdlink.Sub` 发现地址 ➔ `pkg/crosrpc` 标准报文调用」的 100% 真实协议闭环。 |
+| **v2.2.0** | **2026-11-23** | **纯 Go `CrosMeshBackend` 闭环落地与外部 C++ 探针彻底移除（协同 `ADR-22 v2.0` & `ADR-23 v1.1`）**：1. 在 `pkg/rpcmon`（`mesh_protocol.go` & `mesh_transport.go`）中实现纯 Go `CrosMeshBackend`（**4 次 128B `MESH_SEC_HELLO_MSG_INFO_S` 握手 + 40B `MESH_MSG_DATA_HEAD_S` (`0x2019AAAA`) + CROS `ucProtocol=4`**，单连接复用 5 个 `GetRpc*` 接口，显式拦截 `sec_opt != 0` 加密与 `0x2019BBBB` 批量帧），Agent 经 `csgdlink.ResolveServiceInstances` 自动分流 `CROSTCP_RPCMON` 与 `CROSMESH_RPCMON`（支持 TCP➔Mesh 自动回退）；2. **彻底删除 `pkg/rpcmon/native.go`、`scripts/csg/{rpcmon_probe.cpp,build-native-probe.sh}`、`NATIVE_PROBE` 及 `--csg-probe-bin`/`--csg-probe-allowed-dirs`**，全栈实现 100% 纯 Go 单二进制、零外部子进程；3. 对齐 `ADR-22 v2.0` & `ADR-23 v1.1` 更新 D8、§5.4 与 §10（`dophi_mesh` 采集由 `builtin-drt-uprobe` 完成，重放由 `MOCK_SERVER` 改写 `dophi_mesh:// -> tcp://` 并原地归一化 `ucProtocol: 4 -> 1` 放行，仅 `CLIENT_INJECT` 目标在线纯 Mesh 无 TCP 监听时返 `422`）。 |
 
 ---
 
@@ -54,12 +55,12 @@
 
 ```mermaid
 flowchart LR
-    subgraph CSGVer["@csg-ver 已验证的四大核心原语"]
+    subgraph CSGVer["@csg-ver 验证并收敛至纯 Go 的四大核心原语"]
         direction TB
-        P1["1. internal/rpcmon + native/rpcmon_probe.cpp<br/>RPCMonitorService 只读全量查询<br/>(Backend 统一抽象: native 真机 / e2e Mock)"]
-        P2["2. internal/csgdlink<br/>纯 Go dlink/CSG 控制面协议栈<br/>(Register / ClientID / Pub / Sub / Unpub / Unsub)"]
-        P3["3. internal/csgmock (cmd/csgmockserver)<br/>内存态 CSG 控制面 Mock 服务端<br/>(内置 rpcmon.Server 暴露同构监控口)"]
-        P4["4. cmd/csgclient & cmd/csgserver<br/>CSG 寻址调用方与服务发布方闭环<br/>(真机 10.29.92.80:31806 实测通过)"]
+        P1["1. pkg/rpcmon (CrosTCP + CrosMesh)<br/>RPCMonitorService 纯 Go 只读全量查询<br/>(128B HELLO + 40B 数据头 / 标准 CROS TCP)"]
+        P2["2. pkg/csgdlink<br/>纯 Go dlink/CSG 控制面协议栈<br/>(Register / ClientID / Pub / Sub / Unpub / Unsub)"]
+        P3["3. pkg/csgmock (MockCSGServer)<br/>内存态 CSG 控制面 Mock 服务端<br/>(内置 rpcmon.Server 暴露 TCP/Mesh 同构监控口)"]
+        P4["4. internal/agent/csg<br/>CSG 寻址调用方与服务发布方闭环<br/>(真机 10.29.92.80:31806 实测通过)"]
     end
 
     P1 ==>|"单次调用 (<1s) 返回:<br/>709 服务实例 + 724 客户端订阅 + 端口池"| Goal1["🎯 诉求一：现网服务与依赖自动发现"]
@@ -73,9 +74,9 @@ flowchart LR
 
 1. **`RPCMonitorService` 是现网全量服务与订阅拓扑的权威入口（【真机已验证】）**：
    - `DophiServer` 原生发布 `RPCMonitorService-RPCMonitorService`（定义于 `swp/platform/rpc/rpcf/pg/RPCMonitorService.proto`，后端调用 `CSG_ServerPubNumGet/PubInfoGet`、`CSG_ServerSubNumGet/SubInfoGet`、`CSG_ServerIpNumGet/PortUsageGet`）。
-   - 通过 `@csg-ver/native/rpcmon_probe.cpp`（链接宿主机 `~/SW` SDK，严格只读）在 `10.29.92.80:31806` 实测，单次执行即完整返回：
+   - **通过纯 Go `pkg/rpcmon`（`CrosMeshBackend` / `CrosTCPBackend`）**在 `10.29.92.80:31806` 实测（早期 `@csg-ver` 原型曾用只读 C++ 探针验证，现已彻底收敛为纯 Go 4 次 128B HELLO + 40B 数据头 + CROS `ucProtocol=4` 直连），单次执行即完整返回：
      - **`serverNum = 709`（`servers[]`）**：每条含 `{ procName, pid, serverName, serverAddr }`；
-     - **`clientNum = 724`（`clients[]`）**：每条含 `{ procName, pid, clientAddr, serverName }`（连探针进程 `rpcmon_probe` 自身订阅 `RPCMonitorService-RPCMonitorService` 亦实时在列，形成自证闭环）；
+     - **`clientNum = 724`（`clients[]`）**：每条含 `{ procName, pid, clientAddr, serverName }`（连查询会话自身订阅 `RPCMonitorService-RPCMonitorService` 亦实时在列，形成自证闭环）；
      - **`portInfo[]`**：本机 `10.29.92.80` 端口池占用 `81 / 1200`，跨板 LDC 远端节点 `10.1.126.150` 端口池占用 `101 / 1200`。
 2. **`RPCMonitorService` 与 `csgdlink.Sub` 天然互补（【真机已验证】）**：
    - 真机实测发现（见 [`csg-ver/docs/rpcmonitor.md` §6](../../../csg-ver/docs/rpcmonitor.md)）：`RPCMonitorService.GetRpcServerDetailInfo` 返回的 `serverAddr` 在真机上**通常只有节点 IP（如 `"10.29.92.80"` 或 `"10.1.126.150"`）**，不含传输协议前缀（`tcp://` / `dophi_mesh://`）与具体端口号；
@@ -95,14 +96,14 @@ flowchart LR
 
 | 编号 | 决策领域 | 选定方案 (v2.0) | 依据与核心收益 |
 | :--- | :--- | :--- | :--- |
-| **D1** | **包结构与物理防腐** | 将 `@csg-ver` 提炼沉淀为 `code-contract` 的三个纯 Go 基础包：<br>1. `pkg/csgdlink`：dlink 帧与 CSG 消息编解码、客户端连接会话；<br>2. `pkg/rpcmon`：`RPCMonitorService` 统一数据模型、`Backend` 接口（`NativeBackend` + `E2EBackend`）与轻量 Protobuf Wire 编解码（**零 `protoregistry` 依赖**）；<br>3. `pkg/csgmock`：内存态 `MockCSGServer`（实现 `rpcmon.Provider`）；<br>配合可选额外部署的 C++ 只读探针源码 `scripts/csg/rpcmon_probe.cpp` | 保持 `cmd/agent` 纯 Go 零 CGO、零 DB、零 `dynamicpb`/`protoregistry` 物理防腐红线（通过 `cmd/agent/deps_test.go`），同时让 Agent 与 Server 共享同一套 CSG 协议与监控模型 |
-| **D2** | **现网自动发现机制** | 采用 **「L1 全量拓扑快照 (`rpcmon`) + L2 按需端点富化 (`csgdlink.Sub`) + L3 本机 `/proc` 融合」双层协同发现架构**，彻底废除 v1 的“种子池 20 QPS 轮询”模式：<br>- **L1**：通过 `rpcmon.Backend` 一次性获取全量 `Servers`（700+）、`Clients`（700+）与 `Ports`；<br>- **L2**：针对真机 `Servers[].ServerAddr` 仅含 IP 的特征，仅对本机进程发布的服务或待测目标服务按需调用 `csgdlink.Client.Sub(svcName)`（随后立即 `Unsub`）解析完整 `tcp://ipv4:ip:port` / `dophi_mesh://...`；<br>- **降级兜底**：未安装 `rpcmon_probe` 的环境自动回退为「SSOT 已知服务名 `csgdlink.Sub` + `EgressProxy` dlink 旁路被动观测」 | 1 秒内拿到全机服务清单与**完整客户端订阅关系（谁调谁）**，无需猜测种子名、无需等待业务流量触发，也将对真实 CSG 的 `SUB/UNSUB` 次数从每分钟 800+ 次降低一个数量级 |
+| **D1** | **包结构与物理防腐** | 将 `@csg-ver` 提炼沉淀为 `code-contract` 的三个纯 Go 基础包：<br>1. `pkg/csgdlink`：dlink 帧与 CSG 消息编解码、客户端连接会话；<br>2. `pkg/rpcmon`：`RPCMonitorService` 统一数据模型、`Backend` 接口（纯 Go `CrosTCPBackend` + 纯 Go `CrosMeshBackend`）与轻量 Protobuf Wire 编解码（**零 `protoregistry` 依赖、零外部 C++ 探针子进程**）；<br>3. `pkg/csgmock`：内存态 `MockCSGServer`（实现 `rpcmon.Provider`） | 保持 `cmd/agent` 100% 纯 Go 单二进制、零 CGO、零 DB、零 `dynamicpb`/`protoregistry`、零外部子进程物理防腐红线（通过 `cmd/agent/deps_test.go`），同时让 Agent 与 Server 共享同一套 CSG 协议与监控模型 |
+| **D2** | **现网自动发现机制** | 采用 **「L1 全量拓扑快照 (`rpcmon`) + L2 按需端点富化 (`csgdlink.Sub`) + L3 本机 `/proc` 融合」双层协同发现架构**，彻底废除 v1 的“种子池 20 QPS 轮询”模式：<br>- **L1**：先经 `csgdlink.ResolveServiceInstances` 解析 `RPCMonitorService-RPCMonitorService` 的 `tcp://` 或 `dophi_mesh://` 实例地址，自动分流至纯 Go `CrosTCPBackend`（`CROSTCP_RPCMON`）或纯 Go `CrosMeshBackend`（`CROSMESH_RPCMON`，4 次 128B HELLO + 40B 数据头 + CROS `ucProtocol=4`，支持 TCP➔Mesh 自动回退），单连接复用一次性获取全量 `Servers`（700+）、`Clients`（700+）与 `Ports`；<br>- **L2**：针对真机 `Servers[].ServerAddr` 仅含 IP 的特征，仅对本机进程发布的服务或待测目标服务按需调用 `csgdlink.Client.Sub(svcName)`（随后立即 `Unsub`）解析完整 `tcp://ipv4:ip:port` / `dophi_mesh://...`；<br>- **降级兜底**：当目标环境无可达 CSG 或 `RPCMonitorService` 未发布时，降级为 `PROC_ONLY` 并在 `report.Errors` 中透出明确诊断原因 | 1 秒内拿到全机服务清单与**完整客户端订阅关系（谁调谁）**，无需部署任何外部 C++ 探针、无需猜测种子名、无需等待业务流量触发，也将对真实 CSG 的 `SUB/UNSUB` 次数从每分钟 800+ 次降低一个数量级 |
 | **D3** | **多租户 CSG 寻址与跨板 LDC 隔离** | 1. **多租户寻址**：按「一部署用户（OS 租户）一套 `DophiServer` 栈（`port = 31800 + userId`）」建模，支持显式 `--csg-addr`、从纳管进程已建立 TCP 连接识别 `[31800, 31900]` 对端、或扫描本机 `DophiServer` 监听端口并按 `OwnerUID` 归属；<br>2. **跨板 LDC 隔离**：依据 `Ports`、`Servers[].ServerAddr`、`Clients[].ClientAddr` 与本机网卡 IPv4 集合比对，显式标记跨板 LDC 远端实例（如 `10.1.126.150`），仅对本机 IP 实例执行 `pid == proc.PID` 宿主机进程绑定 | 适配单机并发多租户栈（如 `10.29.92.80` 上 `31802~31811` 5 套栈），并杜绝跨板 LDC 同步实例（占比可达 60%+）与本机 PID 发生碰撞误判 |
 | **D4** | **架构 SSOT 自动对账与一键蓝图导入** | 基于自动发现产出的「本机进程 `(procName, pid)` + 提供服务 `Servers` + 订阅依赖 `Clients`」，在控制面直接与 `ArchProcess` / `Module` / `ModuleService (PROVIDE)` / `ModuleDependency (DEPEND)` 执行三态对账（`MATCHED` / `UNDECLARED_IN_SSOT` / `MISSING_IN_LIVE`），并提供管理员确认的 **「一键从现网 CSG 生成/同步架构蓝图」** 接口 | 彻底解决存量大型系统接入 `code-contract` 的冷启动建模难题：无需先抓包即可构建初始物理进程蓝图、模块供给契约与模块间调用依赖 |
 | **D5** | **服务名同一性与 `.pb` 解码映射** | 1. 确认 CSG `acServiceName[64]` 与 CROS RPC `ascServiceName[64]` 为**同一个 64B 运行期字符串**（`<ClassName[:31]>-<svrName[:31]>` 或 `<svrName>`）；<br>2. 演进 `A-07`：`ModuleService.service_name` 登记运行期实际 64B 服务名（如 `RPCMonitorService-RPCMonitorService`），`contract_module_services` 新增可选列 `proto_service_name`（如 `swp.rpc.RPCMonitorService`）注入 `decoder.Registry.ServiceAliases`；<br>3. 对带运行期 PID 后缀的服务名（如 `SSPMonitorService-SSPMonitorService-1-52341`）支持 `^(.+-\d+)-(\d+)$` 模板归一化 | 既保持运行期采集、发现、重放 100% 使用线网真实 64B 名称，又让 `.pb` 动态解码与字段级 Diff（`F-14`）无缝命中 Protobuf 描述集 |
 | **D6** | **三模渐进式仿真测试架构** | 摒弃 v1 单一僵化的重放模式，基于 `@csg-ver` 原语提供三种可按场景组合的 CSG 仿真策略（外加默认 `PASSTHROUGH`）：<br>1. **`CLIENT_INJECT`（寻址调用仿真，源自 `csgclient`）**：`ReplayExecutor` 注入入站请求前通过 `csgdlink.Sub(svcName)` 动态解析被测服务当前 `tcp://ipv4:ip:port`，免除静态端口绑定与被测进程重启；<br>2. **`PUB_STUB`（受控桩服务注册，源自 `csgserver`）**：在个人租户栈或测试环境中，若前置 `Sub(svcName)` 确认目标下游服务当前**未在线（实例数 = 0）**，Agent 启动本地 Mock 监听并通过 `Pub(svcName, "tcp://ipv4:"+mockAddr)`（严禁调 `GET_BIND_ADDR`）注册替身，测试结束自动 `Unpub`；<br>3. **`MOCK_SERVER`（全隔离控制面沙箱，源自 `csgmockserver`）**：当同名下游已在线或处于无真实 CSG 的环境时，通过 `EgressProxy`（或独立监听端口）将 CSG 控制面导向内置 `MockCSGServer`（回放快照、吞掉 `PUB`、固定分配端口），配合数据面 `ScopedMockMatcher` 实现 100% 脱机沙箱仿真 | 用最轻量的手段解决最常见的测试诉求：单服务入站回归用 `CLIENT_INJECT`（零重启）；缺席下游联调用 `PUB_STUB`（零 eBPF 重启竞态）；全隔离回归与 CI 门禁用 `MOCK_SERVER` |
 | **D7** | **真机与沙箱统一监控口 (`rpcmon.Provider`)** | `pkg/csgmock.MockCSGServer` 原生实现 `rpcmon.Provider`（`Snapshot() rpcmon.Snapshot`）并支持挂载 `rpcmon.Server`；在 `MOCK_SERVER` 仿真结束时，自动导出沙箱内的 `Servers`（被测进程发布的实例）与 `Clients`（被测进程订阅的下游服务）写入重放报告 | 使真机环境与 Mock 沙箱拥有完全同构的可观测性，且在重放门禁（`F-27`）中不仅能审计实测 RPC 调用，还能审计被测进程的控制面订阅（`SUB`）合规性 |
-| **D8** | **传输协议边界与显式诊断** | 自动发现（`rpcmon` + `csgdlink.Sub`）全量支持 `tcp://` 与 `dophi_mesh://`；数据面仿真与报文注入仅针对 `tcp://`（支持对 `tcp://` 订阅方将快照中的 `dophi_mesh://ipv4:IP:PORT` 重写为 `tcp://ipv4:IP:PORT` 以保留 `dst_tag`），遇纯 `dophi_mesh://` 订阅（`Trans[1]==0 && Trans[4]==1`）立即返回 `CSG_DATAPLANE_MESH_UNSUPPORTED` 明确诊断 | 边界清晰诚实：不强行向纯 `dophi_mesh://` 客户端返回会被其 `csgSvcInstInfoAddLocal` 丢弃的 `tcp://` 地址，杜绝静默失败 |
+| **D8** | **传输协议边界与跨传输闭环（经 `ADR-22 v2.0` & `ADR-23 v1.1` 演进）** | 自动发现（`rpcmon` `CrosTCP`/`CrosMesh` + `csgdlink.Sub`）与数据面录制（`builtin-tcp` Socket eBPF + `builtin-drt-uprobe` `libdopra.so:DRT_WriteBulk` 内核 uprobe）全量支持 `tcp://` 与 `dophi_mesh://`；仿真重放统一收敛至 `tcp://`（`MOCK_SERVER` 自动将快照中的 `dophi_mesh://ipv4:IP:PORT` 重写为 `tcp://ipv4:IP:PORT` 保留 `dst_tag` 并放行 `Trans[4]==1` 订阅，`ReplayExecutor`/`HealResponseFrames` 在发送副本中原地将 `ucProtocol: 4 -> 1` 归一化）；仅 `CLIENT_INJECT` 目标服务在现网仅发布纯 `dophi_mesh://` 且无 TCP 监听端口时返回 `422 CSG_DATAPLANE_MESH_UNSUPPORTED` | 彻底打通「现网 `dophi_mesh://` 发现与采集 ➔ 测试态 `tcp://` 仿真重放」闭环，同时在 `CLIENT_INJECT` 直拨纯 Mesh 无 TCP 端口时给出清晰诊断 |
 
 ---
 
@@ -238,7 +239,7 @@ message GetRpcClientDetailInfoResponse {
 > **`@csg-ver` 揭示的三项关键工程事实（见 [`csg-ver/docs/rpcmonitor.md`](../../../csg-ver/docs/rpcmonitor.md)）**：
 > 1. **`uService` 私有语法与消息解耦**：`RPCMonitorService.proto` 中的 `uService RPCMonitorService { interface ... }` 是 DOPRA SIMPO 私有语法，不参与标准 `protoc` 编译；真正承载线上数据结构的是标准 `proto2` 的 `RPCMonitorServiceMsg.proto` 与 `BasicTypeMsg.proto`。
 > 2. **真机 `serverAddr` 仅含 IP，需 `csgdlink.Sub` 补齐端口**：真机 `GetRpcServerDetailInfo` 返回的 `serverAddr` 通常只有节点 IP（如 `"10.29.92.80"` 或跨板 `"10.1.126.150"`），而非完整 `tcp://ipv4:ip:port`。这正是我们需要 **「`rpcmon` 全量拉取目录 + `csgdlink.Sub` 按需解析 `acSvcInstAddr` 端口」** 双层协同的根本原因。
-> 3. **为什么采用独立 `rpcmon_probe` 子进程而非在 Agent 内嵌 CGO**：真机上 `DophiServer` 发布的 `RPCMonitorService-RPCMonitorService` 走 DOPRA SDK 内部传输（依赖 `libcroscppapi.so`、`libdophimesh.so`、`libSSPAFplat.so` 等十余个专有动态库及 `PlatformInit(false)` 运行时）。`@csg-ver` 将其封装为独立的 ~170 行只读 C++ 探针 `rpcmon_probe`，由 Go 侧 `rpcmon.NativeBackend` 通过 `exec.CommandContext` 按需拉起并解析其 stdout JSON（自动跳过 shell 环境初始化前缀日志直到首个 `{`）。这样既 **100% 跑通了真机全量枚举**，又让 `code-contract-agent` 保持 **100% 纯 Go 单二进制（零 CGO、零专有 `.so` 强耦合、探针退出即彻底释放 CSG 连接与内存）**！
+> 3. **为什么采用纯 Go `CrosMeshBackend`（128B HELLO + 40B 数据头）彻底取代外部 C++ 探针与 CGO**：真机上 `DophiServer` 发布的 `RPCMonitorService-RPCMonitorService` 通常注册为 `dophi_mesh://ipv4:<ip>:<port>`。早期 `@csg-ver` 原型曾通过独立 C++ 探针调用 DOPRA SDK，但需在目标机编译部署外部二进制；经对 `libdophimesh.so` 底层 TCP 传输协议的完整拆解，其线上报文由 **4 次 128B `MESH_SEC_HELLO_MSG_INFO_S` (`0xEFBC`) 握手 + 40B `MESH_MSG_DATA_HEAD_S` (`0x2019AAAA`) 数据头 + 标准 CROS RPC 帧 (`ucProtocol=4`)** 构成。因此 `pkg/rpcmon` 直接以 **100% 纯 Go 标准库实现了 `CrosMeshBackend`（`CROSMESH_RPCMON`）与 `CrosTCPBackend`（`CROSTCP_RPCMON`）**，单连接复用完成 5 个 `GetRpc*` 查询（并显式拦截不支持的 `sec_opt != 0` 加密与 `0x2019BBBB` 批量帧），**彻底消除了外部 C++ 探针子进程、CGO 与任何专有 `.so` 依赖**，让 `code-contract-agent` 保持 100% 纯 Go 单二进制开箱即用！
 
 ### 3.5 从 `@csg-ver` 原型升级至 `code-contract` 生产包的 8 项完备性收口
 
@@ -285,8 +286,8 @@ message GetRpcClientDetailInfoResponse {
 sequenceDiagram
     participant UI as 控制面 Server / UI
     participant Ag as Agent (csg.Discoverer)
-    participant Probe as rpcmon_probe (只读子进程)
     participant CSG as 真实 DophiServer (31800+userId)
+    participant Mon as RPCMonitorService (CrosTCP / CrosMesh)
     participant Proc as 本机 /proc (ProcScanner)
 
     UI->>Ag: 1. GET /agent/v1/processes/discover (或 /agent/v1/csg/topology)
@@ -294,11 +295,11 @@ sequenceDiagram
     Proc-->>Ag: 发现租户 CSG 端点 (如 10.29.92.80:31806, userId=6, ownerUID=1006)
     
     rect rgb(235, 248, 242)
-        Note over Ag,CSG: Tier 1: RPCMonitorService 全量目录与订阅关系发现 (<1s)
-        Ag->>Probe: 3. exec rpcmon_probe ipv4:10.29.92.80:31806 (Timeout 10s)
-        Probe->>CSG: Sub("RPCMonitorService-RPCMonitorService") + 5x GetRpc*
-        CSG-->>Probe: 返回 709 Servers + 724 Clients + PortInfo
-        Probe-->>Ag: stdout 输出结构化 JSON 并调用 CrosDisconnect() 干净退出
+        Note over Ag,Mon: Tier 1: 纯 Go RPCMonitorService 全量目录与订阅关系发现 (<1s)
+        Ag->>CSG: 3a. csgdlink.ResolveServiceInstances("RPCMonitorService-RPCMonitorService") (Sub -> Unsub)
+        CSG-->>Ag: 返回监控端点 (tcp://ipv4:IP:Port 或 dophi_mesh://ipv4:IP:Port)
+        Ag->>Mon: 3b. 纯 Go CrosTCPBackend / CrosMeshBackend (4x128B HELLO + 40B 数据头 + 5x GetRpc*)
+        Mon-->>Ag: 单连接复用返回 709 Servers + 724 Clients + PortInfo
     end
 
     rect rgb(238, 244, 255)
@@ -335,7 +336,7 @@ sequenceDiagram
    - 融合器遍历所有 `IsRemoteLDC == false` 的 `Servers[].Pid` 与 `Clients[].Pid`：若某 `pid` 未出现在 `ScanListenProcesses()` 结果中，直接读取 `/proc/<pid>/{cmdline,exe,status}` 补齐一条 `DiscoveredProcess`（`ListenPort = 0` 或填入 `tcp://` 实例端口），从而实现**对纯客户端进程与 `dophi_mesh://` 进程的 100% 自动发现**！
 3. **进程级 `Provides`（提供服务）与 `Subscribes`（订阅依赖）双向挂载**：
    - **`Provides`**：将 `Servers` 中 `pid == proc.PID`（本机）的条目挂入 `proc.CSGServices`，并合并 L2 `csgdlink.Sub` 查到的完整 `InstanceAddr`（如 `tcp://ipv4:10.29.92.80:18500`）、`Transport`（`tcp` | `mesh`）与 `Port`；
-   - **`Subscribes`**：将 `Clients` 中 `pid == proc.PID`（本机，且排除 `procName == "rpcmon_probe"` 自身瞬态探针）的条目挂入 `proc.CSGSubscriptions`，并自动关联该 `serverName` 在 `Servers` 中的提供方进程列表（`ProviderProcs`）。
+   - **`Subscribes`**：将 `Clients` 中 `pid == proc.PID`（本机，且排除 `code-contract-agent` / `rpcmon_probe` 自身瞬态监控客户端）的条目挂入 `proc.CSGSubscriptions`，并自动关联该 `serverName` 在 `Servers` 中的提供方进程列表（`ProviderProcs`）。
 
 ### 4.4 控制面架构 SSOT 自动对账与「一键导入架构蓝图」
 
@@ -424,9 +425,10 @@ flowchart TB
 
 1. **预装载快照与动态注册兼容 (`pkg/csgmock`)**：
    - `MockCSGServer` 初始化时，将录制会话固化的 `csg_snapshots`（或发现快照）载入内存注册表 `reg`；
-   - 对 `SUB (3)` 请求：
-     - 校验 `req.Trans` 数组：若仅置位 `MESH (req.Trans[4]==1 && req.Trans[1]==0)`，记录 `MeshOnlySub` 并触发快速失败诊断 `CSG_DATAPLANE_MESH_UNSUPPORTED`；
-     - 若支持 `TCP (req.Trans[1]==1)`：按「精确服务名匹配 $\rightarrow$ `^(.+-\d+)-(\d+)$` 尾部 PID 模板匹配（并将返回实例的 `Name64` 回显为请求的 `req.Name` 以通过客户端 `strcmp`）」查找实例；若快照中的实例地址为历史录制的 `dophi_mesh://ipv4:IP:PORT`，自动重写前缀为 `tcp://ipv4:IP:PORT`（**保留原始 `IP:PORT` 不变，从而 100% 兼容 `ADR-16` 基于原始目的 `IP:Port` 映射的 `@dst_tag` 多实现隔离！**）；
+   - 对 `SUB (3)` 请求（经 [`ADR-22` v2.0.0](./22-pluggable-transport-driver-and-mesh-capture-adr.md) 演进）：
+     - 开启 `EnableMeshToTCPRewrite(true)` 后，将快照中历史录制的 `dophi_mesh://ipv4:IP:PORT` 自动重写前缀为 `tcp://ipv4:IP:PORT`（**保留原始 `IP:PORT` 不变，从而 100% 兼容 `ADR-16` 基于原始目的 `IP:Port` 映射的 `@dst_tag` 多实现隔离！**）；
+     - 同时放行客户端 `req.Trans[1]==1 (TCP)` 与 `req.Trans[4]==1 (MESH)` 的订阅请求（不再对 `MOCK_SERVER` 下的 `meshOnlySub` 判 `422 CSG_DATAPLANE_MESH_UNSUPPORTED`，仅在 `CSGSandboxReport` 记录改写计数与观测列表；数据面由 `ReplayExecutor`/`HealResponseFrames` 在 TCP 发送副本中自动将 `ucProtocol: 4 -> 1` 归一化）；
+     - 按「精确服务名匹配 $\rightarrow$ `^(.+-\d+)-(\d+)$` 尾部 PID 模板匹配（并将返回实例的 `Name64` 回显为请求的 `req.Name` 以通过客户端 `strcmp`）」查找实例；
    - 对 `PUB (2)` / `UNPUB (4)`：仅在 `MockCSGServer` 内存 `reg` 表中增删，**绝不转发至真实 CSG**（彻底消除被测进程重启后向生产/共享注册中心反向注册污染）；
    - 对 `GET_BIND_ADDR (7)`：返回 128B full 应答，默认固定分配 `ProcessSpec.ListenPort`（若检测到端口已被其他非目标进程监听则返回 `uiRst != 0, usPort = 0` 报错，严禁静默换端口）。
 2. **双接入通道（eBPF 透明分流 + 独立端口直连）**：
@@ -444,10 +446,9 @@ flowchart TB
 | `code-contract` 目标路径 | 对应 `@csg-ver` 原型路径 | 核心职责 | 依赖约束 (`deps_test.go`) |
 | :--- | :--- | :--- | :--- |
 | `pkg/csgdlink/`<br>(`protocol.go`, `instance.go`, `client.go`, `observer.go`) | `internal/csgdlink/` | dlink 32B 帧头、248B 实例与 10 类控制面消息/2 类 `NOTIFY` 编解码；纯 Go `Client`（支持只读发现与受控 `Pub`/`Unpub`）；旁路流式 `Observer` | **纯 Go 标准库**（零第三方依赖） |
-| `pkg/rpcmon/`<br>(`model.go`, `wire.go`, `cros_transport.go`, `native.go`, `server.go`, `report.go`) | `internal/rpcmon/` + `proto/sw/rpc/` | `Snapshot` / `ServerEntry` / `ClientEntry` / `PortUsage` 模型；`Backend` 接口；`NativeBackend`（调用 `rpcmon_probe` 解析 JSON）与 `CrosTCPBackend`（基于 `pkg/crosrpc` 标准 `"CSE.TCP"` 帧 + 手写极简 Protobuf Wire 编解码，淘汰 `@csg-ver` 的临时 `RMON` 帧） | 仅依赖 `pkg/crosrpc`、`pkg/csgdlink` 与标准库（不引入 `protoc-gen-go` 生成的 `protoregistry`，确保 `cmd/agent` 100% 合规） |
+| `pkg/rpcmon/`<br>(`model.go`, `wire.go`, `cros_transport.go`, `mesh_protocol.go`, `mesh_transport.go`, `server.go`, `report.go`) | `internal/rpcmon/` + `proto/sw/rpc/` | `Snapshot` / `ServerEntry` / `ClientEntry` / `PortUsage` 模型；`Backend` 接口；纯 Go `CrosTCPBackend`（基于 `pkg/crosrpc` 标准 `"CSE.TCP"\x01` 帧）与纯 Go `CrosMeshBackend`（4 次 128B `MESH_SEC_HELLO_MSG_INFO_S` 握手 + 40B `MESH_MSG_DATA_HEAD_S` + CROS `ucProtocol=4`）+ 手写极简 Protobuf Wire 编解码（彻底淘汰 `@csg-ver` 的临时 `RMON` 帧与外部 C++ 探针 `rpcmon_probe`） | 仅依赖 `pkg/crosrpc` 与标准库（零 `protoregistry`、零外部 C++ 探针子进程，确保 `cmd/agent` 100% 合规） |
 | `pkg/csgmock/`<br>(`mockserver.go`) | `internal/csgmock/mockserver.go` | 内存态 `MockCSGServer`（支持预载快照、动态 `PUB/SUB/GET_BIND_ADDR`、`ServeConn` 进程内接入与独立监听、实现 `rpcmon.Provider`） | 仅依赖 `pkg/csgdlink`、`pkg/rpcmon` 与标准库；**严禁依赖 `pkg/ebpf`** |
-| `scripts/csg/`<br>(`rpcmon_probe.cpp`, `build-native-probe.sh`) | `native/rpcmon_probe.cpp` + `scripts/build-native-probe.sh` | 真机只读 C++ 探针源码与一键编译脚本（在装有 `~/SW` SDK 的目标机编译产出 `rpcmon_probe` 二进制供 Agent 调用） | 独立辅助二进制，不与 Go 二进制静态链接 |
-| `internal/agent/csg/`<br>(`discoverer.go`, `sim_controller.go`, `locate.go`) | `cmd/rpcmonitor` + `cmd/csgclient` + `cmd/csgserver` | Agent 侧双层自动发现融合器（`rpcmon` + `csgdlink.Sub` + `ProcScanner`）与三模仿真测试编排器（`CLIENT_INJECT` / `PUB_STUB` / `MOCK_SERVER`） | 位于 `internal/agent/`，可组合 `pkg/{csgdlink,rpcmon,csgmock,ebpf,replay,agentproto}` |
+| `internal/agent/csg/`<br>(`discoverer.go`, `sim_controller.go`, `locate.go`) | `cmd/rpcmonitor` + `cmd/csgclient` + `cmd/csgserver` | Agent 侧双层自动发现融合器（`rpcmon` `CrosTCP`/`CrosMesh` + `csgdlink.Sub` + `ProcScanner`）与三模仿真测试编排器（`CLIENT_INJECT` / `PUB_STUB` / `MOCK_SERVER`） | 位于 `internal/agent/`，可组合 `pkg/{csgdlink,rpcmon,csgmock,ebpf,replay,agentproto}` |
 
 ### 6.2 `pkg/agentproto` 与 HTTP API 契约扩展
 
@@ -503,7 +504,7 @@ type DiscoveredProcess struct {
 type CSGTopologyReport struct {
 	CSGAddr            string           `json:"csg_addr"`
 	UserID             int              `json:"user_id"`
-	DiscoveryMode      string           `json:"discovery_mode"` // "RPCMON_NATIVE" | "RPCMON_MOCK" | "DLINK_FALLBACK"
+	DiscoveryMode      string           `json:"discovery_mode"` // "CROSTCP_RPCMON" | "CROSMESH_RPCMON" | "PROC_ONLY"
 	Timestamp          int64            `json:"timestamp"`
 	ServerNum          uint32           `json:"server_num"`
 	ClientNum          uint32           `json:"client_num"`
@@ -562,12 +563,12 @@ const (
    - `cmd/agent/deps_test.go` 明确禁止 `cmd/agent` 依赖 `gorm.io`、`pgx`、`dynamicpb`、`protoregistry`、`protocompile`。
    - 注意标准 `protoc-gen-go` 生成的 `.pb.go` 会引入 `google.golang.org/protobuf/runtime/protoimpl` 并传递引入 `protoregistry`。因此 `pkg/rpcmon` 中对 `RPCMonitorServiceMsg.proto` 三个简单响应结构的二进制序列化/反序列化采用 ~50 行纯 Go 标准库 Wire 编解码实现（见 §9.2），并在 `cmd/agent/deps_test.go` 的检查列表中显式加入 `./pkg/csgdlink`、`./pkg/rpcmon`、`./pkg/csgmock`。
 2. **真实 CSG 访问安全守卫**：
-   - **自动发现期（100% 纯只读）**：无论是 `rpcmon_probe` 还是 `csgdlink.Client.Sub`，只允许发送 `REGISTER (0xFF00)`、`CLIENT_ID (1)`、`SUB (3)`、`UNSUB (5)`、`UNREGISTER (0xFF02)`；每次 `SUB` 拿到实例后立即 `UNSUB`，探针/会话结束立即 `UNREGISTER` 并关闭连接。
+   - **自动发现期（100% 纯只读）**：无论是 `csgdlink.Client.Sub` 还是纯 Go `CrosTCPBackend` / `CrosMeshBackend`，只允许发送 `REGISTER (0xFF00)`、`CLIENT_ID (1)`、`SUB (3)`、`UNSUB (5)`、`UNREGISTER (0xFF02)` 及只读 `GetRpc*` 查询；每次 `SUB` 拿到实例后立即 `UNSUB`，会话结束立即 `UNREGISTER` 并关闭连接。
    - **仿真测试期（分级受控）**：
      - **严禁在任何模式下向真实 CSG 发送 `GET_BIND_ADDR (7)` 或 `FREE_BIND_ADDR (8)`**（防止推进生产端口池游标 `usNextPortNum`）；
      - `PUB_STUB` 模式仅允许在满足「前置 `Sub(svcName)` 返回实例数为 `0`」且用户显式指定 `csg_strategy = PUB_STUB` 时向目标租户 CSG 发送 `PUB (2)` / `UNPUB (4)`。
-3. **凭据与命令执行安全**：
-   - Agent 在本机执行 `rpcmon_probe` 时，仅允许调用管理员预置在受控路径（如 `/usr/local/bin/rpcmon_probe` 或 `--csg-probe-bin`）且通过文件属主/权限校验的可执行文件，参数仅传入格式校验通过的 `ipv4:<ip>:<port>`，严禁拼接任意 Shell 字符串。
+3. **100% 纯 Go 零外部子进程与零命令注入安全**：
+   - Agent 全量 CSG 控制面交互与 `RPCMonitorService` 查询（含 `tcp://` 与 `dophi_mesh://` 4 次 128B HELLO + 40B 数据头）均在进程内通过纯 Go 标准库完成，**彻底移除 `rpcmon_probe` C++ 探针子进程、`os/exec` 外部命令调用、CGO 与外部 `.so` 插件**。
 4. **五出口自洁与零残留铁律（红线 4）**：
    - 在重放完成、手动取消、`/purge`、主控失联超过 5 分钟、收到 `SIGINT/SIGTERM` 五个出口，必须幂等清理：关闭 `MockCSGServer`、撤销 `PUB_STUB` 注册的桩服务（`Unpub` + `Unregister` + `Close`）、清除 `EgressProxy` 的 CSG 分流钩子，确保宿主机与 CSG 注册中心零残留。
 
@@ -577,7 +578,7 @@ const (
 
 | 阶段 | 核心交付内容 | 先行 TDD 验收门禁 |
 | :--- | :--- | :--- |
-| **P1：协议底座、监控模型与 Mock 引擎 (`pkg/csgdlink`, `pkg/rpcmon`, `pkg/csgmock`)** | 1. 迁入并加固 `@csg-ver/internal/csgdlink` 至 `pkg/csgdlink`（含 §3.5 全部 7 项完备性收口与流式 `Observer`）；<br>2. 迁入 `@csg-ver/internal/rpcmon` 至 `pkg/rpcmon`（含 `Snapshot`/`Report`、纯 Go Wire 编解码、`E2EBackend` 与 `NativeBackend`）；<br>3. 迁入并扩展 `@csg-ver/internal/csgmock` 至 `pkg/csgmock`（支持 10 类消息、快照预载、`RewriteMeshToTCP`、PID 后缀模板匹配与 `rpcmon.Provider`）；<br>4. 归档 `scripts/csg/rpcmon_probe.cpp` 与 `build-native-probe.sh` | 1. `go test -race ./pkg/csgdlink/... ./pkg/rpcmon/... ./pkg/csgmock/...` 100% 通过 + Fuzz 测试零崩溃；<br>2. 复刻 `@csg-ver/scripts/e2e.sh` 的 Go 集成单测：`MockCSGServer` + 模拟 `csgserver` (`PUB`) + 模拟 `csgclient` (`SUB` + RPC) + `rpcmon` (`op=all` 断言 `serverNum=1, clientNum=1, ports=1`) 全闭环通过；<br>3. `cmd/agent/deps_test.go` 纳入新三包并 100% 通过 |
+| **P1：协议底座、监控模型与 Mock 引擎 (`pkg/csgdlink`, `pkg/rpcmon`, `pkg/csgmock`)** | 1. 迁入并加固 `@csg-ver/internal/csgdlink` 至 `pkg/csgdlink`（含 §3.5 全部完备性收口与流式 `Observer`）；<br>2. 演进 `pkg/rpcmon`（含 `Snapshot`/`Report`、纯 Go Wire 编解码、纯 Go `CrosTCPBackend` 与纯 Go `CrosMeshBackend` 128B HELLO + 40B 数据头 + `Server.ServeMesh`，彻底移除外部 C++ 探针）；<br>3. 迁入并扩展 `pkg/csgmock`（支持 10 类消息、快照预载、`RewriteMeshToTCP`、PID 后缀模板匹配与 `rpcmon.Provider`） | 1. `go test -race ./pkg/csgdlink/... ./pkg/rpcmon/... ./pkg/csgmock/...` 100% 通过 + Fuzz 测试零崩溃；<br>2. 复刻 `@csg-ver/scripts/e2e.sh` 的 Go 集成单测：`MockCSGServer` + 模拟 `csgserver` (`PUB`) + 模拟 `csgclient` (`SUB` + RPC) + `rpcmon` (`op=all` 断言 `serverNum=1, clientNum=1, ports=1`) 全闭环通过；<br>3. `cmd/agent/deps_test.go` 纳入新三包并 100% 通过 |
 | **P2：现网双层自动发现与架构蓝图一键导入** | 1. 实现 `internal/agent/csg/discoverer.go`（`LocateCSGEndpoints` 多租户发现 + L1 `rpcmon` 全量快照 + L2 `csgdlink.Sub` 本机端点富化 + L3 `ProcScanner` 融合与跨板 LDC 过滤）；<br>2. 增强 `GET /agent/v1/processes/discover` 并新增 `GET /agent/v1/csg/topology`；<br>3. 实现控制面 `GET /api/agents/:id/csg/topology` 三态对账与 `POST /api/agents/:id/csg/import-blueprint` 一键生成架构蓝图草稿 | 1. 构造含 709 条服务（265 本机 + 442 远端 `10.1.126.150`）与 724 条订阅的真机同构夹具，验证跨板 LDC 100% 隔离、纯客户端与 `mesh` 进程准确补齐、`Provides` 与 `Subscribes` 双向关联无误；<br>2. 控制面 `testdb` 单测：一键导入自动生成 `ArchProcess`、`Module`、`ModuleService` 与 `ModuleDependency` 并记录审计 Diff |
 | **P3：运行期 64B 服务名映射与录制期控制面快照** | 1. `models.ModuleService` 新增 `proto_service_name`，扩展 `decoder.Registry.Reload()` 将其注入 `ServiceAliases`；<br>2. `EgressProxy` 在录制期挂载 `csgdlink.Observer` 旁路采集 `EventCSGObservation (0x08)` 并连同初始发现快照持久化至 `contract_recording_sessions.csg_snapshots` | 1. 使用 `RPCMonitorService-RPCMonitorService` / `CMReadService-CMReadService` 等 64B 运行期名关联 `.pb` `{package}.{service}`，验证报文动态解码与字段级 Diff 100% 命中；<br>2. 录制会话停止后 `csg_snapshots` 准确包含被测进程订阅的实例列表 |
 | **P4：三模仿真测试闭环 (`CLIENT_INJECT`, `PUB_STUB`, `MOCK_SERVER`) 与前端集成** | 1. 实现 `internal/agent/csg/sim_controller.go`：<br>   - `CLIENT_INJECT`：`ReplayExecutor` 通过 `csgdlink.Sub` 动态寻址注入；<br>   - `PUB_STUB`：前置 `Sub==0` 校验 + 本地端口 `Pub` 注册 `ScopedMockMatcher` + 五出口 `Unpub`；<br>   - `MOCK_SERVER`：`EgressProxy` 控制面分流至内置 `MockCSGServer` + 结束后导出 `MockCSGServer.Snapshot()` 订阅轨迹；<br>2. 前端 `/agents`（CSG 拓扑透视与一键导入蓝图抽屉）与 `/replay`（四档 CSG 仿真策略选择器）升级 | 1. 三种仿真模式各自独立的端到端单测全绿：<br>   - `CLIENT_INJECT` 动态端口服务免重启重放 `PASS`；<br>   - `PUB_STUB` 在目标服务在线时返回 `409 CSG_SERVICE_ALREADY_PUBLISHED`，缺席时注册桩服务重放 `PASS` 且退出后 CSG 0 残留；<br>   - `MOCK_SERVER` 拦截 `PUB/SUB` 零外泄重放 `PASS` 并输出沙箱 `Clients` 订阅报告；<br>2. 前端 Vitest 单测与 `make test && make lint && make build` 零警告通过 |
@@ -1158,8 +1159,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"os"
-	"os/exec"
 	"sync/atomic"
 	"time"
 
@@ -1723,49 +1722,9 @@ func (b *crosTCPBackend) FetchSnapshot(ctx context.Context) (Snapshot, error) {
 	}, nil
 }
 
-type NativeConfig struct {
-	ProbeBin string
-	CSGAddr  string
-	Timeout  time.Duration
-}
-
-type nativeBackend struct {
-	cfg NativeConfig
-}
-
-func NewNative(cfg NativeConfig) Backend {
-	if cfg.Timeout <= 0 {
-		cfg.Timeout = 15 * time.Second
-	}
-	return &nativeBackend{cfg: cfg}
-}
-
-func (b *nativeBackend) Close() error { return nil }
-
-func (b *nativeBackend) FetchSnapshot(ctx context.Context) (Snapshot, error) {
-	cctx, cancel := context.WithTimeout(ctx, b.cfg.Timeout)
-	defer cancel()
-	var args []string
-	if b.cfg.CSGAddr != "" {
-		args = append(args, b.cfg.CSGAddr)
-	}
-	cmd := exec.CommandContext(cctx, b.cfg.ProbeBin, args...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return Snapshot{}, fmt.Errorf("rpcmon: native probe failed: %w (stderr: %s)", err, stderr.String())
-	}
-	raw := stdout.Bytes()
-	if i := bytes.IndexByte(raw, '{'); i > 0 {
-		raw = raw[i:]
-	}
-	var snap Snapshot
-	if err := json.Unmarshal(raw, &snap); err != nil {
-		return Snapshot{}, fmt.Errorf("rpcmon: invalid probe json: %w", err)
-	}
-	return snap, nil
-}
+// 注：dophi_mesh 协议后端由纯 Go CrosMeshBackend (pkg/rpcmon/mesh_protocol.go & mesh_transport.go)
+// 实现（4 次 128B MESH_SEC_HELLO_MSG_INFO_S 握手 + 40B MESH_MSG_DATA_HEAD_S + CROS ucProtocol=4），
+// 无需任何外部 C++ 探针子进程。
 ```
 
 ### 9.3 `pkg/csgmock/mockserver.go` — 集成 `rpcmon.Provider` 与三模仿真支持的 `MockCSGServer`
@@ -2228,8 +2187,8 @@ func procName(pid uint32) string {
 
 ## 10. 非目标边界 (Non-Goals)
 
-1. **不在 Agent 进程内静态链接或通过 CGO 加载 DOPRA 专有 `.so`**：真机 `RPCMonitorService` 查询统一通过受控外部只读子进程 `rpcmon_probe` 完成，保持 `code-contract-agent` 100% 纯 Go 单二进制与物理防腐红线。
+1. **不在 Agent 进程内静态链接、通过 CGO 加载 DOPRA 专有 `.so` 或依赖外部 C++ 探针子进程**：真机 `RPCMonitorService` 查询统一通过纯 Go `pkg/rpcmon`（`CrosTCPBackend` + `CrosMeshBackend` 128B HELLO + 40B 数据头）直连完成，保持 `code-contract-agent` 100% 纯 Go 单二进制与物理防腐红线。
 2. **不向真实 CSG 发送 `GET_BIND_ADDR` 或 `FREE_BIND_ADDR`**：无论在自动发现还是 `PUB_STUB` 仿真模式下，严禁申请或释放真实 CSG 端口池中的端口，避免推进生产端口游标 `usNextPortNum`。
 3. **不在真实服务已在线时强行向同一真实 CSG 执行同名 `PUB_STUB`**：当 `Sub(svcName)` 返回实例数 `> 0` 时必须拒绝 `PUB_STUB` 并切换为 `MOCK_SERVER` 沙箱模式，杜绝污染同租户其他调用方。
-4. **不在本 ADR 内拦截 `dophi_mesh://` 共享内存/UDX 数据面报文**：自动发现支持全量发现 `dophi_mesh://` 服务与订阅关系，但数据面录制与注入仍遵循 `Non-Goal 1` 聚焦 `tcp://`（纯 `dophi_mesh://` 被测进程在仿真时显式报 `CSG_DATAPLANE_MESH_UNSUPPORTED`）。
+4. **不做 `dophi_mesh://` 共享内存环的数据面写注入或共享内存 Mock 桩（经 [`ADR-22` v2.0.0](./22-pluggable-transport-driver-and-mesh-capture-adr.md) & [`ADR-23` v1.1.0](./23-dophi-mesh-uprobe-bypass-capture-adr.md) 演进）**：自动发现支持全量发现 `dophi_mesh://` 服务与订阅关系，数据面录制通过纯 Go `builtin-drt-uprobe`（`libdopra.so:DRT_WriteBulk` 内核 uprobe）零侵入采集；重放阶段统一由 `MockCSGServer` / `PUB_STUB` 返回 `tcp://` 地址并在 TCP 发送副本中自动将 `ucProtocol: 4 -> 1` 归一化（仅 `CLIENT_INJECT` 目标在线服务仅发布纯 `dophi_mesh://` 且无 TCP 监听时显式返回 `422 CSG_DATAPLANE_MESH_UNSUPPORTED`）。
 5. **不越过管理员审批自动覆写全局架构 SSOT**：现网 CSG 自动发现结果默认展示对账差异，写入 `ArchProcess` / `Module` / `ModuleService` / `ModuleDependency` 必须经管理员点击「一键导入」并记录审计日志。

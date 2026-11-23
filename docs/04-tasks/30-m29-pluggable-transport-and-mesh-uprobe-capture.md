@@ -5,7 +5,7 @@
 > **所属阶段**: 阶段三/四（TDD 实施路线与工程作战卡）  
 > **上位基线**: [`ADR-22` (v2.0.0)](../05-adr/22-pluggable-transport-driver-and-mesh-capture-adr.md) · [`ADR-23` (v1.1.0)](../05-adr/23-dophi-mesh-uprobe-bypass-capture-adr.md) · [`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (`F-09`, `F-10`, `F-12`, `F-13`, `F-35`, `SC-18`) · [`01-system-architecture.md`](../02-design/01-system-architecture.md) (v1.10.0) · [`02-data-plane-and-cros-rpc-engine.md`](../02-design/02-data-plane-and-cros-rpc-engine.md) (v1.7.0, §1, §3, §6, §7) · [`04-control-plane-and-web-console.md`](../02-design/04-control-plane-and-web-console.md) (v1.14.0, §1.2, §1.3, §4.3) · [`05-database-schema.md`](../02-design/05-database-schema.md) (v1.10.1, 零 DDL 迁移) · [`01-http-api-contract.md`](../03-api/01-http-api-contract.md) (v1.10.0)  
 > **前置依赖**: `M28`（CSG 现网双层自动发现与三模仿真测试闭环已交付）  
-> **交付状态**: 📋 待实施（SDD 详细架构设计与 TDD 作战卡定稿，**零新增数据库表 / 零 DDL 迁移**，维持 `30` 核心业务表 + `contract_settings` = `31` 表）
+> **交付状态**: ✅ 已交付（`M29-P1`~`M29-P4` 全阶段、纯 Go `pkg/transport`、`builtin-drt-uprobe` 采集驱动及 `SC-18` 跨传输闭环均已实现并通过全量回归验证，**零新增数据库表 / 零 DDL 迁移**，维持 `30` 核心业务表 + `contract_settings` = `31` 表）
 
 ---
 

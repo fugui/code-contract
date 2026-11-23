@@ -16,7 +16,7 @@ type Backend interface {
 	Close() error
 }
 
-// Report is the unified JSON-serializable topology snapshot produced by both CrosTCP and Native backends.
+// Report is the unified JSON-serializable topology snapshot produced by both CrosTCP and CrosMesh backends.
 type Report struct {
 	Query     string        `json:"query"`
 	Timestamp int64         `json:"timestamp"`

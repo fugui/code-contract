@@ -1,7 +1,7 @@
 # 架构与活体契约治理平台 (`code-contract`)
 
 > **产品定位**：以真实运行态为活水，架设微服务架构防漂移与活体契约防劣化的自愈防线  
-> **当前版本**：`v0.3.0` | **服务标识**：`Code-Contract` (`contract`) | **专有协议**：DOPHI `CROS RPC` over IPv4 TCP
+> **当前版本**：`v0.4.0` | **服务标识**：`Code-Contract` (`contract`) | **专有协议**：DOPHI `CROS RPC`（纯 Go `tcp://` & `dophi_mesh://` 采集/发现 ➔ `tcp://` 仿真重放）
 
 本项目基于 CodeBench 微前端架构与 `code-common` 公共底座构建，严格遵循 **SDD (Spec-Driven Development，规范驱动开发) + TDD (Test-Driven Development，测试驱动开发)** 工程模式：  
 **「契约基线与特性边界 (`01-features`) ➔ 系统架构与数据模型 (`02-design`) ➔ 接口契约与任务拆解 (`03-api` & `04-tasks`) ➔ TDD 测试先行与分阶段交付」**
@@ -102,11 +102,16 @@ code-contract/
 ├── demo/                # 4 进程完整微服务仿真集群与田字格 Tmux 可视化联调演示
 ├── internal/
 │   ├── server/          # 控制面内部业务：callgraph/dashboard/decoder/diff/gitclient/hub/linter/notify/protodoc/recorder/security/topology
-│   └── agent/           # 数据面内部服务：eBPF 探针生命周期、出站代理、报文自愈与 ScopedMock 接管
+│   └── agent/           # 数据面内部服务：eBPF 探针生命周期、CSG 双层发现融合与三模仿真控制器、出站代理与 ScopedMock 接管
 ├── pkg/
-│   ├── crosrpc/         # CROS RPC 协议解析与分帧库（主控与 Agent 共享）
-│   ├── ebpf/            # cilium/ebpf 内核探针、Socket 预热与三态出站代理
-│   ├── replay/          # 零 .pb 二进制 ScopedMock 匹配与 ullSNO 自愈引擎
+│   ├── crosrpc/         # CROS RPC 协议解析与分帧库（主控、Agent 与 rpcmon 共享，支持 ucProtocol 0..7）
+│   ├── agentproto/      # 主从 HTTP DTO 与 56B 二进制信封帧契约（含 TransportProto、TransportDrivers 与 CSG 拓扑 DTO）
+│   ├── csgdlink/        # CSG/dlink 控制面 32B 帧栈、只读发现与流式 Observer（100% 纯 Go 标准库）
+│   ├── rpcmon/          # RPCMonitorService 统一监控模型、纯 Go CrosTCP & CrosMesh（128B HELLO + 40B 数据头 + 手写 Wire）
+│   ├── csgmock/         # 内存态 MockCSGServer 控制面沙箱（实现 rpcmon.Provider，支持 Mesh->TCP 改写与五出口清理）
+│   ├── ebpf/            # cilium/ebpf 内核探针（含 Socket eBPF 与 uprobe/DRT_WriteBulk）、Socket 预热与三态出站代理
+│   ├── transport/       # Agent 纯 Go 可插拔传输驱动抽象 (Driver/Registry)、builtin-tcp 与 builtin-drt-uprobe (ADR-22/23)
+│   ├── replay/          # 零 .pb 二进制 ScopedMock 匹配、ucProtocol (4->1) 发送期归一化与 ullSNO 自愈引擎
 │   └── version/         # 规范化语义版本号与构建指纹
 ├── config/              # 配置加载与模块级元数据常量 (ModuleKey="contract", TablePrefix="contract_")
 ├── models/              # GORM 数据模型（强制 contract_ 物理表前缀隔离）
@@ -125,18 +130,18 @@ code-contract/
 ## 4. SDD + TDD 研发路线图 (Lifecycle Checklist)
 
 - [x] **阶段一：特性清单与边界明确** (`docs/01-features/`)
-  - [x] [`01-feature-matrix.md`](./docs/01-features/01-feature-matrix.md)（活体契约愿景、三层治理矩阵 `F-01~F-32`、验收场景 `SC-01~SC-16` 与 `Non-Goals`）
+  - [x] [`01-feature-matrix.md`](./docs/01-features/01-feature-matrix.md)（活体契约愿景、三层治理矩阵 `F-01~F-35`、验收场景 `SC-01~SC-18` 与 `Non-Goals`）
 - [x] **阶段二：系统架构与模型设计** (`docs/02-design/`)
-  - [x] [`01-system-architecture.md`](./docs/02-design/01-system-architecture.md)（主从协同、双模运行架构、微前端接入规范）
-  - [x] [`02-data-plane-and-cros-rpc-engine.md`](./docs/02-design/02-data-plane-and-cros-rpc-engine.md)（CROS RPC 协议栈、eBPF 采集与二进制 Mock 引擎）
-  - [x] [`03-architecture-elements-and-topology.md`](./docs/02-design/03-architecture-elements-and-topology.md)（三级架构模型 SSOT、多实现服务契约与拓扑一致性核验）
+  - [x] [`01-system-architecture.md`](./docs/02-design/01-system-architecture.md)（主从协同、双模运行架构、微前端接入规范、CSG 发现与 `pkg/transport` 跨传输闭环）
+  - [x] [`02-data-plane-and-cros-rpc-engine.md`](./docs/02-design/02-data-plane-and-cros-rpc-engine.md)（CROS RPC 协议栈、纯 Go `pkg/transport` 双驱动 `builtin-tcp`/`builtin-drt-uprobe`、纯 Go `CrosTCP`/`CrosMesh` 监控与二进制 Mock 引擎）
+  - [x] [`03-architecture-elements-and-topology.md`](./docs/02-design/03-architecture-elements-and-topology.md)（三级架构模型 SSOT、多实现服务契约、CSG 三态对账蓝图导入与拓扑一致性核验）
   - [x] [`04-control-plane-and-web-console.md`](./docs/02-design/04-control-plane-and-web-console.md)（控制面调度、Protobuf 编解码与参考文档中心、静态规范与 MR 门禁）
   - [x] [`05-database-schema.md`](./docs/02-design/05-database-schema.md)（30 张核心 `contract_*` 业务表 + `contract_settings` 配置表、黄金套件与按日范围分区设计）
   - [x] [`06-agent-observability-and-self-healing-design.md`](./docs/02-design/06-agent-observability-and-self-healing-design.md)（Agent 探针特权感知、体检诊断与全链路闭环自愈设计）
 - [x] **阶段三：接口契约与 TDD 任务分解** (`docs/03-api/`, `docs/04-tasks/`)
   - [x] [`01-http-api-contract.md`](./docs/03-api/01-http-api-contract.md)（REST/SSE 契约、CI/MR 门禁鉴权、主从 HTTP/WS 信道协议与 RBAC 权限矩阵）
-  - [x] [`01-roadmap.md`](./docs/04-tasks/01-roadmap.md)（Milestone 1~27 DAG 拓扑、特性矩阵覆盖与全局质量门禁）
-  - [x] **M1~M27 作战卡全量交付 (100% Completed)**：
+  - [x] [`01-roadmap.md`](./docs/04-tasks/01-roadmap.md)（Milestone 1~29 DAG 拓扑、特性矩阵覆盖与全局质量门禁）
+  - [x] **M1~M29 作战卡全量交付 (100% Completed)**：
     - [x] [`02-m1-crosrpc-and-domain-models.md`](./docs/04-tasks/02-m1-crosrpc-and-domain-models.md)（CROS RPC 分帧与数据模型）
     - [x] [`03-m2-arch-proto-and-agent-control.md`](./docs/04-tasks/03-m2-arch-proto-and-agent-control.md)（架构契约与 Agent 调度信道）
     - [x] [`04-m3-agent-dataplane-ebpf-and-replay.md`](./docs/04-tasks/04-m3-agent-dataplane-ebpf-and-replay.md)（eBPF 数据面与脱机重放注入）
@@ -164,8 +169,10 @@ code-contract/
     - [x] [`26-m25-git-sync-and-monorepo-bundles.md`](./docs/04-tasks/26-m25-git-sync-and-monorepo-bundles.md)（Git 无状态同步与 Monorepo `1:N` Compilation Bundles）
     - [x] [`27-m26-mr-gates-notifications-and-compliance-dashboard.md`](./docs/04-tasks/27-m26-mr-gates-notifications-and-compliance-dashboard.md)（MR 四合一门禁、定向通知中心与静态合标大盘）
     - [x] [`28-m27-proto-ia-unbundling-and-four-workbenches.md`](./docs/04-tasks/28-m27-proto-ia-unbundling-and-four-workbenches.md)（Proto 契约 5 组 13 项菜单与四工作台正交拆分）
+    - [x] [`29-m28-csg-service-discovery-and-multi-mode-simulation.md`](./docs/04-tasks/29-m28-csg-service-discovery-and-multi-mode-simulation.md)（CSG 双层自动发现、纯 Go `CrosTCP`/`CrosMesh` 监控、蓝图一键导入与三模仿真闭环）
+    - [x] [`30-m29-pluggable-transport-and-mesh-uprobe-capture.md`](./docs/04-tasks/30-m29-pluggable-transport-and-mesh-uprobe-capture.md)（纯 Go 可插拔传输驱动 `pkg/transport`、`builtin-drt-uprobe` 采集与 `dophi_mesh ➔ tcp://` 跨传输重放闭环）
 - [x] **阶段四：工程实施、架构决策与运维验证** (`docs/05-adr/`, `docs/06-ops/`)
-  - [x] [`docs/05-adr/`](./docs/05-adr/)（ADR-01 ~ ADR-20 架构决策全景记录，含大规模拓扑、多实现契约、单层下钻、Proto 全生命周期、IA 拆解与 `code-contract` 更名重构）
+  - [x] [`docs/05-adr/`](./docs/05-adr/)（ADR-01 ~ ADR-23 架构决策全景记录，含大规模拓扑、多实现契约、单层下钻、Proto 全生命周期、IA 拆解、`code-contract` 更名、CSG 双层发现/三模仿真及纯 Go `dophi_mesh` uprobe 采集➔TCP 重放）
   - [x] [`01-verification-and-deployment-guide.md`](./docs/06-ops/01-verification-and-deployment-guide.md)（联调测试与生产部署手册）
   - [x] [`02-e2e-browser-test-and-ux-review.md`](./docs/06-ops/02-e2e-browser-test-and-ux-review.md)（E2E 黑盒走查与交互走查记录）
 
@@ -198,6 +205,16 @@ cd demo && make tmux-demo
 ---
 
 ## 6. 🏷️ 版本历史 (Release History)
+
+### v0.4.0 (2026-11-23)
+* **🧭 CSG 现网双层自动发现、纯 Go `CrosMesh` 监控与三模渐进仿真闭环 (M28 · ADR-21 v2.2.0)**：
+  - 落地 100% 纯 Go `pkg/csgdlink`（32B dlink 帧栈、248B 实例与流式 `Observer`）、`pkg/rpcmon`（手写 Protobuf Wire 编解码、纯 Go `CrosTCPBackend` `CROSTCP_RPCMON` 与纯 Go `CrosMeshBackend` `CROSMESH_RPCMON` 4 次 128B HELLO + 40B 数据头 + CROS `ucProtocol=4`）及内存态 `pkg/csgmock.MockCSGServer`（彻底移除外部 C++ 探针子进程 `rpcmon_probe`）；
+  - 实现 `LocateCSGEndpoints` 多租户定位（`31800+userId`）与 `DiscoverAndFuse` 双层融合，自动隔离跨板远端 LDC 实例，100% 补齐无 TCP 监听端口的纯客户端与 `dophi_mesh://` 进程，提供 `/agents` CSG 三态对账与管理员一键导入架构蓝图抽屉；
+  - 支持 64B 运行期服务名 `proto_service_name` 别名映射（含 `^(.+-\d+)-(\d+)$` PID 归一化）及 `PASSTHROUGH` / `CLIENT_INJECT` / `PUB_STUB`（前置 `Sub==0` 门禁、零 `GET_BIND_ADDR` 端口游标污染）/ `MOCK_SERVER` 四档重放仿真策略与五出口幂等清理。
+* **⚡ 纯 Go 可插拔传输驱动 (`pkg/transport`) 与「`dophi_mesh` 内核 uprobe 采集 ➔ `tcp://` 仿真重放」闭环 (M29 · ADR-22 v2.0.0 / ADR-23 v1.1.0)**：
+  - 构建纯 Go `pkg/transport.Driver` 抽象（内置 `builtin-tcp` 与基于 Go 标准库 `debug/elf` 解析 `libdopra.so:DRT_WriteBulk` `.dynsym` 的 `builtin-drt-uprobe` 内核 uprobe 采集驱动，`ARMED` 期 0 uprobe 挂载、PID 级匿名 `perf_event_open` 零 tracefs 污染），严守九包 `CGO_ENABLED=0` 物理防腐红线（永久禁止外部 `.so` 插件与 `readelf`/`nm` 子进程）；
+  - 解封 `pkg/crosrpc.ValidateCommHead` 支持 `ucProtocol ∈ [0..7]`（`StreamFramer` 保持默认 `<=1` 防伪帧），56B `EnvelopeHeader` 偏移 `26` 透传 `TransportProto (1=TCP, 4=MESH)` 零 DDL 迁移落盘；
+  - 打通跨传输仿真重放闭环：`MOCK_SERVER` 自动将 `dophi_mesh://` 改写为 `tcp://` 并放行订阅，`ReplayExecutor` 与 `HealResponseFrames` 在 TCP 发送副本中原地将 `ucProtocol (4 -> 1)` 归一化。
 
 ### v0.3.0 (2026-11-16)
 * **🧭 架构拓扑单层平铺下钻与大规模聚焦治理 (M19 / M21 · ADR-15 / ADR-17)**：

@@ -56,8 +56,8 @@ docs/
 │   ├── 26-m25-git-sync-and-monorepo-bundles.md                       # 【M25 作战卡 | ✅ 已交付】Git 无状态同步、GitRepo 1:N GitProtoBundle 多包对账、Tier-2 DB Resolver 与只读历史 Diff
 │   ├── 27-m26-mr-gates-notifications-and-compliance-dashboard.md     # 【M26 作战卡 | ✅ 已交付】MR 四合一门禁 (FF 去重/原位评论/Override P1)、SSE 按 userID 定向、持久化通知 (LAN code-notifier/SMTP) 与 F-24 合标卡片
 │   ├── 28-m27-proto-ia-unbundling-and-four-workbenches.md            # 【M27 作战卡 | ✅ 已交付】Proto 契约控制台 IA 拆解：5 组 13 项菜单、四工作台正交拆分与无损深链兼容 (ADR-19)
-│   ├── 29-m28-csg-service-discovery-and-multi-mode-simulation.md     # 【M28 作战卡 | ✅ 已交付】CSG 双层自动发现、蓝图一键导入、64B 服务名映射与三模仿真闭环 (ADR-21 v2.1.0)
-│   └── 30-m29-pluggable-transport-and-mesh-uprobe-capture.md         # 【M29 作战卡 | 📋 待实施】纯 Go 可插拔传输驱动 (pkg/transport)、builtin-drt-uprobe 零侵入 Mesh 采集与 Mesh➔TCP 仿真重放闭环 (ADR-22 v2.0.0 & ADR-23 v1.1.0)
+│   ├── 29-m28-csg-service-discovery-and-multi-mode-simulation.md     # 【M28 作战卡 | ✅ 已交付】CSG 双层自动发现 (纯 Go CrosTCP/CrosMesh)、蓝图一键导入、64B 服务名映射与三模仿真闭环 (ADR-21 v2.2.0)
+│   └── 30-m29-pluggable-transport-and-mesh-uprobe-capture.md         # 【M29 作战卡 | ✅ 已交付】纯 Go 可插拔传输驱动 (pkg/transport)、builtin-drt-uprobe 零侵入 Mesh 采集与 Mesh➔TCP 仿真重放闭环 (ADR-22 v2.0.0 & ADR-23 v1.1.0)
 ├── 05-adr/          # 架构决策记录 (ADR)：重大技术选型与权衡记录 (Architecture Decision Records)
 │   ├── 01-microfrontend-and-table-prefix-isolation.md                  # ADR-01：微前端集成、共享库表前缀隔离与 TDD 测试策略
 │   ├── 02-ebpf-hook-and-dual-subsystem-adr.md                          # ADR-02：eBPF 入站旁路钩子、Cookie 原目的还原与无 Schema 数据面解耦
@@ -79,7 +79,7 @@ docs/
 │   ├── 18-proto-full-lifecycle-and-git-mr-governance-adr.md            # ADR-18：废弃未落地的 code-proto 与 protohub 后，Proto 全生命周期与 Git/MR 协同治理架构决策
 │   ├── 19-proto-contract-ia-unbundling-and-four-workbenches-adr.md     # ADR-19：Proto 契约控制台信息架构拆解与四工作台正交拆分架构决策 (5 组 13 项菜单 + 无损深链重定向)
 │   ├── 20-module-rebranding-*-to-code-contract-adr.md       # ADR-20：[已实施] 模块正式更名为 code-contract 的战略演进与全仓干净重构方案 (v1.2.0)
-│   ├── 21-csg-aware-agent-service-discovery-and-replay-mock-adr.md     # ADR-21：[已采纳] 基于 @csg-ver 现网实证的 CSG 服务与依赖拓扑自动发现及多模式仿真测试架构 (v2.1.0)
+│   ├── 21-csg-aware-agent-service-discovery-and-replay-mock-adr.md     # ADR-21：[已采纳] 基于 @csg-ver 现网实证与纯 Go CrosMeshBackend 的 CSG 服务/依赖自动发现及多模式仿真测试架构 (v2.2.0)
 │   ├── 22-pluggable-transport-driver-and-mesh-capture-adr.md           # ADR-22：[已采纳] Agent 纯 Go 可插拔传输层架构 (pkg/transport) 与 dophi_mesh 采集➔TCP 重放跨传输闭环设计 (v2.0.0)
 │   └── 23-dophi-mesh-uprobe-bypass-capture-adr.md                      # ADR-23：[已采纳] 基于内核 uprobe 的 dophi_mesh 数据面旁路观测工程实证与纯 Go 采集通道裁决 (v1.1.0)
 ├── 06-ops/          # 交付与验证：双模联调、物理隔离数据库测试与生产环境单二进制部署手册

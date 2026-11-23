@@ -1,11 +1,11 @@
 # 架构与活体契约治理 (`code-contract`) 数据面引擎与 CROS RPC 协议栈设计
 
 - **文档编号**：`02-data-plane-and-cros-rpc-engine.md`
-- **文档版本**：v1.7.0
-- **更新日期**：2026-11-19
+- **文档版本**：v1.8.0
+- **更新日期**：2026-11-23
 - **归属阶段**：阶段二：系统架构与数据模型设计 (`02-design`)
-- **状态**：M1~M28 已交付；ADR-22 v2.0.0 & ADR-23 v1.1.0 (M29) SDD 详细设计定稿
-- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.24.0)、[`01-cros-rpc-protocol-spec.md`](../07-references/01-cros-rpc-protocol-spec.md) (v1.0.0)、[`01-system-architecture.md`](./01-system-architecture.md) (v1.10.0)、[`09-arch-process-ssot-and-ebpf-premount-standby-adr.md`](../05-adr/09-arch-process-ssot-and-ebpf-premount-standby-adr.md) (ADR-09 v1.1.0)、[`11-single-process-bidirectional-capture-and-recording-ux-adr.md`](../05-adr/11-single-process-bidirectional-capture-and-recording-ux-adr.md) (ADR-11 v1.0.0)、[`12-packet-causality-call-tree-and-sequence-ux-adr.md`](../05-adr/12-packet-causality-call-tree-and-sequence-ux-adr.md) (ADR-12 v1.0.0)、[`21-csg-aware-agent-service-discovery-and-replay-mock-adr.md`](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (ADR-21 v2.1.0)、[`22-pluggable-transport-driver-and-mesh-capture-adr.md`](../05-adr/22-pluggable-transport-driver-and-mesh-capture-adr.md) (ADR-22 v2.0.0)、[`23-dophi-mesh-uprobe-bypass-capture-adr.md`](../05-adr/23-dophi-mesh-uprobe-bypass-capture-adr.md) (ADR-23 v1.1.0)
+- **状态**：M1~M29 已全部交付
+- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.25.0)、[`01-cros-rpc-protocol-spec.md`](../07-references/01-cros-rpc-protocol-spec.md) (v1.0.0)、[`01-system-architecture.md`](./01-system-architecture.md) (v1.11.0)、[`09-arch-process-ssot-and-ebpf-premount-standby-adr.md`](../05-adr/09-arch-process-ssot-and-ebpf-premount-standby-adr.md) (ADR-09 v1.1.0)、[`11-single-process-bidirectional-capture-and-recording-ux-adr.md`](../05-adr/11-single-process-bidirectional-capture-and-recording-ux-adr.md) (ADR-11 v1.0.0)、[`12-packet-causality-call-tree-and-sequence-ux-adr.md`](../05-adr/12-packet-causality-call-tree-and-sequence-ux-adr.md) (ADR-12 v1.0.0)、[`21-csg-aware-agent-service-discovery-and-replay-mock-adr.md`](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (ADR-21 v2.2.0)、[`22-pluggable-transport-driver-and-mesh-capture-adr.md`](../05-adr/22-pluggable-transport-driver-and-mesh-capture-adr.md) (ADR-22 v2.0.0)、[`23-dophi-mesh-uprobe-bypass-capture-adr.md`](../05-adr/23-dophi-mesh-uprobe-bypass-capture-adr.md) (ADR-23 v1.1.0)
 
 ### 修订记录
 
@@ -14,6 +14,7 @@
 | v1.5.0 | 2026-11-04 | 依据 ADR-11 / ADR-12 对齐全出站透明代理、`StreamFramer` SIMD 紧缩、首字节定戳与 `ScopedMockMatcher` 因果池设计 |
 | v1.6.0 | 2026-11-18 | **依据 ADR-21 (v2.1.0 / M28) 增补 CSG 控制面协议栈、双层自动发现与三模仿真测试引擎设计**：新增 §4（`pkg/csgdlink` 32B 帧头/248B 实例/`Observer` 与 `pkg/rpcmon` 基于 `pkg/crosrpc` 标准帧及零 `protoregistry` Wire 编解码）、§5（`internal/agent/csg/discoverer.go` 多租户定位、L1/L2/L3 融合与跨板 LDC 隔离）及 §6（`pkg/csgmock.MockCSGServer` 与 `SimulationController` `CLIENT_INJECT`/`PUB_STUB`/`MOCK_SERVER` 状态机及五出口清理） |
 | v1.7.0 | 2026-11-19 | **依据 ADR-22 (v2.0.0) 与 ADR-23 (v1.1.0 / M29) 增补纯 Go 可插拔传输驱动与 `dophi_mesh` 采集 ➔ TCP 重放跨传输闭环设计**：1. 更新 §1.1 `ValidateCommHead` 放宽 `ucProtocol ∈ [0..7]`（含 `TransportMesh=4`）同时保持 §1.2 TCP `StreamFramer` 默认 `<= 1` 防伪帧隔离；2. 更新 §3.1/§3.3 `ReplayExecutor` 与 `HealSingleResponseFrame` 发送副本 `ucProtocol (4 -> 1)` 原地归一化；3. 更新 §6 `MockCSGServer` / `SimController` `MOCK_SERVER` 模式放行 `dophi_mesh://` 改写 `tcp://`（取消 `422` 误阻断）；4. 新增 **§7 纯 Go 可插拔传输驱动层 (`pkg/transport`) 与 `builtin-drt-uprobe` 内核 uprobe 采集引擎**（`debug/elf` `.dynsym` 解析、`uprobe/DRT_WriteBulk` + `drt_ringbuf`、方向/四元组相关性归一化与五出口探针卫生） |
+| v1.8.0 | 2026-11-23 | **依据 ADR-21 (v2.2.0) 增补 §5.2 纯 Go `CrosMeshBackend`（4 次 128B HELLO + 40B 数据头 + CROS `ucProtocol=4`）并彻底移除外部 C++ 探针 `rpcmon_probe`**：`pkg/rpcmon` 统一支持纯 Go `CrosTCP` 与纯 Go `CrosMesh` 双后端直连现网 `RPCMonitorService` |
 
 ---
 
@@ -581,15 +582,18 @@ func HealSingleResponseFrame(liveReq []byte, mockRsp []byte) ([]byte, error) {
    - 标准 `protoc-gen-go` 会引入 `google.golang.org/protobuf/runtime/protoimpl` 并传递依赖 `protoregistry`，直接违反 `cmd/agent/deps_test.go` 硬禁令；
    - 因此 `pkg/rpcmon/wire.go` 仅用 Go 标准库实现 varint / length-delimited / fixed64 Wire 原语及 `EncodePortInfoResponse`、`DecodePortInfoResponse`、`EncodeServerDetailResponse`、`DecodeServerDetailResponse`、`EncodeClientDetailResponse`、`DecodeClientDetailResponse`、`EncodeUInt32Type` 与 `VoidTypePayload ([]byte{0x08, 0x00})`，做到 **零 `google.golang.org/protobuf` 运行时依赖**。
 
-### 5.2 基于 `pkg/crosrpc` 的标准 `CrosTCP` 监控通道与双后端实现
+### 5.2 基于 `pkg/crosrpc` 的纯 Go 双传输监控通道（`CrosTCP` & `CrosMesh`）
 
-> **架构收敛声明**：彻底淘汰 `@csg-ver` 原型期的 `internal/rpcmon/transport.go` 12B 私有 `"RMON"` 帧。`pkg/rpcmon` 与 `@pkg-crosrpc` 完全统一！
+> **架构收敛声明**：彻底淘汰 `@csg-ver` 原型期的 `internal/rpcmon/transport.go` 12B 私有 `"RMON"` 帧以及外置 C++ 探针 `rpcmon_probe`。`pkg/rpcmon` 与 `@pkg-crosrpc` 完全统一，100% 纯 Go 直连！
 
 1. **标准 `CrosTCP` 服务端/客户端 (`cros_transport.go` / `server.go`)**：
-   - `pkg/rpcmon.Server` 与 `NewCrosTCP(addr, timeout)` **100% 使用 [`pkg/crosrpc`](#1-共享协议栈-pkgcrosrpc-设计零-pb-依赖) 标准二进制帧**（`24B RPC_COMM_HEAD_S "CSE.TCP"\x01` + `256B V05 RPC_REQ_HEAD_S` / `200B V04 RPC_RSP_HEAD_S` + Wire Payload）；
-   - 按 `ascServiceName = "RPCMonitorService-RPCMonitorService"` 与 `ascOperation ∈ {GetRpcPortInfo, GetRpcServerNumInfo, GetRpcServerDetailInfo, GetRpcClientNumInfo, GetRpcClientDetailInfo}` 分发（通过 `BuildCrosReqPacket` / `BuildCrosRspPacket` 构造，并直接兼容 `pkg/ebpf` 与 `pkg/replay` 采集/自愈通路）。
-2. **真机 `NativeBackend` (`native.go`)**：
-   - 当宿主机存在管理员预置并校验通过的只读 C++ 探针 `rpcmon_probe`（源码位于 `scripts/csg/rpcmon_probe.cpp`，由 `scripts/csg/build-native-probe.sh` 编译）时，通过 `exec.CommandContext` 按严格格式白名单参数 `ipv4:<ip>:<port>` 调用（严禁拼接 Shell），自动跳过环境初始化日志从首个 `{` 起解析 JSON 输出为 `rpcmon.Snapshot`，进程退出即释放全部 DOPRA SDK 资源；**Agent 本体保持 100% 纯 Go 零 CGO**。
+   - `pkg/rpcmon.Server` (`Serve`/`ServeConn`) 与 `NewCrosTCP(addr, timeout)`（支持自动归一化 `tcp://ipv4:` 前缀）**100% 使用 [`pkg/crosrpc`](#1-共享协议栈-pkgcrosrpc-设计零-pb-依赖) 标准二进制帧**（`24B RPC_COMM_HEAD_S "CSE.TCP"\x01` + `256B V05 RPC_REQ_HEAD_S` / `200B V04 RPC_RSP_HEAD_S` + Wire Payload）；
+   - 按 `ascServiceName = "RPCMonitorService-RPCMonitorService"` 与 `ascOperation ∈ {GetRpcPortInfo, GetRpcServerNumInfo, GetRpcServerDetailInfo, GetRpcClientNumInfo, GetRpcClientDetailInfo}` 分发（通过 `BuildCrosReqFrame` / `BuildCrosRspFrame` 构造，并直接兼容 `pkg/ebpf` 与 `pkg/replay` 采集/自愈通路）。
+2. **纯 Go `CrosMesh` 服务端/客户端 (`mesh_protocol.go` / `mesh_transport.go` / `server.go`)**：
+   - 针对现网 `DophiServer` 仅以 `dophi_mesh://ipv4:<ip>:<port>` 发布 `RPCMonitorService-RPCMonitorService` 的场景，`NewCrosMesh(addr, timeout)` 与 `Server.ServeMesh` / `ServeMeshConn` 在纯 Go 标准库中实现完整的 `dophi_mesh` TCP 传输栈：
+     - **四次 128B HELLO 握手 (`MESH_SEC_HELLO_MSG_INFO_S`)**：大端 `Magic = 0xEFBC`、`MsgLen = 128`、`Role (0=Client, 1=Server)`、`Type = 1 (SEC)`、`Name[96]`（首个 `\x00` 截断防栈残留污染，客户端默认 `[P:CodeContractAgent:0]`）；显式校验 `SecOpt == 0`，若现网开启 `SSP/SECLINK` 加密则立即返回明确诊断错误；
+     - **40B 数据头 (`MESH_MSG_DATA_HEAD_S`) + CROS `ucProtocol=4` 帧**：大端 `Magic = 0x2019AAAA`、`MsgNum = 0xFFFFFFFF`、`HeadSize = 40`、`MessageSize`（受 `DefaultMaxCaptureBytes` 防 OOM 保护，显式拦截 `0x2019BBBB` 批量帧与加密数据头），内层承载标准 CROS RPC `V05 Req` / `V04 Rsp`（`TransportProto = 4`、`IsPacked = 1`）；
+     - **单连接复用与自动分流**：单个握手后的 TCP 连接顺序复用完成全部 5 个 `GetRpc*` 查询并校验 `ullSNO`；`DiscoverAndFuse` 经 `csgdlink.ResolveServiceInstances` 解析出监控端点后自动分流 `CROSTCP_RPCMON` 与 `CROSMESH_RPCMON`（当同时存在 `tcp://` 与 `dophi_mesh://` 且 TCP 失败时自动回退 Mesh），**彻底消除外部 C++ 探针子进程 `rpcmon_probe` 与 CGO 依赖**。
 
 ---
 

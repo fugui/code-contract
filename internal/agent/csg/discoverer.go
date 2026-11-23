@@ -19,13 +19,13 @@ const defaultSubEnrichBudget = 8 * time.Second
 
 // DiscovererConfig configures L1 (/proc) + L2 (rpcmon & dlink Sub->Unsub) fusion.
 type DiscovererConfig struct {
-	Locate     LocateOptions
+	Locate      LocateOptions
 	MonitorAddr string
-	CSGAddr    string
-	LocalIPs   []string
-	LocalPIDs  []agentproto.DiscoveredProcess
-	SubEnrich  bool
-	SubTimeout time.Duration
+	CSGAddr     string
+	LocalIPs    []string
+	LocalPIDs   []agentproto.DiscoveredProcess
+	SubEnrich   bool
+	SubTimeout  time.Duration
 }
 
 // DiscoverAndFuse executes dual-layer CSG topology discovery and returns both
@@ -308,20 +308,20 @@ func resolveMonitorAddrViaDlink(ctx context.Context, csgAddr string, timeout tim
 		return "", "", err
 	}
 	for _, inst := range insts {
-		if csgdlink.IsTCPAddr(inst.Addr) {
+		if tcpAddr == "" && csgdlink.IsTCPAddr(inst.Addr) {
 			if hp, ok := csgdlink.ParseTCPTarget(inst.Addr); ok {
-				return hp, "", nil
+				tcpAddr = hp
 			}
 		}
 		if meshAddr == "" && csgdlink.IsMeshAddr(inst.Addr) {
 			meshAddr = inst.Addr
 		}
 	}
-	if meshAddr != "" {
-		return "", meshAddr, nil
+	if tcpAddr != "" || meshAddr != "" {
+		return tcpAddr, meshAddr, nil
 	}
 	if len(insts) > 0 {
-		return "", "", fmt.Errorf("service %s has no tcp:// instance (%s)", rpcmon.ServiceName, insts[0].Addr)
+		return "", "", fmt.Errorf("service %s has no tcp:// or dophi_mesh:// instance (%s)", rpcmon.ServiceName, insts[0].Addr)
 	}
 	return "", "", fmt.Errorf("service %s not published on %s", rpcmon.ServiceName, csgAddr)
 }
@@ -493,7 +493,10 @@ func detectTransport(addr string) string {
 
 func isTransientProbeProc(procName string) bool {
 	lower := strings.ToLower(strings.TrimSpace(procName))
-	return lower == "rpcmon_probe" || strings.Contains(lower, "rpcmon_probe")
+	return lower == "rpcmon_probe" ||
+		strings.Contains(lower, "rpcmon_probe") ||
+		lower == "code-contract-agent" ||
+		strings.Contains(lower, "codecontractagent")
 }
 
 func buildLocalIPSet(explicit []string, csgAddr string) map[string]struct{} {

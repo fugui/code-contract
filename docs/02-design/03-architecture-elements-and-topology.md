@@ -411,7 +411,7 @@ func ValidateReplayProcessCompatibility(
 1. **三层实时对账引擎 (`ReconcileLiveCSGWithSSOT`)**：
    - **进程对账**：将本机非远端 LDC 的 CSG 进程 `(procName, cmdline, listenPort)` 与该环境已挂载的 `Process -> ArchProcess` 按监听端口/进程名模板匹配；
    - **服务供给对账 (`PROVIDE`)**：按 `service_name`（含 `^(.+-\d+)-(\d+)$` PID 后缀剥离归一化）比对进程发布的 `CSGServices[]` vs 该 `ArchProcess` 承载业务模块的 `ModuleService` 声明；
-   - **服务依赖对账 (`DEPEND`)**：按进程订阅的 `CSGSubscriptions[]`（已剔除 `rpcmon_probe` 自身瞬态订阅）比对承载模块的 `ModuleDependency` 声明（支持解析直接依赖 `ServiceID` 与多实现分发契约 `ContractID`），统一输出三态标签：
+   - **服务依赖对账 (`DEPEND`)**：按进程订阅的 `CSGSubscriptions[]`（已剔除 `code-contract-agent` / `rpcmon_probe` 自身瞬态监控客户端订阅）比对承载模块的 `ModuleDependency` 声明（支持解析直接依赖 `ServiceID` 与多实现分发契约 `ContractID`），统一输出三态标签：
      - `MATCHED`（现网与架构 SSOT 一致）；
      - `UNDECLARED_IN_SSOT`（现网存在发布或订阅但 SSOT 尚未登记）；
      - `MISSING_IN_LIVE`（SSOT 已声明但现网当前离线/未发布/未订阅）。

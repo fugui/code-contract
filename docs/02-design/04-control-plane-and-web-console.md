@@ -1450,7 +1450,7 @@ export interface StaticComplianceDTO {
 
 1. **`Agent与进程` 工作台 (`/agents`) 新增「CSG 现网发现与架构对账」面板与蓝图导入抽屉 (`CSGBlueprintImportDrawer`)**：
    - 在右栏顶部新增 **`[🧭 探测 CSG 现网拓扑]`** 按钮，调用 `GET /api/agents/:id/csg/topology` 展示：
-     - **多租户端点与端口池概览条**：按 `csg_addr`（`host:31800+userId`）显示 `DiscoveryMode`（`RPCMON_NATIVE` / `RPCMON_MOCK` / `DLINK_FALLBACK`）、本机 IP 端口池水位（如 `81 / 1200`）与「本机实例数 vs 已隔离跨板 LDC 数」；
+     - **多租户端点与端口池概览条**：按 `csg_addr`（`host:31800+userId`）显示 `DiscoveryMode`（`CROSTCP_RPCMON` / `CROSMESH_RPCMON` / `PROC_ONLY`）、本机 IP 端口池水位（如 `81 / 1200`）与「本机实例数 vs 已隔离跨板 LDC 数」；
      - **三态对账双视图标签（`[发布服务 PROVIDE]` / `[订阅依赖 DEPEND]`）**：高亮 `MATCHED`（绿色）、`UNDECLARED_IN_SSOT`（amber 虚标提示未建模）与 `MISSING_IN_LIVE`（弱化灰标），支持按本机/跨板 LDC 开关切换；
      - **管理员一键导入抽屉 (`CSGBlueprintImportDrawer`, 680px 右侧抽屉，仅 `contract_admin` 可见)**：复选未登记的本机进程（含 `listen_port=0` 纯客户端与 `dophi_mesh://` 标识）、64B 发布服务名（提供 `.pb` 别名下拉推荐 `proto_service_name`）与订阅依赖边，提交 `POST /api/agents/:id/csg/import-blueprint` 完成增量导入并刷新 `/agents` 与 `/architecture`。
 2. **`防劣化回归` (`/replay`) 与 `黄金用例库` (`/golden-suites`) 新增「CSG 仿真策略四档选择器」**：
@@ -1514,7 +1514,7 @@ export interface CSGSubscriptionReconcileItemDTO {
 export interface CSGTopologyReconcileDTO {
   csg_addr: string;
   user_id: number;
-  discovery_mode: 'RPCMON_NATIVE' | 'RPCMON_MOCK' | 'DLINK_FALLBACK';
+  discovery_mode: 'CROSTCP_RPCMON' | 'CROSMESH_RPCMON' | 'PROC_ONLY';
   timestamp: number;
   server_num: number;
   client_num: number;

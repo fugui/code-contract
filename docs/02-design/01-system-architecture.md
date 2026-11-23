@@ -1,11 +1,11 @@
 # 架构与活体契约治理 (`code-contract`) 系统总体架构与主从协同设计
 
 - **文档编号**：`01-system-architecture.md`
-- **文档版本**：v1.10.0（依据 `ADR-22` v2.0.0 与 `ADR-23` v1.1.0 纳入纯 Go 可插拔传输层 `pkg/transport`、`builtin-drt-uprobe` 内核 uprobe 旁路采集与「`dophi_mesh` 录制 ➔ `tcp://` 仿真重放」跨传输闭环，严守 `cmd/agent` 零 DB / 零 `protoregistry` / 零 CGO 物理防腐红线，维持 `30` 张核心业务表 + `contract_settings` 共 `31` 张表）
-- **更新日期**：2026-11-19
+- **文档版本**：v1.11.0（依据 `ADR-21` v2.2.0、`ADR-22` v2.0.0 与 `ADR-23` v1.1.0 纳入纯 Go `pkg/rpcmon.CrosMeshBackend`（128B HELLO + 40B 数据头，彻底移除外部 C++ 探针 `rpcmon_probe`）、纯 Go 可插拔传输层 `pkg/transport`、`builtin-drt-uprobe` 内核 uprobe 旁路采集与「`dophi_mesh` 录制 ➔ `tcp://` 仿真重放」跨传输闭环，严守 `cmd/agent` 零 DB / 零 `protoregistry` / 零 CGO / 零外部探针子进程物理防腐红线，维持 `30` 张核心业务表 + `contract_settings` 共 `31` 张表）
+- **更新日期**：2026-11-23
 - **归属阶段**：阶段二：系统架构与数据模型设计 (`02-design`)
-- **状态**：M1~M28 已交付；ADR-22 v2.0.0 & ADR-23 v1.1.0 (M29) SDD 详细设计定稿
-- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.24.0)、[`01-cros-rpc-protocol-spec.md`](../07-references/01-cros-rpc-protocol-spec.md) (v1.0.0)、[`02-ebpf-hook-and-dual-subsystem-adr.md`](../05-adr/02-ebpf-hook-and-dual-subsystem-adr.md)、[`03-control-plane-state-recovery-and-lease-reconciliation.md`](../05-adr/03-control-plane-state-recovery-and-lease-reconciliation.md)、[`09-arch-process-ssot-and-ebpf-premount-standby-adr.md`](../05-adr/09-arch-process-ssot-and-ebpf-premount-standby-adr.md) (ADR-09 v1.1.0)、[`11-single-process-bidirectional-capture-and-recording-ux-adr.md`](../05-adr/11-single-process-bidirectional-capture-and-recording-ux-adr.md) (ADR-11 v1.0.0)、[`12-packet-causality-call-tree-and-sequence-ux-adr.md`](../05-adr/12-packet-causality-call-tree-and-sequence-ux-adr.md) (ADR-12 v1.0.0)、[`16-multi-implementation-service-contract-adr.md`](../05-adr/16-multi-implementation-service-contract-adr.md) (ADR-16 v2.0.0)、[`17-topology-single-layer-drilldown-and-layout-ux-adr.md`](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md) (ADR-17 v1.1.0)、[`18-proto-full-lifecycle-and-git-mr-governance-adr.md`](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (ADR-18 v1.3.0)、[`21-csg-aware-agent-service-discovery-and-replay-mock-adr.md`](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (ADR-21 v2.1.0)、[`22-pluggable-transport-driver-and-mesh-capture-adr.md`](../05-adr/22-pluggable-transport-driver-and-mesh-capture-adr.md) (ADR-22 v2.0.0)、[`23-dophi-mesh-uprobe-bypass-capture-adr.md`](../05-adr/23-dophi-mesh-uprobe-bypass-capture-adr.md) (ADR-23 v1.1.0)
+- **状态**：M1~M29 已全部交付
+- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.25.0)、[`01-cros-rpc-protocol-spec.md`](../07-references/01-cros-rpc-protocol-spec.md) (v1.0.0)、[`02-ebpf-hook-and-dual-subsystem-adr.md`](../05-adr/02-ebpf-hook-and-dual-subsystem-adr.md)、[`03-control-plane-state-recovery-and-lease-reconciliation.md`](../05-adr/03-control-plane-state-recovery-and-lease-reconciliation.md)、[`09-arch-process-ssot-and-ebpf-premount-standby-adr.md`](../05-adr/09-arch-process-ssot-and-ebpf-premount-standby-adr.md) (ADR-09 v1.1.0)、[`11-single-process-bidirectional-capture-and-recording-ux-adr.md`](../05-adr/11-single-process-bidirectional-capture-and-recording-ux-adr.md) (ADR-11 v1.0.0)、[`12-packet-causality-call-tree-and-sequence-ux-adr.md`](../05-adr/12-packet-causality-call-tree-and-sequence-ux-adr.md) (ADR-12 v1.0.0)、[`16-multi-implementation-service-contract-adr.md`](../05-adr/16-multi-implementation-service-contract-adr.md) (ADR-16 v2.0.0)、[`17-topology-single-layer-drilldown-and-layout-ux-adr.md`](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md) (ADR-17 v1.1.0)、[`18-proto-full-lifecycle-and-git-mr-governance-adr.md`](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (ADR-18 v1.3.0)、[`21-csg-aware-agent-service-discovery-and-replay-mock-adr.md`](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (ADR-21 v2.2.0)、[`22-pluggable-transport-driver-and-mesh-capture-adr.md`](../05-adr/22-pluggable-transport-driver-and-mesh-capture-adr.md) (ADR-22 v2.0.0)、[`23-dophi-mesh-uprobe-bypass-capture-adr.md`](../05-adr/23-dophi-mesh-uprobe-bypass-capture-adr.md) (ADR-23 v1.1.0)
 
 ### 修订记录
 
@@ -15,8 +15,9 @@
 | v1.6.0 | 2026-11-11 | 依据 ADR-16 (v1.0.0 / M20) 同步核心 `contract_*` 业务表总数（扩展至 19 张，新增 `contract_service_contracts`）、录制 `endpoint_snapshots` 固化及 `DownstreamEndpoint.DstTag` 多实现重放 Mock 隔离标签契约 |
 | v1.7.0 | 2026-11-13 | 依据 [`ADR-18`](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (v1.1.0, `M22~M25`) 升级架构基线：增设纯 Go `protocompile`、`gitclient`、`protodoc`、`linter`、`notify` 与 `security` 模块，严格恪守 `cmd/agent` 与 `pkg/*` 零 `.pb`/零 DB/零 Git 防腐红线 |
 | v1.8.0 | 2026-11-13 | 依据 [`ADR-18`](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (v1.2.0, `M22~M26`) 全面检视修订：1. 核心表收敛为 **`30` 张核心 `contract_*` 业务表 + `contract_settings`（共 `31` 张物理表）**，拆分 `GitRepo (1:N) GitProtoBundle` 支持 Monorepo 多目录包、MR 原位评论去重与 `COALESCE(bundle_id,0)` 防 Fast-Forward 同 SHA 误丢；2. 明确统一主密钥 env **`CONTRACT_CRYPTO_KEY`**；3. `SafeDialer` 在永久阻断云元数据/组播前提下支持 `outbound_trusted_cidrs` 白名单放行同内网 GitLab/LLM 与**跨机部署的 `code-notifier` 邮件服务**（调用 `POST /api/notify/email` 严格校验非空 `markdown_content` 并解析真实收件邮箱）；4. 明确 `handlers/settings.go` 敏感字段脱敏及审计掩码 `***REDACTED***`，并将前端预算精确校准为基于 M21 基线的 **`<= 150KB gzip`（`<= 500KB` 原始文本）增量上限** |
-| v1.9.0 | 2026-11-18 | 依据 [`ADR-21`](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (v2.1.0, `M28`) 升级系统架构：1. 新增纯 Go 基础包 `pkg/csgdlink`、`pkg/rpcmon`（基于 `pkg/crosrpc` 标准帧与零 `protoregistry` Wire 编解码）、`pkg/csgmock`、`internal/agent/csg` 与可选外置只读 C++ 探针 `scripts/csg/rpcmon_probe.cpp`，并纳入 `cmd/agent/deps_test.go` 物理防腐红线；2. 扩展主从接口 `GET /agent/v1/csg/topology`、`GET /agent/v1/processes/discover`、WS 事件 `0x08 (EVENT_CSG_OBSERVATION)`、`HandshakeResp.CSGEndpoints` 与 `ExecuteReplayReq.CSGStrategy/CSGAddr/CSGSnapshots`；3. 新增 §5.5 CSG 双层自动发现与三模仿真全链路时序及 §6.5 CSG 访问安全守卫与受控探针调用约束 |
+| v1.9.0 | 2026-11-18 | 依据 [`ADR-21`](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (v2.1.0, `M28`) 升级系统架构：1. 新增纯 Go 基础包 `pkg/csgdlink`、`pkg/rpcmon`（基于 `pkg/crosrpc` 标准帧与零 `protoregistry` Wire 编解码）、`pkg/csgmock`、`internal/agent/csg`，并纳入 `cmd/agent/deps_test.go` 物理防腐红线；2. 扩展主从接口 `GET /agent/v1/csg/topology`、`GET /agent/v1/processes/discover`、WS 事件 `0x08 (EVENT_CSG_OBSERVATION)`、`HandshakeResp.CSGEndpoints` 与 `ExecuteReplayReq.CSGStrategy/CSGAddr/CSGSnapshots`；3. 新增 §5.5 CSG 双层自动发现与三模仿真全链路时序及 §6 CSG 访问安全守卫 |
 | v1.10.0 | 2026-11-19 | 依据 [`ADR-22`](../05-adr/22-pluggable-transport-driver-and-mesh-capture-adr.md) (v2.0.0) 与 [`ADR-23`](../05-adr/23-dophi-mesh-uprobe-bypass-capture-adr.md) (v1.1.0, `M29`) 演进系统架构：1. 新增纯 Go 可插拔传输驱动包 `pkg/transport`（内置 `builtin-tcp` 与基于 `debug/elf` + `cilium/ebpf` 锚定 `libdopra.so:DRT_WriteBulk` 的 `builtin-drt-uprobe`，零 CGO / 零 `.so` 插件 / 零子进程）并纳入 `cmd/agent/deps_test.go` 九包物理防腐红线；2. 扩展 `HandshakeResp.TransportDrivers` 与 56B `EnvelopeHeader` 偏移 `26` `TransportProto (uint8: 1=TCP, 4=MESH)`（零数据库 DDL 迁移）；3. 打通「现网 `dophi_mesh://` (`ucProtocol=4`) 采集 ➔ 测试态 `tcp://` (`ucProtocol=1` 发送副本原地归一化 + `MOCK_SERVER` 放行改写) 仿真重放」全链路闭环，新增 §5.6 时序图与 §6.2 uprobe 探针卫生规范 |
+| v1.11.0 | 2026-11-23 | 依据 [`ADR-21` (v2.2.0)](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) 在 `pkg/rpcmon` 中落地纯 Go `CrosMeshBackend`（4 次 128B HELLO + 40B 数据头 + CROS `ucProtocol=4`）直连现网 `dophi_mesh://` `RPCMonitorService`，自动分流 `CROSTCP_RPCMON` 与 `CROSMESH_RPCMON`；彻底删除 `pkg/rpcmon/native.go`、`scripts/csg/rpcmon_probe.cpp`、`NATIVE_PROBE` 及 `--csg-probe-bin` 参数，更新 §2.2 目录树、§5.5 时序图与 §6.2 安全守卫 |
 
 ---
 
@@ -98,13 +99,11 @@ code-contract/
 │   ├── crosrpc/                     # 共享 CROS RPC 分帧状态机、24B 公共头 (ucProtocol 0..7)、多版本会话头与扩展头解析库
 │   ├── agentproto/                  # 主从 HTTP REST DTO 与 WebSocket 56B 二进制信封帧编解码契约（含 TransportProto、TransportDrivers 与 CSG DTO）
 │   ├── csgdlink/                    # 纯 Go 标准库 DOPRA dlink (32B 帧头/248B 实例/10类控制消息/2类 NOTIFY) 与流式 Observer (ADR-21)
-│   ├── rpcmon/                      # RPCMonitorService 统一模型、pkg/crosrpc 标准帧服务端/客户端与零 protoregistry Wire 编解码及 NativeBackend (ADR-21)
+│   ├── rpcmon/                      # RPCMonitorService 统一模型、纯 Go CrosTCP & CrosMesh (128B HELLO + 40B 数据头) 与零 protoregistry Wire 编解码 (ADR-21 v2.2)
 │   ├── csgmock/                     # 内存态 MockCSGServer（内置 rpcmon.Provider，支援全隔离控制面沙箱、Mesh->TCP 改写与五出口清理，ADR-21/22）
 │   ├── ebpf/                        # Agent 专属：cilium/ebpf 探针加载（含 Socket eBPF 与 uprobe/DRT_WriteBulk）、BPF Map 热更新、/proc 扫描与自洁控制
 │   ├── transport/                   # Agent 专属：纯 Go 可插拔传输驱动抽象 (Driver/Registry)、builtin-tcp 封装与 builtin-drt-uprobe (debug/elf .dynsym + DRT_WriteBulk，ADR-22/23)
 │   └── replay/                      # Agent 专属：零 .pb 二进制 Mock 匹配器、请求注入器、ucProtocol (4->1) 发送期归一化与应答头偏移自愈改写器
-├── scripts/
-│   └── csg/                         # 可选外置只读 C++ 探针源码 (rpcmon_probe.cpp) 与构建脚本 (build-native-probe.sh)
 ├── internal/
 │   ├── agent/
 │   │   ├── server/                  # Agent HTTP + WS 服务、IP 白名单、缓冲与生命周期控制
@@ -579,19 +578,19 @@ sequenceDiagram
 sequenceDiagram
     actor Admin as 管理员 / 开发者
     participant Srv as 控制面 Server
-    participant Ag as 宿主 Agent (csg.*)
-    participant Probe as rpcmon_probe (可选受控只读探针)
+    participant Ag as 宿主 Agent (csg.* + pkg/rpcmon)
     participant CSG as 租户 DophiServer (31800+userId)
+    participant Mon as RPCMonitorService (CrosTCP / CrosMesh)
     participant EP as EgressProxy + MockCSGServer
     participant SUT as 被测进程
 
     Admin->>Srv: 1. GET /api/agents/:id/csg/topology
     Srv->>Ag: GET /agent/v1/csg/topology
     Ag->>Ag: LocateCSGEndpoints (扫描 [31800,31900] 监听与 OwnerUID)
-    Ag->>Probe: exec rpcmon_probe ipv4:IP:Port (严格白名单校验, 超时 10s)
-    Probe->>CSG: Sub(RPCMonitorService) + 5x GetRpc* (纯只读)
-    CSG-->>Probe: 返回全量 Servers(709) + Clients(724) + Ports
-    Probe-->>Ag: stdout 结构化 JSON 退出
+    Ag->>CSG: csgdlink.ResolveServiceInstances(RPCMonitorService) (Sub -> Unsub)
+    CSG-->>Ag: 返回监控端点 (tcp://ipv4:IP:Port 或 dophi_mesh://ipv4:IP:Port)
+    Ag->>Mon: 纯 Go CrosTCP / CrosMesh (4x128B HELLO + 40B 数据头 + 5x GetRpc*, 单连接复用)
+    Mon-->>Ag: 返回全量 Servers(709) + Clients(724) + Ports
     Ag->>CSG: 纯 Go csgdlink.Client 按需 Sub 本机服务 (绝不调 GET_BIND_ADDR) -> 立即 Unsub
     Ag-->>Srv: 返回融合后的 CSGTopologyReport (已过滤跨板 LDC, 识别纯客户端/Mesh)
     Srv-->>Admin: 输出三态对账 (MATCHED / UNDECLARED_IN_SSOT / MISSING_IN_LIVE)
@@ -674,8 +673,8 @@ sequenceDiagram
      2. **默认拦截 + 管理员信任白名单放行 (`outbound_trusted_cidrs`)**：默认拒绝回环（`127.0.0.0/8`、`::1`）、RFC1918 私网与 RFC4193 ULA，同时显式允许管理员在 `contract_settings.outbound_trusted_cidrs` 配置受信任内网 CIDR 或精确主机（放行企业内网 GitLab/CodeHub、内网 LLM 网关及跨机部署的 `code-notifier`），单测沙箱可通过显式构建期或隔离开关放行受控 `127.0.0.1` mock server；
      3. **Dial/Control DNS 重绑定复检与重定向守卫**：通过 `net.Dialer{Control: ...}` 在 TCP 实际建连前再次校验解析后的最终 IP（防止域名通过 DNS 重绑定跳入元数据 IP 或未授权内网段），并禁止跨信任边界自动跳转；
      4. **强制硬超时与安全降级**：LLM 固定 `<= 3s`、Git API `<= 30s`、`code-notifier` `<= 5s`，任何外部依赖离线或返回 `4xx/5xx` 均安全降级（记录 `TIMEOUT_FALLBACK` 或 `email_status='FAILED'`），严禁阻塞核心研发与 MR 门禁主路径。
-   - **宿主机进程探查、CSG 控制面与 DRT Uprobe 安全守卫 (`ADR-21` / `ADR-22 v2.0` / `ADR-23 v1.1`)**：
-     1. Agent 进程探查、连接诊断与 `libdopra.so` 符号解析 100% 通过 Go 标准库只读解析 `/proc/<pid>/*` 与 `debug/elf` 完成（严禁调用外部 `readelf`/`nm`、严禁引入 CGO 或外部 `.so` 传输插件）；针对依赖 DOPRA SDK 私有动态库链的真机 `RPCMonitorService` 全量查询，仅允许调用管理员预置在受控白名单路径（如 `/usr/local/bin/rpcmon_probe` 或 `--csg-probe-bin`，经文件存在性/非符号链接/权限位与属主校验）的只读探针 `rpcmon_probe`，入参严格按正则校验为 `^ipv4:[0-9.]+:[0-9]{1,5}$`，**严禁拼接执行任意 Shell 字符串或调用外部 `protoc` / `git` 命令**；
+   - **宿主机进程探查、CSG 控制面与 DRT Uprobe 安全守卫 (`ADR-21 v2.2` / `ADR-22 v2.0` / `ADR-23 v1.1`)**：
+     1. Agent 进程探查、连接诊断、`libdopra.so` 符号解析及现网 `RPCMonitorService` 全量查询（含 `tcp://` `CrosTCPBackend` 与 `dophi_mesh://` `CrosMeshBackend` 4 次 128B HELLO + 40B 数据头）100% 通过 Go 标准库在进程内只读完成（**严禁调用外部 `readelf`/`nm`、严禁引入 CGO、外部 `.so` 传输插件或任何外部 C++ 探针子进程 `rpcmon_probe`，严禁拼接执行任意 Shell 字符串或调用外部 `protoc` / `git` 命令**）；
      2. **真实 CSG 只读/零游标污染红线**：自动发现期只允许 `REGISTER / CLIENT_ID / SUB / UNSUB / UNREGISTER` 并在取回实例后立即 `UNSUB` 断连；**严禁在任何模式下向真实 CSG 发送 `GET_BIND_ADDR (7)` 或 `FREE_BIND_ADDR (8)`**（防止推进 `usNextPortNum`）；`PUB_STUB` 必须满足前置 `Sub==0` 门禁并在重放完成、手动取消、`/purge`、失联 5 分钟、`SIGINT/SIGTERM` 五出口幂等 `Unpub` 清理零残留；
      3. **`builtin-drt-uprobe` 探针卫生与只读红线 (`ADR-23 D5`)**：① `ARMED` 待命期 **0 uprobe 挂载**，仅在 `StartCapture` 活跃录制期间按目标 `PID` 动态挂载 `libdopra.so:DRT_WriteBulk`；② 通过 `cilium/ebpf` 匿名 `perf_event_open(pid)` `bpf_link` 挂载（零 `/sys/kernel/tracing/uprobe_events` 全局污染，同机非监控进程连内核陷页都不触发）；③ 永不修改寄存器或用户态共享内存环（重放统一收敛 `tcp://`）；④ 五出口调用 `transport.Registry.CloseAll()` 幂等卸载并经负控验收确保停录后 0 事件；
      4. **`Agent` 物理防腐红线 (`cmd/agent/deps_test.go`)**：强制纳入 `./pkg/csgdlink`、`./pkg/rpcmon`、`./pkg/csgmock`、`./pkg/transport`（共九包），严禁依赖 `gorm.io`、`pgx`、`dynamicpb`、`protoregistry`、`protocompile`、`go-git`、`sqlite`、CGO 或 `internal/server`。

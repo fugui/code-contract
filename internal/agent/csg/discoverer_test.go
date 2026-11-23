@@ -541,3 +541,69 @@ func TestDiscoverAndFuse_MeshOnlyMonitor_AutoUsesPureGoCrosMeshAndFusesMeshProc(
 		t.Fatalf("expected PID 7788 backfilled in fusedProcs: %+v", fusedProcs)
 	}
 }
+
+func TestDiscoverAndFuse_TCPMonitorFails_FallbacksToCrosMesh(t *testing.T) {
+	mockCSG := csgmock.NewMockCSGServer("127.0.0.1:0")
+	if err := mockCSG.Start(); err != nil {
+		t.Fatalf("mockCSG.Start failed: %v", err)
+	}
+	defer mockCSG.Close()
+
+	// Allocate and immediately close a TCP listener to get an unreachable TCP monitor address.
+	deadTCPLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen dead tcp failed: %v", err)
+	}
+	deadTCPAddr := deadTCPLn.Addr().String()
+	_ = deadTCPLn.Close()
+
+	meshLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen mesh rpcmon failed: %v", err)
+	}
+	defer meshLn.Close()
+
+	snap := rpcmon.Snapshot{
+		Servers: []rpcmon.ServerEntry{
+			{ProcName: "fallback_mesh_svr", Pid: 7901, ServerName: "FallbackSvc-FallbackSvc", ServerAddr: "dophi_mesh://ipv4:127.0.0.1:16100"},
+		},
+	}
+	go func() {
+		_ = rpcmon.NewServer(&scaleSnapshotProvider{snap: snap}).ServeMesh(meshLn)
+	}()
+
+	// Seed BOTH a dead tcp:// instance and a live dophi_mesh:// instance for RPCMonitorService.
+	mockCSG.SeedInstance(csgdlink.Instance{
+		ClientID: 1,
+		ProcID:   4001,
+		Addr:     "tcp://ipv4:" + deadTCPAddr,
+		Name64:   rpcmon.ServiceName,
+	})
+	mockCSG.SeedInstance(csgdlink.Instance{
+		ClientID: 2,
+		ProcID:   4001,
+		Addr:     "dophi_mesh://ipv4:" + meshLn.Addr().String(),
+		Name64:   rpcmon.ServiceName,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	report, _, err := csg.DiscoverAndFuse(ctx, csg.DiscovererConfig{
+		Locate:   csg.LocateOptions{ProcRoot: t.TempDir()},
+		CSGAddr:  mockCSG.Addr(),
+		LocalIPs: []string{"127.0.0.1"},
+	})
+	if err != nil {
+		t.Fatalf("DiscoverAndFuse failed: %v", err)
+	}
+	if report.DiscoveryMode != "CROSMESH_RPCMON" {
+		t.Fatalf("DiscoveryMode = %q, want CROSMESH_RPCMON after TCP fallback (errors=%v)", report.DiscoveryMode, report.Errors)
+	}
+	if len(report.Services) != 1 || report.Services[0].ServiceName != "FallbackSvc-FallbackSvc" {
+		t.Fatalf("unexpected services after fallback: %+v", report.Services)
+	}
+	if len(report.Errors) != 1 || !strings.Contains(report.Errors[0], "自动回退 dophi_mesh") {
+		t.Fatalf("expected fallback diagnostic in report.Errors, got: %v", report.Errors)
+	}
+}

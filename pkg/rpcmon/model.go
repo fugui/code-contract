@@ -1,6 +1,7 @@
-// Package rpcmon implements read-only RPCMonitorService querying over standard
-// CROS RPC TCP ("CSE.TCP") with zero-reflection hand-coded Protobuf wire codecs
-// as well as the allowlisted native probe backend.
+// Package rpcmon implements read-only RPCMonitorService querying over both
+// standard CROS RPC TCP ("CSE.TCP", ucProtocol=1) and pure-Go dophi_mesh
+// (128B HELLO + 40B MESH_MSG_DATA_HEAD_S + CROS ucProtocol=4) with zero-reflection
+// hand-coded Protobuf wire codecs.
 package rpcmon
 
 // PortUsage mirrors swp.rpc.RpcPortInfo.

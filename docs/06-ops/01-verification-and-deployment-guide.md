@@ -1,9 +1,9 @@
 # 架构与活体契约治理 (`code-contract`) 联调验证与生产部署手册
 
 - **文档编号**：`01-verification-and-deployment-guide.md`
-- **文档版本**：v1.3.0
+- **文档版本**：v1.4.0
 - **编制日期**：2026-10-29
-- **更新日期**：2026-11-13
+- **更新日期**：2026-11-23
 - **归属阶段**：阶段四：交付验证与运维指南
 
 ---
@@ -61,7 +61,7 @@ gateways:
 - [x] 所有写操作接口均已接入 `commonAudit` 操作审计，管理员接口均已挂载 `RequireAdmin("contract_admin")`；
 - [x] 前端所有新增页面在亮色（Light）与暗色（Dark）主题下均无视觉黑块或文字融底，无硬编码色值，无 `any` 类型；
 - [x] `make test && make lint && make build && make clean` 全量零错误通过；
-- [x] SC-01~SC-12 已交付场景全链路端到端回归测试 100% 绿灯（M22~M26 完成后同步纳入 `SC-13~SC-16` 与前端基于 M21 基线 `<= 150KB gzip` / `<= 500KB` 原文产物体积增量门禁）。
+- [x] `SC-01`~`SC-18` 已交付场景全链路端到端回归测试 100% 绿灯（含前端基于 M21 基线 `<= 150KB gzip` / `<= 500KB` 原文产物体积增量门禁，以及 `cmd/agent/deps_test.go` 九包纯 Go 零 CGO / 零 DB / 零 `protoregistry` / 零外部探针子进程物理防腐守卫）。
 
 ---
 
@@ -117,7 +117,7 @@ go run ./scripts/seed-large-topology \
    - **跨机部署 **`code-notifier`** 邮件通道 (`M26`)**：`code-notifier` 运行在同内网另一台独立机器上负责实际邮件发送。在 `/admin/settings` 配置 `code_notifier_enabled=true`、`code_notifier_url`（例如 `http://<code-notifier-lan-host>:8081`，服务端请求 `POST <url>/api/notify/email` 携带必填非空 `markdown_content`、HTML 正文与解析后的真实收件邮箱，同步将该主机 IP/CIDR 加入 `outbound_trusted_cidrs`）及可选 `code_notifier_token`（同样 AES-256-GCM 加密）；可选 SMTP 作为备用兜底。远程 `code-notifier` 网络不可达或返回 `4xx/5xx` 仅记录告警与 `email_status='FAILED'`，绝不阻断 PostgreSQL `contract_notifications` 站内通知持久落库与 MR 门禁主流程。
 
 ### 5.2 上线前追加验证门禁 (`M22~M26`)
-- **二进制依赖隔离**：`go list -deps ./cmd/agent` 不含 `protocompile`、`go-git`、`gorm`、`dynamicpb`、`sqlite`；`go list -deps ./cmd/server` 不含 `sqlite`；全仓 `grep` 零 `os/exec` 调用外部 `protoc`/`git`；
+- **二进制依赖隔离**：`go list -deps ./cmd/agent ./pkg/{crosrpc,agentproto,csgdlink,rpcmon,csgmock,ebpf,transport,replay}`（九包守卫）不含 `protocompile`、`go-git`、`gorm`、`pgx`、`dynamicpb`、`protoregistry`、`sqlite` 或 CGO；`go list -deps ./cmd/server` 不含 `sqlite`；全仓零 `os/exec` 调用外部 `protoc`、`git`、`readelf`/`nm` 或外部 C++ 探针子进程；
 - **只读无锁与体积增量红线**：`frontend/package.json` 不含 `monaco-editor`、`contract_proto_files` 不含 `locked`/`locked_by` 字段；以 M21 交付基线为基准，`M22~M26` 前端静态 JS 构建产物总增量严格控制在 **`<= 150KB gzip`（`<= 500KB` 未压缩）**；
 - **`SC-13` ~ `SC-16` 全链路验收**：逐项覆盖纯 Go 编译 + `layer_level`（含 `DISPATCH` 消费方反向校核与成环 `409`）+ `BASE_LIB` 传递影响雷达 + `/topology` 程序化矢量 SVG/PNG 导出、活体参考文档 + `#L` 行定位 + Markdown 导出、多段式包名 + `Jaccard >= 0.85` 三护栏去重 + LLM 3s 降级、`GitRepo (1:N) GitProtoBundle` + 含删除文件/Fast-Forward 同 SHA 的 MR 四合一预检 + 原位评论更新 + `Override` P1 审计 + `SSEBroker(userID)` 定向推送 + `contract_notifications`/跨机 `code-notifier` 邮件载荷校验及大盘静默合标卡片。
 
