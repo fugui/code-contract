@@ -202,6 +202,59 @@ describe('M28 CSG Discovery, Blueprint Import & 3-Mode Simulation Console', () =
     expect(nonAdminHtml).not.toContain('csg-import-blueprint-btn');
   });
 
+  it('uses valid theme tokens and renders quick-create subsystem form when subsystems list is empty', () => {
+    const emptySubAdminHtml = renderToString(
+      <MemoryRouter>
+        <ModuleUserProvider
+          value={{
+            user: adminUser,
+            loadingUser: false,
+            isEmbedded: false,
+            reloadUser: async () => {},
+          }}
+        >
+          <CSGBlueprintImportContent
+            agent={dummyAgent}
+            initialReport={dummyReport}
+            initialSubsystems={[]}
+          />
+        </ModuleUserProvider>
+      </MemoryRouter>
+    );
+
+    expect(emptySubAdminHtml).toContain('var(--color-primary)');
+    expect(emptySubAdminHtml).not.toContain('--color-accent-primary');
+    expect(emptySubAdminHtml).not.toContain('--color-bg-secondary');
+    expect(emptySubAdminHtml).not.toContain('--color-bg-primary');
+    expect(emptySubAdminHtml).not.toContain('--color-border-default');
+    expect(emptySubAdminHtml).toContain('csg-empty-subsystem-hint');
+    expect(emptySubAdminHtml).toContain('csg-quick-create-subsystem-form');
+    expect(emptySubAdminHtml).toContain('csg-quick-create-subsystem-submit');
+    expect(emptySubAdminHtml).toContain('csg-import-blueprint-btn');
+
+    const emptySubNonAdminHtml = renderToString(
+      <MemoryRouter>
+        <ModuleUserProvider
+          value={{
+            user: normalUser,
+            loadingUser: false,
+            isEmbedded: false,
+            reloadUser: async () => {},
+          }}
+        >
+          <CSGBlueprintImportContent
+            agent={dummyAgent}
+            initialReport={dummyReport}
+            initialSubsystems={[]}
+          />
+        </ModuleUserProvider>
+      </MemoryRouter>
+    );
+
+    expect(emptySubNonAdminHtml).not.toContain('csg-quick-create-subsystem-form');
+    expect(emptySubNonAdminHtml).toContain('csg-admin-only-notice');
+  });
+
   it('renders explicit PROC_ONLY mesh degradation banner when L2 discovery is unavailable', () => {
     const degradedReport: CSGTopologyReconcileResp = {
       agent_id: 10,

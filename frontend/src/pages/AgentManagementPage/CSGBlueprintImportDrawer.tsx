@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   Compass,
   Download,
+  Plus,
   RefreshCw,
   ShieldAlert,
 } from 'lucide-react';
@@ -59,10 +60,22 @@ const STATE_BADGE_MAP: Record<
   },
 };
 
+function buildDefaultSubsystemCode(agentName?: string): string {
+  const normalized = (agentName || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9_-]+/g, '_')
+    .replace(/^[_-]+|[_-]+$/g, '');
+  if (normalized.length >= 2) {
+    return normalized.slice(0, 64);
+  }
+  return 'CSG_AUTO_SYS';
+}
+
 export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps> = ({
   agent,
   initialReport = null,
-  initialSubsystems = [],
+  initialSubsystems,
   onImported,
   onClose,
 }) => {
@@ -74,13 +87,24 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
     Boolean(user?.roles?.includes('contract_admin')) ||
     Boolean(user?.roles?.includes('super_admin'));
 
+  const hasInitialSubsystems = initialSubsystems !== undefined;
+  const resolvedInitialSubsystems = initialSubsystems ?? [];
+
   const [csgAddrInput, setCsgAddrInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [report, setReport] = useState<CSGTopologyReconcileResp | null>(initialReport);
-  const [subsystems, setSubsystems] = useState<Subsystem[]>(initialSubsystems);
+  const [subsystems, setSubsystems] = useState<Subsystem[]>(resolvedInitialSubsystems);
+  const [subsystemsLoaded, setSubsystemsLoaded] = useState<boolean>(hasInitialSubsystems);
+  const [subsystemsError, setSubsystemsError] = useState<string | null>(null);
   const [selectedSubsystemId, setSelectedSubsystemId] = useState<string>(() =>
-    initialSubsystems.length > 0 ? String(initialSubsystems[0].id) : ''
+    resolvedInitialSubsystems.length > 0 ? String(resolvedInitialSubsystems[0].id) : ''
+  );
+  const [showCreateSubsystem, setShowCreateSubsystem] = useState<boolean>(false);
+  const [creatingSubsystem, setCreatingSubsystem] = useState<boolean>(false);
+  const [newSubCode, setNewSubCode] = useState<string>(() => buildDefaultSubsystemCode(agent.name));
+  const [newSubName, setNewSubName] = useState<string>(() =>
+    agent.name?.trim() ? `${agent.name.trim()} 子系统` : 'CSG 自动发现子系统'
   );
   const [selectedServices, setSelectedServices] = useState<Set<string>>(() => {
     const init = new Set<string>();
@@ -93,6 +117,23 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
   });
   const [importDeps, setImportDeps] = useState(true);
   const [importing, setImporting] = useState(false);
+
+  const loadSubsystems = useCallback(async () => {
+    setSubsystemsError(null);
+    try {
+      const res = await archApi.listSubsystems({ page: 1, page_size: 100 });
+      const items = res.items || [];
+      setSubsystems(items);
+      setSubsystemsLoaded(true);
+      if (items.length > 0) {
+        setSelectedSubsystemId((prev) => prev || String(items[0].id));
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setSubsystemsError(msg);
+      setSubsystemsLoaded(true);
+    }
+  }, []);
 
   const loadTopology = useCallback(
     async (explicitAddr?: string) => {
@@ -126,21 +167,45 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
     if (!initialReport && agent?.id) {
       void loadTopology();
     }
-    if (initialSubsystems.length === 0) {
-      archApi
-        .listSubsystems({ page: 1, page_size: 100 })
-        .then((res) => {
-          const items = res.items || [];
-          setSubsystems(items);
-          if (items.length > 0) {
-            setSelectedSubsystemId((prev) => prev || String(items[0].id));
-          }
-        })
-        .catch(() => {
-          // ignore silent subsystem load error until user imports
-        });
+    if (!hasInitialSubsystems) {
+      void loadSubsystems();
     }
-  }, [agent?.id, initialReport, initialSubsystems.length, loadTopology]);
+  }, [agent?.id, initialReport, hasInitialSubsystems, loadTopology, loadSubsystems]);
+
+  const handleQuickCreateSubsystem = async () => {
+    if (!isAdmin || creatingSubsystem) return;
+    const code = newSubCode.trim().toUpperCase();
+    const name = newSubName.trim();
+    if (!/^[A-Z0-9_-]{2,64}$/.test(code)) {
+      toast.error('子系统编码格式不合法（须为 2~64 位大写字母、数字、下划线或中划线）');
+      return;
+    }
+    if (name.length === 0 || name.length > 128) {
+      toast.error('子系统名称不能为空且长度不得超过 128 个字符');
+      return;
+    }
+    setCreatingSubsystem(true);
+    setErrorMsg(null);
+    try {
+      const created = await archApi.createSubsystem({
+        code,
+        name,
+        description: '由 CSG 蓝图导入抽屉快速创建',
+      });
+      setSubsystems((prev) => [...prev, created]);
+      setSelectedSubsystemId(String(created.id));
+      setShowCreateSubsystem(false);
+      setSubsystemsError(null);
+      setSubsystemsLoaded(true);
+      toast.success(`已创建并选中子系统：${created.name} (${created.code})`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setErrorMsg(msg);
+      toast.error(`创建子系统失败: ${msg}`);
+    } finally {
+      setCreatingSubsystem(false);
+    }
+  };
 
   const toggleService = (serviceName: string) => {
     setSelectedServices((prev) => {
@@ -223,6 +288,10 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
     liveServiceCount === 0;
   const isMeshOnlyMonitorErr = discoveryErrors.some((e) => e.includes('dophi_mesh://'));
 
+  const isNoSubsystems = subsystemsLoaded && subsystems.length === 0 && !subsystemsError;
+  const showQuickCreateForm = showCreateSubsystem || isNoSubsystems;
+  const importDisabled = importing || selectedServices.size === 0 || !selectedSubsystemId;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', padding: '4px 0' }}>
       <div
@@ -233,11 +302,11 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
           alignItems: 'center',
           padding: '12px',
           borderRadius: '8px',
-          backgroundColor: 'var(--color-bg-secondary)',
+          backgroundColor: 'var(--color-bg-muted)',
           border: '1px solid var(--color-border-subtle)',
         }}
       >
-        <Compass size={16} style={{ color: 'var(--color-accent-primary)' }} />
+        <Compass size={16} style={{ color: 'var(--color-primary)' }} />
         <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text-primary)' }}>
           目标节点：{agent.name}
         </span>
@@ -252,8 +321,8 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
             minWidth: '220px',
             padding: '6px 10px',
             borderRadius: '6px',
-            border: '1px solid var(--color-border-default)',
-            backgroundColor: 'var(--color-bg-primary)',
+            border: '1px solid var(--color-border-primary)',
+            backgroundColor: 'var(--color-bg-input)',
             color: 'var(--color-text-primary)',
             fontSize: '13px',
           }}
@@ -269,8 +338,8 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
             gap: '6px',
             padding: '6px 12px',
             borderRadius: '6px',
-            border: '1px solid var(--color-border-default)',
-            backgroundColor: 'var(--color-bg-primary)',
+            border: '1px solid var(--color-border-primary)',
+            backgroundColor: 'var(--color-bg-surface)',
             color: 'var(--color-text-primary)',
             cursor: loading ? 'wait' : 'pointer',
             fontSize: '13px',
@@ -313,7 +382,7 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
                 padding: '8px 12px',
                 borderRadius: '6px',
                 border: '1px solid var(--color-border-subtle)',
-                backgroundColor: 'var(--color-bg-secondary)',
+                backgroundColor: 'var(--color-bg-muted)',
                 fontSize: '12px',
               }}
             >
@@ -337,12 +406,12 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
                       padding: '3px 8px',
                       borderRadius: '4px',
                       border: `1px solid ${
-                        active ? 'var(--color-accent-primary)' : 'var(--color-border-default)'
+                        active ? 'var(--color-primary)' : 'var(--color-border-primary)'
                       }`,
                       backgroundColor: active
-                        ? 'color-mix(in srgb, var(--color-accent-primary) 14%, transparent)'
-                        : 'var(--color-bg-primary)',
-                      color: active ? 'var(--color-accent-primary)' : 'var(--color-text-primary)',
+                        ? 'color-mix(in srgb, var(--color-primary) 14%, transparent)'
+                        : 'var(--color-bg-surface)',
+                      color: active ? 'var(--color-primary)' : 'var(--color-text-primary)',
                       fontFamily: 'monospace',
                       fontSize: '12px',
                       cursor: loading ? 'wait' : 'pointer',
@@ -445,7 +514,7 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
                 padding: '10px 12px',
                 borderRadius: '6px',
                 border: '1px solid var(--color-border-subtle)',
-                backgroundColor: 'var(--color-bg-secondary)',
+                backgroundColor: 'var(--color-bg-muted)',
               }}
             >
               <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>发现模式</div>
@@ -458,7 +527,7 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
                 padding: '10px 12px',
                 borderRadius: '6px',
                 border: '1px solid var(--color-border-subtle)',
-                backgroundColor: 'var(--color-bg-secondary)',
+                backgroundColor: 'var(--color-bg-muted)',
               }}
             >
               <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>已纳管 / 现网数</div>
@@ -471,7 +540,7 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
                 padding: '10px 12px',
                 borderRadius: '6px',
                 border: '1px solid var(--color-border-subtle)',
-                backgroundColor: 'var(--color-bg-secondary)',
+                backgroundColor: 'var(--color-bg-muted)',
               }}
             >
               <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>待导入 SSOT</div>
@@ -484,7 +553,7 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
                 padding: '10px 12px',
                 borderRadius: '6px',
                 border: '1px solid var(--color-border-subtle)',
-                backgroundColor: 'var(--color-bg-secondary)',
+                backgroundColor: 'var(--color-bg-muted)',
               }}
             >
               <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>现网缺失 / 订阅</div>
@@ -505,7 +574,7 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
               <thead>
                 <tr
                   style={{
-                    backgroundColor: 'var(--color-bg-secondary)',
+                    backgroundColor: 'var(--color-bg-muted)',
                     color: 'var(--color-text-secondary)',
                     textAlign: 'left',
                   }}
@@ -568,10 +637,10 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
                                   borderRadius: '4px',
                                   fontSize: '11px',
                                   fontWeight: 600,
-                                  color: 'var(--color-accent-primary)',
+                                  color: 'var(--color-primary)',
                                   backgroundColor:
-                                    'color-mix(in srgb, var(--color-accent-primary) 12%, transparent)',
-                                  border: '1px solid var(--color-accent-primary)',
+                                    'color-mix(in srgb, var(--color-primary) 12%, transparent)',
+                                  border: '1px solid var(--color-primary)',
                                 }}
                               >
                                 dophi_mesh
@@ -604,7 +673,7 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
                 padding: '10px 12px',
                 borderRadius: '8px',
                 border: '1px solid var(--color-border-subtle)',
-                backgroundColor: 'var(--color-bg-secondary)',
+                backgroundColor: 'var(--color-bg-muted)',
               }}
             >
               <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: '6px', color: 'var(--color-text-secondary)' }}>
@@ -629,91 +698,259 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
           <div
             style={{
               display: 'flex',
-              flexWrap: 'wrap',
-              gap: '12px',
-              alignItems: 'center',
-              justifyContent: 'space-between',
+              flexDirection: 'column',
+              gap: '10px',
               padding: '12px',
               borderRadius: '8px',
               border: '1px solid var(--color-border-subtle)',
-              backgroundColor: 'var(--color-bg-secondary)',
+              backgroundColor: 'var(--color-bg-muted)',
             }}
           >
             {isAdmin ? (
               <>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center' }}>
-                  <label style={{ fontSize: '13px', color: 'var(--color-text-primary)' }}>
-                    归属子系统：
-                    <select
-                      value={selectedSubsystemId}
-                      onChange={(e) => setSelectedSubsystemId(e.target.value)}
-                      data-testid="csg-import-subsystem-select"
-                      style={{
-                        marginLeft: '6px',
-                        padding: '5px 8px',
-                        borderRadius: '6px',
-                        border: '1px solid var(--color-border-default)',
-                        backgroundColor: 'var(--color-bg-primary)',
-                        color: 'var(--color-text-primary)',
-                      }}
-                    >
-                      <option value="">请选择子系统</option>
-                      {subsystems.map((sub) => (
-                        <option key={sub.id} value={String(sub.id)}>
-                          {sub.name} ({sub.code})
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}>
-                    <input
-                      type="checkbox"
-                      checked={importDeps}
-                      onChange={(e) => setImportDeps(e.target.checked)}
-                    />
-                    同时导入现网订阅依赖边 (含分层守卫)
-                  </label>
-                </div>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  {onClose && (
+                <div
+                  style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: '12px',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                  }}
+                >
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center' }}>
+                    <label style={{ fontSize: '13px', color: 'var(--color-text-primary)' }}>
+                      归属子系统：
+                      <select
+                        value={selectedSubsystemId}
+                        onChange={(e) => setSelectedSubsystemId(e.target.value)}
+                        data-testid="csg-import-subsystem-select"
+                        style={{
+                          marginLeft: '6px',
+                          padding: '5px 8px',
+                          borderRadius: '6px',
+                          border: '1px solid var(--color-border-primary)',
+                          backgroundColor: 'var(--color-bg-input)',
+                          color: 'var(--color-text-primary)',
+                        }}
+                      >
+                        <option value="">请选择子系统</option>
+                        {subsystems.map((sub) => (
+                          <option key={sub.id} value={String(sub.id)}>
+                            {sub.name} ({sub.code})
+                          </option>
+                        ))}
+                      </select>
+                    </label>
                     <button
                       type="button"
-                      onClick={onClose}
+                      disabled={creatingSubsystem}
+                      onClick={() => setShowCreateSubsystem((prev) => !prev)}
+                      data-testid="csg-toggle-create-subsystem-btn"
                       style={{
-                        padding: '6px 12px',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        padding: '5px 10px',
                         borderRadius: '6px',
-                        border: '1px solid var(--color-border-default)',
-                        backgroundColor: 'var(--color-bg-primary)',
+                        border: '1px solid var(--color-border-primary)',
+                        backgroundColor: 'var(--color-bg-surface)',
                         color: 'var(--color-text-primary)',
-                        cursor: 'pointer',
+                        cursor: creatingSubsystem ? 'wait' : 'pointer',
+                        fontSize: '12px',
                       }}
                     >
-                      关闭
+                      <Plus size={13} />
+                      新建子系统
                     </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => void handleImport()}
-                    disabled={importing || selectedServices.size === 0 || !selectedSubsystemId}
-                    data-testid="csg-import-blueprint-btn"
+                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}>
+                      <input
+                        type="checkbox"
+                        checked={importDeps}
+                        onChange={(e) => setImportDeps(e.target.checked)}
+                      />
+                      同时导入现网订阅依赖边 (含分层守卫)
+                    </label>
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    {onClose && (
+                      <button
+                        type="button"
+                        onClick={onClose}
+                        style={{
+                          padding: '6px 12px',
+                          borderRadius: '6px',
+                          border: '1px solid var(--color-border-primary)',
+                          backgroundColor: 'var(--color-bg-surface)',
+                          color: 'var(--color-text-primary)',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        关闭
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => void handleImport()}
+                      disabled={importDisabled}
+                      data-testid="csg-import-blueprint-btn"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '6px 14px',
+                        borderRadius: '6px',
+                        border: '1px solid var(--color-primary)',
+                        backgroundColor: 'var(--color-primary)',
+                        color: 'var(--color-text-white)',
+                        cursor: importing ? 'wait' : importDisabled ? 'not-allowed' : 'pointer',
+                        fontWeight: 500,
+                        opacity: importDisabled ? 0.55 : 1,
+                      }}
+                    >
+                      <Download size={14} />
+                      {importing ? '导入中...' : `一键导入 SSOT 蓝图 (${selectedServices.size})`}
+                    </button>
+                  </div>
+                </div>
+
+                {subsystemsError && (
+                  <div
+                    data-testid="csg-subsystems-error-banner"
                     style={{
-                      display: 'inline-flex',
+                      display: 'flex',
                       alignItems: 'center',
-                      gap: '6px',
-                      padding: '6px 14px',
+                      justifyContent: 'space-between',
+                      gap: '8px',
+                      padding: '8px 10px',
                       borderRadius: '6px',
-                      border: 'none',
-                      backgroundColor: 'var(--color-accent-primary)',
-                      color: '#fff',
-                      cursor: importing ? 'wait' : 'pointer',
-                      fontWeight: 500,
-                      opacity: importing || selectedServices.size === 0 || !selectedSubsystemId ? 0.6 : 1,
+                      backgroundColor: 'color-mix(in srgb, var(--color-warning) 12%, transparent)',
+                      border: '1px solid var(--color-warning)',
+                      color: 'var(--color-warning)',
+                      fontSize: '12px',
                     }}
                   >
-                    <Download size={14} />
-                    {importing ? '导入中...' : `一键导入 SSOT 蓝图 (${selectedServices.size})`}
-                  </button>
-                </div>
+                    <span>子系统列表加载失败：{subsystemsError}</span>
+                    <button
+                      type="button"
+                      onClick={() => void loadSubsystems()}
+                      style={{
+                        padding: '3px 8px',
+                        borderRadius: '4px',
+                        border: '1px solid var(--color-border-primary)',
+                        backgroundColor: 'var(--color-bg-surface)',
+                        color: 'var(--color-text-primary)',
+                        cursor: 'pointer',
+                        fontSize: '12px',
+                      }}
+                    >
+                      重试加载
+                    </button>
+                  </div>
+                )}
+
+                {isNoSubsystems && (
+                  <div
+                    data-testid="csg-empty-subsystem-hint"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      fontSize: '12px',
+                      color: 'var(--color-warning)',
+                    }}
+                  >
+                    <AlertTriangle size={14} />
+                    <span>当前架构库中暂无子系统，请先快速新建一个归属子系统后再一键导入蓝图。</span>
+                  </div>
+                )}
+
+                {showQuickCreateForm && (
+                  <div
+                    data-testid="csg-quick-create-subsystem-form"
+                    style={{
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      gap: '8px',
+                      alignItems: 'center',
+                      padding: '10px',
+                      borderRadius: '6px',
+                      border: '1px solid var(--color-border-subtle)',
+                      backgroundColor: 'var(--color-bg-surface)',
+                    }}
+                  >
+                    <input
+                      type="text"
+                      value={newSubCode}
+                      onChange={(e) => setNewSubCode(e.target.value)}
+                      placeholder="子系统编码 (如 LOCAL_DEMO)"
+                      data-testid="csg-new-subsystem-code-input"
+                      style={{
+                        width: '180px',
+                        padding: '5px 8px',
+                        borderRadius: '6px',
+                        border: '1px solid var(--color-border-primary)',
+                        backgroundColor: 'var(--color-bg-input)',
+                        color: 'var(--color-text-primary)',
+                        fontSize: '12px',
+                        fontFamily: 'monospace',
+                      }}
+                    />
+                    <input
+                      type="text"
+                      value={newSubName}
+                      onChange={(e) => setNewSubName(e.target.value)}
+                      placeholder="子系统名称 (如 local-demo 子系统)"
+                      data-testid="csg-new-subsystem-name-input"
+                      style={{
+                        flex: 1,
+                        minWidth: '180px',
+                        padding: '5px 8px',
+                        borderRadius: '6px',
+                        border: '1px solid var(--color-border-primary)',
+                        backgroundColor: 'var(--color-bg-input)',
+                        color: 'var(--color-text-primary)',
+                        fontSize: '12px',
+                      }}
+                    />
+                    <button
+                      type="button"
+                      disabled={creatingSubsystem}
+                      onClick={() => void handleQuickCreateSubsystem()}
+                      data-testid="csg-quick-create-subsystem-submit"
+                      style={{
+                        padding: '5px 12px',
+                        borderRadius: '6px',
+                        border: '1px solid var(--color-primary)',
+                        backgroundColor: 'var(--color-primary)',
+                        color: 'var(--color-text-white)',
+                        cursor: creatingSubsystem ? 'wait' : 'pointer',
+                        fontSize: '12px',
+                        fontWeight: 500,
+                        opacity: creatingSubsystem ? 0.6 : 1,
+                      }}
+                    >
+                      {creatingSubsystem ? '创建中...' : '创建并选中'}
+                    </button>
+                    {subsystems.length > 0 && (
+                      <button
+                        type="button"
+                        disabled={creatingSubsystem}
+                        onClick={() => setShowCreateSubsystem(false)}
+                        style={{
+                          padding: '5px 10px',
+                          borderRadius: '6px',
+                          border: '1px solid var(--color-border-primary)',
+                          backgroundColor: 'var(--color-bg-surface)',
+                          color: 'var(--color-text-primary)',
+                          cursor: 'pointer',
+                          fontSize: '12px',
+                        }}
+                      >
+                        取消
+                      </button>
+                    )}
+                  </div>
+                )}
               </>
             ) : (
               <div
