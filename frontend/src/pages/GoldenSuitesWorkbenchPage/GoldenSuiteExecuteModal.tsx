@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { X, Play, AlertCircle } from 'lucide-react';
+import { Play, AlertCircle } from 'lucide-react';
+import { Modal } from '@code/common';
 import type { Agent, CSGReplayStrategy, GoldenSuite, Process, ReplayTask } from '../../types';
 import { executeGoldenSuite } from '../../api/golden_suite';
 import { useToast } from '../../utils/toast';
@@ -75,64 +76,21 @@ export const GoldenSuiteExecuteModal: React.FC<GoldenSuiteExecuteModalProps> = (
   };
 
   return (
-    <div
-      className="code-modal-mask"
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        backgroundColor: 'rgba(15, 23, 42, 0.45)',
-        backdropFilter: 'blur(2px)',
-        zIndex: 1050,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}
-      onClick={onClose}
-    >
-      <div
-        className="code-modal"
-        style={{
-          width: '520px',
-          maxWidth: '92vw',
-          backgroundColor: 'var(--color-bg-primary, #ffffff)',
-          borderRadius: '8px',
-          border: '1px solid var(--color-border, #e2e8f0)',
-          boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)',
-          overflow: 'hidden',
-        }}
-        onClick={(e) => e.stopPropagation()}
-        data-testid="golden-suite-execute-modal"
-      >
-        <div
-          style={{
-            padding: '16px 20px',
-            borderBottom: '1px solid var(--color-border, #e2e8f0)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            backgroundColor: 'var(--color-bg-secondary, #f8fafc)',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Play size={18} color="var(--color-primary, #3b82f6)" />
-            <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 600 }}>
-              发起黄金契约套件脱机回归
-            </h3>
-          </div>
-          <button
-            type="button"
-            className="code-btn-icon"
-            onClick={onClose}
-            style={{ background: 'none', border: 'none', cursor: 'pointer' }}
-          >
-            <X size={16} />
-          </button>
+    <Modal
+      open={open}
+      onClose={onClose}
+      width={520}
+      destroyOnClose
+      testId="golden-suite-execute-modal"
+      bodyStyle={{ padding: '20px' }}
+      title={
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <Play size={18} color="var(--color-primary, #3b82f6)" />
+          <span>发起黄金契约套件脱机回归</span>
         </div>
-
-        <form onSubmit={handleSubmit} style={{ padding: '20px' }}>
+      }
+    >
+      <form onSubmit={handleSubmit}>
           <div
             style={{
               padding: '10px 14px',
@@ -299,15 +257,9 @@ export const GoldenSuiteExecuteModal: React.FC<GoldenSuiteExecuteModalProps> = (
             <button
               type="submit"
               disabled={submitting || candidateAgents.length === 0}
-              className="code-btn code-btn-primary"
+              className="code-btn code-btn--primary"
               style={{
-                padding: '6px 18px',
-                fontSize: '13px',
-                backgroundColor: 'var(--color-primary, #3b82f6)',
-                color: '#ffffff',
-                border: 'none',
-                cursor: submitting || candidateAgents.length === 0 ? 'not-allowed' : 'pointer',
-                display: 'flex',
+                display: 'inline-flex',
                 alignItems: 'center',
                 gap: '6px',
               }}
@@ -318,7 +270,6 @@ export const GoldenSuiteExecuteModal: React.FC<GoldenSuiteExecuteModalProps> = (
             </button>
           </div>
         </form>
-      </div>
-    </div>
+    </Modal>
   );
 };

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Sparkles, X, Plus, Trash2 } from 'lucide-react';
+import { Sparkles, Plus, Trash2 } from 'lucide-react';
+import { Drawer } from '@code/common';
 import type {
   ArchProcess,
   GoldenSuite,
@@ -182,80 +183,47 @@ export const GoldenCurateDrawer: React.FC<GoldenCurateDrawerProps> = ({
   };
 
   return (
-    <div
-      className="code-drawer-mask"
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        backgroundColor: 'rgba(15, 23, 42, 0.45)',
-        backdropFilter: 'blur(2px)',
-        zIndex: 1000,
-        display: 'flex',
-        justifyContent: 'flex-end',
-      }}
-      onClick={onClose}
-    >
-      <aside
-        className="code-drawer-panel"
-        style={{
-          width: '680px',
-          maxWidth: '92vw',
-          height: '100%',
-          backgroundColor: 'var(--color-bg-primary, #ffffff)',
-          borderLeft: '1px solid var(--color-border, #e2e8f0)',
-          boxShadow: '-8px 0 24px rgba(0, 0, 0, 0.12)',
-          display: 'flex',
-          flexDirection: 'column',
-          zIndex: 1001,
-        }}
-        onClick={(e) => e.stopPropagation()}
-        data-testid="golden-curate-drawer"
-      >
-        {/* 抽屉顶栏 */}
-        <div
-          style={{
-            padding: '16px 20px',
-            borderBottom: '1px solid var(--color-border, #e2e8f0)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            backgroundColor: 'var(--color-bg-secondary, #f8fafc)',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Sparkles size={20} color="var(--color-warning, #d97706)" />
-            <h3
-              style={{
-                margin: 0,
-                fontSize: '16px',
-                fontWeight: 600,
-                color: 'var(--color-text-primary, #0f172a)',
-              }}
-            >
-              沉淀为黄金契约用例快照 (完全自包含)
-            </h3>
-          </div>
+    <Drawer
+      open={open}
+      onClose={onClose}
+      width="min(680px, 92vw)"
+      destroyOnClose
+      testId="golden-curate-drawer"
+      bodyStyle={{ padding: '20px', gap: 0 }}
+      title={
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <Sparkles size={20} color="var(--color-warning, #d97706)" />
+          <span>沉淀为黄金契约用例快照 (完全自包含)</span>
+        </div>
+      }
+      footer={
+        <>
           <button
             type="button"
-            className="code-btn-icon"
             onClick={onClose}
-            title="关闭"
-            style={{
-              background: 'none',
-              border: 'none',
-              cursor: 'pointer',
-              color: 'var(--color-text-secondary, #64748b)',
-            }}
+            className="code-btn code-btn--secondary"
           >
-            <X size={18} />
+            取消
           </button>
-        </div>
-
-        {/* 抽屉主体滚动区 */}
-        <div style={{ padding: '20px', overflowY: 'auto', flex: 1 }}>
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={submitting}
+            className="code-btn code-btn--primary"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+            }}
+            data-testid="btn-confirm-curate"
+          >
+            <Sparkles size={15} />
+            {submitting ? '正在固化快照...' : '确认沉淀为黄金契约'}
+          </button>
+        </>
+      }
+    >
+      <div>
           {/* 自包含快照防腐提示 */}
           <div
             style={{
@@ -667,57 +635,7 @@ export const GoldenCurateDrawer: React.FC<GoldenCurateDrawerProps> = ({
               ))}
             </div>
           </div>
-        </div>
-
-        {/* 抽屉底部操作栏 */}
-        <div
-          style={{
-            padding: '14px 20px',
-            borderTop: '1px solid var(--color-border, #e2e8f0)',
-            display: 'flex',
-            justifyContent: 'flex-end',
-            gap: '12px',
-            backgroundColor: 'var(--color-bg-secondary, #f8fafc)',
-          }}
-        >
-          <button
-            type="button"
-            onClick={onClose}
-            className="code-btn code-btn-secondary"
-            style={{
-              padding: '6px 16px',
-              fontSize: '13px',
-              borderRadius: '4px',
-              cursor: 'pointer',
-            }}
-          >
-            取消
-          </button>
-          <button
-            type="button"
-            onClick={handleSubmit}
-            disabled={submitting}
-            className="code-btn code-btn-primary"
-            style={{
-              padding: '6px 18px',
-              fontSize: '13px',
-              borderRadius: '4px',
-              cursor: submitting ? 'not-allowed' : 'pointer',
-              backgroundColor: 'var(--color-primary, #3b82f6)',
-              color: '#ffffff',
-              border: 'none',
-              fontWeight: 600,
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-            }}
-            data-testid="btn-confirm-curate"
-          >
-            <Sparkles size={15} />
-            {submitting ? '正在固化快照...' : '确认沉淀为黄金契约'}
-          </button>
-        </div>
-      </aside>
-    </div>
+      </div>
+    </Drawer>
   );
 };

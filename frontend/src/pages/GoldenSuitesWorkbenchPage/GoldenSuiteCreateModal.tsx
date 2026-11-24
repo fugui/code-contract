@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { X, Sparkles } from 'lucide-react';
+import { Sparkles } from 'lucide-react';
+import { Modal } from '@code/common';
 import type { ArchProcess, GoldenSuite } from '../../types';
 import { curateGoldenSuite } from '../../api/golden_suite';
 import { useToast } from '../../utils/toast';
@@ -76,62 +77,21 @@ export const GoldenSuiteCreateModal: React.FC<GoldenSuiteCreateModalProps> = ({
   };
 
   return (
-    <div
-      className="code-modal-mask"
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        backgroundColor: 'rgba(15, 23, 42, 0.45)',
-        backdropFilter: 'blur(2px)',
-        zIndex: 1050,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}
-      onClick={onClose}
-    >
-      <div
-        className="code-modal"
-        style={{
-          width: '540px',
-          maxWidth: '92vw',
-          backgroundColor: 'var(--color-bg-primary, #ffffff)',
-          borderRadius: '8px',
-          border: '1px solid var(--color-border, #e2e8f0)',
-          boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)',
-          overflow: 'hidden',
-        }}
-        onClick={(e) => e.stopPropagation()}
-        data-testid="golden-suite-create-modal"
-      >
-        <div
-          style={{
-            padding: '16px 20px',
-            borderBottom: '1px solid var(--color-border, #e2e8f0)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            backgroundColor: 'var(--color-bg-secondary, #f8fafc)',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Sparkles size={18} color="var(--color-warning, #d97706)" />
-            <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 600 }}>新建黄金契约测试套件</h3>
-          </div>
-          <button
-            type="button"
-            className="code-btn-icon"
-            onClick={onClose}
-            style={{ background: 'none', border: 'none', cursor: 'pointer' }}
-          >
-            <X size={16} />
-          </button>
+    <Modal
+      open={open}
+      onClose={onClose}
+      width={540}
+      destroyOnClose
+      testId="golden-suite-create-modal"
+      bodyStyle={{ padding: '20px' }}
+      title={
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <Sparkles size={18} color="var(--color-warning, #d97706)" />
+          <span>新建黄金契约测试套件</span>
         </div>
-
-        <form onSubmit={handleSubmit} style={{ padding: '20px' }}>
+      }
+    >
+      <form onSubmit={handleSubmit}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             <div>
               <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, marginBottom: '4px' }}>
@@ -275,22 +235,13 @@ export const GoldenSuiteCreateModal: React.FC<GoldenSuiteCreateModalProps> = ({
             <button
               type="submit"
               disabled={submitting}
-              className="code-btn code-btn-primary"
-              style={{
-                padding: '6px 18px',
-                fontSize: '13px',
-                backgroundColor: 'var(--color-primary, #3b82f6)',
-                color: '#ffffff',
-                border: 'none',
-                cursor: submitting ? 'not-allowed' : 'pointer',
-              }}
+              className="code-btn code-btn--primary"
               data-testid="btn-submit-create-suite"
             >
               {submitting ? '正在创建...' : '确认创建'}
             </button>
           </div>
         </form>
-      </div>
-    </div>
+    </Modal>
   );
 };

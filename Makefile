@@ -86,6 +86,7 @@ run: build
 # 执行前端静态代码检查与类型校验
 lint: $(NODE_MODULES)
 	cd $(FRONTEND_DIR) && npm run lint
+	node ../code-common/scripts/check-overlay-guard.mjs $(FRONTEND_DIR)/src
 
 # 清空本地 contract_* 业务数据并恢复内置检查规则与标准词库（保留 contract_settings 与平台共享表）
 reset-db:
