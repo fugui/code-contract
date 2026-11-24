@@ -127,7 +127,7 @@ go run ./scripts/seed-large-topology \
 
 ### 6.1 共享库 (`code_shield`) 一次性清库与角色切换 SQL
 
-本模块在投产前由旧模块标识切换为 `contract_` 表前缀，采用**「一次性清库 + 原生重建 + `make seed` 重塑」**策略，**保留平台共享表 `users`、`departments`、`sys_audit_logs` 及其他兄弟子系统表**。在本地或测试共享库执行以下幂等脚本：
+本模块在投产前由旧模块标识切换为 `contract_` 表前缀，采用**「一次性清库 + 原生重建（`make reset-db`）」**策略，**保留平台共享表 `users`、`departments`、`sys_audit_logs`、模块配置 `contract_settings` 及其他兄弟子系统表**，并在清库后自动恢复内置静态检查规则与标准词库（不预置任何 Agent 或子系统，随后可通过 Agent CSG 自发现一键导入拓扑）。在本地或测试共享库执行以下幂等脚本：
 
 ```sql
 -- 一次性清库与管理员角色迁移脚本（直接对 code_shield 执行）
@@ -165,11 +165,13 @@ BEGIN
 END $$;
 ```
 
-执行清库后，立即运行构建与双次幂等 Seed 重建全套 `contract_*` 表与演示基线：
+执行清库后，立即运行构建与本地数据重置（清库并恢复内置检查规则与标准词库；若 `code-contract-server` 正在运行请重启以刷新内存缓存，再于 `/agents` 纳管本地 Agent 并通过 CSG 自发现导入拓扑）：
 
 ```bash
-make build && make seed
+make build && make reset-db
 ```
+
+> 提示：`make reset-db` 默认仅允许连接本机数据库并保留 `contract_settings`；如需同时重置默认治理参数可执行 `go run ./cmd/resetdb -reset-settings`。
 
 ### 6.2 本地环境变量、配置与 JWT 会话切换清单
 

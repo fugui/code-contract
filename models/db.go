@@ -16,7 +16,7 @@ import (
 var DB *gorm.DB
 
 // BusinessTableNames 返回全部业务数据表名（按外键依赖拓扑倒序排列，排除 ModuleSetting 等全局配置表），
-// 供 cmd/seed 与 scripts/seed-large-topology 等清表重建工具共用，作为单一真实源。
+// 供 cmd/resetdb 与 scripts/seed-large-topology 等清表工具共用，作为单一真实源。
 func BusinessTableNames() []string {
 	return []string{
 		Notification{}.TableName(),
@@ -522,6 +522,17 @@ END $$;
 		log.Printf("[%s] 提示: 初始化 M24 安全/LLM 默认参数未完成: %v", config.ServiceName, err)
 	}
 
+	return nil
+}
+
+// EnsureDefaultSettings 幂等恢复模块运行参数与 M24 安全/LLM 默认配置项
+func EnsureDefaultSettings(db *gorm.DB) error {
+	if err := seedDefaultSettings(db); err != nil {
+		return fmt.Errorf("初始化默认运行参数失败: %w", err)
+	}
+	if err := ensureM24DefaultSettings(db); err != nil {
+		return fmt.Errorf("初始化 M24 安全/LLM 默认参数失败: %w", err)
+	}
 	return nil
 }
 
