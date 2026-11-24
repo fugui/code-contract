@@ -1,14 +1,23 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Drawer } from '@code/common';
 import { useModuleUser } from '../../context/ModuleUserContext';
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
   Compass,
   Download,
+  GitFork,
   Plus,
   RefreshCw,
+  RotateCcw,
+  Search,
+  Server,
   ShieldAlert,
+  X,
 } from 'lucide-react';
 import * as agentApi from '../../api/agent';
 import * as archApi from '../../api/arch';
@@ -18,8 +27,10 @@ import type {
   CSGReconcileState,
   CSGTopologyReconcileResp,
   ReconciledCSGService,
+  ReconciledCSGSubscription,
   Subsystem,
 } from '../../types';
+import './CSGBlueprintImportDrawer.css';
 
 export interface CSGBlueprintImportDrawerProps {
   open: boolean;
@@ -32,33 +43,136 @@ export interface CSGBlueprintImportContentProps {
   agent: Agent;
   initialReport?: CSGTopologyReconcileResp | null;
   initialSubsystems?: Subsystem[];
+  initialTab?: 'services' | 'subscriptions';
   onImported?: () => void;
   onClose?: () => void;
 }
 
+export interface CSGServiceFilterState {
+  search: string;
+  state: CSGReconcileState | 'ALL';
+  proc: string;
+  transport: string;
+  onlySelected: boolean;
+}
+
+export interface CSGSubscriptionFilterState {
+  search: string;
+  state: CSGReconcileState | 'ALL';
+  clientProc: string;
+  onlySelectedServices: boolean;
+}
+
+const UNKNOWN_PROC_KEY = '__UNKNOWN__';
+const DEFAULT_PAGE_SIZE = 50;
+const PAGE_SIZE_OPTIONS = [50, 100, 200, 0] as const;
+
 const STATE_BADGE_MAP: Record<
   CSGReconcileState,
-  { label: string; color: string; bg: string; border: string }
+  { label: string; fullLabel: string; color: string; bg: string; border: string }
 > = {
   MATCHED: {
-    label: '已纳管 (MATCHED)',
+    label: '已纳管',
+    fullLabel: '已纳管 (MATCHED)',
     color: 'var(--color-success)',
-    bg: 'color-mix(in srgb, var(--color-success) 12%, transparent)',
-    border: 'var(--color-success)',
+    bg: 'var(--color-success-subtle)',
+    border: 'var(--color-success-border)',
   },
   UNDECLARED_IN_SSOT: {
-    label: '待导入 (UNDECLARED_IN_SSOT)',
+    label: '待导入',
+    fullLabel: '待导入 (UNDECLARED_IN_SSOT)',
     color: 'var(--color-warning)',
-    bg: 'color-mix(in srgb, var(--color-warning) 14%, transparent)',
-    border: 'var(--color-warning)',
+    bg: 'var(--color-warning-subtle)',
+    border: 'var(--color-warning-border)',
   },
   MISSING_IN_LIVE: {
-    label: '现网未上线 (MISSING_IN_LIVE)',
+    label: '现网缺失',
+    fullLabel: '现网缺失 (MISSING_IN_LIVE)',
     color: 'var(--color-danger)',
-    bg: 'color-mix(in srgb, var(--color-danger) 12%, transparent)',
-    border: 'var(--color-danger)',
+    bg: 'var(--color-danger-subtle)',
+    border: 'var(--color-danger-border)',
   },
 };
+
+function getServiceProcKey(svc: ReconciledCSGService): string {
+  return svc.server_proc || svc.ssot_module_name || svc.ssot_module_code || UNKNOWN_PROC_KEY;
+}
+
+function getSubscriptionClientKey(sub: ReconciledCSGSubscription): string {
+  return sub.client_proc || (sub.client_pid ? `pid-${sub.client_pid}` : UNKNOWN_PROC_KEY);
+}
+
+export function filterReconciledServices(
+  services: ReconciledCSGService[],
+  filter: CSGServiceFilterState,
+  selectedServices: Set<string>
+): ReconciledCSGService[] {
+  const kw = filter.search.trim().toLowerCase();
+  return services.filter((svc) => {
+    if (filter.state !== 'ALL' && svc.state !== filter.state) {
+      return false;
+    }
+    if (filter.proc !== 'ALL' && getServiceProcKey(svc) !== filter.proc) {
+      return false;
+    }
+    if (filter.transport !== 'ALL') {
+      const transport = (svc.transport || UNKNOWN_PROC_KEY).toUpperCase();
+      if (transport !== filter.transport) {
+        return false;
+      }
+    }
+    if (filter.onlySelected && !selectedServices.has(svc.service_name)) {
+      return false;
+    }
+    if (kw) {
+      const haystacks = [
+        svc.service_name,
+        svc.ssot_proto_svc,
+        svc.server_proc,
+        svc.server_pid !== undefined ? String(svc.server_pid) : '',
+        svc.addr,
+        svc.ssot_module_name,
+        svc.ssot_module_code,
+        svc.expected_port !== undefined ? String(svc.expected_port) : '',
+      ];
+      if (!haystacks.some((val) => val && val.toLowerCase().includes(kw))) {
+        return false;
+      }
+    }
+    return true;
+  });
+}
+
+export function filterReconciledSubscriptions(
+  subscriptions: ReconciledCSGSubscription[],
+  filter: CSGSubscriptionFilterState,
+  selectedServices: Set<string>
+): ReconciledCSGSubscription[] {
+  const kw = filter.search.trim().toLowerCase();
+  return subscriptions.filter((sub) => {
+    if (filter.state !== 'ALL' && sub.state !== filter.state) {
+      return false;
+    }
+    if (filter.clientProc !== 'ALL' && getSubscriptionClientKey(sub) !== filter.clientProc) {
+      return false;
+    }
+    if (filter.onlySelectedServices && !selectedServices.has(sub.service_name)) {
+      return false;
+    }
+    if (kw) {
+      const haystacks = [
+        sub.client_proc,
+        sub.client_pid !== undefined ? String(sub.client_pid) : '',
+        sub.client_addr,
+        sub.service_name,
+      ];
+      if (!haystacks.some((val) => val && val.toLowerCase().includes(kw))) {
+        return false;
+      }
+    }
+    return true;
+  });
+}
 
 function buildDefaultSubsystemCode(agentName?: string): string {
   const normalized = (agentName || '')
@@ -76,6 +190,7 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
   agent,
   initialReport = null,
   initialSubsystems,
+  initialTab = 'services',
   onImported,
   onClose,
 }) => {
@@ -118,6 +233,27 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
   const [importDeps, setImportDeps] = useState(true);
   const [importing, setImporting] = useState(false);
 
+  // 布局、标签页与现网过滤状态
+  const [activeTab, setActiveTab] = useState<'services' | 'subscriptions'>(initialTab);
+  const [errorsExpanded, setErrorsExpanded] = useState(false);
+
+  const [serviceSearch, setServiceSearch] = useState('');
+  const [serviceStateFilter, setServiceStateFilter] = useState<CSGReconcileState | 'ALL'>('ALL');
+  const [serviceProcFilter, setServiceProcFilter] = useState<string>('ALL');
+  const [serviceTransportFilter, setServiceTransportFilter] = useState<string>('ALL');
+  const [onlySelectedServices, setOnlySelectedServices] = useState(false);
+  const [servicePage, setServicePage] = useState(1);
+  const [servicePageSize, setServicePageSize] = useState<number>(DEFAULT_PAGE_SIZE);
+
+  const [subSearch, setSubSearch] = useState('');
+  const [subStateFilter, setSubStateFilter] = useState<CSGReconcileState | 'ALL'>('ALL');
+  const [subClientFilter, setSubClientFilter] = useState<string>('ALL');
+  const [onlySelectedSubServices, setOnlySelectedSubServices] = useState(false);
+  const [subPage, setSubPage] = useState(1);
+  const [subPageSize, setSubPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
+
+  const masterCheckboxRef = useRef<HTMLInputElement | null>(null);
+
   const loadSubsystems = useCallback(async () => {
     setSubsystemsError(null);
     try {
@@ -153,6 +289,8 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
           }
         });
         setSelectedServices(undeclared);
+        setServicePage(1);
+        setSubPage(1);
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         setErrorMsg(msg);
@@ -254,33 +392,35 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
     return (
       <span
         data-testid={`csg-state-badge-${state}`}
+        title={cfg.fullLabel}
+        className="csg-state-badge"
         style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          padding: '2px 8px',
-          borderRadius: '4px',
-          fontSize: '12px',
-          fontWeight: 500,
           color: cfg.color,
           backgroundColor: cfg.bg,
           border: `1px solid ${cfg.border}`,
         }}
       >
-        {cfg.label}
+        <span className="csg-state-dot" style={{ backgroundColor: cfg.color }} />
+        <span>{cfg.label}</span>
       </span>
     );
   };
 
-  const services: ReconciledCSGService[] = report?.services || [];
+  const services: ReconciledCSGService[] = useMemo(() => report?.services || [], [report]);
+  const subscriptions: ReconciledCSGSubscription[] = useMemo(
+    () => report?.subscriptions || [],
+    [report]
+  );
   const endpoints = report?.csg_endpoints || [];
   const discoveryErrors = report?.errors || [];
+
   const liveServiceCount = report
     ? report.summary.live_service_count ??
-      report.summary.matched_count + report.summary.undeclared_count
+    report.summary.matched_count + report.summary.undeclared_count
     : 0;
   const liveSubCount = report
     ? report.summary.live_sub_count ??
-      (report.summary.sub_matched_count ?? 0) + (report.summary.sub_undeclared_count ?? 0)
+    (report.summary.sub_matched_count ?? 0) + (report.summary.sub_undeclared_count ?? 0)
     : 0;
   const isProcOnlyDegraded =
     Boolean(report) &&
@@ -288,671 +428,1268 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
     liveServiceCount === 0;
   const isMeshOnlyMonitorErr = discoveryErrors.some((e) => e.includes('dophi_mesh://'));
 
+  // 订阅边计数映射（按服务名）
+  const subCountByService = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const sub of subscriptions) {
+      map.set(sub.service_name, (map.get(sub.service_name) || 0) + 1);
+    }
+    return map;
+  }, [subscriptions]);
+
+  // 服务维度筛选项与计数
+  const serviceStateCounts = useMemo(() => {
+    const counts: Record<CSGReconcileState, number> = {
+      MATCHED: 0,
+      UNDECLARED_IN_SSOT: 0,
+      MISSING_IN_LIVE: 0,
+    };
+    for (const svc of services) {
+      if (counts[svc.state] !== undefined) {
+        counts[svc.state] += 1;
+      }
+    }
+    return counts;
+  }, [services]);
+
+  const serviceProcOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const svc of services) {
+      const key = getServiceProcKey(svc);
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .map(([value, count]) => ({
+        value,
+        label: value === UNKNOWN_PROC_KEY ? '未知进程/模块' : value,
+        count,
+      }))
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+  }, [services]);
+
+  const serviceTransportOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const svc of services) {
+      const key = (svc.transport || UNKNOWN_PROC_KEY).toUpperCase();
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .map(([value, count]) => ({
+        value,
+        label: value === UNKNOWN_PROC_KEY ? '未指定协议' : value === 'MESH' ? 'dophi_mesh' : value,
+        count,
+      }))
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+  }, [services]);
+
+  // 订阅边维度筛选项与计数
+  const subStateCounts = useMemo(() => {
+    const counts: Record<CSGReconcileState, number> = {
+      MATCHED: 0,
+      UNDECLARED_IN_SSOT: 0,
+      MISSING_IN_LIVE: 0,
+    };
+    for (const sub of subscriptions) {
+      if (counts[sub.state] !== undefined) {
+        counts[sub.state] += 1;
+      }
+    }
+    return counts;
+  }, [subscriptions]);
+
+  const subClientOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const sub of subscriptions) {
+      const key = getSubscriptionClientKey(sub);
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .map(([value, count]) => ({
+        value,
+        label: value === UNKNOWN_PROC_KEY ? '未知调用方' : value,
+        count,
+      }))
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+  }, [subscriptions]);
+
+  // 过滤后服务列表 & 分页
+  const filteredServices = useMemo(
+    () =>
+      filterReconciledServices(
+        services,
+        {
+          search: serviceSearch,
+          state: serviceStateFilter,
+          proc: serviceProcFilter,
+          transport: serviceTransportFilter,
+          onlySelected: onlySelectedServices,
+        },
+        selectedServices
+      ),
+    [
+      services,
+      serviceSearch,
+      serviceStateFilter,
+      serviceProcFilter,
+      serviceTransportFilter,
+      onlySelectedServices,
+      selectedServices,
+    ]
+  );
+
+  const serviceTotalPages = useMemo(() => {
+    if (servicePageSize === 0 || filteredServices.length === 0) return 1;
+    return Math.max(1, Math.ceil(filteredServices.length / servicePageSize));
+  }, [filteredServices.length, servicePageSize]);
+
+  const safeServicePage = Math.min(servicePage, serviceTotalPages);
+
+  const pagedServices = useMemo(() => {
+    if (servicePageSize === 0) return filteredServices;
+    const start = (safeServicePage - 1) * servicePageSize;
+    return filteredServices.slice(start, start + servicePageSize);
+  }, [filteredServices, safeServicePage, servicePageSize]);
+
+  // 过滤后订阅列表 & 分页
+  const filteredSubscriptions = useMemo(
+    () =>
+      filterReconciledSubscriptions(
+        subscriptions,
+        {
+          search: subSearch,
+          state: subStateFilter,
+          clientProc: subClientFilter,
+          onlySelectedServices: onlySelectedSubServices,
+        },
+        selectedServices
+      ),
+    [subscriptions, subSearch, subStateFilter, subClientFilter, onlySelectedSubServices, selectedServices]
+  );
+
+  const subTotalPages = useMemo(() => {
+    if (subPageSize === 0 || filteredSubscriptions.length === 0) return 1;
+    return Math.max(1, Math.ceil(filteredSubscriptions.length / subPageSize));
+  }, [filteredSubscriptions.length, subPageSize]);
+
+  const safeSubPage = Math.min(subPage, subTotalPages);
+
+  const pagedSubscriptions = useMemo(() => {
+    if (subPageSize === 0) return filteredSubscriptions;
+    const start = (safeSubPage - 1) * subPageSize;
+    return filteredSubscriptions.slice(start, start + subPageSize);
+  }, [filteredSubscriptions, safeSubPage, subPageSize]);
+
+  // 批量勾选聚合
+  const filteredUndeclaredNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const svc of filteredServices) {
+      if (svc.state === 'UNDECLARED_IN_SSOT') {
+        names.add(svc.service_name);
+      }
+    }
+    return Array.from(names);
+  }, [filteredServices]);
+
+  const filteredSelectedCount = useMemo(
+    () => filteredUndeclaredNames.filter((name) => selectedServices.has(name)).length,
+    [filteredUndeclaredNames, selectedServices]
+  );
+
+  const isAllFilteredSelected =
+    filteredUndeclaredNames.length > 0 && filteredSelectedCount === filteredUndeclaredNames.length;
+  const isPartialFilteredSelected =
+    filteredSelectedCount > 0 && filteredSelectedCount < filteredUndeclaredNames.length;
+
+  useEffect(() => {
+    if (masterCheckboxRef.current) {
+      masterCheckboxRef.current.indeterminate = isPartialFilteredSelected;
+    }
+  }, [isPartialFilteredSelected]);
+
+  const relatedSelectedUndeclaredSubCount = useMemo(() => {
+    if (selectedServices.size === 0) return 0;
+    let count = 0;
+    for (const sub of subscriptions) {
+      if (sub.state === 'UNDECLARED_IN_SSOT' && selectedServices.has(sub.service_name)) {
+        count += 1;
+      }
+    }
+    return count;
+  }, [subscriptions, selectedServices]);
+
+  const selectFilteredUndeclared = () => {
+    if (filteredUndeclaredNames.length === 0) return;
+    setSelectedServices((prev) => {
+      const next = new Set(prev);
+      filteredUndeclaredNames.forEach((name) => next.add(name));
+      return next;
+    });
+  };
+
+  const deselectFilteredUndeclared = () => {
+    if (filteredUndeclaredNames.length === 0) return;
+    setSelectedServices((prev) => {
+      const next = new Set(prev);
+      filteredUndeclaredNames.forEach((name) => next.delete(name));
+      return next;
+    });
+  };
+
+  const toggleMasterFilteredCheckbox = () => {
+    if (isAllFilteredSelected) {
+      deselectFilteredUndeclared();
+    } else {
+      selectFilteredUndeclared();
+    }
+  };
+
+  const clearAllSelected = () => {
+    setSelectedServices(new Set());
+  };
+
+  const hasActiveServiceFilter =
+    serviceSearch.trim() !== '' ||
+    serviceStateFilter !== 'ALL' ||
+    serviceProcFilter !== 'ALL' ||
+    serviceTransportFilter !== 'ALL' ||
+    onlySelectedServices;
+
+  const resetServiceFilters = () => {
+    setServiceSearch('');
+    setServiceStateFilter('ALL');
+    setServiceProcFilter('ALL');
+    setServiceTransportFilter('ALL');
+    setOnlySelectedServices(false);
+    setServicePage(1);
+  };
+
+  const hasActiveSubFilter =
+    subSearch.trim() !== '' ||
+    subStateFilter !== 'ALL' ||
+    subClientFilter !== 'ALL' ||
+    onlySelectedSubServices;
+
+  const resetSubFilters = () => {
+    setSubSearch('');
+    setSubStateFilter('ALL');
+    setSubClientFilter('ALL');
+    setOnlySelectedSubServices(false);
+    setSubPage(1);
+  };
+
+  const jumpToServiceSubscriptions = (serviceName: string) => {
+    setActiveTab('subscriptions');
+    setSubStateFilter('ALL');
+    setSubClientFilter('ALL');
+    setOnlySelectedSubServices(false);
+    setSubSearch(serviceName);
+    setSubPage(1);
+  };
+
   const isNoSubsystems = subsystemsLoaded && subsystems.length === 0 && !subsystemsError;
   const showQuickCreateForm = showCreateSubsystem || isNoSubsystems;
   const importDisabled = importing || selectedServices.size === 0 || !selectedSubsystemId;
 
+  const visibleErrors = errorsExpanded ? discoveryErrors : discoveryErrors.slice(0, 2);
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', padding: '4px 0' }}>
-      <div
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          gap: '8px',
-          alignItems: 'center',
-          padding: '12px',
-          borderRadius: '8px',
-          backgroundColor: 'var(--color-bg-muted)',
-          border: '1px solid var(--color-border-subtle)',
-        }}
-      >
-        <Compass size={16} style={{ color: 'var(--color-primary)' }} />
-        <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text-primary)' }}>
-          目标节点：{agent.name}
-        </span>
-        <input
-          type="text"
-          value={csgAddrInput}
-          onChange={(e) => setCsgAddrInput(e.target.value)}
-          placeholder="可选指定 CSG dlink 地址 (如 127.0.0.1:31806)"
-          data-testid="csg-addr-probe-input"
-          style={{
-            flex: 1,
-            minWidth: '220px',
-            padding: '6px 10px',
-            borderRadius: '6px',
-            border: '1px solid var(--color-border-primary)',
-            backgroundColor: 'var(--color-bg-input)',
-            color: 'var(--color-text-primary)',
-            fontSize: '13px',
-          }}
-        />
-        <button
-          type="button"
-          onClick={() => void loadTopology()}
-          disabled={loading}
-          data-testid="csg-refresh-topology-btn"
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '6px',
-            padding: '6px 12px',
-            borderRadius: '6px',
-            border: '1px solid var(--color-border-primary)',
-            backgroundColor: 'var(--color-bg-surface)',
-            color: 'var(--color-text-primary)',
-            cursor: loading ? 'wait' : 'pointer',
-            fontSize: '13px',
-          }}
-        >
-          <RefreshCw size={14} />
-          {loading ? '探测中...' : '重新探测现网拓扑'}
-        </button>
-      </div>
-
-      {errorMsg && (
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            padding: '10px 12px',
-            borderRadius: '6px',
-            backgroundColor: 'color-mix(in srgb, var(--color-danger) 12%, transparent)',
-            border: '1px solid var(--color-danger)',
-            color: 'var(--color-danger)',
-            fontSize: '13px',
-          }}
-        >
-          <ShieldAlert size={16} />
-          <span>{errorMsg}</span>
+    <div className="csg-drawer-shell">
+      {/* ── Zone A: 顶部固定探测栏 + 告警 + KPI 汇总 ── */}
+      <div className="csg-drawer-top">
+        <div className="csg-probe-bar">
+          <span className="csg-probe-node-label">
+            <Compass size={16} style={{ color: 'var(--color-primary)' }} />
+            目标节点：{agent.name}
+          </span>
+          <input
+            type="text"
+            value={csgAddrInput}
+            onChange={(e) => setCsgAddrInput(e.target.value)}
+            placeholder="可选指定 CSG dlink 地址 (如 127.0.0.1:31806)"
+            data-testid="csg-addr-probe-input"
+            className="csg-probe-input"
+          />
+          <button
+            type="button"
+            onClick={() => void loadTopology()}
+            disabled={loading}
+            data-testid="csg-refresh-topology-btn"
+            className="csg-probe-btn"
+          >
+            <RefreshCw size={14} />
+            {loading ? '探测中...' : '重新探测现网拓扑'}
+          </button>
         </div>
-      )}
 
-      {report && (
-        <>
-          {endpoints.length > 0 && (
-            <div
-              data-testid="csg-endpoints-selector"
-              style={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '8px 12px',
-                borderRadius: '6px',
-                border: '1px solid var(--color-border-subtle)',
-                backgroundColor: 'var(--color-bg-muted)',
-                fontSize: '12px',
-              }}
-            >
-              <span style={{ color: 'var(--color-text-secondary)', fontWeight: 500 }}>
-                候选 CSG 控制面 ({endpoints.length})：
-              </span>
-              {endpoints.map((ep, idx) => {
-                const epAddr = `${ep.listen_ip}:${ep.listen_port}`;
-                const active =
-                  csgAddrInput.trim() === epAddr || (csgAddrInput.trim() === '' && idx === 0);
-                return (
-                  <button
-                    key={`${epAddr}-${ep.source}-${idx}`}
-                    type="button"
-                    disabled={loading}
-                    onClick={() => {
-                      setCsgAddrInput(epAddr);
-                      void loadTopology(epAddr);
-                    }}
-                    style={{
-                      padding: '3px 8px',
-                      borderRadius: '4px',
-                      border: `1px solid ${
-                        active ? 'var(--color-primary)' : 'var(--color-border-primary)'
-                      }`,
-                      backgroundColor: active
-                        ? 'color-mix(in srgb, var(--color-primary) 14%, transparent)'
-                        : 'var(--color-bg-surface)',
-                      color: active ? 'var(--color-primary)' : 'var(--color-text-primary)',
-                      fontFamily: 'monospace',
-                      fontSize: '12px',
-                      cursor: loading ? 'wait' : 'pointer',
-                    }}
-                  >
-                    {epAddr} ({ep.exe_name ? `${ep.exe_name} · ` : ''}{ep.source})
-                  </button>
-                );
-              })}
-            </div>
-          )}
+        {errorMsg && (
+          <div className="csg-banner-error">
+            <ShieldAlert size={16} />
+            <span>{errorMsg}</span>
+          </div>
+        )}
 
-          {discoveryErrors.length > 0 && (
-            <div
-              data-testid="csg-discovery-errors-banner"
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '4px',
-                padding: '10px 12px',
-                borderRadius: '6px',
-                backgroundColor: 'color-mix(in srgb, var(--color-warning) 12%, transparent)',
-                border: '1px solid var(--color-warning)',
-                color: 'var(--color-warning)',
-                fontSize: '12px',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600 }}>
-                <AlertTriangle size={14} />
-                <span>CSG 发现告警 / 降级原因</span>
-              </div>
-              {discoveryErrors.map((errItem, idx) => (
-                <div key={idx} style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>
-                  {errItem}
-                </div>
-              ))}
-            </div>
-          )}
-
-          {isProcOnlyDegraded && (
-            <div
-              data-testid="csg-proc-only-degraded-banner"
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '6px',
-                padding: '12px',
-                borderRadius: '6px',
-                backgroundColor: 'color-mix(in srgb, var(--color-warning) 10%, transparent)',
-                border: '1px solid var(--color-warning)',
-                color: 'var(--color-text-primary)',
-                fontSize: '12px',
-                lineHeight: 1.5,
-              }}
-            >
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  fontWeight: 600,
-                  color: 'var(--color-warning)',
-                }}
-              >
-                <AlertTriangle size={14} />
-                <span>
-                  {isMeshOnlyMonitorErr
-                    ? 'L2 dophi_mesh:// 纯 Go 发现失败（当前停留在 PROC_ONLY 降级模式）'
-                    : 'L2 CSG 服务枚举未生效（当前停留在 PROC_ONLY 降级模式）'}
+        {report && (
+          <>
+            {endpoints.length > 0 && (
+              <div data-testid="csg-endpoints-selector" className="csg-endpoints-bar">
+                <span className="csg-endpoints-label">
+                  候选 CSG 控制面 ({endpoints.length})：
                 </span>
-              </div>
-              <div style={{ color: 'var(--color-text-secondary)' }}>
-                {isMeshOnlyMonitorErr ? (
-                  <>
-                    Agent 已通过 CSG 发现 <code>RPCMonitorService-RPCMonitorService</code> 的{' '}
-                    <code>dophi_mesh://</code> 端点，但纯 Go Mesh 查询（<code>CROSMESH_RPCMON</code>）失败。请检查对应{' '}
-                    <code>dophi_mesh://</code> 端口网络连通性，并确认目标环境未启用未支持的 SSP/SECLINK 加密；若已知监控端点，也可在 Agent 启动时通过{' '}
-                    <code>--csg-monitor-addr</code> 指定。
-                  </>
-                ) : (
-                  <>
-                    未通过 <code>CROSMESH_RPCMON</code> 或 <code>CROSTCP_RPCMON</code> 获取到现网 CSG 服务目录。请检查目标 CSG 控制面端点可达性、确认{' '}
-                    <code>RPCMonitorService-RPCMonitorService</code> 已在线发布，或通过 Agent 启动参数{' '}
-                    <code>--csg-addr</code> / <code>--csg-monitor-addr</code> 显式指定后重试。
-                  </>
-                )}
-              </div>
-            </div>
-          )}
-
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
-              gap: '8px',
-            }}
-          >
-            <div
-              style={{
-                padding: '10px 12px',
-                borderRadius: '6px',
-                border: '1px solid var(--color-border-subtle)',
-                backgroundColor: 'var(--color-bg-muted)',
-              }}
-            >
-              <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>发现模式</div>
-              <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-text-primary)' }}>
-                {report.discovery_mode || 'PROC_ONLY'}
-              </div>
-            </div>
-            <div
-              style={{
-                padding: '10px 12px',
-                borderRadius: '6px',
-                border: '1px solid var(--color-border-subtle)',
-                backgroundColor: 'var(--color-bg-muted)',
-              }}
-            >
-              <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>已纳管 / 现网数</div>
-              <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-success)' }}>
-                {report.summary.matched_count} / {liveServiceCount}
-              </div>
-            </div>
-            <div
-              style={{
-                padding: '10px 12px',
-                borderRadius: '6px',
-                border: '1px solid var(--color-border-subtle)',
-                backgroundColor: 'var(--color-bg-muted)',
-              }}
-            >
-              <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>待导入 SSOT</div>
-              <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-warning)' }}>
-                {report.summary.undeclared_count}
-              </div>
-            </div>
-            <div
-              style={{
-                padding: '10px 12px',
-                borderRadius: '6px',
-                border: '1px solid var(--color-border-subtle)',
-                backgroundColor: 'var(--color-bg-muted)',
-              }}
-            >
-              <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>现网缺失 / 订阅</div>
-              <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-text-primary)' }}>
-                {report.summary.missing_in_live_count} / {liveSubCount}
-              </div>
-            </div>
-          </div>
-
-          <div
-            style={{
-              border: '1px solid var(--color-border-subtle)',
-              borderRadius: '8px',
-              overflow: 'hidden',
-            }}
-          >
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-              <thead>
-                <tr
-                  style={{
-                    backgroundColor: 'var(--color-bg-muted)',
-                    color: 'var(--color-text-secondary)',
-                    textAlign: 'left',
-                  }}
-                >
-                  <th style={{ padding: '8px 10px', width: '36px' }}>选</th>
-                  <th style={{ padding: '8px 10px' }}>CSG 服务名 (64B)</th>
-                  <th style={{ padding: '8px 10px' }}>传输与地址</th>
-                  <th style={{ padding: '8px 10px' }}>宿主进程</th>
-                  <th style={{ padding: '8px 10px' }}>三态对账</th>
-                </tr>
-              </thead>
-              <tbody>
-                {services.length === 0 ? (
-                  <tr>
-                    <td
-                      colSpan={5}
-                      style={{
-                        padding: '20px',
-                        textAlign: 'center',
-                        color: 'var(--color-text-secondary)',
+                {endpoints.map((ep, idx) => {
+                  const epAddr = `${ep.listen_ip}:${ep.listen_port}`;
+                  const active =
+                    csgAddrInput.trim() === epAddr || (csgAddrInput.trim() === '' && idx === 0);
+                  return (
+                    <button
+                      key={`${epAddr}-${ep.source}-${idx}`}
+                      type="button"
+                      disabled={loading}
+                      onClick={() => {
+                        setCsgAddrInput(epAddr);
+                        void loadTopology(epAddr);
                       }}
+                      className={`csg-endpoint-chip${active ? ' csg-endpoint-chip--active' : ''}`}
                     >
-                      未探测到 CSG 现网服务实例
-                    </td>
-                  </tr>
-                ) : (
-                  services.map((svc, idx) => {
-                    const isUndeclared = svc.state === 'UNDECLARED_IN_SSOT';
-                    const checked = selectedServices.has(svc.service_name);
-                    return (
-                      <tr
-                        key={`${svc.service_name}-${svc.server_pid ?? 0}-${svc.port ?? 0}-${svc.state}-${idx}`}
-                        style={{ borderTop: '1px solid var(--color-border-subtle)' }}
-                      >
-                        <td style={{ padding: '8px 10px' }}>
-                          <input
-                            type="checkbox"
-                            disabled={!isUndeclared || !isAdmin}
-                            checked={checked}
-                            onChange={() => toggleService(svc.service_name)}
-                          />
-                        </td>
-                        <td style={{ padding: '8px 10px', fontFamily: 'monospace', color: 'var(--color-text-primary)' }}>
-                          <div>{svc.service_name}</div>
-                          {svc.ssot_proto_svc && (
-                            <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>
-                              pb: {svc.ssot_proto_svc}
-                            </div>
-                          )}
-                        </td>
-                        <td style={{ padding: '8px 10px', color: 'var(--color-text-secondary)' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            {svc.transport === 'MESH' ? (
-                              <span
-                                data-testid="csg-transport-badge-MESH"
-                                style={{
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  padding: '1px 6px',
-                                  borderRadius: '4px',
-                                  fontSize: '11px',
-                                  fontWeight: 600,
-                                  color: 'var(--color-primary)',
-                                  backgroundColor:
-                                    'color-mix(in srgb, var(--color-primary) 12%, transparent)',
-                                  border: '1px solid var(--color-primary)',
-                                }}
-                              >
-                                dophi_mesh
-                              </span>
-                            ) : (
-                              <span>{svc.transport || '-'}</span>
-                            )}
-                          </div>
-                          <div style={{ fontSize: '12px', fontFamily: 'monospace' }}>
-                            {svc.addr || (svc.expected_port ? `expected:${svc.expected_port}` : '-')}
-                          </div>
-                        </td>
-                        <td style={{ padding: '8px 10px', color: 'var(--color-text-primary)' }}>
-                          {svc.server_proc
-                            ? `${svc.server_proc} (${svc.server_pid || 0})`
-                            : svc.ssot_module_name || svc.ssot_module_code || '-'}
-                        </td>
-                        <td style={{ padding: '8px 10px' }}>{renderStateBadge(svc.state)}</td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          {(report.subscriptions || []).length > 0 && (
-            <div
-              style={{
-                padding: '10px 12px',
-                borderRadius: '8px',
-                border: '1px solid var(--color-border-subtle)',
-                backgroundColor: 'var(--color-bg-muted)',
-              }}
-            >
-              <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: '6px', color: 'var(--color-text-secondary)' }}>
-                现网观测调用订阅边 ({report.subscriptions.length})
+                      {epAddr} ({ep.exe_name ? `${ep.exe_name} · ` : ''}
+                      {ep.source})
+                    </button>
+                  );
+                })}
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '12px' }}>
-                {report.subscriptions.map((sub, idx) => (
+            )}
+
+            {discoveryErrors.length > 0 && (
+              <div data-testid="csg-discovery-errors-banner" className="csg-banner-warning">
+                <div className="csg-banner-warning-header">
+                  <span className="csg-banner-warning-title">
+                    <AlertTriangle size={14} />
+                    <span>CSG 发现告警 / 降级原因 ({discoveryErrors.length})</span>
+                  </span>
+                  {discoveryErrors.length > 2 && (
+                    <button
+                      type="button"
+                      className="csg-link-btn"
+                      onClick={() => setErrorsExpanded((prev) => !prev)}
+                    >
+                      {errorsExpanded ? (
+                        <>
+                          <ChevronUp size={13} /> 收起
+                        </>
+                      ) : (
+                        <>
+                          <ChevronDown size={13} /> 展开全部 ({discoveryErrors.length})
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
+                {visibleErrors.map((errItem, idx) => (
                   <div
-                    key={`${sub.client_pid}-${sub.service_name}-${idx}`}
-                    style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                    key={idx}
+                    style={{
+                      fontFamily: 'var(--font-family-mono, monospace)',
+                      wordBreak: 'break-all',
+                    }}
                   >
-                    <span style={{ fontFamily: 'monospace', color: 'var(--color-text-primary)' }}>
-                      {sub.client_proc || `pid-${sub.client_pid}`} ({sub.client_pid}) → {sub.service_name}
-                    </span>
-                    {renderStateBadge(sub.state)}
+                    {errItem}
                   </div>
                 ))}
               </div>
-            </div>
-          )}
+            )}
 
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '10px',
-              padding: '12px',
-              borderRadius: '8px',
-              border: '1px solid var(--color-border-subtle)',
-              backgroundColor: 'var(--color-bg-muted)',
-            }}
-          >
-            {isAdmin ? (
-              <>
-                <div
-                  style={{
-                    display: 'flex',
-                    flexWrap: 'wrap',
-                    gap: '12px',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                  }}
-                >
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center' }}>
-                    <label style={{ fontSize: '13px', color: 'var(--color-text-primary)' }}>
-                      归属子系统：
-                      <select
-                        value={selectedSubsystemId}
-                        onChange={(e) => setSelectedSubsystemId(e.target.value)}
-                        data-testid="csg-import-subsystem-select"
-                        style={{
-                          marginLeft: '6px',
-                          padding: '5px 8px',
-                          borderRadius: '6px',
-                          border: '1px solid var(--color-border-primary)',
-                          backgroundColor: 'var(--color-bg-input)',
-                          color: 'var(--color-text-primary)',
-                        }}
-                      >
-                        <option value="">请选择子系统</option>
-                        {subsystems.map((sub) => (
-                          <option key={sub.id} value={String(sub.id)}>
-                            {sub.name} ({sub.code})
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <button
-                      type="button"
-                      disabled={creatingSubsystem}
-                      onClick={() => setShowCreateSubsystem((prev) => !prev)}
-                      data-testid="csg-toggle-create-subsystem-btn"
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '4px',
-                        padding: '5px 10px',
-                        borderRadius: '6px',
-                        border: '1px solid var(--color-border-primary)',
-                        backgroundColor: 'var(--color-bg-surface)',
-                        color: 'var(--color-text-primary)',
-                        cursor: creatingSubsystem ? 'wait' : 'pointer',
-                        fontSize: '12px',
+            {isProcOnlyDegraded && (
+              <div data-testid="csg-proc-only-degraded-banner" className="csg-banner-warning">
+                <div className="csg-banner-warning-header">
+                  <span className="csg-banner-warning-title">
+                    <AlertTriangle size={14} />
+                    <span>
+                      {isMeshOnlyMonitorErr
+                        ? 'L2 dophi_mesh:// 纯 Go 发现失败（当前停留在 PROC_ONLY 降级模式）'
+                        : 'L2 CSG 服务枚举未生效（当前停留在 PROC_ONLY 降级模式）'}
+                    </span>
+                  </span>
+                </div>
+                <div style={{ color: 'var(--color-text-secondary)' }}>
+                  {isMeshOnlyMonitorErr ? (
+                    <>
+                      Agent 已通过 CSG 发现 <code>RPCMonitorService-RPCMonitorService</code> 的{' '}
+                      <code>dophi_mesh://</code> 端点，但纯 Go Mesh 查询（<code>CROSMESH_RPCMON</code>
+                      ）失败。请检查对应 <code>dophi_mesh://</code> 端口网络连通性，并确认目标环境未启用未支持的
+                      SSP/SECLINK 加密；若已知监控端点，也可在 Agent 启动时通过{' '}
+                      <code>--csg-monitor-addr</code> 指定。
+                    </>
+                  ) : (
+                    <>
+                      未通过 <code>CROSMESH_RPCMON</code> 或 <code>CROSTCP_RPCMON</code> 获取到现网
+                      CSG 服务目录。请检查目标 CSG 控制面端点可达性、确认{' '}
+                      <code>RPCMonitorService-RPCMonitorService</code> 已在线发布，或通过 Agent 启动参数{' '}
+                      <code>--csg-addr</code> / <code>--csg-monitor-addr</code> 显式指定后重试。
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div className="csg-kpi-strip">
+              <div className="csg-kpi-card">
+                <span className="csg-kpi-label">发现模式</span>
+                <span className="csg-kpi-value" title={report.discovery_mode || 'PROC_ONLY'}>
+                  {report.discovery_mode || 'PROC_ONLY'}
+                </span>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('services');
+                  setServiceStateFilter((prev) => (prev === 'MATCHED' ? 'ALL' : 'MATCHED'));
+                  setServicePage(1);
+                }}
+                className={`csg-kpi-card csg-kpi-card--interactive${activeTab === 'services' && serviceStateFilter === 'MATCHED'
+                    ? ' csg-kpi-card--active'
+                    : ''
+                  }`}
+              >
+                <span className="csg-kpi-label">已纳管 / 现网数</span>
+                <span className="csg-kpi-value csg-kpi-value--success">
+                  {report.summary.matched_count} / {liveServiceCount}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('services');
+                  setServiceStateFilter((prev) =>
+                    prev === 'UNDECLARED_IN_SSOT' ? 'ALL' : 'UNDECLARED_IN_SSOT'
+                  );
+                  setServicePage(1);
+                }}
+                className={`csg-kpi-card csg-kpi-card--interactive${activeTab === 'services' && serviceStateFilter === 'UNDECLARED_IN_SSOT'
+                    ? ' csg-kpi-card--active'
+                    : ''
+                  }`}
+              >
+                <span className="csg-kpi-label">待导入 SSOT</span>
+                <span className="csg-kpi-value csg-kpi-value--warning">
+                  {report.summary.undeclared_count}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('subscriptions');
+                  setSubPage(1);
+                }}
+                className={`csg-kpi-card csg-kpi-card--interactive${activeTab === 'subscriptions' ? ' csg-kpi-card--active' : ''
+                  }`}
+              >
+                <span className="csg-kpi-label">现网缺失 / 订阅边</span>
+                <span className="csg-kpi-value">
+                  {report.summary.missing_in_live_count} / {liveSubCount}
+                </span>
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* ── Zone B: 中间标签页 + 多维过滤 + 滚动表格区 ── */}
+      {report && (
+        <div className="csg-workspace">
+          <div data-testid="csg-reconcile-tabs" className="csg-tabs-header">
+            <div className="csg-tabs-nav">
+              <button
+                type="button"
+                data-testid="csg-tab-services"
+                onClick={() => setActiveTab('services')}
+                className={`csg-tab-btn${activeTab === 'services' ? ' csg-tab-btn--active' : ''}`}
+              >
+                <Server size={14} />
+                <span>现网服务列表</span>
+                <span className="csg-tab-count">{services.length}</span>
+              </button>
+
+              <button
+                type="button"
+                data-testid="csg-tab-subscriptions"
+                onClick={() => setActiveTab('subscriptions')}
+                className={`csg-tab-btn${activeTab === 'subscriptions' ? ' csg-tab-btn--active' : ''
+                  }`}
+              >
+                <GitFork size={14} />
+                <span>调用订阅边</span>
+                <span className="csg-tab-count">{subscriptions.length}</span>
+              </button>
+            </div>
+
+            {(report.filtered_remote_count > 0 || report.filtered_transient_count > 0) && (
+              <span className="csg-tabs-meta">
+                采集已自动降噪：远端 {report.filtered_remote_count} / 瞬态{' '}
+                {report.filtered_transient_count}
+              </span>
+            )}
+          </div>
+
+          {activeTab === 'services' ? (
+            <>
+              {/* 服务列表多维过滤栏 */}
+              <div data-testid="csg-services-filter-bar" className="csg-filter-bar">
+                <div className="csg-filter-row">
+                  <div className="csg-search-box">
+                    <Search size={14} className="csg-search-icon" />
+                    <input
+                      type="text"
+                      value={serviceSearch}
+                      onChange={(e) => {
+                        setServiceSearch(e.target.value);
+                        setServicePage(1);
                       }}
-                    >
-                      <Plus size={13} />
-                      新建子系统
-                    </button>
-                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}>
-                      <input
-                        type="checkbox"
-                        checked={importDeps}
-                        onChange={(e) => setImportDeps(e.target.checked)}
-                      />
-                      同时导入现网订阅依赖边 (含分层守卫)
-                    </label>
-                  </div>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    {onClose && (
+                      placeholder="搜索 CSG 服务名、Proto、宿主进程、PID 或地址..."
+                      data-testid="csg-service-search-input"
+                      className="csg-search-input"
+                    />
+                    {serviceSearch && (
                       <button
                         type="button"
-                        onClick={onClose}
-                        style={{
-                          padding: '6px 12px',
-                          borderRadius: '6px',
-                          border: '1px solid var(--color-border-primary)',
-                          backgroundColor: 'var(--color-bg-surface)',
-                          color: 'var(--color-text-primary)',
-                          cursor: 'pointer',
+                        aria-label="清空服务搜索"
+                        onClick={() => {
+                          setServiceSearch('');
+                          setServicePage(1);
                         }}
+                        className="csg-search-clear"
                       >
-                        关闭
+                        <X size={13} />
                       </button>
                     )}
-                    <button
-                      type="button"
-                      onClick={() => void handleImport()}
-                      disabled={importDisabled}
-                      data-testid="csg-import-blueprint-btn"
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        padding: '6px 14px',
-                        borderRadius: '6px',
-                        border: '1px solid var(--color-primary)',
-                        backgroundColor: 'var(--color-primary)',
-                        color: 'var(--color-text-white)',
-                        cursor: importing ? 'wait' : importDisabled ? 'not-allowed' : 'pointer',
-                        fontWeight: 500,
-                        opacity: importDisabled ? 0.55 : 1,
-                      }}
-                    >
-                      <Download size={14} />
-                      {importing ? '导入中...' : `一键导入 SSOT 蓝图 (${selectedServices.size})`}
-                    </button>
                   </div>
+
+                  <select
+                    value={serviceProcFilter}
+                    onChange={(e) => {
+                      setServiceProcFilter(e.target.value);
+                      setServicePage(1);
+                    }}
+                    data-testid="csg-service-proc-filter"
+                    className="csg-filter-select"
+                    aria-label="按宿主进程过滤"
+                  >
+                    <option value="ALL">全部宿主进程 ({services.length})</option>
+                    {serviceProcOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label} ({opt.count})
+                      </option>
+                    ))}
+                  </select>
+
+                  <select
+                    value={serviceTransportFilter}
+                    onChange={(e) => {
+                      setServiceTransportFilter(e.target.value);
+                      setServicePage(1);
+                    }}
+                    data-testid="csg-service-transport-filter"
+                    className="csg-filter-select"
+                    aria-label="按传输协议过滤"
+                  >
+                    <option value="ALL">全部协议</option>
+                    {serviceTransportOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label} ({opt.count})
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
-                {subsystemsError && (
-                  <div
-                    data-testid="csg-subsystems-error-banner"
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: '8px',
-                      padding: '8px 10px',
-                      borderRadius: '6px',
-                      backgroundColor: 'color-mix(in srgb, var(--color-warning) 12%, transparent)',
-                      border: '1px solid var(--color-warning)',
-                      color: 'var(--color-warning)',
-                      fontSize: '12px',
-                    }}
-                  >
-                    <span>子系统列表加载失败：{subsystemsError}</span>
+                <div className="csg-filter-row">
+                  <div data-testid="csg-service-state-filter" className="csg-state-pills">
                     <button
                       type="button"
-                      onClick={() => void loadSubsystems()}
-                      style={{
-                        padding: '3px 8px',
-                        borderRadius: '4px',
-                        border: '1px solid var(--color-border-primary)',
-                        backgroundColor: 'var(--color-bg-surface)',
-                        color: 'var(--color-text-primary)',
-                        cursor: 'pointer',
-                        fontSize: '12px',
+                      onClick={() => {
+                        setServiceStateFilter('ALL');
+                        setServicePage(1);
                       }}
+                      className={`csg-pill${serviceStateFilter === 'ALL' ? ' csg-pill--active' : ''}`}
                     >
-                      重试加载
+                      全部 ({services.length})
                     </button>
-                  </div>
-                )}
-
-                {isNoSubsystems && (
-                  <div
-                    data-testid="csg-empty-subsystem-hint"
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                      fontSize: '12px',
-                      color: 'var(--color-warning)',
-                    }}
-                  >
-                    <AlertTriangle size={14} />
-                    <span>当前架构库中暂无子系统，请先快速新建一个归属子系统后再一键导入蓝图。</span>
-                  </div>
-                )}
-
-                {showQuickCreateForm && (
-                  <div
-                    data-testid="csg-quick-create-subsystem-form"
-                    style={{
-                      display: 'flex',
-                      flexWrap: 'wrap',
-                      gap: '8px',
-                      alignItems: 'center',
-                      padding: '10px',
-                      borderRadius: '6px',
-                      border: '1px solid var(--color-border-subtle)',
-                      backgroundColor: 'var(--color-bg-surface)',
-                    }}
-                  >
-                    <input
-                      type="text"
-                      value={newSubCode}
-                      onChange={(e) => setNewSubCode(e.target.value)}
-                      placeholder="子系统编码 (如 LOCAL_DEMO)"
-                      data-testid="csg-new-subsystem-code-input"
-                      style={{
-                        width: '180px',
-                        padding: '5px 8px',
-                        borderRadius: '6px',
-                        border: '1px solid var(--color-border-primary)',
-                        backgroundColor: 'var(--color-bg-input)',
-                        color: 'var(--color-text-primary)',
-                        fontSize: '12px',
-                        fontFamily: 'monospace',
-                      }}
-                    />
-                    <input
-                      type="text"
-                      value={newSubName}
-                      onChange={(e) => setNewSubName(e.target.value)}
-                      placeholder="子系统名称 (如 local-demo 子系统)"
-                      data-testid="csg-new-subsystem-name-input"
-                      style={{
-                        flex: 1,
-                        minWidth: '180px',
-                        padding: '5px 8px',
-                        borderRadius: '6px',
-                        border: '1px solid var(--color-border-primary)',
-                        backgroundColor: 'var(--color-bg-input)',
-                        color: 'var(--color-text-primary)',
-                        fontSize: '12px',
-                      }}
-                    />
+                    {(
+                      ['UNDECLARED_IN_SSOT', 'MATCHED', 'MISSING_IN_LIVE'] as CSGReconcileState[]
+                    ).map((st) => {
+                      const cfg = STATE_BADGE_MAP[st];
+                      const active = serviceStateFilter === st;
+                      return (
+                        <button
+                          key={st}
+                          type="button"
+                          onClick={() => {
+                            setServiceStateFilter(active ? 'ALL' : st);
+                            setServicePage(1);
+                          }}
+                          className={`csg-pill${active ? ' csg-pill--active' : ''}`}
+                        >
+                          <span
+                            className="csg-pill-dot"
+                            style={{ backgroundColor: cfg.color }}
+                          />
+                          <span>
+                            {cfg.label} ({serviceStateCounts[st]})
+                          </span>
+                        </button>
+                      );
+                    })}
                     <button
                       type="button"
-                      disabled={creatingSubsystem}
-                      onClick={() => void handleQuickCreateSubsystem()}
-                      data-testid="csg-quick-create-subsystem-submit"
-                      style={{
-                        padding: '5px 12px',
-                        borderRadius: '6px',
-                        border: '1px solid var(--color-primary)',
-                        backgroundColor: 'var(--color-primary)',
-                        color: 'var(--color-text-white)',
-                        cursor: creatingSubsystem ? 'wait' : 'pointer',
-                        fontSize: '12px',
-                        fontWeight: 500,
-                        opacity: creatingSubsystem ? 0.6 : 1,
+                      onClick={() => {
+                        setOnlySelectedServices((prev) => !prev);
+                        setServicePage(1);
                       }}
+                      className={`csg-pill${onlySelectedServices ? ' csg-pill--active' : ''}`}
                     >
-                      {creatingSubsystem ? '创建中...' : '创建并选中'}
+                      仅看已选 ({selectedServices.size})
                     </button>
-                    {subsystems.length > 0 && (
+                  </div>
+
+                  <div className="csg-batch-bar">
+                    {isAdmin && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={selectFilteredUndeclared}
+                          disabled={
+                            filteredUndeclaredNames.length === 0 ||
+                            filteredSelectedCount === filteredUndeclaredNames.length
+                          }
+                          className="csg-link-btn"
+                        >
+                          全选筛选结果 ({filteredUndeclaredNames.length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={deselectFilteredUndeclared}
+                          disabled={filteredSelectedCount === 0}
+                          className="csg-link-btn csg-link-btn--muted"
+                        >
+                          取消筛选选中
+                        </button>
+                      </>
+                    )}
+                    {hasActiveServiceFilter && (
                       <button
                         type="button"
-                        disabled={creatingSubsystem}
-                        onClick={() => setShowCreateSubsystem(false)}
-                        style={{
-                          padding: '5px 10px',
-                          borderRadius: '6px',
-                          border: '1px solid var(--color-border-primary)',
-                          backgroundColor: 'var(--color-bg-surface)',
-                          color: 'var(--color-text-primary)',
-                          cursor: 'pointer',
-                          fontSize: '12px',
-                        }}
+                        onClick={resetServiceFilters}
+                        className="csg-link-btn csg-link-btn--muted"
                       >
-                        取消
+                        <RotateCcw size={12} />
+                        重置筛选
                       </button>
                     )}
                   </div>
-                )}
-              </>
-            ) : (
+                </div>
+              </div>
+
+              {/* 服务数据表格 */}
+              <div className="csg-table-card">
+                <div className="csg-table-scroll">
+                  <table className="csg-table">
+                    <thead>
+                      <tr>
+                        <th style={{ width: '40px', textAlign: 'center' }}>
+                          <input
+                            ref={masterCheckboxRef}
+                            type="checkbox"
+                            data-testid="csg-select-all-filtered-checkbox"
+                            disabled={!isAdmin || filteredUndeclaredNames.length === 0}
+                            checked={isAllFilteredSelected}
+                            onChange={toggleMasterFilteredCheckbox}
+                            title="全选/取消全选当前筛选出的待导入服务"
+                          />
+                        </th>
+                        <th style={{ width: '34%' }}>CSG 服务名 (64B)</th>
+                        <th style={{ width: '24%' }}>传输与地址</th>
+                        <th style={{ width: '19%' }}>宿主进程</th>
+                        <th style={{ width: '84px' }}>订阅边</th>
+                        <th style={{ width: '100px' }}>状态</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pagedServices.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="csg-empty-cell">
+                            {services.length === 0
+                              ? '未探测到 CSG 现网服务实例'
+                              : '没有符合当前筛选条件的 CSG 服务'}
+                          </td>
+                        </tr>
+                      ) : (
+                        pagedServices.map((svc, idx) => {
+                          const isUndeclared = svc.state === 'UNDECLARED_IN_SSOT';
+                          const checked = selectedServices.has(svc.service_name);
+                          const edgeCount = subCountByService.get(svc.service_name) || 0;
+                          const addrText =
+                            svc.addr || (svc.expected_port ? `expected:${svc.expected_port}` : '-');
+                          const procText = svc.server_proc
+                            ? `${svc.server_proc} (${svc.server_pid || 0})`
+                            : svc.ssot_module_name || svc.ssot_module_code || '-';
+                          return (
+                            <tr
+                              key={`${svc.service_name}-${svc.server_pid ?? 0}-${svc.port ?? 0}-${svc.state}-${idx}`}
+                              className={checked ? 'csg-row--selected' : undefined}
+                            >
+                              <td style={{ textAlign: 'center' }}>
+                                <input
+                                  type="checkbox"
+                                  disabled={!isUndeclared || !isAdmin}
+                                  checked={checked}
+                                  onChange={() => toggleService(svc.service_name)}
+                                />
+                              </td>
+                              <td>
+                                <div className="csg-mono-ellipsis" title={svc.service_name}>
+                                  {svc.service_name}
+                                </div>
+                                {svc.ssot_proto_svc && (
+                                  <div className="csg-sub-meta" title={svc.ssot_proto_svc}>
+                                    pb: {svc.ssot_proto_svc}
+                                  </div>
+                                )}
+                              </td>
+                              <td>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                  {svc.transport === 'MESH' ? (
+                                    <span
+                                      data-testid="csg-transport-badge-MESH"
+                                      className="csg-transport-pill"
+                                      style={{
+                                        color: 'var(--color-primary)',
+                                        backgroundColor: 'var(--color-primary-subtle)',
+                                        border: '1px solid var(--color-primary-border)',
+                                      }}
+                                    >
+                                      dophi_mesh
+                                    </span>
+                                  ) : (
+                                    <span
+                                      className="csg-transport-pill"
+                                      style={{
+                                        color: 'var(--color-text-secondary)',
+                                        backgroundColor: 'var(--color-bg-muted)',
+                                        border: '1px solid var(--color-border-subtle)',
+                                      }}
+                                    >
+                                      {svc.transport || '-'}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="csg-sub-meta csg-mono-ellipsis" title={addrText}>
+                                  {addrText}
+                                </div>
+                              </td>
+                              <td>
+                                <div className="csg-mono-ellipsis" title={procText}>
+                                  {procText}
+                                </div>
+                              </td>
+                              <td>
+                                {edgeCount > 0 ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => jumpToServiceSubscriptions(svc.service_name)}
+                                    className="csg-edge-count-btn"
+                                    title={`查看 ${svc.service_name} 的 ${edgeCount} 条现网调用订阅边`}
+                                  >
+                                    {edgeCount} 条
+                                  </button>
+                                ) : (
+                                  <span style={{ color: 'var(--color-text-muted)' }}>-</span>
+                                )}
+                              </td>
+                              <td>{renderStateBadge(svc.state)}</td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* 服务分页条 */}
+                <div data-testid="csg-services-pagination" className="csg-pagination-bar">
+                  <span>
+                    匹配 <strong>{filteredServices.length}</strong> / {services.length} 个服务
+                    {servicePageSize > 0 && filteredServices.length > 0 && (
+                      <>
+                        {' '}
+                        · 第 {(safeServicePage - 1) * servicePageSize + 1}-
+                        {Math.min(safeServicePage * servicePageSize, filteredServices.length)} 条
+                      </>
+                    )}
+                  </span>
+                  <div className="csg-pagination-controls">
+                    <select
+                      value={servicePageSize}
+                      onChange={(e) => {
+                        setServicePageSize(Number(e.target.value));
+                        setServicePage(1);
+                      }}
+                      className="csg-filter-select"
+                      style={{ height: '26px' }}
+                      aria-label="服务列表每页条数"
+                    >
+                      {PAGE_SIZE_OPTIONS.map((size) => (
+                        <option key={size} value={size}>
+                          {size === 0 ? '全部显示' : `${size} 条/页`}
+                        </option>
+                      ))}
+                    </select>
+                    {servicePageSize > 0 && (
+                      <>
+                        <button
+                          type="button"
+                          disabled={safeServicePage <= 1}
+                          onClick={() => setServicePage((p) => Math.max(1, p - 1))}
+                          className="csg-page-btn"
+                          aria-label="上一页"
+                        >
+                          <ChevronLeft size={14} />
+                        </button>
+                        <span>
+                          {safeServicePage} / {serviceTotalPages}
+                        </span>
+                        <button
+                          type="button"
+                          disabled={safeServicePage >= serviceTotalPages}
+                          onClick={() => setServicePage((p) => Math.min(serviceTotalPages, p + 1))}
+                          className="csg-page-btn"
+                          aria-label="下一页"
+                        >
+                          <ChevronRight size={14} />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              {/* 订阅边多维过滤栏 */}
+              <div data-testid="csg-subscriptions-filter-bar" className="csg-filter-bar">
+                <div className="csg-filter-row">
+                  <div className="csg-search-box">
+                    <Search size={14} className="csg-search-icon" />
+                    <input
+                      type="text"
+                      value={subSearch}
+                      onChange={(e) => {
+                        setSubSearch(e.target.value);
+                        setSubPage(1);
+                      }}
+                      placeholder="搜索调用方进程、PID、IP 或目标 CSG 服务名..."
+                      data-testid="csg-sub-search-input"
+                      className="csg-search-input"
+                    />
+                    {subSearch && (
+                      <button
+                        type="button"
+                        aria-label="清空订阅边搜索"
+                        onClick={() => {
+                          setSubSearch('');
+                          setSubPage(1);
+                        }}
+                        className="csg-search-clear"
+                      >
+                        <X size={13} />
+                      </button>
+                    )}
+                  </div>
+
+                  <select
+                    value={subClientFilter}
+                    onChange={(e) => {
+                      setSubClientFilter(e.target.value);
+                      setSubPage(1);
+                    }}
+                    data-testid="csg-sub-client-filter"
+                    className="csg-filter-select"
+                    aria-label="按调用方进程过滤"
+                  >
+                    <option value="ALL">全部调用方 ({subscriptions.length})</option>
+                    {subClientOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label} ({opt.count})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="csg-filter-row">
+                  <div data-testid="csg-sub-state-filter" className="csg-state-pills">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSubStateFilter('ALL');
+                        setSubPage(1);
+                      }}
+                      className={`csg-pill${subStateFilter === 'ALL' ? ' csg-pill--active' : ''}`}
+                    >
+                      全部 ({subscriptions.length})
+                    </button>
+                    {(
+                      ['UNDECLARED_IN_SSOT', 'MATCHED', 'MISSING_IN_LIVE'] as CSGReconcileState[]
+                    ).map((st) => {
+                      const cfg = STATE_BADGE_MAP[st];
+                      const active = subStateFilter === st;
+                      return (
+                        <button
+                          key={st}
+                          type="button"
+                          onClick={() => {
+                            setSubStateFilter(active ? 'ALL' : st);
+                            setSubPage(1);
+                          }}
+                          className={`csg-pill${active ? ' csg-pill--active' : ''}`}
+                        >
+                          <span
+                            className="csg-pill-dot"
+                            style={{ backgroundColor: cfg.color }}
+                          />
+                          <span>
+                            {cfg.label} ({subStateCounts[st]})
+                          </span>
+                        </button>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOnlySelectedSubServices((prev) => !prev);
+                        setSubPage(1);
+                      }}
+                      className={`csg-pill${onlySelectedSubServices ? ' csg-pill--active' : ''}`}
+                    >
+                      关联已选服务
+                    </button>
+                  </div>
+
+                  {hasActiveSubFilter && (
+                    <div className="csg-batch-bar">
+                      <button
+                        type="button"
+                        onClick={resetSubFilters}
+                        className="csg-link-btn csg-link-btn--muted"
+                      >
+                        <RotateCcw size={12} />
+                        重置筛选
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* 订阅边表格 */}
+              <div className="csg-table-card">
+                <div className="csg-table-scroll">
+                  <table className="csg-table">
+                    <thead>
+                      <tr>
+                        <th style={{ width: '28%' }}>调用方进程</th>
+                        <th style={{ width: '36px', textAlign: 'center' }} />
+                        <th style={{ width: '50%' }}>目标 CSG 服务名</th>
+                        <th style={{ width: '110px' }}>状态</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pagedSubscriptions.length === 0 ? (
+                        <tr>
+                          <td colSpan={4} className="csg-empty-cell">
+                            {subscriptions.length === 0
+                              ? '未观测到现网调用订阅边'
+                              : '没有符合当前筛选条件的调用订阅边'}
+                          </td>
+                        </tr>
+                      ) : (
+                        pagedSubscriptions.map((sub, idx) => {
+                          const clientText = `${sub.client_proc || `pid-${sub.client_pid}`} (${sub.client_pid})`;
+                          const isTargetSelected = selectedServices.has(sub.service_name);
+                          return (
+                            <tr
+                              key={`${sub.client_pid}-${sub.service_name}-${idx}`}
+                              className={isTargetSelected ? 'csg-row--selected' : undefined}
+                            >
+                              <td>
+                                <div className="csg-mono-ellipsis" title={clientText}>
+                                  {clientText}
+                                </div>
+                                {sub.client_addr && (
+                                  <div className="csg-sub-meta csg-mono-ellipsis" title={sub.client_addr}>
+                                    {sub.client_addr}
+                                  </div>
+                                )}
+                              </td>
+                              <td style={{ textAlign: 'center', color: 'var(--color-text-muted)' }}>
+                                →
+                              </td>
+                              <td>
+                                <div className="csg-mono-ellipsis" title={sub.service_name}>
+                                  {sub.service_name}
+                                </div>
+                                {isTargetSelected && (
+                                  <div className="csg-sub-meta" style={{ color: 'var(--color-primary)' }}>
+                                    目标服务已勾选导入
+                                  </div>
+                                )}
+                              </td>
+                              <td>{renderStateBadge(sub.state)}</td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* 订阅边分页条 */}
+                <div data-testid="csg-subscriptions-pagination" className="csg-pagination-bar">
+                  <span>
+                    匹配 <strong>{filteredSubscriptions.length}</strong> / {subscriptions.length}{' '}
+                    条订阅边
+                    {subPageSize > 0 && filteredSubscriptions.length > 0 && (
+                      <>
+                        {' '}
+                        · 第 {(safeSubPage - 1) * subPageSize + 1}-
+                        {Math.min(safeSubPage * subPageSize, filteredSubscriptions.length)} 条
+                      </>
+                    )}
+                  </span>
+                  <div className="csg-pagination-controls">
+                    <select
+                      value={subPageSize}
+                      onChange={(e) => {
+                        setSubPageSize(Number(e.target.value));
+                        setSubPage(1);
+                      }}
+                      className="csg-filter-select"
+                      style={{ height: '26px' }}
+                      aria-label="订阅边每页条数"
+                    >
+                      {PAGE_SIZE_OPTIONS.map((size) => (
+                        <option key={size} value={size}>
+                          {size === 0 ? '全部显示' : `${size} 条/页`}
+                        </option>
+                      ))}
+                    </select>
+                    {subPageSize > 0 && (
+                      <>
+                        <button
+                          type="button"
+                          disabled={safeSubPage <= 1}
+                          onClick={() => setSubPage((p) => Math.max(1, p - 1))}
+                          className="csg-page-btn"
+                          aria-label="上一页"
+                        >
+                          <ChevronLeft size={14} />
+                        </button>
+                        <span>
+                          {safeSubPage} / {subTotalPages}
+                        </span>
+                        <button
+                          type="button"
+                          disabled={safeSubPage >= subTotalPages}
+                          onClick={() => setSubPage((p) => Math.min(subTotalPages, p + 1))}
+                          className="csg-page-btn"
+                          aria-label="下一页"
+                        >
+                          <ChevronRight size={14} />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ── Zone C: 底部固定导入操作区 ── */}
+      {report && (
+        <div data-testid="csg-import-footer" className="csg-footer">
+          {isAdmin ? (
+            <>
+              <div className="csg-footer-config-row">
+                <div className="csg-footer-subsystem-group">
+                  <label className="csg-footer-label" htmlFor="csg-import-subsystem-select">
+                    归属子系统：
+                  </label>
+                  <select
+                    id="csg-import-subsystem-select"
+                    value={selectedSubsystemId}
+                    onChange={(e) => setSelectedSubsystemId(e.target.value)}
+                    data-testid="csg-import-subsystem-select"
+                    className="csg-subsystem-select"
+                  >
+                    <option value="">请选择子系统</option>
+                    {subsystems.map((sub) => (
+                      <option key={sub.id} value={String(sub.id)}>
+                        {sub.name} ({sub.code})
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    disabled={creatingSubsystem}
+                    onClick={() => setShowCreateSubsystem((prev) => !prev)}
+                    data-testid="csg-toggle-create-subsystem-btn"
+                    className="csg-subsystem-btn"
+                  >
+                    <Plus size={13} />
+                    新建子系统
+                  </button>
+                </div>
+
+                <label className="csg-deps-toggle">
+                  <input
+                    type="checkbox"
+                    checked={importDeps}
+                    onChange={(e) => setImportDeps(e.target.checked)}
+                  />
+                  <span>同时导入现网订阅依赖边</span>
+                  <span className="csg-deps-hint">(含分层守卫)</span>
+                </label>
+              </div>
+
+              {subsystemsError && (
+                <div
+                  data-testid="csg-subsystems-error-banner"
+                  className="csg-banner-warning"
+                  style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
+                >
+                  <span>子系统列表加载失败：{subsystemsError}</span>
+                  <button
+                    type="button"
+                    onClick={() => void loadSubsystems()}
+                    className="csg-page-btn"
+                  >
+                    重试加载
+                  </button>
+                </div>
+              )}
+
+              {isNoSubsystems && (
+                <div
+                  data-testid="csg-empty-subsystem-hint"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '12px',
+                    color: 'var(--color-warning)',
+                  }}
+                >
+                  <AlertTriangle size={14} />
+                  <span>当前架构库中暂无子系统，请先快速新建一个归属子系统后再一键导入蓝图。</span>
+                </div>
+              )}
+
+              {showQuickCreateForm && (
+                <div
+                  data-testid="csg-quick-create-subsystem-form"
+                  className="csg-quick-create-form"
+                >
+                  <input
+                    type="text"
+                    value={newSubCode}
+                    onChange={(e) => setNewSubCode(e.target.value)}
+                    placeholder="子系统编码 (如 LOCAL_DEMO)"
+                    data-testid="csg-new-subsystem-code-input"
+                    className="csg-search-input"
+                    style={{
+                      width: '180px',
+                      padding: '0 10px',
+                      fontFamily: 'var(--font-family-mono, monospace)',
+                    }}
+                  />
+                  <input
+                    type="text"
+                    value={newSubName}
+                    onChange={(e) => setNewSubName(e.target.value)}
+                    placeholder="子系统名称 (如 local-demo 子系统)"
+                    data-testid="csg-new-subsystem-name-input"
+                    className="csg-search-input"
+                    style={{ flex: 1, minWidth: '180px', padding: '0 10px' }}
+                  />
+                  <button
+                    type="button"
+                    disabled={creatingSubsystem}
+                    onClick={() => void handleQuickCreateSubsystem()}
+                    data-testid="csg-quick-create-subsystem-submit"
+                    className="csg-btn-primary"
+                    style={{ height: '32px', padding: '0 12px', fontSize: '12px' }}
+                  >
+                    {creatingSubsystem ? '创建中...' : '创建并选中'}
+                  </button>
+                  {subsystems.length > 0 && (
+                    <button
+                      type="button"
+                      disabled={creatingSubsystem}
+                      onClick={() => setShowCreateSubsystem(false)}
+                      className="csg-btn-secondary"
+                      style={{ height: '32px', padding: '0 10px', fontSize: '12px' }}
+                    >
+                      取消
+                    </button>
+                  )}
+                </div>
+              )}
+
+              <div className="csg-footer-action-row">
+                <div className="csg-footer-selection-summary">
+                  <span>
+                    已选待导入服务{' '}
+                    <strong style={{ color: 'var(--color-primary)' }}>
+                      {selectedServices.size}
+                    </strong>{' '}
+                    / {report.summary.undeclared_count} 个
+                  </span>
+                  {importDeps && relatedSelectedUndeclaredSubCount > 0 && (
+                    <span className="csg-deps-hint">
+                      · 预计关联导入 {relatedSelectedUndeclaredSubCount} 条未纳管订阅边
+                    </span>
+                  )}
+                  {selectedServices.size > 0 && (
+                    <button
+                      type="button"
+                      onClick={clearAllSelected}
+                      className="csg-link-btn csg-link-btn--muted"
+                    >
+                      清空已选
+                    </button>
+                  )}
+                </div>
+
+                <div className="csg-footer-buttons">
+                  {onClose && (
+                    <button type="button" onClick={onClose} className="csg-btn-secondary">
+                      关闭
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void handleImport()}
+                    disabled={importDisabled}
+                    data-testid="csg-import-blueprint-btn"
+                    className="csg-btn-primary"
+                  >
+                    <Download size={14} />
+                    {importing ? '导入中...' : `一键导入 SSOT 蓝图 (${selectedServices.size})`}
+                  </button>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="csg-footer-action-row" style={{ borderTop: 'none', paddingTop: 0 }}>
               <div
                 data-testid="csg-admin-only-notice"
                 style={{
@@ -969,9 +1706,16 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
                   <CheckCircle2 size={15} style={{ color: 'var(--color-success)' }} />
                 )}
               </div>
-            )}
-          </div>
-        </>
+              {onClose && (
+                <div className="csg-footer-buttons">
+                  <button type="button" onClick={onClose} className="csg-btn-secondary">
+                    关闭
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
@@ -988,7 +1732,8 @@ export const CSGBlueprintImportDrawer: React.FC<CSGBlueprintImportDrawerProps> =
       open={open}
       onClose={onClose}
       title={`CSG 现网服务探测与蓝图对账 — ${agent.name}`}
-      width="860px"
+      width="min(1080px, 94vw)"
+      bodyStyle={{ padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
     >
       <CSGBlueprintImportContent agent={agent} onImported={onImported} onClose={onClose} />
     </Drawer>
