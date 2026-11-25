@@ -82,7 +82,7 @@ docs/
 │   ├── 21-csg-aware-agent-service-discovery-and-replay-mock-adr.md     # ADR-21：[已采纳] 基于 @csg-ver 现网实证与纯 Go CrosMeshBackend 的 CSG 服务/依赖自动发现及多模式仿真测试架构 (v2.2.0)
 │   ├── 22-pluggable-transport-driver-and-mesh-capture-adr.md           # ADR-22：[已采纳] Agent 纯 Go 可插拔传输层架构 (pkg/transport) 与 dophi_mesh 采集➔TCP 重放跨传输闭环设计 (v2.0.0)
 │   ├── 23-dophi-mesh-uprobe-bypass-capture-adr.md                      # ADR-23：[已采纳] 基于内核 uprobe 的 dophi_mesh 数据面旁路观测工程实证与纯 Go 采集通道裁决 (v1.1.0)
-│   └── 24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md # ADR-24：[已定稿待实施] 以「现网发现」为中心的活体契约工作流水线与物理/逻辑双态架构决策 (v1.0.0)
+│   └── 24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md # ADR-24：[已定稿待实施] 以「现网发现」为中心的活体契约工作流水线与物理/逻辑双态架构决策 (v1.1.0)
 ├── 06-ops/          # 交付与验证：双模联调、物理隔离数据库测试与生产环境单二进制部署手册
 │   └── 01-verification-and-deployment-guide.md    # 联调验证、自动化回归测试与生产部署操作指南
 └── 07-references/   # 外部参考与上位契约基准：协议包规范、字节字典与领域标准文档
