@@ -3,7 +3,10 @@ package transport
 import (
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
+	"io"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -243,5 +246,183 @@ func TestParseDRTUprobeEvent_BufferValidation(t *testing.T) {
 	}
 	if string(evt.Data) != "0123456789" {
 		t.Errorf("parsed data mismatch: %q", string(evt.Data))
+	}
+}
+
+type mockClosableLink struct {
+	closed atomic.Int32
+}
+
+func (m *mockClosableLink) Close() error {
+	m.closed.Add(1)
+	return nil
+}
+
+func TestMultiPIDCapture_TCPAndUprobe_FiveExitCleanup(t *testing.T) {
+	// 1. 验证 agentproto.ProcessMonitorSpec TargetPIDs JSON 向后兼容与 ComputeArmedDigest 稳定
+	specWithPIDs := agentproto.ProcessMonitorSpec{
+		ProcessID:  10,
+		ListenPort: 20010,
+		CmdPattern: "worker",
+		TargetPIDs: []uint32{2001, 2002},
+	}
+	specWithoutPIDs := agentproto.ProcessMonitorSpec{
+		ProcessID:  10,
+		ListenPort: 20010,
+		CmdPattern: "worker",
+	}
+	rawJSON, err := json.Marshal(specWithPIDs)
+	if err != nil {
+		t.Fatalf("Marshal ProcessMonitorSpec failed: %v", err)
+	}
+	var decoded agentproto.ProcessMonitorSpec
+	if err := json.Unmarshal(rawJSON, &decoded); err != nil {
+		t.Fatalf("Unmarshal ProcessMonitorSpec failed: %v", err)
+	}
+	if len(decoded.TargetPIDs) != 2 || decoded.TargetPIDs[0] != 2001 || decoded.TargetPIDs[1] != 2002 {
+		t.Fatalf("TargetPIDs roundtrip mismatch: %+v", decoded.TargetPIDs)
+	}
+	if agentproto.ComputeArmedDigest([]agentproto.ProcessMonitorSpec{specWithPIDs}) !=
+		agentproto.ComputeArmedDigest([]agentproto.ProcessMonitorSpec{specWithoutPIDs}) {
+		t.Fatalf("ComputeArmedDigest should remain backward compatible when TargetPIDs is set")
+	}
+
+	// 2. 验证 TargetProcess.EffectivePIDs() 去重与单 PID 回退
+	tpMulti := TargetProcess{ProcessID: 10, PID: 2001, PIDs: []uint32{2001, 2002, 2001, 0}}
+	effMulti := tpMulti.EffectivePIDs()
+	if len(effMulti) != 2 || effMulti[0] != 2001 || effMulti[1] != 2002 {
+		t.Fatalf("EffectivePIDs dedup mismatch: %v", effMulti)
+	}
+	tpFallback := TargetProcess{ProcessID: 11, PID: 3001}
+	effFallback := tpFallback.EffectivePIDs()
+	if len(effFallback) != 1 || effFallback[0] != 3001 {
+		t.Fatalf("EffectivePIDs fallback mismatch: %v", effFallback)
+	}
+
+	// 3. 验证 TCPDriver 多 PID 登记及 RemoveTarget / StopCapture / Close 全量清理
+	tcpDrv := NewTCPDriver(nil)
+	ctx := context.Background()
+	if err := tcpDrv.StartCapture(ctx, CaptureSpec{
+		SessionOrTaskID: 5001,
+		RefKind:         agentproto.RefKindRecordingSession,
+		Processes: []TargetProcess{
+			{ProcessID: 10, PID: 2001, PIDs: []uint32{2001, 2002}},
+			{ProcessID: 11, PID: 3001},
+		},
+	}); err != nil {
+		t.Fatalf("TCPDriver StartCapture failed: %v", err)
+	}
+	if tcpDrv.ActivePIDsCount() != 3 {
+		t.Fatalf("expected 3 active TCP PIDs, got %d", tcpDrv.ActivePIDsCount())
+	}
+	if err := tcpDrv.RemoveTarget(5001, 10); err != nil {
+		t.Fatalf("TCPDriver RemoveTarget failed: %v", err)
+	}
+	if tcpDrv.ActivePIDsCount() != 1 {
+		t.Fatalf("expected 1 active TCP PID after RemoveTarget, got %d", tcpDrv.ActivePIDsCount())
+	}
+	if err := tcpDrv.StopCapture(ctx, 5001); err != nil {
+		t.Fatalf("TCPDriver StopCapture failed: %v", err)
+	}
+	if tcpDrv.ActivePIDsCount() != 0 {
+		t.Fatalf("expected 0 active TCP PIDs after StopCapture, got %d", tcpDrv.ActivePIDsCount())
+	}
+	if err := tcpDrv.StartCapture(ctx, CaptureSpec{
+		SessionOrTaskID: 5002,
+		Processes:       []TargetProcess{{ProcessID: 10, PIDs: []uint32{4001, 4002}}},
+	}); err != nil {
+		t.Fatalf("TCPDriver second StartCapture failed: %v", err)
+	}
+	if err := tcpDrv.Close(); err != nil {
+		t.Fatalf("TCPDriver Close failed: %v", err)
+	}
+	if tcpDrv.ActivePIDsCount() != 0 {
+		t.Fatalf("expected 0 active TCP PIDs after Close, got %d", tcpDrv.ActivePIDsCount())
+	}
+
+	// 4. 验证 DRTUprobeDriver 对同进程多 PID 分别挂载独立 bpf_link，并在五出口全量幂等清理
+	var createdLinks []*mockClosableLink
+	var attachedPIDs []uint32
+	uprobeDrv := NewDRTUprobeDriver(nil, DRTUprobeConfig{
+		ProcRoot: "/proc",
+		AttachUprobeFunc: func(procRoot string, pid uint32) (io.Closer, error) {
+			attachedPIDs = append(attachedPIDs, pid)
+			lnk := &mockClosableLink{}
+			createdLinks = append(createdLinks, lnk)
+			return lnk, nil
+		},
+	})
+	if uprobeDrv.ActiveLinksCount() != 0 {
+		t.Fatalf("ARMED standby must have 0 links, got %d", uprobeDrv.ActiveLinksCount())
+	}
+
+	if err := uprobeDrv.StartCapture(ctx, CaptureSpec{
+		SessionOrTaskID: 6001,
+		RefKind:         agentproto.RefKindRecordingSession,
+		Processes: []TargetProcess{
+			{ProcessID: 20, PID: 7001, PIDs: []uint32{7001, 7002}},
+			{ProcessID: 21, PID: 8001},
+		},
+	}); err != nil {
+		t.Fatalf("DRTUprobeDriver StartCapture failed: %v", err)
+	}
+	if uprobeDrv.ActiveLinksCount() != 3 || len(attachedPIDs) != 3 {
+		t.Fatalf("expected 3 per-PID uprobe links, active=%d attached=%v", uprobeDrv.ActiveLinksCount(), attachedPIDs)
+	}
+
+	// 验证 CapturedPID 在多实例事件中精确保留
+	var envs []agentproto.EnvelopeHeader
+	sink := FrameSinkFunc(func(h agentproto.EnvelopeHeader, payload []byte) error {
+		envs = append(envs, h)
+		return nil
+	})
+	reqPkt := buildMockCrosPacket(crosrpc.TransportMesh, 9101, crosrpc.MsgTypeReq, []byte("req"))
+	if err := uprobeDrv.ProcessEvent(DRTUprobeEvent{
+		SessionID: 6001, ProcessID: 20, PID: 7002, Handle: 11, DataLen: uint32(len(reqPkt)), Data: reqPkt,
+	}, sink); err != nil {
+		t.Fatalf("ProcessEvent req failed: %v", err)
+	}
+	if len(envs) != 1 || envs[0].CapturedPID != 7002 {
+		t.Fatalf("expected CapturedPID=7002, got %+v", envs)
+	}
+
+	// RemoveTarget 移除进程 20 应同时卸载 7001 与 7002 的 2 个 link
+	if err := uprobeDrv.RemoveTarget(6001, 20); err != nil {
+		t.Fatalf("DRTUprobeDriver RemoveTarget failed: %v", err)
+	}
+	if uprobeDrv.ActiveLinksCount() != 1 {
+		t.Fatalf("expected 1 link remaining after RemoveTarget, got %d", uprobeDrv.ActiveLinksCount())
+	}
+	if createdLinks[0].closed.Load() != 1 || createdLinks[1].closed.Load() != 1 || createdLinks[2].closed.Load() != 0 {
+		t.Fatalf("unexpected link close counts after RemoveTarget: %d,%d,%d",
+			createdLinks[0].closed.Load(), createdLinks[1].closed.Load(), createdLinks[2].closed.Load())
+	}
+
+	// StopCapture 卸载剩余 link
+	if err := uprobeDrv.StopCapture(ctx, 6001); err != nil {
+		t.Fatalf("DRTUprobeDriver StopCapture failed: %v", err)
+	}
+	if uprobeDrv.ActiveLinksCount() != 0 || createdLinks[2].closed.Load() != 1 {
+		t.Fatalf("expected 0 links after StopCapture, got %d (closed=%d)", uprobeDrv.ActiveLinksCount(), createdLinks[2].closed.Load())
+	}
+
+	// 重新挂载并验证 Close 幂等全清
+	if err := uprobeDrv.StartCapture(ctx, CaptureSpec{
+		SessionOrTaskID: 6002,
+		Processes:       []TargetProcess{{ProcessID: 22, PIDs: []uint32{9001, 9002}}},
+	}); err != nil {
+		t.Fatalf("DRTUprobeDriver StartCapture 6002 failed: %v", err)
+	}
+	if uprobeDrv.ActiveLinksCount() != 2 {
+		t.Fatalf("expected 2 links for session 6002, got %d", uprobeDrv.ActiveLinksCount())
+	}
+	if err := uprobeDrv.Close(); err != nil {
+		t.Fatalf("DRTUprobeDriver Close failed: %v", err)
+	}
+	if uprobeDrv.ActiveLinksCount() != 0 || createdLinks[3].closed.Load() != 1 || createdLinks[4].closed.Load() != 1 {
+		t.Fatalf("expected all links closed on Close, active=%d", uprobeDrv.ActiveLinksCount())
+	}
+	if err := uprobeDrv.Close(); err != nil {
+		t.Fatalf("DRTUprobeDriver second Close failed: %v", err)
 	}
 }

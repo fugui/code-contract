@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { BookOpen, ListTree } from 'lucide-react';
+import { BookOpen, ListTree, Radar } from 'lucide-react';
 import { usePaginationState } from '@code/common';
 import { useModuleUser } from '../../context/ModuleUserContext';
 import { useModulePath } from '../../hooks/useModulePath';
@@ -19,9 +19,10 @@ import { OperationMappingTable } from './OperationMappingTable';
 import { OperationDocDrawer } from './OperationDocDrawer';
 import { SchemaAssetInspectDrawer } from './SchemaAssetInspectDrawer';
 import { ProtoSourceAnchorDrawer, useSourceAnchorDrawer } from './ProtoSourceAnchorDrawer';
+import { UnifiedCatalogPane } from './UnifiedCatalogPane';
 import './ProtoDocsAndCodeViewer.css';
 
-export type ProtoDocsViewMode = 'reference' | 'catalog-ops';
+export type ProtoDocsViewMode = 'reference' | 'catalog-ops' | 'unified-catalog';
 
 export interface ProtoDocsWorkbenchPageProps {
   initialTree?: ProtoDocTreeResponse;
@@ -50,16 +51,22 @@ export const ProtoDocsWorkbenchPage: React.FC<ProtoDocsWorkbenchPageProps> = ({
   const isAdmin = Boolean(user?.is_module_admin || user?.is_super_admin);
 
   const rawDocsView = searchParams.get('docs_view');
+  const rawView = searchParams.get('view');
   const legacyTab = searchParams.get('tab');
+  const radarStateQuery = searchParams.get('state') || '';
   const serviceNameQuery = searchParams.get('service_name') || '';
   const schemaIdQuery = searchParams.get('schema_id') || '';
   const claimedStatusQuery = searchParams.get('claimed_status');
   const searchQueryParam = searchParams.get('search') || '';
 
   const docsView: ProtoDocsViewMode =
-    rawDocsView === 'catalog-ops' ||
-    rawDocsView === 'catalog' ||
-    (!rawDocsView && (claimedStatusQuery === 'UNCLAIMED' || legacyTab === 'catalog'))
+    rawDocsView === 'unified-catalog' ||
+    rawView === 'unified-catalog' ||
+    (!rawDocsView && !rawView && Boolean(radarStateQuery))
+      ? 'unified-catalog'
+      : rawDocsView === 'catalog-ops' ||
+        rawDocsView === 'catalog' ||
+        (!rawDocsView && (claimedStatusQuery === 'UNCLAIMED' || legacyTab === 'catalog'))
       ? 'catalog-ops'
       : 'reference';
 
@@ -67,7 +74,11 @@ export const ProtoDocsWorkbenchPage: React.FC<ProtoDocsWorkbenchPageProps> = ({
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
       next.set('docs_view', mode);
+      next.delete('view');
       next.delete('tab');
+      if (mode !== 'unified-catalog') {
+        next.delete('state');
+      }
       return next;
     });
   };
@@ -219,6 +230,16 @@ export const ProtoDocsWorkbenchPage: React.FC<ProtoDocsWorkbenchPageProps> = ({
           >
             <ListTree size={14} /> 契约认领与方法目录
           </button>
+          <button
+            type="button"
+            role="tab"
+            data-testid="pdoc-tab-unified-catalog"
+            aria-selected={docsView === 'unified-catalog'}
+            className={`code-pill-btn ${docsView === 'unified-catalog' ? 'code-pill-btn--active' : ''}`}
+            onClick={() => setDocsView('unified-catalog')}
+          >
+            <Radar size={14} /> 统一契约目录与五态雷达
+          </button>
         </div>
       </div>
 
@@ -230,6 +251,20 @@ export const ProtoDocsWorkbenchPage: React.FC<ProtoDocsWorkbenchPageProps> = ({
           initialSchemaId={schemaIdQuery}
           initialSearch={searchQueryParam}
           onJumpToSource={(sid, fp, line) => void sourceAnchorDrawer.openBySchemaFile(sid, fp, line)}
+        />
+      ) : docsView === 'unified-catalog' ? (
+        <UnifiedCatalogPane
+          initialState={radarStateQuery}
+          isAdmin={isAdmin}
+          onStateChange={(nextState) => {
+            setSearchParams((prev) => {
+              const next = new URLSearchParams(prev);
+              next.set('docs_view', 'unified-catalog');
+              if (nextState) next.set('state', nextState);
+              else next.delete('state');
+              return next;
+            });
+          }}
         />
       ) : (
         <OperationMappingTable

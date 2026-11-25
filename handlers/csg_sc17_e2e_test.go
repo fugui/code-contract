@@ -481,29 +481,33 @@ func TestSC17_EndToEnd_DiscoveryBlueprintDecodeAndThreeModeSimulation(t *testing
 		t.Fatalf("expected >= 2 UNDECLARED_IN_SSOT services, got %+v", topo1.Summary)
 	}
 
-	// Step B: POST /api/agents/:id/csg/import-blueprint (403 for non-admin, 200 for admin -> MATCHED)
+	// Step B: POST /api/agents/:id/csg/import-blueprint 已于 M31 下线 (404)，改为调用领域函数 ImportCSGBlueprint Seed SSOT -> MATCHED
 	subsys := models.Subsystem{Code: "SUB_SC17", Name: "SC17Subsys", LayerLevel: 20}
 	db.Create(&subsys)
 	importJSON, _ := json.Marshal(map[string]interface{}{
 		"subsystem_id":        subsys.ID,
 		"import_dependencies": true,
 	})
-	reqImpForbidden := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/agents/%d/csg/import-blueprint", agent.ID), bytes.NewReader(importJSON))
-	reqImpForbidden.Header.Set("Authorization", "Bearer "+normalToken)
-	reqImpForbidden.Header.Set("Content-Type", "application/json")
-	wImpForbidden := httptest.NewRecorder()
-	r.ServeHTTP(wImpForbidden, reqImpForbidden)
-	if wImpForbidden.Code != http.StatusForbidden {
-		t.Fatalf("expected 403 for non-admin blueprint import, got %d", wImpForbidden.Code)
+	reqDeadImp := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/agents/%d/csg/import-blueprint", agent.ID), bytes.NewReader(importJSON))
+	reqDeadImp.Header.Set("Authorization", "Bearer "+adminToken)
+	reqDeadImp.Header.Set("Content-Type", "application/json")
+	wDeadImp := httptest.NewRecorder()
+	r.ServeHTTP(wDeadImp, reqDeadImp)
+	if wDeadImp.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for decommissioned import-blueprint, got %d", wDeadImp.Code)
 	}
-
-	reqImpAdmin := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/agents/%d/csg/import-blueprint", agent.ID), bytes.NewReader(importJSON))
-	reqImpAdmin.Header.Set("Authorization", "Bearer "+adminToken)
-	reqImpAdmin.Header.Set("Content-Type", "application/json")
-	wImpAdmin := httptest.NewRecorder()
-	r.ServeHTTP(wImpAdmin, reqImpAdmin)
-	if wImpAdmin.Code != http.StatusOK {
-		t.Fatalf("expected 200 admin blueprint import, got %d: %s", wImpAdmin.Code, wImpAdmin.Body.String())
+	liveSnapshot, err := handlers.GetHubManager().FetchAgentCSGTopology(context.Background(), agent.ID, "", adminUser.ID, true)
+	if err != nil {
+		t.Fatalf("FetchAgentCSGTopology failed: %v", err)
+	}
+	if _, err := topology.ImportCSGBlueprint(db, topology.CSGBlueprintImportInput{
+		AgentID:            agent.ID,
+		SubsystemID:        subsys.ID,
+		ImportDependencies: true,
+		OperatorID:         adminUser.ID,
+		Live:               liveSnapshot,
+	}); err != nil {
+		t.Fatalf("topology.ImportCSGBlueprint failed: %v", err)
 	}
 
 	reqTopo2 := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/agents/%d/csg/topology", agent.ID), nil)

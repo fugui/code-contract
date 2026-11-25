@@ -9,6 +9,10 @@ import type {
   EnrollResultDTO,
   PaginatedResponse,
   PhysicalAssetsRespDTO,
+  QuickRecordReqInput,
+  QuickRecordResultDTO,
+  SimulationPlanReqInput,
+  SimulationPlanResultDTO,
 } from '../types';
 
 export async function getLiveDiscovery(params: {
@@ -157,4 +161,30 @@ export async function migrateCSGPlaceholderModules(data: {
       body: JSON.stringify(data),
     }
   );
+}
+
+export async function quickRecordDiscovery(
+  data: QuickRecordReqInput
+): Promise<QuickRecordResultDTO> {
+  return apiRequestWithErrorPayload<QuickRecordResultDTO>('/discovery/quick-record', {
+    method: 'POST',
+    body: JSON.stringify({
+      ...data,
+      agent_id: Number(data.agent_id),
+    }),
+  });
+}
+
+export async function buildDiscoverySimulationPlan(
+  data: SimulationPlanReqInput
+): Promise<SimulationPlanResultDTO> {
+  return apiRequest<SimulationPlanResultDTO>('/discovery/simulation-plan', {
+    method: 'POST',
+    body: JSON.stringify({
+      agent_id: Number(data.agent_id),
+      arch_process_id: data.arch_process_id ? Number(data.arch_process_id) : undefined,
+      process_key: data.process_key,
+      csg_addr: data.csg_addr,
+    }),
+  });
 }

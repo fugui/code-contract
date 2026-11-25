@@ -115,9 +115,47 @@ type ManagerConfig struct {
 type MonitoredProc struct {
 	Spec             agentproto.ProcessMonitorSpec
 	CurrentPID       uint32
+	CurrentPIDs      []uint32
 	DiagStatus       string
 	EstablishedConns int
 	NeedReconnect    bool
+}
+
+func (p *MonitoredProc) effectivePIDs() []uint32 {
+	if len(p.CurrentPIDs) > 0 {
+		return p.CurrentPIDs
+	}
+	if p.CurrentPID > 0 {
+		return []uint32{p.CurrentPID}
+	}
+	return nil
+}
+
+func (m *Manager) resolveTargetPIDsLocked(spec agentproto.ProcessMonitorSpec) (uint32, []uint32, error) {
+	if len(spec.TargetPIDs) > 0 {
+		seen := make(map[uint32]struct{}, len(spec.TargetPIDs))
+		live := make([]uint32, 0, len(spec.TargetPIDs))
+		for _, pid := range spec.TargetPIDs {
+			if pid == 0 {
+				continue
+			}
+			if _, ok := seen[pid]; ok {
+				continue
+			}
+			seen[pid] = struct{}{}
+			if m.scanner.PIDExists(pid) {
+				live = append(live, pid)
+			}
+		}
+		if len(live) > 0 {
+			return live[0], live, nil
+		}
+	}
+	pid, err := m.scanner.FindPIDByPortAndCmd(spec.ListenPort, spec.CmdPattern)
+	if err != nil || pid == 0 {
+		return 0, nil, err
+	}
+	return pid, []uint32{pid}, nil
 }
 
 // Manager eBPF 探针装载、规则热更新与生命周期自洁中枢
@@ -292,7 +330,7 @@ func (m *Manager) SyncMonitors(sessionID uint64, specs []agentproto.ProcessMonit
 	}
 
 	for _, spec := range specs {
-		pid, err := m.scanner.FindPIDByPortAndCmd(spec.ListenPort, spec.CmdPattern)
+		pid, pids, err := m.resolveTargetPIDsLocked(spec)
 		status := "MONITORING"
 		msg := ""
 		estConns := 0
@@ -306,16 +344,21 @@ func (m *Manager) SyncMonitors(sessionID uint64, specs []agentproto.ProcessMonit
 				msg = fmt.Sprintf("未在端口 %d 检测到符合特征的业务进程", spec.ListenPort)
 			}
 		} else {
-			var diagErr error
-			estConns, needRec, diagErr = m.scanner.DiagnoseEstablishedConns(pid, spec.Downstreams, spec.ListenPort, proxyPort)
-			if diagErr != nil {
-				log.Printf("[eBPF] 诊断存量连接 (pid=%d) 警告: %v", pid, diagErr)
+			for _, targetPID := range pids {
+				c, rec, diagErr := m.scanner.DiagnoseEstablishedConns(targetPID, spec.Downstreams, spec.ListenPort, proxyPort)
+				if diagErr != nil {
+					log.Printf("[eBPF] 诊断存量连接 (pid=%d) 警告: %v", targetPID, diagErr)
+				}
+				estConns += c
+				if rec {
+					needRec = true
+				}
 			}
 			if needRec {
 				msg = fmt.Sprintf("检测到 %d 条存量已建立长连接，需重启业务进程生效 (A-01)", estConns)
 			}
 
-			// 更新 BPF Map
+			// 更新 BPF Map（覆盖全部多实例 PID）
 			if m.objs != nil {
 				tp := cros_probeTargetProc{
 					SessionId:  sessionID,
@@ -323,29 +366,31 @@ func (m *Manager) SyncMonitors(sessionID uint64, specs []agentproto.ProcessMonit
 					ListenPort: spec.ListenPort,
 					Mode:       0, // RECORDING
 				}
-				if err := m.objs.TargetPidsMap.Put(pid, tp); err != nil {
-					log.Printf("[eBPF] TargetPidsMap.Put (pid=%d) 失败: %v", pid, err)
-				}
+				for _, targetPID := range pids {
+					if err := m.objs.TargetPidsMap.Put(targetPID, tp); err != nil {
+						log.Printf("[eBPF] TargetPidsMap.Put (pid=%d) 失败: %v", targetPID, err)
+					}
 
-				// 存量入站 FD 预热：将 local_port == spec.ListenPort 的已建立入站 Socket 批量写入 ing_conn_map (F-08, ADR-11)
-				if spec.ListenPort > 0 {
-					inboundSocks, sErr := m.scanner.ScanProcessEstablishedSockets(pid)
-					if sErr == nil {
-						for _, isock := range inboundSocks {
-							if isock.LocalPort == spec.ListenPort {
-								pfd := cros_probePidFd{
-									Pid: pid,
-									Fd:  isock.FD,
-								}
-								conn := cros_probeConnTuple{
-									SrcIp:   ipv4ToBPFBe32(net.ParseIP(isock.RemIP)),
-									DstIp:   ipv4ToBPFBe32(net.ParseIP(isock.LocalIP)),
-									SrcPort: htons(isock.RemPort),
-									DstPort: htons(isock.LocalPort),
-									ConnSeq: atomic.AddUint32(&m.connSeqGen, 1),
-								}
-								if pErr := m.objs.IngConnMap.Put(pfd, conn); pErr != nil {
-									log.Printf("[eBPF] 预热入站连接 (pid=%d, fd=%d) 警告: %v", pid, isock.FD, pErr)
+					// 存量入站 FD 预热：将 local_port == spec.ListenPort 的已建立入站 Socket 批量写入 ing_conn_map (F-08, ADR-11)
+					if spec.ListenPort > 0 {
+						inboundSocks, sErr := m.scanner.ScanProcessEstablishedSockets(targetPID)
+						if sErr == nil {
+							for _, isock := range inboundSocks {
+								if isock.LocalPort == spec.ListenPort {
+									pfd := cros_probePidFd{
+										Pid: targetPID,
+										Fd:  isock.FD,
+									}
+									conn := cros_probeConnTuple{
+										SrcIp:   ipv4ToBPFBe32(net.ParseIP(isock.RemIP)),
+										DstIp:   ipv4ToBPFBe32(net.ParseIP(isock.LocalIP)),
+										SrcPort: htons(isock.RemPort),
+										DstPort: htons(isock.LocalPort),
+										ConnSeq: atomic.AddUint32(&m.connSeqGen, 1),
+									}
+									if pErr := m.objs.IngConnMap.Put(pfd, conn); pErr != nil {
+										log.Printf("[eBPF] 预热入站连接 (pid=%d, fd=%d) 警告: %v", targetPID, isock.FD, pErr)
+									}
 								}
 							}
 						}
@@ -378,6 +423,7 @@ func (m *Manager) SyncMonitors(sessionID uint64, specs []agentproto.ProcessMonit
 			ProcessID:        spec.ProcessID,
 			Status:           status,
 			ResolvedPID:      pid,
+			ResolvedPIDs:     pids,
 			EstablishedConns: estConns,
 			NeedReconnect:    needRec,
 			Message:          msg,
@@ -387,6 +433,7 @@ func (m *Manager) SyncMonitors(sessionID uint64, specs []agentproto.ProcessMonit
 		activeProcMap[spec.ProcessID] = &MonitoredProc{
 			Spec:             spec,
 			CurrentPID:       pid,
+			CurrentPIDs:      pids,
 			DiagStatus:       status,
 			EstablishedConns: estConns,
 			NeedReconnect:    needRec,
@@ -436,7 +483,7 @@ func (m *Manager) ArmStandby(specs []agentproto.ProcessMonitorSpec) ([]agentprot
 	}
 
 	for _, spec := range specs {
-		pid, err := m.scanner.FindPIDByPortAndCmd(spec.ListenPort, spec.CmdPattern)
+		pid, pids, err := m.resolveTargetPIDsLocked(spec)
 		status := "MONITORING"
 		msg := ""
 		estConns := 0
@@ -450,10 +497,15 @@ func (m *Manager) ArmStandby(specs []agentproto.ProcessMonitorSpec) ([]agentprot
 				msg = fmt.Sprintf("未在端口 %d 检测到符合特征的业务进程", spec.ListenPort)
 			}
 		} else {
-			var diagErr error
-			estConns, needRec, diagErr = m.scanner.DiagnoseEstablishedConns(pid, spec.Downstreams, spec.ListenPort, proxyPort)
-			if diagErr != nil {
-				log.Printf("[eBPF] ArmStandby 诊断存量连接 (pid=%d) 警告: %v", pid, diagErr)
+			for _, targetPID := range pids {
+				c, rec, diagErr := m.scanner.DiagnoseEstablishedConns(targetPID, spec.Downstreams, spec.ListenPort, proxyPort)
+				if diagErr != nil {
+					log.Printf("[eBPF] ArmStandby 诊断存量连接 (pid=%d) 警告: %v", targetPID, diagErr)
+				}
+				estConns += c
+				if rec {
+					needRec = true
+				}
 			}
 			if needRec {
 				msg = fmt.Sprintf("检测到 %d 条存量已建立长连接，需重启业务进程生效 (A-01)", estConns)
@@ -467,8 +519,10 @@ func (m *Manager) ArmStandby(specs []agentproto.ProcessMonitorSpec) ([]agentprot
 					ListenPort: spec.ListenPort,
 					Mode:       0,
 				}
-				if err := m.objs.TargetPidsMap.Put(pid, tp); err != nil {
-					log.Printf("[eBPF] ArmStandby TargetPidsMap.Put (pid=%d) 失败: %v", pid, err)
+				for _, targetPID := range pids {
+					if err := m.objs.TargetPidsMap.Put(targetPID, tp); err != nil {
+						log.Printf("[eBPF] ArmStandby TargetPidsMap.Put (pid=%d) 失败: %v", targetPID, err)
+					}
 				}
 
 				for _, ds := range spec.Downstreams {
@@ -496,6 +550,7 @@ func (m *Manager) ArmStandby(specs []agentproto.ProcessMonitorSpec) ([]agentprot
 			ProcessID:        spec.ProcessID,
 			Status:           status,
 			ResolvedPID:      pid,
+			ResolvedPIDs:     pids,
 			EstablishedConns: estConns,
 			NeedReconnect:    needRec,
 			Message:          msg,
@@ -505,6 +560,7 @@ func (m *Manager) ArmStandby(specs []agentproto.ProcessMonitorSpec) ([]agentprot
 		activeProcMap[spec.ProcessID] = &MonitoredProc{
 			Spec:             spec,
 			CurrentPID:       pid,
+			CurrentPIDs:      pids,
 			DiagStatus:       status,
 			EstablishedConns: estConns,
 			NeedReconnect:    needRec,
@@ -529,15 +585,15 @@ func (m *Manager) StopCapture() {
 	// 恢复 BPF Map 中目标进程模式为 MODE_RECORDING (0)
 	if m.objs != nil {
 		for _, proc := range m.monitoredProcs {
-			if proc.CurrentPID > 0 {
+			for _, pid := range proc.effectivePIDs() {
 				tp := cros_probeTargetProc{
 					SessionId:  0,
 					ProcessId:  proc.Spec.ProcessID,
 					ListenPort: proc.Spec.ListenPort,
 					Mode:       0, // RECORDING / PASSTHROUGH
 				}
-				if err := m.objs.TargetPidsMap.Put(proc.CurrentPID, tp); err != nil {
-					log.Printf("[eBPF] StopCapture TargetPidsMap.Put (pid=%d) 警告: %v", proc.CurrentPID, err)
+				if err := m.objs.TargetPidsMap.Put(pid, tp); err != nil {
+					log.Printf("[eBPF] StopCapture TargetPidsMap.Put (pid=%d) 警告: %v", pid, err)
 				}
 			}
 		}
@@ -558,15 +614,15 @@ func (m *Manager) SetReplayMock(taskID uint64, matcher *replay.ScopedMockMatcher
 	// 更新 BPF Map 中纳管目标进程为 MODE_REPLAY (1)
 	if m.objs != nil {
 		for _, proc := range m.monitoredProcs {
-			if proc.CurrentPID > 0 {
+			for _, pid := range proc.effectivePIDs() {
 				tp := cros_probeTargetProc{
 					SessionId:  taskID,
 					ProcessId:  proc.Spec.ProcessID,
 					ListenPort: proc.Spec.ListenPort,
 					Mode:       1, // MODE_REPLAY
 				}
-				if err := m.objs.TargetPidsMap.Put(proc.CurrentPID, tp); err != nil {
-					log.Printf("[eBPF] SetReplayMock TargetPidsMap.Put (pid=%d) 警告: %v", proc.CurrentPID, err)
+				if err := m.objs.TargetPidsMap.Put(pid, tp); err != nil {
+					log.Printf("[eBPF] SetReplayMock TargetPidsMap.Put (pid=%d) 警告: %v", pid, err)
 				}
 			}
 		}
@@ -588,15 +644,15 @@ func (m *Manager) ResetPassthrough() {
 
 	if m.objs != nil {
 		for _, proc := range m.monitoredProcs {
-			if proc.CurrentPID > 0 {
+			for _, pid := range proc.effectivePIDs() {
 				tp := cros_probeTargetProc{
 					SessionId:  0,
 					ProcessId:  proc.Spec.ProcessID,
 					ListenPort: proc.Spec.ListenPort,
 					Mode:       0,
 				}
-				if err := m.objs.TargetPidsMap.Put(proc.CurrentPID, tp); err != nil {
-					log.Printf("[eBPF] ResetPassthrough TargetPidsMap.Put (pid=%d) 警告: %v", proc.CurrentPID, err)
+				if err := m.objs.TargetPidsMap.Put(pid, tp); err != nil {
+					log.Printf("[eBPF] ResetPassthrough TargetPidsMap.Put (pid=%d) 警告: %v", pid, err)
 				}
 			}
 		}
@@ -631,10 +687,12 @@ func (m *Manager) RemoveProcessMonitor(processID uint64) (remaining int, err err
 		return len(m.monitoredProcs), nil
 	}
 
-	// 从 BPF Map 移除该进程
-	if m.objs != nil && proc.CurrentPID > 0 {
-		if err := m.objs.TargetPidsMap.Delete(proc.CurrentPID); err != nil {
-			log.Printf("[eBPF] TargetPidsMap.Delete (pid=%d) 警告: %v", proc.CurrentPID, err)
+	// 从 BPF Map 移除该进程全部 PID 实例
+	if m.objs != nil {
+		for _, pid := range proc.effectivePIDs() {
+			if err := m.objs.TargetPidsMap.Delete(pid); err != nil {
+				log.Printf("[eBPF] TargetPidsMap.Delete (pid=%d) 警告: %v", pid, err)
+			}
 		}
 		for _, ds := range proc.Spec.Downstreams {
 			ipParsed := net.ParseIP(ds.IP)

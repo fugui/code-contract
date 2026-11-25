@@ -74,40 +74,24 @@ func TestImportBlueprint_DelegatesToEnroll_NoFakeModule(t *testing.T) {
 		t.Fatalf("create agent: %v", err)
 	}
 
-	// 1. 非管理员仍被 403 拒绝
-	req403 := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/agents/%d/csg/import-blueprint", agent.ID), bytes.NewReader([]byte(`{}`)))
-	req403.Header.Set("Authorization", "Bearer "+normalToken)
-	req403.Header.Set("Content-Type", "application/json")
-	w403 := httptest.NewRecorder()
-	r.ServeHTTP(w403, req403)
-	if w403.Code != http.StatusForbidden {
-		t.Fatalf("非管理员调用 import-blueprint 期望 403，实际 %d", w403.Code)
+	// 1. M31: 废弃路由 POST /api/agents/:id/csg/import-blueprint 已下线，返回 404
+	for _, tok := range []string{normalToken, adminToken} {
+		reqDead := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/agents/%d/csg/import-blueprint", agent.ID), bytes.NewReader([]byte(`{"import_dependencies":true}`)))
+		reqDead.Header.Set("Authorization", "Bearer "+tok)
+		reqDead.Header.Set("Content-Type", "application/json")
+		wDead := httptest.NewRecorder()
+		r.ServeHTTP(wDead, reqDead)
+		if wDead.Code != http.StatusNotFound {
+			t.Fatalf("import-blueprint 路由应已下线返回 404，实际 %d", wDead.Code)
+		}
 	}
 
-	// 2. 管理员调用无需传 subsystem_id，委托至 Enroll 且返回 Deprecation: true + deprecated: true
-	reqOK := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/agents/%d/csg/import-blueprint", agent.ID), bytes.NewReader([]byte(`{"import_dependencies":true}`)))
-	reqOK.Header.Set("Authorization", "Bearer "+adminToken)
-	reqOK.Header.Set("Content-Type", "application/json")
-	wOK := httptest.NewRecorder()
-	r.ServeHTTP(wOK, reqOK)
-	if wOK.Code != http.StatusOK && wOK.Code != http.StatusCreated {
-		t.Fatalf("import-blueprint v2 委托期望 200/201，实际 %d body=%s", wOK.Code, wOK.Body.String())
-	}
-	if wOK.Header().Get("Deprecation") != "true" {
-		t.Fatalf("期望响应头 Deprecation: true，实际: %q", wOK.Header().Get("Deprecation"))
-	}
-	var resp map[string]interface{}
-	_ = json.Unmarshal(wOK.Body.Bytes(), &resp)
-	if resp["deprecated"] != true {
-		t.Fatalf("期望响应体 deprecated: true，实际: %+v", resp)
-	}
-
-	// 3. 绝不生成任何 CSG_DISCOVERED 功能组或 MOD_* 假模块
+	// 2. Enroll v2 绝不生成任何 CSG_DISCOVERED 功能组或 MOD_* 假模块
 	var fakeFGCount, fakeModCount int64
 	_ = db.Model(&models.FunctionalGroup{}).Where("code = ?", "CSG_DISCOVERED").Count(&fakeFGCount).Error
 	_ = db.Model(&models.Module{}).Where("code LIKE 'MOD\\_%'").Count(&fakeModCount).Error
 	if fakeFGCount != 0 || fakeModCount != 0 {
-		t.Fatalf("v2 委托绝不创建假模块，实际 fakeFG=%d fakeMod=%d", fakeFGCount, fakeModCount)
+		t.Fatalf("v2 绝不创建假模块，实际 fakeFG=%d fakeMod=%d", fakeFGCount, fakeModCount)
 	}
 
 	// 4. arm-all 缺省跳过 DISCOVERY 挂载，仅布防 MANUAL 挂载

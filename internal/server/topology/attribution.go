@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
+	"code-contract/internal/server/decoder"
 	"code-contract/models"
+	"code-contract/pkg/agentproto"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
@@ -16,6 +19,9 @@ const (
 	AttributionTraceSpan        = "TRACE_SPAN"
 	AttributionUniqueDepend     = "UNIQUE_DEPEND"
 	AttributionProcessLevel     = "PROCESS_LEVEL"
+
+	PeerAttributionModeResolved  = "RESOLVED"
+	PeerAttributionModeAmbiguous = "AMBIGUOUS"
 )
 
 // ResolveDestinationModule 依据全局唯一供给原则 (A-05) 穿透定位目标功能模块 (Service 级别)
@@ -91,8 +97,24 @@ func ResolveSourceModule(
 	return nil, AttributionProcessLevel, modules
 }
 
-// OfflineBatchAttribution 在录制批次停止后，统一归集全链路报文并执行结算 (OfflineBatchAttribution)
+// OfflineBatchAttribution 在录制批次停止后，统一归集全链路报文并执行 Stage 1 物理进程归因与 Stage 2 逻辑模块结算
 func OfflineBatchAttribution(ctx context.Context, db *gorm.DB, sessionID uint64) error {
+	return OfflineBatchAttributionWithDecoder(ctx, db, sessionID, nil)
+}
+
+type stage1PlacementEntry struct {
+	ArchProcessID uint64
+	AgentID       uint64
+	AgentScope    string
+	Lifecycle     string
+	Status        string
+	ServiceName   string
+	ProtoSvcName  string
+	Endpoints     []string
+}
+
+// OfflineBatchAttributionWithDecoder 执行 Stage 1 物理进程级归因（含 4 级优先级与 AMBIGUOUS 候选保存）、.pb 字段级解码及 Stage 2 逻辑模块归因
+func OfflineBatchAttributionWithDecoder(ctx context.Context, db *gorm.DB, sessionID uint64, dec *decoder.Registry) error {
 	// 1. 加载契约与服务解析器 (支持独占服务与多实现契约解析)
 	resolver, err := LoadContractResolver(ctx, db)
 	if err != nil {
@@ -130,7 +152,7 @@ func OfflineBatchAttribution(ctx context.Context, db *gorm.DB, sessionID uint64)
 		}
 	}
 
-	// 3. 加载进程承载模块映射 (通过 ArchProcessID 映射)
+	// 3. 加载进程承载模块映射 (通过 ArchProcessID 映射) 与 Stage 1 物理放置索引
 	var allProcs []models.Process
 	if err := db.WithContext(ctx).Find(&allProcs).Error; err != nil {
 		return err
@@ -162,12 +184,63 @@ func OfflineBatchAttribution(ctx context.Context, db *gorm.DB, sessionID uint64)
 		}
 	}
 
-	// 3.5 加载会话级 endpoint_snapshots
+	var allPlacements []models.ServicePlacement
+	_ = db.WithContext(ctx).
+		Preload("ModuleService").
+		Preload("Agent").
+		Preload("ArchProcess").
+		Where("status <> ?", models.PlacementStatusRetired).
+		Find(&allPlacements).Error
+
+	placementsByService := make(map[string][]stage1PlacementEntry)
+	for _, pl := range allPlacements {
+		if pl.ModuleService == nil {
+			continue
+		}
+		var eps []string
+		if len(pl.Endpoints) > 0 {
+			_ = json.Unmarshal(pl.Endpoints, &eps)
+		}
+		scope := models.ScopeShared
+		if pl.Agent != nil && pl.Agent.Scope != "" {
+			scope = pl.Agent.Scope
+		}
+		lifecycle := models.ArchProcLifecycleConfirmed
+		if pl.ArchProcess != nil && pl.ArchProcess.Lifecycle != "" {
+			lifecycle = pl.ArchProcess.Lifecycle
+		}
+		entry := stage1PlacementEntry{
+			ArchProcessID: pl.ArchProcessID,
+			AgentID:       pl.AgentID,
+			AgentScope:    scope,
+			Lifecycle:     lifecycle,
+			Status:        pl.Status,
+			ServiceName:   strings.TrimSpace(pl.ModuleService.ServiceName),
+			ProtoSvcName:  strings.TrimSpace(pl.ModuleService.ProtoServiceName),
+			Endpoints:     eps,
+		}
+		for _, key := range []string{
+			entry.ServiceName,
+			StripCSGPIDSuffix(entry.ServiceName),
+			entry.ProtoSvcName,
+		} {
+			if key == "" {
+				continue
+			}
+			placementsByService[key] = append(placementsByService[key], entry)
+		}
+	}
+
+	// 3.5 加载会话级 endpoint_snapshots 与 csg_snapshots
 	var session models.RecordingSession
 	var snapshots []models.EndpointSnapshotItem
+	var csgSnapshots []agentproto.CSGSnapshotRecord
 	if err := db.WithContext(ctx).Where("id = ?", sessionID).First(&session).Error; err == nil {
 		if len(session.EndpointSnapshots) > 0 {
 			_ = json.Unmarshal(session.EndpointSnapshots, &snapshots)
+		}
+		if len(session.CSGSnapshots) > 0 {
+			_ = json.Unmarshal(session.CSGSnapshots, &csgSnapshots)
 		}
 	}
 
@@ -180,11 +253,82 @@ func OfflineBatchAttribution(ctx context.Context, db *gorm.DB, sessionID uint64)
 		return nil
 	}
 
-	// 5. 构建入站 Span 索引: spanID -> *TrafficRecord (必须已定位 DstModule)
+	// 5. Stage 1 物理归因 + .pb 解码 + 构建入站 Span 索引
 	ingressMap := make(map[string]*models.TrafficRecord)
 	for i := range records {
 		rec := &records[i]
-		// 多级解析定位目标模块与契约
+
+		// 5.1 Stage 1 本地端物理进程归因
+		localArchPID := procArchMap[rec.ProcessID]
+		if localArchPID > 0 {
+			if rec.Direction == models.TrafficDirEgress && rec.SrcArchProcessID == nil {
+				apID := localArchPID
+				rec.SrcArchProcessID = &apID
+			} else if rec.Direction == models.TrafficDirIngress && rec.DstArchProcessID == nil {
+				apID := localArchPID
+				rec.DstArchProcessID = &apID
+			}
+		}
+
+		// 5.2 Stage 1 对端物理进程 4 级优先级解析（不强行猜绑）
+		var peerNeedResolve bool
+		var peerAddr string
+		if rec.Direction == models.TrafficDirEgress && rec.DstArchProcessID == nil {
+			peerNeedResolve = true
+			peerAddr = rec.DstAddr
+		} else if rec.Direction == models.TrafficDirIngress && rec.SrcArchProcessID == nil {
+			peerNeedResolve = true
+			peerAddr = rec.SrcAddr
+		}
+
+		if peerNeedResolve {
+			resolvedPeerArchID, candidates := resolveStage1PeerArchProcess(
+				rec.AgentID,
+				rec.ServiceName,
+				peerAddr,
+				csgSnapshots,
+				placementsByService,
+			)
+			if resolvedPeerArchID != nil {
+				if rec.Direction == models.TrafficDirEgress {
+					rec.DstArchProcessID = resolvedPeerArchID
+				} else {
+					rec.SrcArchProcessID = resolvedPeerArchID
+				}
+			} else if len(candidates) > 1 {
+				rec.HeadersJSON = mergeAmbiguousPeerMeta(rec.HeadersJSON, candidates)
+			}
+		}
+
+		// 5.3 Stage 1 .pb 字段级同步解码（当此前未解码且存在注册表时）
+		if dec != nil && len(rec.RawReqPacket) > 0 &&
+			(rec.DecodeStatus == "" || rec.DecodeStatus == decoder.DecodeStatusNoSchemaRawHex || rec.DecodeStatus == decoder.DecodeStatusDecodeErrRawHex) {
+			if reqDec, dErr := dec.DecodeCrosFrame(rec.RawReqPacket, rec.IsTruncated); dErr == nil && reqDec != nil {
+				if reqDec.Decode.DecodeStatus == decoder.DecodeStatusDecodedJSON || reqDec.Decode.DecodeStatus == decoder.DecodeStatusSuccess {
+					var reqObj interface{}
+					if len(reqDec.Decode.JSONBytes) > 0 {
+						_ = json.Unmarshal(reqDec.Decode.JSONBytes, &reqObj)
+					}
+					var rspObj interface{}
+					if len(rec.RawRspPacket) > 0 {
+						if rspDec, rErr := dec.DecodeCrosFrame(rec.RawRspPacket, rec.IsTruncated); rErr == nil && rspDec != nil &&
+							(rspDec.Decode.DecodeStatus == decoder.DecodeStatusDecodedJSON || rspDec.Decode.DecodeStatus == decoder.DecodeStatusSuccess) && len(rspDec.Decode.JSONBytes) > 0 {
+							_ = json.Unmarshal(rspDec.Decode.JSONBytes, &rspObj)
+						}
+					}
+					pBytes, _ := json.Marshal(map[string]interface{}{
+						"req": reqObj,
+						"rsp": rspObj,
+					})
+					rec.PayloadJSON = datatypes.JSON(pBytes)
+					rec.DecodeStatus = reqDec.Decode.DecodeStatus
+					rec.SchemaID = reqDec.Decode.SchemaID
+					rec.SchemaVersion = reqDec.Decode.SchemaVersion
+				}
+			}
+		}
+
+		// 5.4 Stage 2 目标逻辑模块与契约解析
 		targetArchPID := procArchMap[rec.ProcessID]
 		dstID, dstContractID := resolver.ResolveDestinationFull(
 			rec.ServiceName,
@@ -226,6 +370,13 @@ func OfflineBatchAttribution(ctx context.Context, db *gorm.DB, sessionID uint64)
 		}
 
 		updates := map[string]interface{}{
+			"src_arch_process_id":      rec.SrcArchProcessID,
+			"dst_arch_process_id":      rec.DstArchProcessID,
+			"headers_json":             rec.HeadersJSON,
+			"payload_json":             rec.PayloadJSON,
+			"decode_status":            rec.DecodeStatus,
+			"schema_id":                rec.SchemaID,
+			"schema_version":           rec.SchemaVersion,
 			"dst_module_id":            rec.DstModuleID,
 			"dst_contract_id":          rec.DstContractID,
 			"src_module_id":            rec.SrcModuleID,
@@ -240,4 +391,191 @@ func OfflineBatchAttribution(ctx context.Context, db *gorm.DB, sessionID uint64)
 	}
 
 	return nil
+}
+
+func resolveStage1PeerArchProcess(
+	agentID uint64,
+	serviceName string,
+	peerAddr string,
+	csgSnapshots []agentproto.CSGSnapshotRecord,
+	placementsByService map[string][]stage1PlacementEntry,
+) (*uint64, []uint64) {
+	normSvc := StripCSGPIDSuffix(strings.TrimSpace(serviceName))
+	candidates := placementsByService[strings.TrimSpace(serviceName)]
+	if len(candidates) == 0 && normSvc != "" {
+		candidates = placementsByService[normSvc]
+	}
+
+	peerHP := normalizeStage1HostPort(peerAddr)
+
+	// 优先级 ①: 会话级 CSGSnapshots 端点匹配服务 -> 同环境放置
+	if len(csgSnapshots) > 0 && peerHP != "" {
+		matchedCSG := false
+		for _, snap := range csgSnapshots {
+			snapSvc := StripCSGPIDSuffix(strings.TrimSpace(snap.ServiceName))
+			if snapSvc != "" && normSvc != "" && snapSvc != normSvc && strings.TrimSpace(snap.ServiceName) != strings.TrimSpace(serviceName) {
+				continue
+			}
+			snapHP := normalizeStage1HostPort(snap.Addr)
+			if snapHP == "" && snap.HostIP != "" && snap.Port > 0 {
+				snapHP = fmt.Sprintf("%s:%d", snap.HostIP, snap.Port)
+			}
+			if snapHP != "" && matchHostPort(snapHP, peerHP) {
+				matchedCSG = true
+				break
+			}
+		}
+		if matchedCSG {
+			var matchedArch []uint64
+			for _, pl := range candidates {
+				if pl.AgentID == agentID && placementMatchesHostPort(pl.Endpoints, peerHP) {
+					matchedArch = append(matchedArch, pl.ArchProcessID)
+				}
+			}
+			matchedArch = uniqueUint64Slice(matchedArch)
+			if len(matchedArch) == 1 {
+				id := matchedArch[0]
+				return &id, nil
+			}
+		}
+	}
+
+	// 优先级 ②: 报文对端 IP:Port 匹配同环境放置 endpoints（次选其他权威环境唯一放置端点）
+	if peerHP != "" && len(candidates) > 0 {
+		var sameEnvMatches []uint64
+		var sharedEnvMatches []uint64
+		for _, pl := range candidates {
+			if !placementMatchesHostPort(pl.Endpoints, peerHP) {
+				continue
+			}
+			if pl.AgentID == agentID {
+				sameEnvMatches = append(sameEnvMatches, pl.ArchProcessID)
+			}
+			if pl.AgentScope == models.ScopeShared && pl.Lifecycle == models.ArchProcLifecycleConfirmed {
+				sharedEnvMatches = append(sharedEnvMatches, pl.ArchProcessID)
+			}
+		}
+		sameEnvMatches = uniqueUint64Slice(sameEnvMatches)
+		if len(sameEnvMatches) == 1 {
+			id := sameEnvMatches[0]
+			return &id, nil
+		}
+		sharedEnvMatches = uniqueUint64Slice(sharedEnvMatches)
+		if len(sharedEnvMatches) == 1 {
+			id := sharedEnvMatches[0]
+			return &id, nil
+		}
+	}
+
+	// 优先级 ③: 服务身份在权威 SHARED 环境恰有 1 个 ACTIVE 放置的 ArchProcess
+	var sharedActiveArch []uint64
+	for _, pl := range candidates {
+		if pl.AgentScope == models.ScopeShared &&
+			pl.Lifecycle == models.ArchProcLifecycleConfirmed &&
+			pl.Status == models.PlacementStatusActive {
+			sharedActiveArch = append(sharedActiveArch, pl.ArchProcessID)
+		}
+	}
+	sharedActiveArch = uniqueUint64Slice(sharedActiveArch)
+	if len(sharedActiveArch) == 1 {
+		id := sharedActiveArch[0]
+		return &id, nil
+	}
+
+	// 优先级 ④: 不唯一时绝不猜绑，透出候选集供解剖抽屉展示
+	if len(sharedActiveArch) > 1 {
+		return nil, sharedActiveArch
+	}
+	var allActive []uint64
+	for _, pl := range candidates {
+		if pl.Status == models.PlacementStatusActive && pl.AgentID == agentID {
+			allActive = append(allActive, pl.ArchProcessID)
+		}
+	}
+	allActive = uniqueUint64Slice(allActive)
+	if len(allActive) > 1 {
+		return nil, allActive
+	}
+	return nil, nil
+}
+
+func normalizeStage1HostPort(raw string) string {
+	s := strings.TrimSpace(raw)
+	s = strings.TrimPrefix(s, "tcp://ipv4:")
+	s = strings.TrimPrefix(s, "dophi_mesh://ipv4:")
+	s = strings.TrimPrefix(s, "tcp://")
+	s = strings.TrimPrefix(s, "dophi_mesh://")
+	if idx := strings.Index(s, "@"); idx >= 0 {
+		s = s[:idx]
+	}
+	return s
+}
+
+func matchHostPort(a, b string) bool {
+	if a == b {
+		return true
+	}
+	ha, pa, okA := splitHostPortSafe(a)
+	hb, pb, okB := splitHostPortSafe(b)
+	if !okA || !okB || pa != pb {
+		return false
+	}
+	if ha == hb {
+		return true
+	}
+	return ha == "127.0.0.1" || hb == "127.0.0.1"
+}
+
+func splitHostPortSafe(hp string) (string, string, bool) {
+	idx := strings.LastIndex(hp, ":")
+	if idx <= 0 || idx == len(hp)-1 {
+		return "", "", false
+	}
+	return hp[:idx], hp[idx+1:], true
+}
+
+func placementMatchesHostPort(endpoints []string, targetHP string) bool {
+	for _, ep := range endpoints {
+		norm := normalizeStage1HostPort(ep)
+		if norm != "" && matchHostPort(norm, targetHP) {
+			return true
+		}
+	}
+	return false
+}
+
+func uniqueUint64Slice(in []uint64) []uint64 {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := make(map[uint64]struct{}, len(in))
+	out := make([]uint64, 0, len(in))
+	for _, v := range in {
+		if v == 0 {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
+func mergeAmbiguousPeerMeta(raw datatypes.JSON, candidates []uint64) datatypes.JSON {
+	hdr := make(map[string]interface{})
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &hdr)
+	}
+	meta, ok := hdr["meta"].(map[string]interface{})
+	if !ok || meta == nil {
+		meta = make(map[string]interface{})
+	}
+	meta["peer_attribution_mode"] = PeerAttributionModeAmbiguous
+	meta["peer_candidate_arch_process_ids"] = candidates
+	hdr["meta"] = meta
+	b, _ := json.Marshal(hdr)
+	return datatypes.JSON(b)
 }

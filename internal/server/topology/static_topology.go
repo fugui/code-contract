@@ -1632,6 +1632,41 @@ func CompileProcessDownstreams(db *gorm.DB, procID uint64, batchProcessIDs []uin
 	}
 	addExtras(proc.ExtraDownstreams)
 
+	// 3.5 M31 discovery.auto_downstreams: 对已常驻布防 (ARMED) 进程自动并入同环境 ACTIVE TCP 订阅边（跳过 dophi_mesh://）
+	if proc.ProbeDesiredState == models.ProbeDesiredStateArmed {
+		var autoSetting models.ModuleSetting
+		if err := db.Select("setting_val").Where("setting_key = ?", "discovery.auto_downstreams").First(&autoSetting).Error; err == nil {
+			val := strings.TrimSpace(strings.ToLower(autoSetting.SettingVal))
+			if val == "true" || val == "1" {
+				var activeDeps []models.ProcessDependency
+				_ = db.Where("consumer_process_id = ? AND agent_id = ? AND status = ? AND resolved_endpoint <> ''",
+					proc.ID, proc.AgentID, models.PlacementStatusActive).Find(&activeDeps).Error
+				for _, ad := range activeDeps {
+					rawEP := strings.TrimSpace(ad.ResolvedEndpoint)
+					lowerEP := strings.ToLower(rawEP)
+					if strings.HasPrefix(lowerEP, "dophi_mesh://") || strings.HasPrefix(lowerEP, "mesh://") {
+						continue
+					}
+					cleanEP := strings.TrimPrefix(rawEP, "tcp://ipv4:")
+					cleanEP = strings.TrimPrefix(cleanEP, "tcp://")
+					host, portStr, splitErr := net.SplitHostPort(cleanEP)
+					if splitErr != nil {
+						continue
+					}
+					port, portErr := strconv.Atoi(portStr)
+					if portErr != nil || port <= 0 || port > 65535 {
+						continue
+					}
+					extraEndpoints = append(extraEndpoints, agentproto.DownstreamEndpoint{
+						IP:     host,
+						Port:   uint16(port),
+						DstTag: ad.ServiceName,
+					})
+				}
+			}
+		}
+	}
+
 	// 4. 合并去重并剔除自身监听端口
 	selfPort := uint16(proc.EffectiveListenPort)
 

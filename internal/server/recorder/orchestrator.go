@@ -15,6 +15,7 @@ import (
 
 	commonAudit "code-common/backend/audit"
 	"code-contract/config"
+	"code-contract/internal/server/decoder"
 	"code-contract/internal/server/hub"
 	"code-contract/internal/server/topology"
 	"code-contract/models"
@@ -36,13 +37,14 @@ var (
 
 // StartSessionReq 创建协同录制请求
 type StartSessionReq struct {
-	Name             string   `json:"name" binding:"required"`
-	Scope            string   `json:"scope"`
-	TargetProcessIDs []uint64 `json:"target_process_ids" binding:"required"`
-	MaxDurationSec   int      `json:"max_duration_sec"`
-	MaxFrames        int      `json:"max_frames"`
-	MaxFrameBytes    int      `json:"max_frame_bytes"`
-	Description      string   `json:"description"`
+	Name                string              `json:"name" binding:"required"`
+	Scope               string              `json:"scope"`
+	TargetProcessIDs    []uint64            `json:"target_process_ids" binding:"required"`
+	TargetPIDsByProcess map[uint64][]uint32 `json:"target_pids_by_process,omitempty"`
+	MaxDurationSec      int                 `json:"max_duration_sec"`
+	MaxFrames           int                 `json:"max_frames"`
+	MaxFrameBytes       int                 `json:"max_frame_bytes"`
+	Description         string              `json:"description"`
 }
 
 // SessionListQuery 列表检索参数
@@ -220,10 +222,15 @@ func (o *Orchestrator) StartSession(
 			if p.AgentID == agtID {
 				downstreams, _ := topology.CompileProcessDownstreams(o.db, p.ID, req.TargetProcessIDs, nil)
 				p.FillFromArchProcess()
+				targetPIDs := req.TargetPIDsByProcess[p.ID]
+				if len(targetPIDs) == 0 && len(p.ObservedPIDs) > 0 {
+					_ = json.Unmarshal(p.ObservedPIDs, &targetPIDs)
+				}
 				specs = append(specs, agentproto.ProcessMonitorSpec{
 					ProcessID:   p.ID,
 					ListenPort:  uint16(p.EffectiveListenPort),
 					CmdPattern:  p.CmdPattern,
+					TargetPIDs:  targetPIDs,
 					Downstreams: downstreams,
 				})
 			}
@@ -290,6 +297,34 @@ func (o *Orchestrator) StartSession(
 	return session, nil
 }
 
+// SyncAgentMonitors 向指定 Agent 下发 /agent/v1/monitors/sync（供 quick-record Saga 等复用）
+func (o *Orchestrator) SyncAgentMonitors(ctx context.Context, agt *models.Agent, req agentproto.SyncMonitorReq) ([]agentproto.ProcessDiagStatus, error) {
+	return o.callAgentSync(ctx, agt, req)
+}
+
+// AttachRecordingSession 为外部已启动的录制会话挂载 WebSocket 采集流、帧数上限与自动停录定时器
+func (o *Orchestrator) AttachRecordingSession(ctx context.Context, session *models.RecordingSession, agt *models.Agent) {
+	if session == nil || agt == nil {
+		return
+	}
+	streamCtx, streamCancel := context.WithCancel(context.Background())
+	o.streamCancels.Store(session.ID, streamCancel)
+	go o.startAgentStream(streamCtx, session.ID, agt)
+
+	if o.assembler != nil {
+		o.assembler.SetSessionMaxFrames(session.ID, int64(session.MaxFrames))
+	}
+
+	maxDur := session.MaxDurationSec
+	if maxDur <= 0 {
+		maxDur = 1800
+	}
+	timer := time.AfterFunc(time.Duration(maxDur)*time.Second, func() {
+		_, _ = o.StopSession(context.Background(), session.ID, 0, true, "COMPLETED_BY_LIMIT")
+	})
+	o.timers.Store(session.ID, timer)
+}
+
 // StopSession 停止协同录制并释放租约
 func (o *Orchestrator) StopSession(
 	ctx context.Context,
@@ -349,8 +384,12 @@ func (o *Orchestrator) StopSession(
 		_ = hub.ReleaseAgentLeases(ctx, o.db, agentIDs, models.AgentLeaseRecording, session.ID)
 	}
 
-	// 触发离线批量对账引擎结算报文来源与目标模块 (OfflineBatchAttribution)
-	_ = topology.OfflineBatchAttribution(ctx, o.db, session.ID)
+	// 触发离线批量对账引擎结算报文物理进程/逻辑模块归因与解码 (OfflineBatchAttributionWithDecoder)
+	var decReg *decoder.Registry
+	if o.assembler != nil {
+		decReg = o.assembler.Decoder()
+	}
+	_ = topology.OfflineBatchAttributionWithDecoder(ctx, o.db, session.ID, decReg)
 
 	// 5. 统计总帧数与丢包
 	var capturedCount int64

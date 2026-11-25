@@ -522,14 +522,27 @@ func (s *AgentServer) handleSyncMonitors(w http.ResponseWriter, r *http.Request)
 
 	if s.transportRegistry != nil {
 		pidMap := make(map[uint64]uint32)
+		pidsMap := make(map[uint64][]uint32)
 		for _, d := range diags {
 			pidMap[d.ProcessID] = d.ResolvedPID
+			if len(d.ResolvedPIDs) > 0 {
+				pidsMap[d.ProcessID] = d.ResolvedPIDs
+			}
 		}
 		var targetProcs []transport.TargetProcess
 		for _, p := range req.Processes {
+			pids := pidsMap[p.ProcessID]
+			if len(pids) == 0 && len(p.TargetPIDs) > 0 {
+				pids = p.TargetPIDs
+			}
+			mainPID := pidMap[p.ProcessID]
+			if mainPID == 0 && len(pids) > 0 {
+				mainPID = pids[0]
+			}
 			targetProcs = append(targetProcs, transport.TargetProcess{
 				ProcessID:   p.ProcessID,
-				PID:         pidMap[p.ProcessID],
+				PID:         mainPID,
+				PIDs:        pids,
 				ListenPort:  p.ListenPort,
 				CmdPattern:  p.CmdPattern,
 				Downstreams: p.Downstreams,

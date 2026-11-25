@@ -82,11 +82,12 @@ type StaticComplianceDTO struct {
 
 // DashboardOverviewDTO 全景治理大盘响应 DTO
 type DashboardOverviewDTO struct {
-	HealthScore       HealthScoreDTO       `json:"health_score"`
-	DriftRadar        DriftRadarDTO        `json:"drift_radar"`
-	ContractAssets    ContractAssetsDTO    `json:"contract_assets"`
-	RegressionDefense RegressionDefenseDTO `json:"regression_defense"`
-	StaticCompliance  StaticComplianceDTO  `json:"static_compliance"`
+	HealthScore       HealthScoreDTO              `json:"health_score"`
+	DriftRadar        DriftRadarDTO               `json:"drift_radar"`
+	ContractAssets    ContractAssetsDTO           `json:"contract_assets"`
+	RegressionDefense RegressionDefenseDTO        `json:"regression_defense"`
+	StaticCompliance  StaticComplianceDTO         `json:"static_compliance"`
+	FiveStateRadar    *topology.FiveStateRadarDTO `json:"five_state_radar,omitempty"`
 }
 
 type hintItem struct {
@@ -584,6 +585,11 @@ func GetOverview(ctx context.Context, db *gorm.DB, subsystemID *uint64) (*Dashbo
 
 	// 7. F-24 静态合规与 MR 质量门禁指标聚合（独立卡片展示，不改动上方 40+30+30 HealthScore）
 	overview.StaticCompliance = computeStaticCompliance(ctx, db, since7d)
+
+	// 8. M31 权威 SHARED 环境五态契约健康雷达（独立卡片展示，不改动 40+30+30 HealthScore）
+	if radar, rErr := topology.ComputeFiveStateRadar(ctx, db); rErr == nil {
+		overview.FiveStateRadar = radar
+	}
 
 	return overview, nil
 }

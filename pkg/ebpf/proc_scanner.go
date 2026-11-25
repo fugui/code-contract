@@ -31,6 +31,15 @@ func NewProcScanner(procRoot string) *ProcScanner {
 	return &ProcScanner{root: procRoot}
 }
 
+// PIDExists 检查目标 PID 在 procfs 下是否存活
+func (s *ProcScanner) PIDExists(pid uint32) bool {
+	if pid == 0 {
+		return false
+	}
+	info, err := os.Stat(filepath.Join(s.root, strconv.FormatUint(uint64(pid), 10)))
+	return err == nil && info.IsDir()
+}
+
 // ScanListenProcesses 扫描当前宿主机所有处于 TCP_LISTEN 状态的进程
 func (s *ProcScanner) ScanListenProcesses() ([]agentproto.DiscoveredProcess, error) {
 	// 1. 读取 /proc/net/tcp

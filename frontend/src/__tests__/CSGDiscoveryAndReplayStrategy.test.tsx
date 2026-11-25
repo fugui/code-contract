@@ -193,7 +193,9 @@ describe('M28 CSG Discovery, Blueprint Import & 3-Mode Simulation Console', () =
     expect(adminHtml).toContain('rpcmon: native probe warning');
     expect(adminHtml).toContain('csg-live-coverage-badge');
     expect(adminHtml).toContain('已纳管 1/2');
-    expect(adminHtml).toContain('一键导入 SSOT 蓝图');
+    expect(adminHtml).not.toContain('csg-import-blueprint-btn');
+    expect(adminHtml).not.toContain('一键导入 SSOT 蓝图');
+    expect(adminHtml).toContain('csg-goto-discovery-btn');
     expect(adminHtml).not.toContain('csg-admin-only-notice');
 
     const nonAdminHtml = renderToString(
@@ -217,9 +219,10 @@ describe('M28 CSG Discovery, Blueprint Import & 3-Mode Simulation Console', () =
 
     expect(nonAdminHtml).toContain('csg-admin-only-notice');
     expect(nonAdminHtml).not.toContain('csg-import-blueprint-btn');
+    expect(nonAdminHtml).toContain('csg-goto-discovery-btn');
   });
 
-  it('uses valid theme tokens and renders quick-create subsystem form when subsystems list is empty', () => {
+  it('uses valid theme tokens and renders discovery workbench navigation button when subsystems list is empty', () => {
     const emptySubAdminHtml = renderToString(
       <MemoryRouter>
         <ModuleUserProvider
@@ -244,10 +247,8 @@ describe('M28 CSG Discovery, Blueprint Import & 3-Mode Simulation Console', () =
     expect(emptySubAdminHtml).not.toContain('--color-bg-secondary');
     expect(emptySubAdminHtml).not.toContain('--color-bg-primary');
     expect(emptySubAdminHtml).not.toContain('--color-border-default');
-    expect(emptySubAdminHtml).toContain('csg-empty-subsystem-hint');
-    expect(emptySubAdminHtml).toContain('csg-quick-create-subsystem-form');
-    expect(emptySubAdminHtml).toContain('csg-quick-create-subsystem-submit');
-    expect(emptySubAdminHtml).toContain('csg-import-blueprint-btn');
+    expect(emptySubAdminHtml).not.toContain('csg-import-blueprint-btn');
+    expect(emptySubAdminHtml).toContain('csg-goto-discovery-btn');
 
     const emptySubNonAdminHtml = renderToString(
       <MemoryRouter>
@@ -268,8 +269,9 @@ describe('M28 CSG Discovery, Blueprint Import & 3-Mode Simulation Console', () =
       </MemoryRouter>
     );
 
-    expect(emptySubNonAdminHtml).not.toContain('csg-quick-create-subsystem-form');
+    expect(emptySubNonAdminHtml).not.toContain('csg-import-blueprint-btn');
     expect(emptySubNonAdminHtml).toContain('csg-admin-only-notice');
+    expect(emptySubNonAdminHtml).toContain('csg-goto-discovery-btn');
   });
 
   it('renders explicit PROC_ONLY mesh degradation banner when L2 discovery is unavailable', () => {

@@ -2,8 +2,8 @@ package handlers_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -11,9 +11,8 @@ import (
 	"sync"
 	"testing"
 
-	commonAudit "code-common/backend/audit"
-	commonModels "code-common/backend/models"
 	"code-contract/config"
+	"code-contract/internal/server/topology"
 	"code-contract/models"
 	"code-contract/pkg/agentproto"
 )
@@ -107,54 +106,56 @@ func TestCSGImportBlueprint_IdempotentAdminOnlyLayerGuardAndAudit(t *testing.T) 
 		t.Fatalf("GET csg topology status = %d body=%s", wGet.Code, wGet.Body.String())
 	}
 
-	// 2. Non-admin is forbidden (403) on POST /api/agents/:id/csg/import-blueprint
+	// 2. M31: POST /api/agents/:id/csg/import-blueprint 路由已下线，返回 404 Not Found
 	importBody := map[string]interface{}{
 		"subsystem_id":        subsys.ID,
 		"import_dependencies": true,
 	}
 	rawBody, _ := json.Marshal(importBody)
-	reqForbidden := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/agents/%d/csg/import-blueprint", agent.ID), bytes.NewReader(rawBody))
-	reqForbidden.Header.Set("Authorization", "Bearer "+normalToken)
-	reqForbidden.Header.Set("Content-Type", "application/json")
-	wForbidden := httptest.NewRecorder()
-	r.ServeHTTP(wForbidden, reqForbidden)
-	if wForbidden.Code != http.StatusForbidden {
-		t.Fatalf("expected 403 for non-admin blueprint import, got %d body=%s", wForbidden.Code, wForbidden.Body.String())
+	for _, tok := range []string{normalToken, adminToken} {
+		reqDead := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/agents/%d/csg/import-blueprint", agent.ID), bytes.NewReader(rawBody))
+		reqDead.Header.Set("Authorization", "Bearer "+tok)
+		reqDead.Header.Set("Content-Type", "application/json")
+		wDead := httptest.NewRecorder()
+		r.ServeHTTP(wDead, reqDead)
+		if wDead.Code != http.StatusNotFound {
+			t.Fatalf("expected 404 for decommissioned import-blueprint, got %d body=%s", wDead.Code, wDead.Body.String())
+		}
 	}
 
-	// 3. First idempotent import by admin creates processes, modules, services, dependencies
-	reqImport1 := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/agents/%d/csg/import-blueprint", agent.ID), bytes.NewReader(rawBody))
-	reqImport1.Header.Set("Authorization", "Bearer "+adminToken)
-	reqImport1.Header.Set("Content-Type", "application/json")
-	wImport1 := httptest.NewRecorder()
-	r.ServeHTTP(wImport1, reqImport1)
-	if wImport1.Code != http.StatusOK {
-		t.Fatalf("first import status = %d body=%s", wImport1.Code, wImport1.Body.String())
+	// 3. 保留核心领域函数 topology.ImportCSGBlueprint 幂等性与跨层守卫回归验证
+	topoMu.RLock()
+	liveCopy1 := liveTopo
+	topoMu.RUnlock()
+	resp1, err := topology.ImportCSGBlueprint(db, topology.CSGBlueprintImportInput{
+		AgentID:            agent.ID,
+		SubsystemID:        subsys.ID,
+		ImportDependencies: true,
+		OperatorID:         adminUser.ID,
+		Live:               &liveCopy1,
+	})
+	if err != nil {
+		t.Fatalf("first topology.ImportCSGBlueprint failed: %v", err)
 	}
-	var resp1 map[string]interface{}
-	if err := json.Unmarshal(wImport1.Body.Bytes(), &resp1); err != nil {
-		t.Fatalf("decode import resp1 failed: %v", err)
-	}
-	if resp1["created_services"] != float64(2) || resp1["created_dependencies"] != float64(1) {
+	if resp1.CreatedServices != 2 || resp1.CreatedDependencies != 1 {
 		t.Fatalf("unexpected import resp1: %+v", resp1)
 	}
 
-	// 4. Repeat import is completely idempotent (0 newly created, skipped instead)
-	reqImport2 := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/agents/%d/csg/import-blueprint", agent.ID), bytes.NewReader(rawBody))
-	reqImport2.Header.Set("Authorization", "Bearer "+adminToken)
-	reqImport2.Header.Set("Content-Type", "application/json")
-	wImport2 := httptest.NewRecorder()
-	r.ServeHTTP(wImport2, reqImport2)
-	if wImport2.Code != http.StatusOK {
-		t.Fatalf("repeat import status = %d body=%s", wImport2.Code, wImport2.Body.String())
+	resp2, err := topology.ImportCSGBlueprint(db, topology.CSGBlueprintImportInput{
+		AgentID:            agent.ID,
+		SubsystemID:        subsys.ID,
+		ImportDependencies: true,
+		OperatorID:         adminUser.ID,
+		Live:               &liveCopy1,
+	})
+	if err != nil {
+		t.Fatalf("repeat topology.ImportCSGBlueprint failed: %v", err)
 	}
-	var resp2 map[string]interface{}
-	_ = json.Unmarshal(wImport2.Body.Bytes(), &resp2)
-	if resp2["created_services"] != float64(0) || resp2["skipped_services"] != float64(2) {
+	if resp2.CreatedServices != 0 || resp2.SkippedServices != 2 {
 		t.Fatalf("expected repeat import idempotent skip, got %+v", resp2)
 	}
 
-	// 5. Layer violation guard (409 ERR_LAYER_VIOLATION) rolls back when lower-layer module tries to depend on higher-layer provider!
+	// 4. Layer violation guard (ErrLayerViolation) rolls back when lower-layer module tries to depend on higher-layer provider
 	lowSub := models.Subsystem{Code: "low_infra", Name: "LowInfra", LayerLevel: 10}
 	if err := db.Create(&lowSub).Error; err != nil {
 		t.Fatalf("create lowSub failed: %v", err)
@@ -181,37 +182,22 @@ func TestCSGImportBlueprint_IdempotentAdminOnlyLayerGuardAndAudit(t *testing.T) 
 			IsLocal:     true,
 		},
 	}
+	liveCopyLow := liveTopo
 	topoMu.Unlock()
 
-	lowBody, _ := json.Marshal(map[string]interface{}{
-		"subsystem_id":        lowSub.ID,
-		"import_dependencies": true,
-	})
-	reqLayerFail := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/agents/%d/csg/import-blueprint", agent.ID), bytes.NewReader(lowBody))
-	reqLayerFail.Header.Set("Authorization", "Bearer "+adminToken)
-	reqLayerFail.Header.Set("Content-Type", "application/json")
-	wLayerFail := httptest.NewRecorder()
-	r.ServeHTTP(wLayerFail, reqLayerFail)
-	if wLayerFail.Code != http.StatusConflict {
-		t.Fatalf("expected 409 layer violation on L10->L20 import, got %d body=%s", wLayerFail.Code, wLayerFail.Body.String())
+	var layerErr *topology.LayerViolationError
+	if _, err := topology.ImportCSGBlueprint(db, topology.CSGBlueprintImportInput{
+		AgentID:            agent.ID,
+		SubsystemID:        lowSub.ID,
+		ImportDependencies: true,
+		OperatorID:         adminUser.ID,
+		Live:               &liveCopyLow,
+	}); !errors.As(err, &layerErr) || layerErr.Code != topology.ErrCodeLayerViolation {
+		t.Fatalf("expected ErrCodeLayerViolation on L10->L20 import, got %v", err)
 	}
 	var leakedCount int64
 	db.Model(&models.ModuleService{}).Where("service_name = ?", "LowInfraSvc-LowInfraSvc").Count(&leakedCount)
 	if leakedCount != 0 {
-		t.Fatalf("expected rollback on 409 layer guard, found %d leaked services", leakedCount)
-	}
-
-	// 6. Flush audit logger and verify SysAuditLog persistence
-	if err := commonAudit.Close(context.Background()); err != nil {
-		t.Fatalf("close audit failed: %v", err)
-	}
-	var auditCount int64
-	if err := db.Model(&commonModels.SysAuditLog{}).
-		Where("target_type = ? AND action = ?", "csg_blueprint", "csg_import_blueprint").
-		Count(&auditCount).Error; err != nil {
-		t.Fatalf("query audit log failed: %v", err)
-	}
-	if auditCount == 0 {
-		t.Fatalf("expected SysAuditLog record for csg_blueprint/csg_import_blueprint")
+		t.Fatalf("expected rollback on layer guard, found %d leaked services", leakedCount)
 	}
 }

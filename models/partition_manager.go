@@ -121,22 +121,38 @@ ORDER BY c.relname ASC
 			if err := db.Raw(`
 SELECT COUNT(*)
 FROM pg_inherits i
-JOIN pg_class c ON c.oid = i.inhrelid
 JOIN pg_class p ON p.oid = i.inhparent
-WHERE p.relname = ? AND c.relname = ?
-`, sp.parentIdx, partIdxName).Scan(&attached).Error; err != nil {
+JOIN pg_class c ON c.oid = i.inhrelid
+JOIN pg_index ci ON ci.indexrelid = c.oid
+JOIN pg_class tbl ON tbl.oid = ci.indrelid
+WHERE p.relname = ? AND tbl.relname = ? AND ci.indisvalid
+`, sp.parentIdx, partName).Scan(&attached).Error; err != nil {
 				return err
 			}
 			if attached > 0 {
 				continue
 			}
 
-			createSQL := fmt.Sprintf("CREATE INDEX CONCURRENTLY IF NOT EXISTS %s ON %s (%s)", partIdxName, partName, sp.col)
-			if err := db.Exec(createSQL).Error; err != nil {
-				// 若调用方处于事务内导致 CONCURRENTLY 不可用，则退化为普通索引创建以保证测试/迁移健壮性
-				fallbackSQL := fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s (%s)", partIdxName, partName, sp.col)
-				if fbErr := db.Exec(fallbackSQL).Error; fbErr != nil {
-					return fmt.Errorf("创建分区索引 [%s] 失败: %w", partIdxName, fbErr)
+			var idxExists int64
+			if err := db.Raw(`SELECT COUNT(*) FROM pg_indexes WHERE tablename = ? AND indexname = ?`, partName, partIdxName).Scan(&idxExists).Error; err != nil {
+				return err
+			}
+			if idxExists == 0 {
+				createSQL := fmt.Sprintf("CREATE INDEX CONCURRENTLY IF NOT EXISTS %s ON %s (%s)", partIdxName, partName, sp.col)
+				created := false
+				if sqlDB, sqlErr := db.DB(); sqlErr == nil && sqlDB != nil {
+					if _, execErr := sqlDB.Exec(createSQL); execErr == nil {
+						created = true
+					}
+				}
+				if !created {
+					if err := db.Exec(createSQL).Error; err != nil {
+						// 若调用方处于事务内导致 CONCURRENTLY 不可用，则退化为普通索引创建以保证测试/迁移健壮性
+						fallbackSQL := fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s (%s)", partIdxName, partName, sp.col)
+						if fbErr := db.Exec(fallbackSQL).Error; fbErr != nil {
+							return fmt.Errorf("创建分区索引 [%s] 失败: %w", partIdxName, fbErr)
+						}
+					}
 				}
 			}
 			attachSQL := fmt.Sprintf("ALTER INDEX %s ATTACH PARTITION %s", sp.parentIdx, partIdxName)

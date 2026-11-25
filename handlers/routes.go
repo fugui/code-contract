@@ -161,6 +161,11 @@ func RegisterAPIRoutes(r *gin.Engine) {
 		protected.GET("/proto-files/:id/diff", GetProtoFileDiff)
 		protected.GET("/proto-services", ListProtoServices)
 
+		// 5.0 统一契约服务目录、三级 .pb 撮合与五态健康雷达 (ADR-24, M31)
+		protected.GET("/catalog/services", ListCatalogServices)
+		protected.POST("/catalog/correlate", CorrelateCatalogServicesHandler)
+		protected.POST("/catalog/services/:id/confirm-proto", ConfirmCatalogServiceProtoHandler)
+
 		// 5.0 Git 契约仓、Monorepo Bundles 与一致性对账域 (F-21, F-28, F-29, M25)
 		protected.GET("/git-repos", ListGitRepos)
 		protected.POST("/git-repos", requireAdmin, CreateGitRepo)
@@ -211,11 +216,12 @@ func RegisterAPIRoutes(r *gin.Engine) {
 		protected.POST("/agents/:id/handshake", HandshakeAgent)
 		protected.GET("/agents/:id/discover-processes", DiscoverAgentProcesses)
 		protected.GET("/agents/:id/csg/topology", GetAgentCSGTopology)
-		protected.POST("/agents/:id/csg/import-blueprint", requireAdmin, ImportAgentCSGBlueprint)
 
-		// 6.1 现网发现工作台、持久化快照与双模 Diff 域 (ADR-24, M30a, M30b, F-36)
+		// 6.1 现网发现工作台、持久化快照与双模 Diff 域 (ADR-24, M30a, M30b, M31, F-36~F-38)
 		protected.GET("/discovery/live", GetDiscoveryLive)
 		protected.POST("/discovery/enroll", EnrollDiscoveryProcesses)
+		protected.POST("/discovery/quick-record", QuickRecordDiscovery)
+		protected.POST("/discovery/simulation-plan", BuildDiscoverySimulationPlan)
 		protected.GET("/discovery/physical", GetDiscoveryPhysical)
 		protected.GET("/discovery/snapshots", ListDiscoverySnapshots)
 		protected.POST("/discovery/snapshots", CreateDiscoverySnapshot)

@@ -19,10 +19,31 @@ type DriverInfo struct {
 type TargetProcess struct {
 	ProcessID   uint64                          `json:"process_id"`
 	PID         uint32                          `json:"pid"`
+	PIDs        []uint32                        `json:"pids,omitempty"`
 	ListenPort  uint16                          `json:"listen_port"`
 	CmdPattern  string                          `json:"cmd_pattern"`
 	ExeName     string                          `json:"exe_name"`
 	Downstreams []agentproto.DownstreamEndpoint `json:"downstreams,omitempty"`
+}
+
+// EffectivePIDs 返回去重后的非零目标 PID 集合，PIDs 为空时回退为 [PID]。
+func (t TargetProcess) EffectivePIDs() []uint32 {
+	seen := make(map[uint32]struct{}, len(t.PIDs)+1)
+	out := make([]uint32, 0, len(t.PIDs)+1)
+	for _, pid := range t.PIDs {
+		if pid == 0 {
+			continue
+		}
+		if _, ok := seen[pid]; ok {
+			continue
+		}
+		seen[pid] = struct{}{}
+		out = append(out, pid)
+	}
+	if len(out) == 0 && t.PID > 0 {
+		out = append(out, t.PID)
+	}
+	return out
 }
 
 // CaptureSpec 流量采集下发规格

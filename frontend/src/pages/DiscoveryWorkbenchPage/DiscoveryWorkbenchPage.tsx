@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Modal } from '@code/common';
+import { useModulePath } from '../../hooks/useModulePath';
 import * as agentApi from '../../api/agent';
 import * as discoveryApi from '../../api/discovery';
 import { ApiRequestError } from '../../api/client';
@@ -8,10 +9,13 @@ import { useToast } from '../../utils/toast';
 import type {
   Agent,
   DiscoveryLiveRespDTO,
+  DiscoveryProcessGroupDTO,
   DiscoverySnapshotDiffDTO,
   DiscoverySnapshotSummaryDTO,
   EnrollItemInput,
   EnrollValidationErrorPayload,
+  QuickRecordResultDTO,
+  SimulationPlanResultDTO,
 } from '../../types';
 import { DiscoveryTopBar } from './DiscoveryTopBar';
 import { DiscoveryProcessTreeTable } from './DiscoveryProcessTreeTable';
@@ -50,6 +54,7 @@ export const DiscoveryWorkbenchPage: React.FC<DiscoveryWorkbenchPageProps> = ({
   initialDisambiguation = null,
 }) => {
   const toast = useToast();
+  const resolvePath = useModulePath();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [agents, setAgents] = useState<Agent[]>(initialAgents ?? []);
@@ -78,6 +83,12 @@ export const DiscoveryWorkbenchPage: React.FC<DiscoveryWorkbenchPageProps> = ({
   const [liveData, setLiveData] = useState<DiscoveryLiveRespDTO | null>(initialLiveData);
   const [loadingLive, setLoadingLive] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [quickRecording, setQuickRecording] = useState(false);
+  const [quickRecordResult, setQuickRecordResult] = useState<QuickRecordResultDTO | null>(null);
+  const [simPlanModalOpen, setSimPlanModalOpen] = useState(false);
+  const [loadingSimPlan, setLoadingSimPlan] = useState(false);
+  const [simPlanResult, setSimPlanResult] = useState<SimulationPlanResultDTO | null>(null);
+  const [simPlanError, setSimPlanError] = useState('');
 
   const [drawerOpen, setDrawerOpen] = useState(initialDrawerOpen);
   const [snapshots, setSnapshots] = useState<DiscoverySnapshotSummaryDTO[]>(
@@ -313,6 +324,70 @@ export const DiscoveryWorkbenchPage: React.FC<DiscoveryWorkbenchPageProps> = ({
     [selectedAgentId, selectedCsgAddr, selectedKeys, enrollOverrides, toast]
   );
 
+  const handleQuickRecord = useCallback(async () => {
+    if (!selectedAgentId || selectedKeys.size === 0 || quickRecording) return;
+    setQuickRecording(true);
+    setQuickRecordResult(null);
+    const reqId = `qr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    try {
+      const res = await discoveryApi.quickRecordDiscovery({
+        agent_id: selectedAgentId,
+        csg_addr: selectedCsgAddr || undefined,
+        process_keys: Array.from(selectedKeys),
+        request_id: reqId,
+      });
+      setQuickRecordResult(res);
+      toast.success(`已启动一键直录会话 #${res.session.id}`);
+      try {
+        const refreshed = await discoveryApi.getLiveDiscovery({
+          agent_id: selectedAgentId,
+          csg_addr: selectedCsgAddr || undefined,
+        });
+        setLiveData(refreshed);
+      } catch {
+        // 保持当前实况视图，避免刷新波动覆盖直录结果横幅
+      }
+    } catch (err) {
+      if (err instanceof ApiRequestError && err.status === 422 && err.data && typeof err.data === 'object') {
+        const payload = err.data as EnrollValidationErrorPayload;
+        if (
+          payload.code === 'IDENTITY_AMBIGUOUS' ||
+          payload.code === 'LOW_CONFIDENCE_CONFIRM_REQUIRED'
+        ) {
+          setDisambiguationPayload(payload);
+          return;
+        }
+      }
+      toast.error(err instanceof Error ? err.message : '一键直录启动失败');
+    } finally {
+      setQuickRecording(false);
+    }
+  }, [selectedAgentId, selectedCsgAddr, selectedKeys, quickRecording, toast]);
+
+  const handleOpenSimulationPlan = useCallback(
+    async (group: DiscoveryProcessGroupDTO) => {
+      if (!selectedAgentId) return;
+      setSimPlanModalOpen(true);
+      setLoadingSimPlan(true);
+      setSimPlanResult(null);
+      setSimPlanError('');
+      try {
+        const plan = await discoveryApi.buildDiscoverySimulationPlan({
+          agent_id: selectedAgentId,
+          arch_process_id: group.arch_process_id || undefined,
+          process_key: group.process_key,
+          csg_addr: selectedCsgAddr || undefined,
+        });
+        setSimPlanResult(plan);
+      } catch (err) {
+        setSimPlanError(err instanceof Error ? err.message : '仿真策略推导失败');
+      } finally {
+        setLoadingSimPlan(false);
+      }
+    },
+    [selectedAgentId, selectedCsgAddr]
+  );
+
   return (
     <div className="discovery-workbench-page" data-testid="discovery-workbench-page">
       <DiscoveryTopBar
@@ -376,9 +451,56 @@ export const DiscoveryWorkbenchPage: React.FC<DiscoveryWorkbenchPageProps> = ({
             <DiscoveryBatchActionBar
               selectedCount={selectedKeys.size}
               enrolling={enrolling}
+              quickRecording={quickRecording}
               onClearSelection={() => setSelectedKeys(new Set())}
               onOpenEnrollModal={() => setEnrollModalOpen(true)}
+              onQuickRecord={() => void handleQuickRecord()}
             />
+          )}
+          {quickRecordResult && (
+            <div
+              className="discovery-quick-record-banner"
+              data-testid="discovery-quick-record-banner"
+            >
+              <div className="discovery-quick-record-banner__main">
+                <strong>
+                  直录会话 #{quickRecordResult.session.id} ({quickRecordResult.session.name}) 已就绪
+                </strong>
+                <span className="discovery-mono">
+                  驱动: {(quickRecordResult.target_drivers || []).join(', ') || 'builtin-tcp'} ·
+                  自动纳管 {quickRecordResult.enrolled_count} 个进程
+                </span>
+                <Link
+                  to={resolvePath(`/record?session_id=${quickRecordResult.session.id}`)}
+                  className="code-btn code-btn--primary code-btn--xs"
+                  data-testid="discovery-quick-record-goto-session"
+                >
+                  前往录制工作台查看
+                </Link>
+              </div>
+              {quickRecordResult.coverage_warnings &&
+                quickRecordResult.coverage_warnings.length > 0 && (
+                  <ul className="discovery-quick-record-warnings">
+                    {quickRecordResult.coverage_warnings.map((w, idx) => (
+                      <li
+                        key={`${w.code}-${w.process_id}-${idx}`}
+                        data-testid={
+                          w.code === 'NEED_RECONNECT'
+                            ? 'discovery-need-reconnect-warning'
+                            : `discovery-coverage-warning-${w.code}`
+                        }
+                        className={
+                          w.code === 'NEED_RECONNECT'
+                            ? 'discovery-warning-item discovery-warning-item--danger'
+                            : 'discovery-warning-item'
+                        }
+                      >
+                        <strong>[{w.code}]</strong> {w.process_name}: {w.message}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+            </div>
           )}
           <DiscoveryProcessTreeTable
             localProcesses={liveData?.processes ?? []}
@@ -412,6 +534,7 @@ export const DiscoveryWorkbenchPage: React.FC<DiscoveryWorkbenchPageProps> = ({
                 return next;
               });
             }}
+            onOpenSimulationPlan={(grp) => void handleOpenSimulationPlan(grp)}
           />
         </>
       ) : (
@@ -555,6 +678,81 @@ export const DiscoveryWorkbenchPage: React.FC<DiscoveryWorkbenchPageProps> = ({
           void submitEnroll(nextOverrides);
         }}
       />
+
+      <Modal
+        open={simPlanModalOpen}
+        onClose={() => setSimPlanModalOpen(false)}
+        title="CSG 三模仿真策略预研"
+        width="lg"
+        footer={
+          <div className="code-modal-footer">
+            <button
+              type="button"
+              className="code-btn code-btn--secondary"
+              onClick={() => setSimPlanModalOpen(false)}
+            >
+              关闭
+            </button>
+            {simPlanResult && (
+              <Link
+                to={resolvePath(
+                  `/replay?agent_id=${simPlanResult.agent_id}&arch_process_id=${simPlanResult.arch_process_id}&strategy=${encodeURIComponent(simPlanResult.recommended_strategy)}`
+                )}
+                className="code-btn code-btn--primary"
+                data-testid="sim-plan-goto-replay-btn"
+                onClick={() => setSimPlanModalOpen(false)}
+              >
+                前往重放工作台执行 ({simPlanResult.recommended_strategy})
+              </Link>
+            )}
+          </div>
+        }
+      >
+        {loadingSimPlan ? (
+          <div className="discovery-modal-notice">正在结合同环境 CSG 在线订阅推导最佳仿真策略...</div>
+        ) : simPlanError ? (
+          <div className="discovery-modal-notice" style={{ color: 'var(--color-danger)' }}>
+            {simPlanError}
+          </div>
+        ) : simPlanResult ? (
+          <div className="discovery-modal-body" data-testid="discovery-sim-plan-modal-body">
+            <div className="discovery-modal-notice">
+              <div>
+                <strong>目标进程：</strong>
+                <span>{simPlanResult.process_name}</span>
+                {' · '}
+                <strong>推荐策略：</strong>
+                <span className="discovery-pill discovery-pill--primary">
+                  {simPlanResult.recommended_strategy}
+                </span>
+              </div>
+              <div className="discovery-modal-subnotice">{simPlanResult.rationale}</div>
+            </div>
+            {simPlanResult.downstream_statuses && simPlanResult.downstream_statuses.length > 0 && (
+              <table className="discovery-subtable">
+                <thead>
+                  <tr>
+                    <th>下游服务名</th>
+                    <th>制式</th>
+                    <th>在线状态</th>
+                    <th>端点 / 说明</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {simPlanResult.downstream_statuses.map((ds) => (
+                    <tr key={ds.service_name}>
+                      <td className="discovery-mono">{ds.service_name}</td>
+                      <td>{ds.transport}</td>
+                      <td>{ds.is_online ? '在线' : '离线'}</td>
+                      <td className="discovery-mono">{ds.resolved_endpoint || ds.note || '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        ) : null}
+      </Modal>
     </div>
   );
 };

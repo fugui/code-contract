@@ -170,21 +170,23 @@ type DownstreamEndpoint struct {
 
 // ProcessMonitorSpec 单进程监控元信息（零 .pb Schema 依赖）
 type ProcessMonitorSpec struct {
-	ProcessID   uint64               `json:"process_id"`         // 主控 contract_processes.id
-	ListenPort  uint16               `json:"listen_port"`        // 唯一监听端口 (A-02)
-	CmdPattern  string               `json:"cmd_pattern"`        // /proc/<pid>/cmdline 匹配表达式
-	Downstreams []DownstreamEndpoint `json:"downstreams"`        // 下游端点清单
-	CSGAddr     string               `json:"csg_addr,omitempty"` // 可选 CSG 控制面端点 (<ip>:<port>)
+	ProcessID   uint64               `json:"process_id"`            // 主控 contract_processes.id
+	ListenPort  uint16               `json:"listen_port"`           // 唯一监听端口 (A-02)
+	CmdPattern  string               `json:"cmd_pattern"`           // /proc/<pid>/cmdline 匹配表达式
+	TargetPIDs  []uint32             `json:"target_pids,omitempty"` // M31 多实例目标 PID 集合（为空时退化为单 PID 解析）
+	Downstreams []DownstreamEndpoint `json:"downstreams"`           // 下游端点清单
+	CSGAddr     string               `json:"csg_addr,omitempty"`    // 可选 CSG 控制面端点 (<ip>:<port>)
 }
 
 // ProcessDiagStatus 下发监控后的实时定位与存量长连接诊断结果
 type ProcessDiagStatus struct {
-	ProcessID        uint64 `json:"process_id"`
-	Status           string `json:"status"`            // "MONITORING" | "NOT_FOUND" | "CAP_DENIED" | "ERROR"
-	ResolvedPID      uint32 `json:"resolved_pid"`      // 实时定位到的 OS PID
-	EstablishedConns int    `json:"established_conns"` // 指向已登记下游的存量 TCP_ESTABLISHED 连接数
-	NeedReconnect    bool   `json:"need_reconnect"`    // EstablishedConns > 0 时为 true
-	Message          string `json:"message"`
+	ProcessID        uint64   `json:"process_id"`
+	Status           string   `json:"status"`                  // "MONITORING" | "NOT_FOUND" | "CAP_DENIED" | "ERROR"
+	ResolvedPID      uint32   `json:"resolved_pid"`            // 实时定位到的主 OS PID
+	ResolvedPIDs     []uint32 `json:"resolved_pids,omitempty"` // M31 实际定位/挂载的 OS PID 列表
+	EstablishedConns int      `json:"established_conns"`       // 指向已登记下游的存量 TCP_ESTABLISHED 连接数
+	NeedReconnect    bool     `json:"need_reconnect"`          // EstablishedConns > 0 时为 true
+	Message          string   `json:"message"`
 }
 
 // SyncMonitorReq 下发声明式监控进程规格

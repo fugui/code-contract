@@ -23,6 +23,7 @@ import type {
   RegressionDefenseDTO,
 } from '../../types/dashboard';
 import { StaticComplianceCard } from './StaticComplianceCard';
+import { FiveStateRadarCard } from './FiveStateRadarCard';
 import './dashboard.css';
 
 const GRADE_MAP: Record<HealthGrade, { label: string; className: string }> = {
@@ -569,6 +570,22 @@ export const DashboardWorkbenchPage: React.FC<DashboardWorkbenchPageProps> = ({
               staticCompliance={data.static_compliance}
               onNavigateMrGates={handleNavigateMrGates}
               onNavigateProtoSources={handleNavigateProtoSources}
+            />
+          )}
+
+          {/* 视窗六 (M31): 统一契约五态健康雷达（严格仅统计 SHARED + CONFIRMED 权威环境） */}
+          {data.five_state_radar && (
+            <FiveStateRadarCard
+              radar={data.five_state_radar}
+              onNavigateCatalog={(state) =>
+                navigate(
+                  resolvePath(
+                    state
+                      ? `/proto-docs?view=unified-catalog&state=${encodeURIComponent(state)}`
+                      : '/proto-docs?view=unified-catalog'
+                  )
+                )
+              }
             />
           )}
         </div>

@@ -1,3 +1,5 @@
+import type { FiveStateRadarDTO } from './catalog';
+
 export type HealthGrade = 'EXCELLENT' | 'GOOD' | 'SUBHEALTH' | 'CRITICAL';
 
 export interface ViolatedProcessStat {
@@ -64,4 +66,5 @@ export interface DashboardOverviewDTO {
   contract_assets: ContractAssetsDTO;
   regression_defense: RegressionDefenseDTO;
   static_compliance?: StaticComplianceDTO;
+  five_state_radar?: FiveStateRadarDTO;
 }

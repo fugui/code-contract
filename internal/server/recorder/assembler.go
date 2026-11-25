@@ -180,6 +180,14 @@ func NewExchangeAssembler(
 	return a
 }
 
+// Decoder 返回关联的 Protobuf 动态解码注册表
+func (a *ExchangeAssembler) Decoder() *decoder.Registry {
+	if a == nil {
+		return nil
+	}
+	return a.dec
+}
+
 func (a *ExchangeAssembler) nextSeqNo(sessionID uint64) int64 {
 	val, ok := a.sessionSeqs.Load(sessionID)
 	if !ok {

@@ -5,7 +5,7 @@
 > **所属阶段**: 阶段三/四（TDD 实施路线与工程作战卡）  
 > **上位基线**: [`ADR-24` (v1.1.0)](../05-adr/24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md) · [`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.26.0, `F-38`, `SC-21`) · [`02-data-plane-and-cros-rpc-engine.md`](../02-design/02-data-plane-and-cros-rpc-engine.md) (v1.9.0, §7.5) · [`03-architecture-elements-and-topology.md`](../02-design/03-architecture-elements-and-topology.md) (v1.11.0, §7.6~§7.7) · [`04-control-plane-and-web-console.md`](../02-design/04-control-plane-and-web-console.md) (v1.15.0, §1.10, §4.12) · [`05-database-schema.md`](../02-design/05-database-schema.md) (v1.11.0) · [`01-http-api-contract.md`](../03-api/01-http-api-contract.md) (v1.11.0, §2.10, §3)  
 > **前置依赖**: `M30b`（已交付且全绿；本阶段按 `ADR-24` 新增 `ProcessMonitorSpec.TargetPIDs []uint32` 向后兼容扩展，严格保持 `cmd/agent` 九包物理防腐红线）  
-> **交付状态**: 📋 待实施
+> **交付状态**: ✅ 已交付
 
 ---
 

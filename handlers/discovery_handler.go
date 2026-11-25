@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -12,7 +13,10 @@ import (
 	commonAuth "code-common/backend/auth"
 	commonModels "code-common/backend/models"
 	"code-contract/internal/server/discovery"
+	"code-contract/internal/server/hub"
+	"code-contract/internal/server/recorder"
 	"code-contract/models"
+	"code-contract/pkg/agentproto"
 	"github.com/gin-gonic/gin"
 )
 
@@ -442,7 +446,164 @@ func EnrollDiscoveryProcesses(c *gin.Context) {
 	c.JSON(http.StatusOK, res)
 }
 
+type quickRecordDiscoveryReq struct {
+	AgentID              FlexUint64        `json:"agent_id" binding:"required"`
+	ProcessKeys          []string          `json:"process_keys" binding:"required"`
+	Name                 string            `json:"name"`
+	Scope                string            `json:"scope"`
+	DurationSec          int               `json:"duration_sec"`
+	MaxFrames            int               `json:"max_frames"`
+	MaxFrameBytes        int               `json:"max_frame_bytes"`
+	CSGAddr              string            `json:"csg_addr"`
+	RequestID            string            `json:"request_id" binding:"required"`
+	IdentityOverrides    map[string]uint64 `json:"identity_overrides"`
+	ConfirmLowConfidence bool              `json:"confirm_low_confidence"`
+}
+
+// QuickRecordDiscovery handles POST /api/discovery/quick-record (M31 4-step Saga).
+func QuickRecordDiscovery(c *gin.Context) {
+	if !discovery.IsV2Enabled(models.DB) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "现网发现 V2 功能未开启"})
+		return
+	}
+
+	var req quickRecordDiscoveryReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数错误: " + err.Error()})
+		return
+	}
+
+	uc := commonAuth.GetUserContext(c)
+	isAdmin := isCurrentUserAdmin(uc)
+	userID := uint(0)
+	operator := "system"
+	if uc != nil {
+		userID = uc.UserID
+		operator = uc.Username
+	}
+
+	var syncer discovery.AgentMonitorSyncer
+	if orch := GetGlobalOrchestrator(); orch != nil {
+		syncer = &orchestratorMonitorSyncer{orch: orch}
+	}
+
+	res, err := discovery.ExecuteQuickRecordSaga(c.Request.Context(), models.DB, GetDiscoveryService(), syncer, discovery.QuickRecordInput{
+		AgentID:              uint64(req.AgentID),
+		ProcessKeys:          req.ProcessKeys,
+		Name:                 req.Name,
+		Scope:                req.Scope,
+		DurationSec:          req.DurationSec,
+		MaxFrames:            req.MaxFrames,
+		MaxFrameBytes:        req.MaxFrameBytes,
+		CSGAddr:              strings.TrimSpace(req.CSGAddr),
+		RequestID:            strings.TrimSpace(req.RequestID),
+		IdentityOverrides:    req.IdentityOverrides,
+		ConfirmLowConfidence: req.ConfirmLowConfidence,
+		OperatorID:           userID,
+		IsAdmin:              isAdmin,
+	})
+	if err != nil {
+		var valErr *discovery.EnrollValidationError
+		if errors.As(err, &valErr) {
+			c.JSON(http.StatusUnprocessableEntity, valErr)
+			return
+		}
+		var leaseErr *hub.LeaseConflictError
+		if errors.As(err, &leaseErr) {
+			c.JSON(http.StatusConflict, gin.H{
+				"code":            "LEASE_CONFLICT",
+				"error":           leaseErr.Error(),
+				"lease_holder_id": leaseErr.LeaseHolderID,
+				"lease_type":      leaseErr.LeaseType,
+				"lease_ref_id":    leaseErr.LeaseRefID,
+				"expire_at":       leaseErr.ExpireAt,
+			})
+			return
+		}
+		if errors.Is(err, discovery.ErrQuickRecordTargetsEmpty) || errors.Is(err, discovery.ErrQuickRecordRequestIDEmpty) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		respondDiscoveryError(c, err)
+		return
+	}
+
+	if !res.IdempotentHit {
+		commonAudit.SetAuditContext(
+			c,
+			"contract_discovery",
+			"quick_record",
+			commonModels.AuditLevelP2,
+			fmt.Sprintf("用户 [%s] 在 Agent #%d 一键直录会话 #%d（进程 %d）", operator, req.AgentID, res.Session.ID, len(req.ProcessKeys)),
+			"recording_session",
+			strconv.FormatUint(res.Session.ID, 10),
+			res.Session.Name,
+			nil,
+			res.Session,
+		)
+	}
+
+	statusCode := http.StatusCreated
+	if res.IdempotentHit {
+		statusCode = http.StatusOK
+	}
+	c.JSON(statusCode, res)
+}
+
 // GetDiscoveryPhysical handles GET /api/discovery/physical.
+
+type orchestratorMonitorSyncer struct {
+	orch *recorder.Orchestrator
+}
+
+func (s *orchestratorMonitorSyncer) SyncMonitors(ctx context.Context, agt *models.Agent, req agentproto.SyncMonitorReq) ([]agentproto.ProcessDiagStatus, error) {
+	return s.orch.SyncAgentMonitors(ctx, agt, req)
+}
+
+func (s *orchestratorMonitorSyncer) AttachRecordingSession(ctx context.Context, session *models.RecordingSession, agt *models.Agent) {
+	s.orch.AttachRecordingSession(ctx, session, agt)
+}
+
+type simulationPlanReq struct {
+	AgentID       FlexUint64 `json:"agent_id" binding:"required"`
+	ArchProcessID FlexUint64 `json:"arch_process_id"`
+	ProcessKey    string     `json:"process_key"`
+	CSGAddr       string     `json:"csg_addr"`
+}
+
+// BuildDiscoverySimulationPlan handles POST /api/discovery/simulation-plan (M31).
+func BuildDiscoverySimulationPlan(c *gin.Context) {
+	var req simulationPlanReq
+	if err := c.ShouldBindJSON(&req); err != nil || uint64(req.AgentID) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数错误"})
+		return
+	}
+	if uint64(req.ArchProcessID) == 0 && strings.TrimSpace(req.ProcessKey) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "arch_process_id 与 process_key 至少提供一项"})
+		return
+	}
+
+	uc := commonAuth.GetUserContext(c)
+	isAdmin := isCurrentUserAdmin(uc)
+	userID := uint(0)
+	if uc != nil {
+		userID = uc.UserID
+	}
+
+	plan, err := discovery.BuildSimulationPlan(c.Request.Context(), models.DB, GetDiscoveryService(), discovery.SimulationPlanInput{
+		AgentID:       uint64(req.AgentID),
+		ArchProcessID: uint64(req.ArchProcessID),
+		ProcessKey:    strings.TrimSpace(req.ProcessKey),
+		CSGAddr:       strings.TrimSpace(req.CSGAddr),
+		UserID:        userID,
+		IsAdmin:       isAdmin,
+	})
+	if err != nil {
+		respondDiscoveryError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, plan)
+}
 func GetDiscoveryPhysical(c *gin.Context) {
 	var agentID uint64
 	if raw := strings.TrimSpace(c.Query("agent_id")); raw != "" {

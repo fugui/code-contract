@@ -5,15 +5,12 @@ import { useModuleUser } from '../../context/ModuleUserContext';
 import { useModulePath } from '../../hooks/useModulePath';
 import {
   AlertTriangle,
-  CheckCircle2,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   ChevronUp,
   Compass,
-  Download,
   GitFork,
-  Plus,
   RefreshCw,
   RotateCcw,
   Search,
@@ -22,8 +19,6 @@ import {
   X,
 } from 'lucide-react';
 import * as agentApi from '../../api/agent';
-import * as archApi from '../../api/arch';
-import { useToast } from '../../utils/toast';
 import type {
   Agent,
   CSGReconcileState,
@@ -176,27 +171,12 @@ export function filterReconciledSubscriptions(
   });
 }
 
-function buildDefaultSubsystemCode(agentName?: string): string {
-  const normalized = (agentName || '')
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9_-]+/g, '_')
-    .replace(/^[_-]+|[_-]+$/g, '');
-  if (normalized.length >= 2) {
-    return normalized.slice(0, 64);
-  }
-  return 'CSG_AUTO_SYS';
-}
-
 export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps> = ({
   agent,
   initialReport = null,
-  initialSubsystems,
   initialTab = 'services',
-  onImported,
   onClose,
 }) => {
-  const toast = useToast();
   const { user } = useModuleUser();
   const isAdmin =
     Boolean(user?.is_module_admin) ||
@@ -204,25 +184,10 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
     Boolean(user?.roles?.includes('contract_admin')) ||
     Boolean(user?.roles?.includes('super_admin'));
 
-  const hasInitialSubsystems = initialSubsystems !== undefined;
-  const resolvedInitialSubsystems = initialSubsystems ?? [];
-
   const [selectedCsgAddr, setSelectedCsgAddr] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [report, setReport] = useState<CSGTopologyReconcileResp | null>(initialReport);
-  const [subsystems, setSubsystems] = useState<Subsystem[]>(resolvedInitialSubsystems);
-  const [subsystemsLoaded, setSubsystemsLoaded] = useState<boolean>(hasInitialSubsystems);
-  const [subsystemsError, setSubsystemsError] = useState<string | null>(null);
-  const [selectedSubsystemId, setSelectedSubsystemId] = useState<string>(() =>
-    resolvedInitialSubsystems.length > 0 ? String(resolvedInitialSubsystems[0].id) : ''
-  );
-  const [showCreateSubsystem, setShowCreateSubsystem] = useState<boolean>(false);
-  const [creatingSubsystem, setCreatingSubsystem] = useState<boolean>(false);
-  const [newSubCode, setNewSubCode] = useState<string>(() => buildDefaultSubsystemCode(agent.name));
-  const [newSubName, setNewSubName] = useState<string>(() =>
-    agent.name?.trim() ? `${agent.name.trim()} 子系统` : 'CSG 自动发现子系统'
-  );
   const [selectedServices, setSelectedServices] = useState<Set<string>>(() => {
     const init = new Set<string>();
     initialReport?.services?.forEach((svc) => {
@@ -232,8 +197,6 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
     });
     return init;
   });
-  const [importDeps, setImportDeps] = useState(true);
-  const [importing, setImporting] = useState(false);
 
   // 布局、标签页与现网过滤状态
   const [activeTab, setActiveTab] = useState<'services' | 'subscriptions'>(initialTab);
@@ -255,23 +218,6 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
   const [subPageSize, setSubPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
 
   const masterCheckboxRef = useRef<HTMLInputElement | null>(null);
-
-  const loadSubsystems = useCallback(async () => {
-    setSubsystemsError(null);
-    try {
-      const res = await archApi.listSubsystems({ page: 1, page_size: 100 });
-      const items = res.items || [];
-      setSubsystems(items);
-      setSubsystemsLoaded(true);
-      if (items.length > 0) {
-        setSelectedSubsystemId((prev) => prev || String(items[0].id));
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setSubsystemsError(msg);
-      setSubsystemsLoaded(true);
-    }
-  }, []);
 
   const loadTopology = useCallback(
     async (explicitAddr?: string) => {
@@ -307,45 +253,7 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
     if (!initialReport && agent?.id) {
       void loadTopology();
     }
-    if (!hasInitialSubsystems) {
-      void loadSubsystems();
-    }
-  }, [agent?.id, initialReport, hasInitialSubsystems, loadTopology, loadSubsystems]);
-
-  const handleQuickCreateSubsystem = async () => {
-    if (!isAdmin || creatingSubsystem) return;
-    const code = newSubCode.trim().toUpperCase();
-    const name = newSubName.trim();
-    if (!/^[A-Z0-9_-]{2,64}$/.test(code)) {
-      toast.error('子系统编码格式不合法（须为 2~64 位大写字母、数字、下划线或中划线）');
-      return;
-    }
-    if (name.length === 0 || name.length > 128) {
-      toast.error('子系统名称不能为空且长度不得超过 128 个字符');
-      return;
-    }
-    setCreatingSubsystem(true);
-    setErrorMsg(null);
-    try {
-      const created = await archApi.createSubsystem({
-        code,
-        name,
-        description: '由 CSG 蓝图导入抽屉快速创建',
-      });
-      setSubsystems((prev) => [...prev, created]);
-      setSelectedSubsystemId(String(created.id));
-      setShowCreateSubsystem(false);
-      setSubsystemsError(null);
-      setSubsystemsLoaded(true);
-      toast.success(`已创建并选中子系统：${created.name} (${created.code})`);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setErrorMsg(msg);
-      toast.error(`创建子系统失败: ${msg}`);
-    } finally {
-      setCreatingSubsystem(false);
-    }
-  };
+  }, [agent?.id, initialReport, loadTopology]);
 
   const toggleService = (serviceName: string) => {
     setSelectedServices((prev) => {
@@ -357,36 +265,6 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
       }
       return next;
     });
-  };
-
-  const handleImport = async () => {
-    if (!isAdmin) return;
-    if (!selectedSubsystemId) {
-      toast.error('请先选择要导入归属的目标子系统');
-      return;
-    }
-    setImporting(true);
-    setErrorMsg(null);
-    try {
-      const res = await agentApi.importAgentCSGBlueprint(agent.id, {
-        subsystem_id: Number(selectedSubsystemId),
-        csg_addr: selectedCsgAddr || undefined,
-        service_names: Array.from(selectedServices),
-        import_dependencies: importDeps,
-      });
-      const createdProcs = res.created_processes ?? res.created_arch_processes ?? 0;
-      toast.success(
-        `CSG 蓝图导入完成：新增进程 ${createdProcs}、服务 ${res.created_services}、依赖 ${res.created_dependencies}`
-      );
-      await loadTopology();
-      onImported?.();
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setErrorMsg(msg);
-      toast.error(`CSG 蓝图导入失败: ${msg}`);
-    } finally {
-      setImporting(false);
-    }
   };
 
   const renderStateBadge = (state: CSGReconcileState) => {
@@ -612,17 +490,6 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
     }
   }, [isPartialFilteredSelected]);
 
-  const relatedSelectedUndeclaredSubCount = useMemo(() => {
-    if (selectedServices.size === 0) return 0;
-    let count = 0;
-    for (const sub of subscriptions) {
-      if (sub.state === 'UNDECLARED_IN_SSOT' && selectedServices.has(sub.service_name)) {
-        count += 1;
-      }
-    }
-    return count;
-  }, [subscriptions, selectedServices]);
-
   const selectFilteredUndeclared = () => {
     if (filteredUndeclaredNames.length === 0) return;
     setSelectedServices((prev) => {
@@ -647,10 +514,6 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
     } else {
       selectFilteredUndeclared();
     }
-  };
-
-  const clearAllSelected = () => {
-    setSelectedServices(new Set());
   };
 
   const hasActiveServiceFilter =
@@ -691,10 +554,6 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
     setSubSearch(serviceName);
     setSubPage(1);
   };
-
-  const isNoSubsystems = subsystemsLoaded && subsystems.length === 0 && !subsystemsError;
-  const showQuickCreateForm = showCreateSubsystem || isNoSubsystems;
-  const importDisabled = importing || selectedServices.size === 0 || !selectedSubsystemId;
 
   const visibleErrors = errorsExpanded ? discoveryErrors : discoveryErrors.slice(0, 2);
   const modulePath = useModulePath();
@@ -1454,208 +1313,42 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
         </div>
       )}
 
-      {/* ── Zone C: 底部固定导入操作区 ── */}
+      {/* ── Zone C: 只读导航底栏（M31 起下线蓝图一键导入，统一由 /discovery 工作台接管） ── */}
       {report && (
         <div data-testid="csg-import-footer" className="csg-footer">
-          {isAdmin ? (
-            <>
-              <div className="csg-footer-config-row">
-                <div className="csg-footer-subsystem-group">
-                  <label className="csg-footer-label" htmlFor="csg-import-subsystem-select">
-                    归属子系统：
-                  </label>
-                  <select
-                    id="csg-import-subsystem-select"
-                    value={selectedSubsystemId}
-                    onChange={(e) => setSelectedSubsystemId(e.target.value)}
-                    data-testid="csg-import-subsystem-select"
-                    className="csg-subsystem-select"
-                  >
-                    <option value="">请选择子系统</option>
-                    {subsystems.map((sub) => (
-                      <option key={sub.id} value={String(sub.id)}>
-                        {sub.name} ({sub.code})
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    disabled={creatingSubsystem}
-                    onClick={() => setShowCreateSubsystem((prev) => !prev)}
-                    data-testid="csg-toggle-create-subsystem-btn"
-                    className="csg-subsystem-btn"
-                  >
-                    <Plus size={13} />
-                    新建子系统
-                  </button>
-                </div>
-
-                <label className="csg-deps-toggle">
-                  <input
-                    type="checkbox"
-                    checked={importDeps}
-                    onChange={(e) => setImportDeps(e.target.checked)}
-                  />
-                  <span>同时导入现网订阅依赖边</span>
-                  <span className="csg-deps-hint">(含分层守卫)</span>
-                </label>
-              </div>
-
-              {subsystemsError && (
-                <div
-                  data-testid="csg-subsystems-error-banner"
-                  className="csg-banner-warning"
-                  style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
-                >
-                  <span>子系统列表加载失败：{subsystemsError}</span>
-                  <button
-                    type="button"
-                    onClick={() => void loadSubsystems()}
-                    className="csg-page-btn"
-                  >
-                    重试加载
-                  </button>
-                </div>
-              )}
-
-              {isNoSubsystems && (
-                <div
-                  data-testid="csg-empty-subsystem-hint"
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    fontSize: '12px',
-                    color: 'var(--color-warning)',
-                  }}
-                >
-                  <AlertTriangle size={14} />
-                  <span>当前架构库中暂无子系统，请先快速新建一个归属子系统后再一键导入蓝图。</span>
-                </div>
-              )}
-
-              {showQuickCreateForm && (
-                <div
-                  data-testid="csg-quick-create-subsystem-form"
-                  className="csg-quick-create-form"
-                >
-                  <input
-                    type="text"
-                    value={newSubCode}
-                    onChange={(e) => setNewSubCode(e.target.value)}
-                    placeholder="子系统编码 (如 LOCAL_DEMO)"
-                    data-testid="csg-new-subsystem-code-input"
-                    className="csg-search-input"
-                    style={{
-                      width: '180px',
-                      padding: '0 10px',
-                      fontFamily: 'var(--font-family-mono, monospace)',
-                    }}
-                  />
-                  <input
-                    type="text"
-                    value={newSubName}
-                    onChange={(e) => setNewSubName(e.target.value)}
-                    placeholder="子系统名称 (如 local-demo 子系统)"
-                    data-testid="csg-new-subsystem-name-input"
-                    className="csg-search-input"
-                    style={{ flex: 1, minWidth: '180px', padding: '0 10px' }}
-                  />
-                  <button
-                    type="button"
-                    disabled={creatingSubsystem}
-                    onClick={() => void handleQuickCreateSubsystem()}
-                    data-testid="csg-quick-create-subsystem-submit"
-                    className="csg-btn-primary"
-                    style={{ height: '32px', padding: '0 12px', fontSize: '12px' }}
-                  >
-                    {creatingSubsystem ? '创建中...' : '创建并选中'}
-                  </button>
-                  {subsystems.length > 0 && (
-                    <button
-                      type="button"
-                      disabled={creatingSubsystem}
-                      onClick={() => setShowCreateSubsystem(false)}
-                      className="csg-btn-secondary"
-                      style={{ height: '32px', padding: '0 10px', fontSize: '12px' }}
-                    >
-                      取消
-                    </button>
-                  )}
-                </div>
-              )}
-
-              <div className="csg-footer-action-row">
-                <div className="csg-footer-selection-summary">
-                  <span>
-                    已选待导入服务{' '}
-                    <strong style={{ color: 'var(--color-primary)' }}>
-                      {selectedServices.size}
-                    </strong>{' '}
-                    / {report.summary.undeclared_count} 个
-                  </span>
-                  {importDeps && relatedSelectedUndeclaredSubCount > 0 && (
-                    <span className="csg-deps-hint">
-                      · 预计关联导入 {relatedSelectedUndeclaredSubCount} 条未纳管订阅边
-                    </span>
-                  )}
-                  {selectedServices.size > 0 && (
-                    <button
-                      type="button"
-                      onClick={clearAllSelected}
-                      className="csg-link-btn csg-link-btn--muted"
-                    >
-                      清空已选
-                    </button>
-                  )}
-                </div>
-
-                <div className="csg-footer-buttons">
-                  {onClose && (
-                    <button type="button" onClick={onClose} className="csg-btn-secondary">
-                      关闭
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => void handleImport()}
-                    disabled={importDisabled}
-                    data-testid="csg-import-blueprint-btn"
-                    className="csg-btn-primary"
-                  >
-                    <Download size={14} />
-                    {importing ? '导入中...' : `一键导入 SSOT 蓝图 (${selectedServices.size})`}
-                  </button>
-                </div>
-              </div>
-            </>
-          ) : (
-            <div className="csg-footer-action-row" style={{ borderTop: 'none', paddingTop: 0 }}>
-              <div
-                data-testid="csg-admin-only-notice"
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  fontSize: '13px',
-                  color: 'var(--color-text-secondary)',
-                }}
-              >
-                <AlertTriangle size={15} style={{ color: 'var(--color-warning)' }} />
-                <span>蓝图写回 SSOT 仅限平台管理员 (contract_admin) 操作，当前为只读对账视图。</span>
-                {report.summary.undeclared_count === 0 && (
-                  <CheckCircle2 size={15} style={{ color: 'var(--color-success)' }} />
-                )}
-              </div>
-              {onClose && (
-                <div className="csg-footer-buttons">
-                  <button type="button" onClick={onClose} className="csg-btn-secondary">
-                    关闭
-                  </button>
-                </div>
-              )}
+          <div className="csg-footer-action-row" style={{ borderTop: 'none', paddingTop: 0 }}>
+            <div
+              data-testid={isAdmin ? 'csg-discovery-migration-notice' : 'csg-admin-only-notice'}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                fontSize: '13px',
+                color: 'var(--color-text-secondary)',
+              }}
+            >
+              <AlertTriangle size={15} style={{ color: 'var(--color-warning)' }} />
+              <span>
+                旧版蓝图导入入口已于 M31 正式下线，当前抽屉仅保留只读探测与三态对账。请前往现网发现工作台完成物理纳管、一键直录与服务认领。
+              </span>
             </div>
-          )}
+            <div className="csg-footer-buttons">
+              {onClose && (
+                <button type="button" onClick={onClose} className="csg-btn-secondary">
+                  关闭
+                </button>
+              )}
+              <Link
+                to={discoveryDeepLink}
+                data-testid="csg-goto-discovery-btn"
+                className="csg-btn-primary"
+                onClick={() => onClose?.()}
+              >
+                <Compass size={14} />
+                前往现网发现工作台纳管与直录
+              </Link>
+            </div>
+          </div>
         </div>
       )}
     </div>

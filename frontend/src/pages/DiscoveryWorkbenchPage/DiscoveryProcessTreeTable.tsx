@@ -18,6 +18,7 @@ export interface DiscoveryProcessTreeTableProps {
   selectedKeys?: Set<string>;
   onToggleSelectKey?: (processKey: string) => void;
   onToggleSelectAll?: (keys: string[], checked: boolean) => void;
+  onOpenSimulationPlan?: (group: DiscoveryProcessGroupDTO) => void;
 }
 
 const ROLE_META: Record<ObservedProcessRole, { label: string; cls: string }> = {
@@ -91,6 +92,7 @@ export const DiscoveryProcessTreeTable: React.FC<DiscoveryProcessTreeTableProps>
   selectedKeys,
   onToggleSelectKey,
   onToggleSelectAll,
+  onOpenSimulationPlan,
 }) => {
   const [roleFilter, setRoleFilter] = useState<'ALL' | ObservedProcessRole>('ALL');
   const [transportFilter, setTransportFilter] = useState<'ALL' | 'TCP' | 'MESH'>('ALL');
@@ -228,6 +230,7 @@ export const DiscoveryProcessTreeTable: React.FC<DiscoveryProcessTreeTableProps>
                 <th>传输制式</th>
                 <th>提供服务数</th>
                 <th>订阅下游数</th>
+                {scopeTab !== 'ldc' && onOpenSimulationPlan && <th>操作</th>}
               </tr>
             </thead>
             <tbody>
@@ -346,6 +349,20 @@ export const DiscoveryProcessTreeTable: React.FC<DiscoveryProcessTreeTableProps>
                       <td>
                         <span className="discovery-mono">{group.subscriptions.length}</span>
                       </td>
+                      {scopeTab !== 'ldc' && onOpenSimulationPlan && (
+                        <td>
+                          {!group.is_remote_ldc && (
+                            <button
+                              type="button"
+                              className="code-btn code-btn--secondary code-btn--xs"
+                              data-testid={`discovery-sim-plan-btn-${group.process_key}`}
+                              onClick={() => onOpenSimulationPlan(group)}
+                            >
+                              编排仿真任务
+                            </button>
+                          )}
+                        </td>
+                      )}
                     </tr>
 
                     {isExpanded && (
@@ -353,7 +370,7 @@ export const DiscoveryProcessTreeTable: React.FC<DiscoveryProcessTreeTableProps>
                         className="discovery-child-row"
                         data-testid={`discovery-child-row-${group.process_key}`}
                       >
-                        <td colSpan={scopeTab !== 'ldc' ? 8 : 7}>
+                        <td colSpan={scopeTab !== 'ldc' ? (onOpenSimulationPlan ? 9 : 8) : 7}>
                           <div className="discovery-child-section">
                             {group.services.length > 0 && (
                               <div className="discovery-child-block">

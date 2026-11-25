@@ -1,4 +1,5 @@
 import type { CSGEndpointInfo, CSGPortUsage } from './agent';
+import type { RecordingSession } from './traffic';
 
 export type ObservedProcessRole = 'SERVER' | 'CLIENT_ONLY' | 'DUAL';
 export type EnrollStatus =
@@ -284,4 +285,62 @@ export interface CSGPlaceholderMigrationRespDTO {
   rewritten_records: number;
   attribution_job_id?: number;
   blocked_items: BlockedPlaceholderModuleDTO[];
+}
+
+export interface CoverageWarningDTO {
+  code: 'NEED_RECONNECT' | 'LEGACY_AGENT_SINGLE_PID' | 'MESH_REQUIRES_DRT_UPROBE' | string;
+  process_id: number;
+  process_name: string;
+  transport?: string;
+  message: string;
+}
+
+export interface QuickRecordReqInput {
+  agent_id: number | string;
+  process_keys: string[];
+  name?: string;
+  scope?: string;
+  duration_sec?: number;
+  max_frames?: number;
+  max_frame_bytes?: number;
+  csg_addr?: string;
+  request_id: string;
+  identity_overrides?: Record<string, number>;
+  confirm_low_confidence?: boolean;
+}
+
+export interface QuickRecordResultDTO {
+  session: RecordingSession;
+  coverage_warnings: CoverageWarningDTO[];
+  enrolled_count: number;
+  target_drivers: string[];
+  idempotent_hit: boolean;
+}
+
+export interface DownstreamLiveStatusDTO {
+  service_name: string;
+  provider_kind: string;
+  resolved_endpoint?: string;
+  transport: 'TCP' | 'MESH' | 'OFFLINE' | string;
+  is_online: boolean;
+  has_online_conflict: boolean;
+  note?: string;
+}
+
+export interface SimulationPlanReqInput {
+  agent_id: number | string;
+  arch_process_id?: number | string;
+  process_key?: string;
+  csg_addr?: string;
+}
+
+export interface SimulationPlanResultDTO {
+  agent_id: number;
+  arch_process_id: number;
+  process_id?: number;
+  process_name: string;
+  recommended_strategy: 'PASSTHROUGH' | 'CLIENT_INJECT' | 'PUB_STUB' | 'MOCK_SERVER' | string;
+  rationale: string;
+  prefill_replay_spec: Record<string, unknown>;
+  downstream_statuses: DownstreamLiveStatusDTO[];
 }

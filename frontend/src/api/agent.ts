@@ -7,8 +7,6 @@ import type {
   PaginatedResponse,
   BatchProcessMountReq,
   CSGTopologyReconcileResp,
-  CSGImportBlueprintReq,
-  CSGImportBlueprintResult,
 } from '../types';
 
 export async function listAgents(params?: {
@@ -216,17 +214,4 @@ export async function getAgentCSGTopology(
 ) {
   const qs = csgAddr ? `?csg_addr=${encodeURIComponent(csgAddr)}` : '';
   return apiRequest<CSGTopologyReconcileResp>(`/agents/${agentId}/csg/topology${qs}`);
-}
-
-export async function importAgentCSGBlueprint(
-  agentId: string | number,
-  data: CSGImportBlueprintReq
-) {
-  return apiRequest<CSGImportBlueprintResult>(
-    `/agents/${agentId}/csg/import-blueprint`,
-    {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }
-  );
 }
