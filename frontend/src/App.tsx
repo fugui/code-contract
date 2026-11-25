@@ -17,6 +17,7 @@ import {
   BookOpen,
   Code2,
   ShieldCheck,
+  Compass,
 } from 'lucide-react';
 import {
   AUTH_TOKEN_KEY,
@@ -55,6 +56,7 @@ import ProtoSchemaWorkbenchPage, {
 import AgentManagementPage from './pages/AgentManagementPage';
 import AdminSettingsPage from './pages/AdminSettingsPage';
 import { GoldenSuitesWorkbenchPage } from './pages/GoldenSuitesWorkbenchPage';
+import DiscoveryWorkbenchPage from './pages/DiscoveryWorkbenchPage';
 import type { CurrentUserProfile } from './types';
 
 // 安装全局 fetch 拦截器：在微前端嵌入模式下自动将 /api/* 重写为 /<MODULE_KEY>/api/* 并注入 Bearer Token
@@ -176,6 +178,8 @@ const renderNavIcon = (path: string) => {
       return <RotateCcw size={16} />;
     case '/topology':
       return <Network size={16} />;
+    case '/discovery':
+      return <Compass size={16} />;
     case '/architecture':
       return <Layers size={16} />;
     case '/proto-docs':
@@ -229,6 +233,8 @@ export const EmbeddedRoutes: React.FC = () => {
       <Route path={`${MODULE_BASE_PATH}/replay`} element={<ReplayWorkbenchPage />} />
       <Route path="/golden-suites" element={<GoldenSuitesWorkbenchPage />} />
       <Route path={`${MODULE_BASE_PATH}/golden-suites`} element={<GoldenSuitesWorkbenchPage />} />
+      <Route path="/discovery" element={<DiscoveryWorkbenchPage />} />
+      <Route path={`${MODULE_BASE_PATH}/discovery`} element={<DiscoveryWorkbenchPage />} />
       <Route path="/topology" element={<TopologyWorkbenchPage />} />
       <Route path={`${MODULE_BASE_PATH}/topology`} element={<TopologyWorkbenchPage />} />
       <Route path="/architecture" element={<ArchitectureRouteWrapper isEmbedded />} />
@@ -377,6 +383,7 @@ export const StandaloneShell: React.FC<{ onLogout: () => void }> = ({ onLogout }
             <Route path="/debug" element={<TrafficDebugWorkbenchPage />} />
             <Route path="/replay" element={<ReplayWorkbenchPage />} />
             <Route path="/golden-suites" element={<GoldenSuitesWorkbenchPage />} />
+            <Route path="/discovery" element={<DiscoveryWorkbenchPage />} />
             <Route path="/topology" element={<TopologyWorkbenchPage />} />
             <Route path="/architecture" element={<ArchitectureRouteWrapper />} />
             <Route path="/proto-docs" element={<ProtoDocsWorkbenchPage />} />

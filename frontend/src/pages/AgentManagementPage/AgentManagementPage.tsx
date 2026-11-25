@@ -849,6 +849,17 @@ export const AgentManagementPage: React.FC<AgentManagementPageProps> = ({
                       <button
                         type="button"
                         className="code-btn code-btn--secondary code-btn--xs"
+                        data-testid="open-discovery-workbench-link"
+                        onClick={() =>
+                          navigate(modulePath(`/discovery?agent_id=${selectedAgent.id}`))
+                        }
+                        title="在全新一级「现网发现」工作台中查看进程主轴视图与快照 Diff"
+                      >
+                        🧭 在现网发现中查看 →
+                      </button>
+                      <button
+                        type="button"
+                        className="code-btn code-btn--secondary code-btn--xs"
                         data-testid="open-csg-topology-btn"
                         onClick={() => setCsgDrawerOpen(true)}
                       >

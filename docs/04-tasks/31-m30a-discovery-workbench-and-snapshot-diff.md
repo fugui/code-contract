@@ -5,7 +5,7 @@
 > **所属阶段**: 阶段三/四（TDD 实施路线与工程作战卡）  
 > **上位基线**: [`ADR-24` (v1.1.0)](../05-adr/24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md) · [`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.26.0, `F-15`, `F-36`, `SC-19`) · [`01-system-architecture.md`](../02-design/01-system-architecture.md) (v1.12.0) · [`04-control-plane-and-web-console.md`](../02-design/04-control-plane-and-web-console.md) (v1.15.0, §1.10, §4.1, §4.12) · [`05-database-schema.md`](../02-design/05-database-schema.md) (v1.11.0, 表 #31 `contract_discovery_snapshots`) · [`01-http-api-contract.md`](../03-api/01-http-api-contract.md) (v1.11.0, §2.10)  
 > **前置依赖**: `M29`（已交付；本阶段纯只读增强，不受 `discovery.v2_enabled` 开关控制，**不改动任何 `cmd/agent` 或 `pkg/*` 代码**）  
-> **交付状态**: 📋 待实施
+> **交付状态**: ✅ 已交付
 
 ---
 

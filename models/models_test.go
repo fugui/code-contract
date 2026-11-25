@@ -429,8 +429,8 @@ func TestCleanRebuild15Tables_MultiSharedEnvAndPortPartialUnique(t *testing.T) {
 	}
 
 	bizTables := BusinessTableNames()
-	if len(bizTables) != 30 {
-		t.Fatalf("BusinessTableNames() 期望返回 30 张业务表，实际为 %d", len(bizTables))
+	if len(bizTables) != 31 {
+		t.Fatalf("BusinessTableNames() 期望返回 31 张业务表，实际为 %d", len(bizTables))
 	}
 	for _, tbl := range bizTables {
 		if tbl == (ModuleSetting{}).TableName() {
@@ -471,6 +471,13 @@ func TestCleanRebuild15Tables_MultiSharedEnvAndPortPartialUnique(t *testing.T) {
 	}
 	if err := db.Where("setting_key = ?", "default_probe_desired_state_private").First(&sPrivate).Error; err != nil || sPrivate.SettingVal != "ARMED" {
 		t.Fatalf("默认预挂策略 default_probe_desired_state_private 未初始化为 ARMED: %v, val: %s", err, sPrivate.SettingVal)
+	}
+	var sRetention, sPinLimit ModuleSetting
+	if err := db.Where("setting_key = ?", "discovery.snapshot_retention_count").First(&sRetention).Error; err != nil || sRetention.SettingVal != "50" {
+		t.Fatalf("discovery.snapshot_retention_count 未初始化为 50: %v, val: %s", err, sRetention.SettingVal)
+	}
+	if err := db.Where("setting_key = ?", "discovery.snapshot_pin_limit").First(&sPinLimit).Error; err != nil || sPinLimit.SettingVal != "20" {
+		t.Fatalf("discovery.snapshot_pin_limit 未初始化为 20: %v, val: %s", err, sPinLimit.SettingVal)
 	}
 
 	// 3. 创建标准架构进程组与标准业务进程 P1(:18080), P2(:0), P3(:0)

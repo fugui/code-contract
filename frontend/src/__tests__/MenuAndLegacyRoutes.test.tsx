@@ -9,7 +9,7 @@ function getRedirectTarget(html: string): string | null {
   return match ? match[1].replace(/&amp;/g, '&') : null;
 }
 
-export function testMenuStructure_FiveGroupsThirteenItems_ProtoGovernanceSplit(): void {
+export function testMenuStructure_FiveGroupsFourteenItems_DiscoveryFirstInArchTwin(): void {
   // 1. 严格包含 全局概览、架构数字孪生、Proto 契约治理、契约核验与回归、环境与治理 5 个分组
   expect(contractMenuConfig.groups.length).toBe(5);
   expect(contractMenuConfig.groups[0].title).toBe('全局概览');
@@ -19,17 +19,18 @@ export function testMenuStructure_FiveGroupsThirteenItems_ProtoGovernanceSplit()
   expect(contractMenuConfig.groups[4].title).toBe('环境与治理');
 
   const allItems = contractMenuConfig.groups.flatMap((g) => g.items);
-  // 严格共 13 个子项（ADR-19 将 Proto 域拆分为 4 个独立工作台）
-  expect(allItems.length).toBe(13);
+  // 严格共 14 个子项（ADR-24 在架构数字孪生首位新增 /discovery 现网发现）
+  expect(allItems.length).toBe(14);
 
   const group0Paths = contractMenuConfig.groups[0].items.map((i) => i.path);
   expect(group0Paths).toEqual(['/dashboard']);
   expect(contractMenuConfig.groups[0].items[0].label).toBe('治理大盘');
 
   const group1Paths = contractMenuConfig.groups[1].items.map((i) => i.path);
-  expect(group1Paths).toEqual(['/topology', '/architecture']);
-  expect(contractMenuConfig.groups[1].items[0].label).toBe('架构拓扑');
-  expect(contractMenuConfig.groups[1].items[1].label).toBe('架构元素');
+  expect(group1Paths).toEqual(['/discovery', '/topology', '/architecture']);
+  expect(contractMenuConfig.groups[1].items[0].label).toBe('现网发现');
+  expect(contractMenuConfig.groups[1].items[1].label).toBe('架构拓扑');
+  expect(contractMenuConfig.groups[1].items[2].label).toBe('架构元素');
 
   const group2Paths = contractMenuConfig.groups[2].items.map((i) => i.path);
   expect(group2Paths).toEqual(['/proto-docs', '/proto-sources', '/proto-governance', '/schemas']);
@@ -200,12 +201,20 @@ export function testLegacyDeepLinks_LosslessRedirect(): void {
     expect(getRedirectTarget(govHtml)).toBeNull();
     expect(govHtml).toContain('proto-governance-workbench-page');
     expect(govHtml).not.toContain('上传描述集 (.pb)');
+
+    const discHtml = renderToString(
+      <MemoryRouter initialEntries={['/discovery']}>
+        <EmbeddedRoutes />
+      </MemoryRouter>
+    );
+    expect(getRedirectTarget(discHtml)).toBeNull();
+    expect(discHtml).toContain('discovery-workbench-page');
   }
 }
 
 describe('MenuAndLegacyRoutes Test Suite', () => {
-  it('TC-MENU-01: 五组十三项菜单结构（含 Proto 契约治理分组）与 /dashboard 默认落地路径校验', () => {
-    testMenuStructure_FiveGroupsThirteenItems_ProtoGovernanceSplit();
+  it('TC-MENU-01: 五组十四项菜单结构（含现网发现首位入口）与 /dashboard 默认落地路径校验', () => {
+    testMenuStructure_FiveGroupsFourteenItems_DiscoveryFirstInArchTwin();
   });
 
   it('TC-MENU-02: 历史旧路由与 /schemas?tab=* 带参及 Hash 无损平滑重定向校验', () => {

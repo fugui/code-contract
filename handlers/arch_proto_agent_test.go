@@ -76,6 +76,7 @@ func setupRouterAndDB(t *testing.T) (*gin.Engine, *gorm.DB) {
 	// 实例化 Hub 管理器并注入全局
 	mgr := hub.NewManager(db, &config.AppConfig)
 	handlers.ResetGlobalHubManager(mgr)
+	handlers.ResetGlobalDiscoveryService(nil)
 
 	decReg, _ := decoder.NewRegistry(db)
 	handlers.ResetGlobalDecoderRegistry(decReg)
@@ -264,6 +265,14 @@ func RegisterRoutesForTest(r *gin.Engine) {
 		protected.GET("/agents/:id/discover-processes", handlers.DiscoverAgentProcesses)
 		protected.GET("/agents/:id/csg/topology", handlers.GetAgentCSGTopology)
 		protected.POST("/agents/:id/csg/import-blueprint", requireAdmin, handlers.ImportAgentCSGBlueprint)
+
+		// 6.1 现网发现工作台、持久化快照与双模 Diff 域 (M30a)
+		protected.GET("/discovery/live", handlers.GetDiscoveryLive)
+		protected.GET("/discovery/snapshots", handlers.ListDiscoverySnapshots)
+		protected.POST("/discovery/snapshots", handlers.CreateDiscoverySnapshot)
+		protected.GET("/discovery/snapshots/diff", handlers.DiffDiscoverySnapshots)
+		protected.PATCH("/discovery/snapshots/:id", handlers.UpdateDiscoverySnapshot)
+		protected.DELETE("/discovery/snapshots/:id", handlers.DeleteDiscoverySnapshot)
 		protected.POST("/agents/:id/lease/force-unlock", requireAdmin, handlers.ForceUnlockAgentLease)
 		protected.PUT("/agents/:id/process-mounts", handlers.BatchUpdateProcessMounts)
 		protected.POST("/agents/:id/probes/disarm-all", handlers.DisarmAllProbes)

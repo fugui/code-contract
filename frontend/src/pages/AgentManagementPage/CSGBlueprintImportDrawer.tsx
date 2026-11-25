@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Drawer } from '@code/common';
 import { useModuleUser } from '../../context/ModuleUserContext';
+import { useModulePath } from '../../hooks/useModulePath';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -695,11 +697,26 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
   const importDisabled = importing || selectedServices.size === 0 || !selectedSubsystemId;
 
   const visibleErrors = errorsExpanded ? discoveryErrors : discoveryErrors.slice(0, 2);
+  const modulePath = useModulePath();
+  const discoveryDeepLink = modulePath(`/discovery?agent_id=${agent.id}`);
 
   return (
     <div className="csg-drawer-shell">
       {/* ── Zone A: 顶部固定探测栏 + 告警 ── */}
       <div className="csg-drawer-top">
+        <div className="csg-discovery-deeplink-banner" data-testid="csg-discovery-deeplink-banner">
+          <span>
+            M30a 已确立「现网发现」工作台为进程主轴视图与快照 Diff 的单一权威入口（当前抽屉保留轻量摘要与兼容导入）：
+          </span>
+          <Link
+            to={discoveryDeepLink}
+            data-testid="csg-discovery-deeplink-anchor"
+            className="code-btn code-btn--primary code-btn--xs"
+            onClick={() => onClose?.()}
+          >
+            🧭 在现网发现中查看 →
+          </Link>
+        </div>
         <div className="csg-probe-bar">
           <span className="csg-probe-node-label">
             <Compass size={15} style={{ color: 'var(--color-primary)' }} />

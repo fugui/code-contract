@@ -11,7 +11,7 @@ export const DEFAULT_ENTRY_PATH = `${MODULE_BASE_PATH}/dashboard`;
 export const DEFAULT_STANDALONE_PATH = '/dashboard';
 
 // 标准侧边栏菜单契约（由 CodeBench 宿主在运行时通过 remoteEntry.js -> ./menu 动态拉取）
-// 按照 ADR-14 与 ADR-19 演进为「全局概览 ➔ 架构数字孪生 ➔ Proto 契约治理 ➔ 契约核验与回归 ➔ 环境与治理」5 组 13 项结构 (F-15, F-25)
+// 按照 ADR-14、ADR-19 与 ADR-24 演进为「全局概览 ➔ 架构数字孪生 ➔ Proto 契约治理 ➔ 契约核验与回归 ➔ 环境与治理」5 组 14 项结构 (F-15, F-25, F-36)
 export const contractMenuConfig: ContractMenuConfig = {
   moduleKey: MODULE_KEY,
   moduleName: MODULE_TITLE,
@@ -30,6 +30,11 @@ export const contractMenuConfig: ContractMenuConfig = {
     {
       title: '架构数字孪生',
       items: [
+        {
+          path: '/discovery',
+          label: '现网发现',
+          icon: 'M12 2a10 10 0 100 20 10 10 0 000-20zm3.5 6.5l-2.1 5.4-5.4 2.1 2.1-5.4 5.4-2.1z',
+        },
         {
           path: '/topology',
           label: '架构拓扑',

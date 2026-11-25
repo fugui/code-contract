@@ -189,8 +189,8 @@ func (s *ReplayScheduler) CreateAndExecuteTask(
 		}
 	}
 
-	if err := ValidateReplayProcessCompatibility(
-		userID, isAdmin, &session, records, sourceSnap, &targetProc, targetProc.Agent, archProcModules, provideMap,
+	if err := ValidateReplayProcessCompatibilityWithStrategy(
+		userID, isAdmin, &session, records, sourceSnap, &targetProc, targetProc.Agent, archProcModules, provideMap, strategy,
 	); err != nil {
 		return nil, err
 	}

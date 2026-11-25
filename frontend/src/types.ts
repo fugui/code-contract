@@ -1,5 +1,6 @@
 export * from './types/arch';
 export * from './types/agent';
+export * from './types/discovery';
 export * from './types/schema';
 export * from './types/schema_tree';
 export * from './types/traffic';

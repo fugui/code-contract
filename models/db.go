@@ -19,6 +19,7 @@ var DB *gorm.DB
 // 供 cmd/resetdb 与 scripts/seed-large-topology 等清表工具共用，作为单一真实源。
 func BusinessTableNames() []string {
 	return []string{
+		DiscoverySnapshot{}.TableName(),
 		Notification{}.TableName(),
 		MRCheckRun{}.TableName(),
 		CheckViolation{}.TableName(),
@@ -102,6 +103,7 @@ func SetupWithDB(db *gorm.DB) error {
 		&CheckViolation{},
 		&MRCheckRun{},
 		&Notification{},
+		&DiscoverySnapshot{},
 	); err != nil {
 		return fmt.Errorf("迁移数据表结构失败: %w", err)
 	}
@@ -512,6 +514,9 @@ END $$;
 	if err := ensureM26MRGateAndNotificationConstraints(DB); err != nil {
 		return fmt.Errorf("初始化 M26 MR 门禁与通知约束失败: %w", err)
 	}
+	if err := ensureM30aDiscoveryConstraints(DB); err != nil {
+		return fmt.Errorf("初始化 M30a 现网发现快照约束失败: %w", err)
+	}
 	if err := EnsureBuiltinCheckRules(DB); err != nil {
 		return fmt.Errorf("初始化内置静态检查规则失败: %w", err)
 	}
@@ -521,17 +526,23 @@ END $$;
 	if err := ensureM24DefaultSettings(DB); err != nil {
 		log.Printf("[%s] 提示: 初始化 M24 安全/LLM 默认参数未完成: %v", config.ServiceName, err)
 	}
+	if err := ensureM30aDefaultSettings(DB); err != nil {
+		log.Printf("[%s] 提示: 初始化 M30a 现网发现默认参数未完成: %v", config.ServiceName, err)
+	}
 
 	return nil
 }
 
-// EnsureDefaultSettings 幂等恢复模块运行参数与 M24 安全/LLM 默认配置项
+// EnsureDefaultSettings 幂等恢复模块运行参数与 M24/M30a 默认配置项
 func EnsureDefaultSettings(db *gorm.DB) error {
 	if err := seedDefaultSettings(db); err != nil {
 		return fmt.Errorf("初始化默认运行参数失败: %w", err)
 	}
 	if err := ensureM24DefaultSettings(db); err != nil {
 		return fmt.Errorf("初始化 M24 安全/LLM 默认参数失败: %w", err)
+	}
+	if err := ensureM30aDefaultSettings(db); err != nil {
+		return fmt.Errorf("初始化 M30a 现网发现默认参数未完成: %w", err)
 	}
 	return nil
 }

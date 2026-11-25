@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"code-contract/models"
+	"code-contract/pkg/agentproto"
 )
 
 var (
@@ -28,6 +29,24 @@ func ValidateReplayProcessCompatibility(
 	targetAgent *models.Agent,
 	archProcModules map[uint64][]uint64, // key: ArchProcessID -> []ModuleID
 	provideMap map[string]uint64, // key: "serviceName" 或 "serviceName:operation" -> DstModuleID
+) error {
+	return ValidateReplayProcessCompatibilityWithStrategy(
+		callerID, isAdmin, session, selectedRecords, sourceSnap, targetProc, targetAgent, archProcModules, provideMap, agentproto.CSGStrategyPassthrough,
+	)
+}
+
+// ValidateReplayProcessCompatibilityWithStrategy 在兼容校验中感知 CSG 重放策略（CLIENT_INJECT 依赖 CSG Sub 动态寻址，放行静态 ListenPort=0 以由 Agent 返回精确 422 诊断）
+func ValidateReplayProcessCompatibilityWithStrategy(
+	callerID uint,
+	isAdmin bool,
+	session *models.RecordingSession,
+	selectedRecords []models.TrafficRecord,
+	sourceSnap *models.ProcessSnapshotItem, // 优先从 session.ProcessSnapshots 提取
+	targetProc *models.Process,
+	targetAgent *models.Agent,
+	archProcModules map[uint64][]uint64, // key: ArchProcessID -> []ModuleID
+	provideMap map[string]uint64, // key: "serviceName" 或 "serviceName:operation" -> DstModuleID
+	strategy agentproto.CSGReplayStrategy,
 ) error {
 	if session == nil || targetProc == nil || targetAgent == nil {
 		return errors.New("400 Bad Request: 缺少必要参数")
@@ -52,8 +71,8 @@ func ValidateReplayProcessCompatibility(
 		return ErrSourceProcessSnapshotNotFound
 	}
 
-	// 3. 目标挂载进程必须具备有效监听端口 (> 0，纯客户端进程无法接收重放注入)
-	if targetProc.EffectiveListenPort <= 0 {
+	// 3. 目标挂载进程必须具备有效监听端口 (> 0，纯客户端进程无法接收重放注入；CLIENT_INJECT 改由 CSG 动态寻址)
+	if strategy != agentproto.CSGStrategyClientInject && targetProc.EffectiveListenPort <= 0 {
 		return ErrClientOnlyReplayTarget
 	}
 
