@@ -61,6 +61,21 @@ type ArchProcessGroup struct {
 
 func (ArchProcessGroup) TableName() string { return config.TablePrefix + "arch_process_groups" }
 
+// ArchProcess 角色、生命周期与来源常量 (ADR-24)
+const (
+	ArchProcRoleUnknown    = "UNKNOWN"
+	ArchProcRoleServer     = "SERVER"
+	ArchProcRoleClientOnly = "CLIENT_ONLY"
+	ArchProcRoleDual       = "DUAL"
+
+	ArchProcLifecycleProvisional = "PROVISIONAL"
+	ArchProcLifecycleConfirmed   = "CONFIRMED"
+
+	ArchProcOriginManual    = "MANUAL"
+	ArchProcOriginDiscovery = "DISCOVERY"
+	ArchProcOriginMigrated  = "MIGRATED"
+)
+
 // 4. ArchProcess 全局架构标准业务进程蓝图表 (contract_arch_processes)
 type ArchProcess struct {
 	ID                      uint64            `gorm:"primaryKey;autoIncrement" json:"id"`
@@ -71,6 +86,12 @@ type ArchProcess struct {
 	DefaultListenPort       int               `gorm:"not null;default:0;check:chk_contract_arch_proc_port,default_listen_port >= 0 AND default_listen_port <= 65535" json:"default_listen_port"` // 0 表示纯客户端进程；1..65535 为默认监听端口
 	DefaultCmdPattern       string            `gorm:"size:512;not null;default:''" json:"default_cmd_pattern"`                                                                                   // 默认 /proc/<pid>/cmdline 匹配特征
 	DefaultExtraDownstreams datatypes.JSON    `gorm:"type:jsonb;not null;default:'[]'" json:"default_extra_downstreams"`                                                                         // 默认补充下游 ["IP:Port"]
+	DeclaredRole            string            `gorm:"size:16;not null;default:'UNKNOWN'" json:"declared_role"`
+	IdentityFingerprint     string            `gorm:"size:64;not null;default:'';index:idx_contract_arch_proc_fp,priority:2" json:"identity_fingerprint"`
+	FingerprintVersion      int16             `gorm:"not null;default:0;index:idx_contract_arch_proc_fp,priority:1" json:"fingerprint_version"`
+	Lifecycle               string            `gorm:"size:16;not null;default:'CONFIRMED'" json:"lifecycle"`
+	Origin                  string            `gorm:"size:16;not null;default:'MANUAL'" json:"origin"`
+	OriginAgentID           *uint64           `gorm:"index:idx_contract_arch_proc_origin_agent" json:"origin_agent_id,omitempty"`
 	SortOrder               int               `gorm:"not null;default:0" json:"sort_order"`
 	Description             string            `gorm:"type:text" json:"description"`
 	Modules                 []Module          `gorm:"foreignKey:ArchProcessID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL" json:"modules,omitempty"` // 组装承载的 FM 功能模块集合 (1:N)
@@ -141,25 +162,61 @@ type DownstreamConsumer struct {
 	SubsystemName string `json:"subsystem_name,omitempty"`
 }
 
+// ModuleService 来源与 .pb 撮合置信度常量 (ADR-24)
+const (
+	ServiceSourceManual        = "MANUAL"
+	ServiceSourceCSGDiscovered = "CSG_DISCOVERED"
+	ServiceSourceMigrated      = "MIGRATED"
+
+	ProtoMatchConfNone        = "NONE"
+	ProtoMatchConfFingerprint = "FINGERPRINT"
+	ProtoMatchConfHeuristic   = "HEURISTIC"
+	ProtoMatchConfExact       = "EXACT"
+	ProtoMatchConfManual      = "MANUAL"
+)
+
+// Uint64Ptr 构造 uint64 指针辅助函数
+func Uint64Ptr(v uint64) *uint64 {
+	return &v
+}
+
 type ModuleService struct {
-	ID                  uint64               `gorm:"primaryKey;autoIncrement" json:"id"`
-	ModuleID            uint64               `gorm:"not null;index:idx_contract_mod_svc_mod" json:"module_id"`
-	Module              *Module              `gorm:"foreignKey:ModuleID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE" json:"module,omitempty"`
-	ContractID          *uint64              `gorm:"index:idx_contract_mod_svc_contract" json:"contract_id,omitempty"` // 指向多实现服务契约 (ADR-16)，NULL 表示独占服务 (EXCLUSIVE)
-	Contract            *ServiceContract     `gorm:"foreignKey:ContractID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT" json:"contract,omitempty"`
-	ServiceName         string               `gorm:"size:128;not null" json:"service_name"`                                                        // 运行期实际发布的 CROS 服务名（独占全局唯一；多实现可共享契约名或自定义唯一名如 DH_SyncService）
-	ProtoServiceName    string               `gorm:"size:128;not null;default:'';index:idx_contract_mod_svc_proto_name" json:"proto_service_name"` // 可选 .pb service 定义全名（当运行期 CSG 64B 服务名与 .pb 名不同时作为解码别名前映射）
-	ImplKey             string               `gorm:"size:64;not null;default:''" json:"impl_key"`                                                  // 多实现时必填身份标识，独占服务恒为空串
-	IsCustomServiceName bool                 `gorm:"not null;default:false" json:"is_custom_service_name"`                                         // true 表示该多实现服务使用了不同于契约 .pb 名的自定义运行期服务名
-	ContractServiceName string               `gorm:"-" json:"contract_service_name,omitempty"`                                                     // 多实现时填充关联契约名 (.pb 定义服务名)
-	DiffIgnorePaths     datatypes.JSON       `gorm:"type:jsonb;not null;default:'[]'" json:"diff_ignore_paths"`                                    // 服务级默认回归 Diff 忽略字段路径 []string (F-14)
-	Description         string               `gorm:"type:text" json:"description"`
-	DownstreamCount     int                  `gorm:"-" json:"downstream_count"`               // 被下游模块依赖数量
-	DownstreamModules   []string             `gorm:"-" json:"downstream_modules,omitempty"`   // 被下游模块名称清单
-	DownstreamConsumers []DownstreamConsumer `gorm:"-" json:"downstream_consumers,omitempty"` // 被下游模块结构化清单
-	CreatedBy           uint                 `gorm:"not null;default:0" json:"created_by"`
-	CreatedAt           time.Time            `json:"created_at"`
-	UpdatedAt           time.Time            `json:"updated_at"`
+	ID                   uint64               `gorm:"primaryKey;autoIncrement" json:"id"`
+	ModuleID             *uint64              `gorm:"index:idx_contract_mod_svc_mod" json:"module_id,omitempty"`
+	Module               *Module              `gorm:"foreignKey:ModuleID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT" json:"module,omitempty"`
+	ContractID           *uint64              `gorm:"index:idx_contract_mod_svc_contract" json:"contract_id,omitempty"` // 指向多实现服务契约 (ADR-16)，NULL 表示独占服务 (EXCLUSIVE)
+	Contract             *ServiceContract     `gorm:"foreignKey:ContractID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT" json:"contract,omitempty"`
+	ServiceName          string               `gorm:"size:128;not null" json:"service_name"`                                                        // 运行期实际发布的 CROS 服务名（独占全局唯一；多实现可共享契约名或自定义唯一名如 DH_SyncService）
+	ProtoServiceName     string               `gorm:"size:128;not null;default:'';index:idx_contract_mod_svc_proto_name" json:"proto_service_name"` // 可选 .pb service 定义全名（当运行期 CSG 64B 服务名与 .pb 名不同时作为解码别名前映射）
+	ImplKey              string               `gorm:"size:64;not null;default:''" json:"impl_key"`                                                  // 多实现时必填身份标识，独占服务恒为空串
+	IsCustomServiceName  bool                 `gorm:"not null;default:false" json:"is_custom_service_name"`                                         // true 表示该多实现服务使用了不同于契约 .pb 名的自定义运行期服务名
+	Source               string               `gorm:"size:24;not null;default:'MANUAL'" json:"source"`
+	ProtoMatchConfidence string               `gorm:"size:16;not null;default:'NONE'" json:"proto_match_confidence"`
+	ProtoSuggestedName   string               `gorm:"size:128;not null;default:''" json:"proto_suggested_name"`
+	ClaimedAt            *time.Time           `json:"claimed_at,omitempty"`
+	ClaimedBy            uint                 `gorm:"not null;default:0" json:"claimed_by"`
+	ContractServiceName  string               `gorm:"-" json:"contract_service_name,omitempty"`                  // 多实现时填充关联契约名 (.pb 定义服务名)
+	DiffIgnorePaths      datatypes.JSON       `gorm:"type:jsonb;not null;default:'[]'" json:"diff_ignore_paths"` // 服务级默认回归 Diff 忽略字段路径 []string (F-14)
+	Description          string               `gorm:"type:text" json:"description"`
+	DownstreamCount      int                  `gorm:"-" json:"downstream_count"`               // 被下游模块依赖数量
+	DownstreamModules    []string             `gorm:"-" json:"downstream_modules,omitempty"`   // 被下游模块名称清单
+	DownstreamConsumers  []DownstreamConsumer `gorm:"-" json:"downstream_consumers,omitempty"` // 被下游模块结构化清单
+	CreatedBy            uint                 `gorm:"not null;default:0" json:"created_by"`
+	CreatedAt            time.Time            `json:"created_at"`
+	UpdatedAt            time.Time            `json:"updated_at"`
+}
+
+// IsClaimed 返回该服务身份是否已被逻辑模块认领
+func (m ModuleService) IsClaimed() bool {
+	return m.ModuleID != nil && *m.ModuleID > 0
+}
+
+// ModuleIDVal 安全返回认领模块 ID（未认领时返回 0）
+func (m ModuleService) ModuleIDVal() uint64 {
+	if m.ModuleID == nil {
+		return 0
+	}
+	return *m.ModuleID
 }
 
 func (ModuleService) TableName() string { return config.TablePrefix + "module_services" }

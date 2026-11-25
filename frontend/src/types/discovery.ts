@@ -54,6 +54,14 @@ export interface DiscoveryLiveSubDTO {
   transport?: string;
 }
 
+export interface ProcessCandidateDTO {
+  arch_process_id: number;
+  code: string;
+  name: string;
+  lifecycle: string;
+  match_tier: string;
+}
+
 export interface DiscoveryProcessGroupDTO {
   process_key: string;
   proc_name: string;
@@ -66,6 +74,7 @@ export interface DiscoveryProcessGroupDTO {
   observed_transports: string[];
   enroll_status: EnrollStatus;
   identity_match: IdentityMatchStatus;
+  candidates?: ProcessCandidateDTO[];
   arch_process_id?: number;
   arch_process_code?: string;
   arch_process_name?: string;
@@ -160,4 +169,119 @@ export interface DiscoverySnapshotDiffDTO {
   right_captured_at?: string;
   summary: DiscoveryDiffSummaryDTO;
   items: DiscoveryDiffItemDTO[];
+}
+
+export interface EnrollItemInput {
+  process_key: string;
+  force_arch_process_id?: number;
+  confirm_low_confidence?: boolean;
+  display_name?: string;
+}
+
+export interface EnrolledProcessDTO {
+  process_key: string;
+  arch_process_id: number;
+  arch_process_code: string;
+  arch_process_name: string;
+  lifecycle: string;
+  process_id: number;
+  result: string;
+  services_created: number;
+  placements_updated: number;
+}
+
+export interface EnrollResultDTO {
+  agent_id: number;
+  enrolled: EnrolledProcessDTO[];
+  placements_count: number;
+  dependencies_count: number;
+  snapshot_id?: number;
+}
+
+export interface EnrollValidationErrorPayload {
+  code: 'IDENTITY_AMBIGUOUS' | 'LOW_CONFIDENCE_CONFIRM_REQUIRED' | 'ENROLL_BATCH_LIMIT' | string;
+  error: string;
+  process_key?: string;
+  candidates?: ProcessCandidateDTO[];
+}
+
+export interface PhysicalProcessDTO {
+  process_id: number;
+  agent_id: number;
+  agent_name: string;
+  agent_scope: string;
+  arch_process_id: number;
+  arch_process_code: string;
+  arch_process_name: string;
+  group_id: number;
+  lifecycle: string;
+  origin: string;
+  enroll_source: string;
+  declared_role: string;
+  observed_role: string;
+  observed_transports: string[];
+  observed_pids: number[];
+  effective_listen_port: number;
+  probe_desired_state: string;
+  probe_status: string;
+  last_observed_at?: string;
+}
+
+export interface ServicePlacementDTO {
+  id: number;
+  module_service_id: number;
+  service_name: string;
+  process_id: number;
+  agent_id: number;
+  arch_process_id: number;
+  endpoints: string[];
+  observed_transport: string;
+  instance_count: number;
+  status: string;
+  miss_count: number;
+  claim_status: 'CLAIMED' | 'UNCLAIMED' | string;
+  module_id?: number;
+  last_seen_at: string;
+}
+
+export interface ProcessDependencyDTO {
+  id: number;
+  consumer_process_id: number;
+  agent_id: number;
+  consumer_arch_process_id: number;
+  service_name: string;
+  service_id?: number;
+  provider_kind: ProviderKind | string;
+  provider_process_id?: number;
+  provider_arch_process_id?: number;
+  remote_node?: string;
+  resolved_endpoint?: string;
+  status: string;
+  miss_count: number;
+  last_seen_at: string;
+}
+
+export interface PhysicalAssetsRespDTO {
+  processes: PhysicalProcessDTO[];
+  placements: ServicePlacementDTO[];
+  dependencies: ProcessDependencyDTO[];
+  total_processes: number;
+  page: number;
+  page_size: number;
+}
+
+export interface BlockedPlaceholderModuleDTO {
+  module_id: number;
+  module_code: string;
+  reason: string;
+}
+
+export interface CSGPlaceholderMigrationRespDTO {
+  mode: 'DRY_RUN' | 'EXECUTE' | 'ROLLBACK' | string;
+  backup_batch_id?: string;
+  cleared_modules: number;
+  migrated_services: number;
+  rewritten_records: number;
+  attribution_job_id?: number;
+  blocked_items: BlockedPlaceholderModuleDTO[];
 }

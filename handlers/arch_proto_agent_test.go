@@ -177,6 +177,15 @@ func RegisterRoutesForTest(r *gin.Engine) {
 
 		requireAdmin := commonAuth.RequireAdmin(config.AdminRole)
 
+		admin := protected.Group("/admin")
+		admin.Use(requireAdmin)
+		{
+			admin.GET("/settings", handlers.GetModuleSettings)
+			admin.PUT("/settings", handlers.UpdateModuleSettings)
+			admin.POST("/arch-processes/:id/promote", handlers.PromoteArchProcess)
+			admin.POST("/migrations/csg-placeholder-modules", handlers.MigrateCSGPlaceholderModulesHandler)
+		}
+
 		// 架构元素
 		protected.GET("/arch/subsystems", handlers.ListSubsystems)
 		protected.POST("/arch/subsystems", requireAdmin, handlers.CreateSubsystem)
@@ -266,8 +275,10 @@ func RegisterRoutesForTest(r *gin.Engine) {
 		protected.GET("/agents/:id/csg/topology", handlers.GetAgentCSGTopology)
 		protected.POST("/agents/:id/csg/import-blueprint", requireAdmin, handlers.ImportAgentCSGBlueprint)
 
-		// 6.1 现网发现工作台、持久化快照与双模 Diff 域 (M30a)
+		// 6.1 现网发现工作台、持久化快照与双模 Diff 域 (M30a, M30b)
 		protected.GET("/discovery/live", handlers.GetDiscoveryLive)
+		protected.POST("/discovery/enroll", handlers.EnrollDiscoveryProcesses)
+		protected.GET("/discovery/physical", handlers.GetDiscoveryPhysical)
 		protected.GET("/discovery/snapshots", handlers.ListDiscoverySnapshots)
 		protected.POST("/discovery/snapshots", handlers.CreateDiscoverySnapshot)
 		protected.GET("/discovery/snapshots/diff", handlers.DiffDiscoverySnapshots)
@@ -1599,7 +1610,7 @@ func TestProtoSchemaSummary_BloodlineAndOrphanServices(t *testing.T) {
 	_ = db.Create(&grp).Error
 	mod := models.Module{SubsystemID: sub.ID, GroupID: grp.ID, Code: "SUM_MOD", Name: "SummaryModule"}
 	_ = db.Create(&mod).Error
-	ms := models.ModuleService{ModuleID: mod.ID, ServiceName: "demo.ClaimedService"}
+	ms := models.ModuleService{ModuleID: models.Uint64Ptr(mod.ID), ServiceName: "demo.ClaimedService"}
 	_ = db.Create(&ms).Error
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/proto-schemas/%d/summary", schema.ID), nil)
@@ -2427,7 +2438,7 @@ func TestProtoSchemaLedgerAPI_LatestOnlyGrouping_BatchActivate_Deactivate_GraphA
 	_ = db.Create(&grp).Error
 	mod := models.Module{SubsystemID: sub.ID, GroupID: grp.ID, Code: "MOD_LEDGER", Name: "OrderModule"}
 	_ = db.Create(&mod).Error
-	ms := models.ModuleService{ModuleID: mod.ID, ServiceName: "order.OrderService"}
+	ms := models.ModuleService{ModuleID: models.Uint64Ptr(mod.ID), ServiceName: "order.OrderService"}
 	_ = db.Create(&ms).Error
 
 	// (A) 测试 GET /api/proto-schemas (默认 latest_only=true)
@@ -2639,8 +2650,8 @@ func TestListProtoServices_ServiceLevelPagination_SourceSchemaBadge_AndUnclaimed
 	_ = db.Create(&grp).Error
 	mod := models.Module{SubsystemID: sub.ID, GroupID: grp.ID, Code: "MOD_SVC", Name: "ServiceModule"}
 	_ = db.Create(&mod).Error
-	_ = db.Create(&models.ModuleService{ModuleID: mod.ID, ServiceName: "test.SvcA"}).Error
-	_ = db.Create(&models.ModuleService{ModuleID: mod.ID, ServiceName: "test.SvcB"}).Error
+	_ = db.Create(&models.ModuleService{ModuleID: models.Uint64Ptr(mod.ID), ServiceName: "test.SvcA"}).Error
+	_ = db.Create(&models.ModuleService{ModuleID: models.Uint64Ptr(mod.ID), ServiceName: "test.SvcB"}).Error
 
 	// 1. 请求 GET /api/proto-services?page=1&page_size=2
 	req := httptest.NewRequest(http.MethodGet, "/api/proto-services?page=1&page_size=2", nil)

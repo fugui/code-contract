@@ -10,20 +10,44 @@ import {
   ShieldAlert,
   Trash2,
 } from 'lucide-react';
-import { EmptyState, Modal } from '@code/common';
+import { EmptyState, Modal, useConfirm } from '@code/common';
 import { useToast } from '../utils/toast';
 import { apiRequest } from '../api/client';
+import * as discoveryApi from '../api/discovery';
 import { ADMIN_ROLE } from '../constants';
 import { useModuleUser } from '../context/ModuleUserContext';
 import type {
   CITokenRotateResponse,
+  CSGPlaceholderMigrationRespDTO,
   ModuleSettingItem,
   ModuleSettingsResponse,
 } from '../types';
 
+interface DiscoverySettingSpec {
+  key: string;
+  label: string;
+  defaultVal: string;
+  kind: 'bool' | 'number';
+  description: string;
+}
+
+const DISCOVERY_V2_SETTING_SPECS: DiscoverySettingSpec[] = [
+  { key: 'discovery.v2_enabled', label: '启用 Discovery V2 物理/逻辑双态解耦', defaultVal: 'false', kind: 'bool', description: '控制自助 Enroll、物理拓扑 0 模块连线与 import-blueprint 委托' },
+  { key: 'discovery.enroll_batch_limit_shared', label: 'SHARED 单次纳管进程上限', defaultVal: '50', kind: 'number', description: '范围 1..200，防止全量误勾选超大批量纳管' },
+  { key: 'discovery.reconcile_interval_sec', label: 'PhysicalReconciler 对账间隔 (秒)', defaultVal: '600', kind: 'number', description: '范围 60..86400，含 ±10% 随机抖动' },
+  { key: 'discovery.stale_miss_threshold', label: '连续失联转 STALE 阈值', defaultVal: '3', kind: 'number', description: '范围 1..20，连续未观测次数阈值' },
+  { key: 'discovery.stale_hours', label: '失联转 STALE 时长阈值 (小时)', defaultVal: '24', kind: 'number', description: '范围 1..720' },
+  { key: 'discovery.retire_days', label: 'STALE 转 RETIRED 天数', defaultVal: '7', kind: 'number', description: '范围 1..90' },
+  { key: 'discovery.gc_days', label: '全退役未认领资产 GC 天数', defaultVal: '30', kind: 'number', description: '范围 7..365（已认领服务与带 ignore_paths 服务永不 GC）' },
+  { key: 'discovery.auto_downstreams', label: '自动并入常驻布防 connect4 下游', defaultVal: 'false', kind: 'bool', description: '缺省关闭，避免观测数据隐式修改探测范围' },
+  { key: 'discovery.snapshot_retention_count', label: '非置顶快照 FIFO 保留数', defaultVal: '50', kind: 'number', description: '范围 10..200，按 (agent_id, csg_addr) 分组保留' },
+  { key: 'discovery.snapshot_pin_limit', label: '单组置顶快照数量上限', defaultVal: '20', kind: 'number', description: '范围 5..50' },
+];
+
 export const AdminSettingsPage: React.FC = () => {
   const { user, loadingUser } = useModuleUser();
   const { showToast } = useToast();
+  const showConfirmDialog = useConfirm();
 
   const [settings, setSettings] = useState<ModuleSettingItem[]>([]);
   const [ciTokenConfigured, setCiTokenConfigured] = useState<boolean>(false);
@@ -43,6 +67,11 @@ export const AdminSettingsPage: React.FC = () => {
   const [revoking, setRevoking] = useState<boolean>(false);
   const [newlyGeneratedToken, setNewlyGeneratedToken] = useState<string | null>(null);
   const [copied, setCopied] = useState<boolean>(false);
+
+  // M30b-P5: 存量 CSG 占位模块迁移治理状态
+  const [migrationLoading, setMigrationLoading] = useState<boolean>(false);
+  const [migrationResult, setMigrationResult] = useState<CSGPlaceholderMigrationRespDTO | null>(null);
+  const [lastBackupBatchId, setLastBackupBatchId] = useState<string>('');
 
   const isAdmin = Boolean(user?.is_super_admin || user?.is_module_admin);
 
@@ -68,6 +97,7 @@ export const AdminSettingsPage: React.FC = () => {
     'smtp_port',
     'smtp_username',
     'smtp_from',
+    ...DISCOVERY_V2_SETTING_SPECS.map((s) => s.key),
   ]);
 
   const applySettingsResponse = useCallback((data: ModuleSettingsResponse) => {
@@ -543,6 +573,39 @@ export const AdminSettingsPage: React.FC = () => {
         </div>
 
         <h3 className="code-tpl-panel-title code-mt-md">
+          <span>现网发现与物理资产 (Discovery V2)</span>
+        </h3>
+        <div className="admin-sec-grid" data-testid="admin-discovery-v2-settings">
+          {DISCOVERY_V2_SETTING_SPECS.map((spec) => (
+            <div key={spec.key} className="admin-sec-field">
+              <div className="admin-sec-field__head">
+                <code className="code-tpl-code-inline">{spec.key}</code>
+                <span className="text-secondary">{spec.label}</span>
+              </div>
+              {spec.kind === 'bool' ? (
+                <select
+                  className="code-input"
+                  aria-label={spec.key}
+                  value={getSettingVal(spec.key, spec.defaultVal)}
+                  onChange={(e) => handleValueChange(spec.key, e.target.value, spec.description)}
+                >
+                  <option value="false">false（关闭）</option>
+                  <option value="true">true（开启）</option>
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  className="code-input"
+                  aria-label={spec.key}
+                  value={getSettingVal(spec.key, spec.defaultVal)}
+                  onChange={(e) => handleValueChange(spec.key, e.target.value, spec.description)}
+                />
+              )}
+            </div>
+          ))}
+        </div>
+
+        <h3 className="code-tpl-panel-title code-mt-md">
           <span>运行时动态配置项</span>
         </h3>
 
@@ -572,6 +635,125 @@ export const AdminSettingsPage: React.FC = () => {
           </div>
         )}
       </form>
+
+      {/* 卡片 3: M30b-P5 CSG 占位模块迁移治理面板 */}
+      <div className="code-card code-tpl-panel" style={{ marginTop: 20 }} data-testid="admin-csg-migration-panel">
+        <div className="flex-between">
+          <div>
+            <h2 className="code-tpl-panel-title">
+              <RefreshCw size={18} />
+              <span>CSG 占位模块迁移治理</span>
+            </h2>
+            <p className="text-secondary">
+              安全扫描旧版 <code className="code-tpl-code-inline">CSG_DISCOVERED</code> / <code className="code-tpl-code-inline">MOD_*</code> 占位模块；存在手工依赖、契约定义或录制回放引用的模块将被阻断保留，其余服务解绑至未认领物理资产态并支持按备份批次一键回滚。
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              data-testid="admin-migration-dryrun-btn"
+              disabled={migrationLoading}
+              onClick={() => {
+                setMigrationLoading(true);
+                void discoveryApi
+                  .migrateCSGPlaceholderModules({ dry_run: true })
+                  .then((res) => {
+                    setMigrationResult(res);
+                    showToast(`预演完成：可清理 ${res.cleared_modules} 个占位模块，阻断 ${res.blocked_items?.length ?? 0} 个`, 'success');
+                  })
+                  .catch((err) => {
+                    showToast(err instanceof Error ? err.message : '迁移预演失败', 'error');
+                  })
+                  .finally(() => setMigrationLoading(false));
+              }}
+            >
+              Dry-Run 预演
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              data-testid="admin-migration-execute-btn"
+              disabled={migrationLoading}
+              onClick={() => {
+                void showConfirmDialog({
+                  title: '确认执行 CSG 占位模块安全迁移',
+                  content: '将解绑无阻断占位模块名下服务为未认领物理态、删除空占位模块并记录可回滚备份快照。是否继续？',
+                  confirmText: '确认执行',
+                  cancelText: '取消',
+                  type: 'warning',
+                }).then((ok) => {
+                  if (!ok) return;
+                  setMigrationLoading(true);
+                  void discoveryApi
+                    .migrateCSGPlaceholderModules({ dry_run: false, action: 'EXECUTE' })
+                    .then((res) => {
+                      setMigrationResult(res);
+                      if (res.backup_batch_id) setLastBackupBatchId(res.backup_batch_id);
+                      showToast(`迁移完成：清理 ${res.cleared_modules} 个模块、回退 ${res.migrated_services} 个服务`, 'success');
+                    })
+                    .catch((err) => {
+                      showToast(err instanceof Error ? err.message : '执行迁移失败', 'error');
+                    })
+                    .finally(() => setMigrationLoading(false));
+                });
+              }}
+            >
+              执行迁移
+            </button>
+            <button
+              type="button"
+              className="btn btn-danger"
+              data-testid="admin-migration-rollback-btn"
+              disabled={migrationLoading}
+              onClick={() => {
+                void showConfirmDialog({
+                  title: '确认回滚占位模块迁移',
+                  content: '将根据最近一次或指定备份批次恢复占位模块及其服务归属（已重新认领的服务将跳过）。确认回滚？',
+                  confirmText: '确认回滚',
+                  cancelText: '取消',
+                  type: 'danger',
+                }).then((ok) => {
+                  if (!ok) return;
+                  setMigrationLoading(true);
+                  void discoveryApi
+                    .migrateCSGPlaceholderModules({
+                      dry_run: false,
+                      action: 'ROLLBACK',
+                      batch_id: lastBackupBatchId || undefined,
+                    })
+                    .then((res) => {
+                      setMigrationResult(res);
+                      showToast(`回滚完成：恢复 ${res.cleared_modules} 个占位模块与 ${res.migrated_services} 个服务`, 'success');
+                    })
+                    .catch((err) => {
+                      showToast(err instanceof Error ? err.message : '回滚迁移失败', 'error');
+                    })
+                    .finally(() => setMigrationLoading(false));
+                });
+              }}
+            >
+              回滚最近批次
+            </button>
+          </div>
+        </div>
+
+        {migrationResult && (
+          <div style={{ marginTop: 12, fontSize: 13 }} data-testid="admin-migration-result">
+            <div>
+              <strong>模式: {migrationResult.mode}</strong> · 清理模块 {migrationResult.cleared_modules} · 迁移服务{' '}
+              {migrationResult.migrated_services} · 回填流量行 {migrationResult.rewritten_records}
+              {migrationResult.backup_batch_id && ` · 备份批次 ${migrationResult.backup_batch_id}`}
+            </div>
+            {(migrationResult.blocked_items?.length ?? 0) > 0 && (
+              <div className="text-secondary" style={{ marginTop: 6 }}>
+                已阻断保留 ({migrationResult.blocked_items.length}):{' '}
+                {migrationResult.blocked_items.map((b) => `${b.module_code}(${b.reason})`).join('；')}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* 对话框 1: 生成/轮换 CI Token 成功后展示 */}
       <Modal

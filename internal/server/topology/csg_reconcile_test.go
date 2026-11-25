@@ -93,13 +93,13 @@ func TestReconcileLiveCSGWithSSOT_ThreeStates(t *testing.T) {
 	}
 
 	svcOrder := models.ModuleService{
-		ModuleID:         modOrder.ID,
+		ModuleID:         models.Uint64Ptr(modOrder.ID),
 		ServiceName:      "OrderService-0",
 		ProtoServiceName: "order.v1.OrderService",
 		DiffIgnorePaths:  datatypes.JSON("[]"),
 	}
 	svcGhost := models.ModuleService{
-		ModuleID:        modGhost.ID,
+		ModuleID:        models.Uint64Ptr(modGhost.ID),
 		ServiceName:     "GhostService-GhostService",
 		DiffIgnorePaths: datatypes.JSON("[]"),
 	}

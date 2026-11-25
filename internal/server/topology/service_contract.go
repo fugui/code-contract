@@ -652,8 +652,10 @@ func ConvertExclusiveToMultiImplContract(db *gorm.DB, in ConvertExclusiveContrac
 			}
 		}
 
-		if err := ValidateContractRealizationGuard(tx, contract.ID, targetSvc.ModuleID); err != nil {
-			return err
+		if targetSvc.ModuleID != nil {
+			if err := ValidateContractRealizationGuard(tx, contract.ID, *targetSvc.ModuleID); err != nil {
+				return err
+			}
 		}
 		if err := ValidateAllTopologyLayerAndCycleConstraints(tx); err != nil {
 			return err
@@ -757,8 +759,8 @@ func AttachExclusiveToMultiImplContract(db *gorm.DB, in AttachExclusiveToContrac
 		}
 
 		// 若归入后仍采用共享契约名，则须通过 A-09 进程互斥检查；自定义名（如 DH_SyncService）豁免 A-09
-		if !isCustom {
-			if err := AssertContractImplProcessDisjoint(tx, targetSvc.ModuleID, &contract.ID, nil); err != nil {
+		if !isCustom && targetSvc.ModuleID != nil {
+			if err := AssertContractImplProcessDisjoint(tx, *targetSvc.ModuleID, &contract.ID, nil); err != nil {
 				return err
 			}
 		}
@@ -800,8 +802,10 @@ func AttachExclusiveToMultiImplContract(db *gorm.DB, in AttachExclusiveToContrac
 			}
 		}
 
-		if err := ValidateContractRealizationGuard(tx, contract.ID, targetSvc.ModuleID); err != nil {
-			return err
+		if targetSvc.ModuleID != nil {
+			if err := ValidateContractRealizationGuard(tx, contract.ID, *targetSvc.ModuleID); err != nil {
+				return err
+			}
 		}
 		if err := ValidateAllTopologyLayerAndCycleConstraints(tx); err != nil {
 			return err

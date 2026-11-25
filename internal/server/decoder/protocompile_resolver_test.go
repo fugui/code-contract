@@ -394,7 +394,7 @@ service OrderService {
 	db.Create(&modGw)
 	db.Create(&modUnrel)
 
-	svcOrder := models.ModuleService{ModuleID: modOrder.ID, ServiceName: "order.v1.OrderService", CreatedBy: 1}
+	svcOrder := models.ModuleService{ModuleID: models.Uint64Ptr(modOrder.ID), ServiceName: "order.v1.OrderService", CreatedBy: 1}
 	db.Create(&svcOrder)
 	depGw := models.ModuleDependency{ConsumerModuleID: modGw.ID, ServiceID: &svcOrder.ID, CreatedBy: 1}
 	db.Create(&depGw)

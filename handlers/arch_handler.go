@@ -13,6 +13,7 @@ import (
 	"code-contract/models"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // SubsystemReq 创建/更新子系统请求体
@@ -743,10 +744,20 @@ func DeleteModule(c *gin.Context) {
 		return
 	}
 
-	deleted, err := topology.DeleteModule(models.DB, id)
+	var res *topology.DeleteModuleResult
+	err = models.DB.Transaction(func(tx *gorm.DB) error {
+		var txErr error
+		res, txErr = topology.DeleteModuleTx(tx, id)
+		return txErr
+	})
 	if err != nil {
 		if errors.Is(err, topology.ErrModuleNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+		var depRefErr *topology.DependencyReferencedError
+		if errors.As(err, &depRefErr) {
+			c.JSON(http.StatusConflict, depRefErr)
 			return
 		}
 		if errors.Is(err, topology.ErrModuleNotEmpty) || errors.Is(err, topology.ErrContractLibHasContractsCannotDelete) {
@@ -757,8 +768,9 @@ func DeleteModule(c *gin.Context) {
 		return
 	}
 
-	recordAudit(c, "delete", commonModels.AuditLevelP1, fmt.Sprintf("删除功能模块 [%s]", deleted.Name), "module", deleted.ID, deleted.Name, deleted, nil)
-	c.JSON(http.StatusOK, gin.H{"message": "功能模块已删除"})
+	deleted := &res.Module
+	recordAudit(c, "delete_module_migrate_services", commonModels.AuditLevelP1, fmt.Sprintf("删除功能模块 [%s]（删除手工服务 %d，回退未认领 %d，合并未认领 %d）", deleted.Name, res.DeletedServices, res.RevertedServices, res.MergedServices), "module", deleted.ID, deleted.Name, deleted, res)
+	c.JSON(http.StatusOK, gin.H{"message": "功能模块已删除", "result": res})
 }
 
 // --- Module Process Binding Handlers ---

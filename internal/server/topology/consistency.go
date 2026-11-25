@@ -139,7 +139,9 @@ func VerifySessionTopology(ctx context.Context, db *gorm.DB, sessionID uint64, r
 	contractImplsMap := make(map[uint64][]models.ModuleService)
 	for _, svc := range provideServices {
 		key := strings.TrimSpace(svc.ServiceName)
-		provideMap[key] = svc.ModuleID
+		if svc.ModuleID != nil && *svc.ModuleID > 0 {
+			provideMap[key] = *svc.ModuleID
+		}
 		if svc.ContractID != nil && *svc.ContractID > 0 {
 			contractImplsMap[*svc.ContractID] = append(contractImplsMap[*svc.ContractID], svc)
 		}
@@ -183,7 +185,10 @@ func VerifySessionTopology(ctx context.Context, db *gorm.DB, sessionID uint64, r
 			impls := contractImplsMap[*dep.ContractID]
 			c := contractMap[*dep.ContractID]
 			for _, impl := range impls {
-				mID := impl.ModuleID
+				if impl.ModuleID == nil || *impl.ModuleID == 0 {
+					continue
+				}
+				mID := *impl.ModuleID
 				cID := *dep.ContractID
 				svcName := strings.TrimSpace(impl.ServiceName)
 				if svcName == "" {
@@ -200,7 +205,11 @@ func VerifySessionTopology(ctx context.Context, db *gorm.DB, sessionID uint64, r
 				})
 			}
 		} else if dep.Service != nil {
-			mID := dep.Service.ModuleID
+			var provPtr *uint64
+			if dep.Service.ModuleID != nil && *dep.Service.ModuleID > 0 {
+				mID := *dep.Service.ModuleID
+				provPtr = &mID
+			}
 			var cID *uint64
 			var implKey string
 			var contractSvcName string
@@ -213,7 +222,7 @@ func VerifySessionTopology(ctx context.Context, db *gorm.DB, sessionID uint64, r
 			}
 			expandedDeps = append(expandedDeps, expandedDep{
 				ConsumerModuleID:    dep.ConsumerModuleID,
-				ProviderModuleID:    &mID,
+				ProviderModuleID:    provPtr,
 				ContractID:          cID,
 				ContractServiceName: contractSvcName,
 				ImplKey:             implKey,

@@ -168,7 +168,7 @@ func buildPoolSummary(db *gorm.DB) ProtoPoolSummaryDTO {
 		}
 		var claimedCount int64
 		_ = db.Model(&models.ModuleService{}).
-			Where("service_name IN ?", activeSvcNames).
+			Where("service_name IN ? AND module_id IS NOT NULL", activeSvcNames).
 			Distinct("service_name").
 			Count(&claimedCount).Error
 
@@ -429,7 +429,7 @@ func ListProtoSchemas(c *gin.Context) {
 		if len(allSvcNames) > 0 {
 			var claimedSvcs []string
 			_ = models.DB.Model(&models.ModuleService{}).
-				Where("service_name IN ?", allSvcNames).
+				Where("service_name IN ? AND module_id IS NOT NULL", allSvcNames).
 				Pluck("service_name", &claimedSvcs).Error
 			for _, cs := range claimedSvcs {
 				claimedSvcSet[cs] = struct{}{}
@@ -1493,12 +1493,12 @@ func ListProtoServices(c *gin.Context) {
 
 	// 批量查询架构认领情况
 	var moduleSvcs []models.ModuleService
-	_ = models.DB.Preload("Module.Subsystem").Where("service_name IN ?", pageServices).Find(&moduleSvcs).Error
+	_ = models.DB.Preload("Module.Subsystem").Where("service_name IN ? AND module_id IS NOT NULL", pageServices).Find(&moduleSvcs).Error
 	claimedMap := make(map[string]*ClaimedModuleDTO)
 	for _, ms := range moduleSvcs {
-		if ms.Module != nil {
+		if ms.Module != nil && ms.ModuleID != nil {
 			dto := &ClaimedModuleDTO{
-				ModuleID:   ms.ModuleID,
+				ModuleID:   *ms.ModuleID,
 				ModuleName: ms.Module.Name,
 			}
 			if ms.Module.Subsystem != nil {
@@ -1748,13 +1748,15 @@ func GetProtoSchemaSummary(c *gin.Context) {
 
 	var moduleSvcs []models.ModuleService
 	if len(orderedSvcNames) > 0 {
-		_ = models.DB.Preload("Module.Subsystem").Where("service_name IN ?", orderedSvcNames).Find(&moduleSvcs).Error
+		_ = models.DB.Preload("Module.Subsystem").Where("service_name IN ? AND module_id IS NOT NULL", orderedSvcNames).Find(&moduleSvcs).Error
 	}
 
 	claimedCount := 0
 	claimedModMap := make(map[string]*models.ModuleService)
 	for i := range moduleSvcs {
-		claimedModMap[moduleSvcs[i].ServiceName] = &moduleSvcs[i]
+		if moduleSvcs[i].ModuleID != nil {
+			claimedModMap[moduleSvcs[i].ServiceName] = &moduleSvcs[i]
+		}
 	}
 
 	servicesSummary := make([]ServiceSummaryItem, 0, len(orderedSvcNames))
@@ -1762,7 +1764,7 @@ func GetProtoSchemaSummary(c *gin.Context) {
 		item := svcMap[name]
 		if ms, ok := claimedModMap[name]; ok {
 			item.IsClaimed = true
-			item.ClaimedModuleID = &ms.ModuleID
+			item.ClaimedModuleID = ms.ModuleID
 			if ms.Module != nil {
 				item.ClaimedModuleName = ms.Module.Name
 				if ms.Module.Subsystem != nil {

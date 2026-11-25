@@ -62,7 +62,7 @@ func RegisterAPIRoutes(r *gin.Engine) {
 
 		requireAdmin := commonAuth.RequireAdmin(config.AdminRole)
 
-		// 3. 模块管理员专属路由 (Settings)
+		// 3. 模块管理员专属路由 (Settings & M30b Governance)
 		admin := protected.Group("/admin")
 		admin.Use(requireAdmin)
 		{
@@ -70,6 +70,8 @@ func RegisterAPIRoutes(r *gin.Engine) {
 			admin.PUT("/settings", UpdateModuleSettings)
 			admin.POST("/ci-token/rotate", RotateCIToken)
 			admin.DELETE("/ci-token", RevokeCIToken)
+			admin.POST("/arch-processes/:id/promote", PromoteArchProcess)
+			admin.POST("/migrations/csg-placeholder-modules", MigrateCSGPlaceholderModulesHandler)
 		}
 
 		// 4. 三级架构元素与静态拓扑域 (F-01, F-02, F-04)
@@ -211,8 +213,10 @@ func RegisterAPIRoutes(r *gin.Engine) {
 		protected.GET("/agents/:id/csg/topology", GetAgentCSGTopology)
 		protected.POST("/agents/:id/csg/import-blueprint", requireAdmin, ImportAgentCSGBlueprint)
 
-		// 6.1 现网发现工作台、持久化快照与双模 Diff 域 (ADR-24, M30a, F-36)
+		// 6.1 现网发现工作台、持久化快照与双模 Diff 域 (ADR-24, M30a, M30b, F-36)
 		protected.GET("/discovery/live", GetDiscoveryLive)
+		protected.POST("/discovery/enroll", EnrollDiscoveryProcesses)
+		protected.GET("/discovery/physical", GetDiscoveryPhysical)
 		protected.GET("/discovery/snapshots", ListDiscoverySnapshots)
 		protected.POST("/discovery/snapshots", CreateDiscoverySnapshot)
 		protected.GET("/discovery/snapshots/diff", DiffDiscoverySnapshots)

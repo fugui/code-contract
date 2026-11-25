@@ -19,6 +19,11 @@ var DB *gorm.DB
 // 供 cmd/resetdb 与 scripts/seed-large-topology 等清表工具共用，作为单一真实源。
 func BusinessTableNames() []string {
 	return []string{
+		MigBackup{}.TableName(),
+		AttributionJob{}.TableName(),
+		DependencyDecision{}.TableName(),
+		ProcessDependency{}.TableName(),
+		ServicePlacement{}.TableName(),
 		DiscoverySnapshot{}.TableName(),
 		Notification{}.TableName(),
 		MRCheckRun{}.TableName(),
@@ -104,6 +109,11 @@ func SetupWithDB(db *gorm.DB) error {
 		&MRCheckRun{},
 		&Notification{},
 		&DiscoverySnapshot{},
+		&ServicePlacement{},
+		&ProcessDependency{},
+		&DependencyDecision{},
+		&AttributionJob{},
+		&MigBackup{},
 	); err != nil {
 		return fmt.Errorf("迁移数据表结构失败: %w", err)
 	}
@@ -382,7 +392,7 @@ BEGIN
         ALTER TABLE contract_module_services
         ADD CONSTRAINT fk_contract_mod_svc_module
         FOREIGN KEY (module_id) REFERENCES contract_modules(id)
-        ON UPDATE CASCADE ON DELETE CASCADE;
+        ON UPDATE CASCADE ON DELETE RESTRICT;
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_contract_dep_consumer') THEN
         ALTER TABLE contract_module_dependencies
@@ -517,6 +527,12 @@ END $$;
 	if err := ensureM30aDiscoveryConstraints(DB); err != nil {
 		return fmt.Errorf("初始化 M30a 现网发现快照约束失败: %w", err)
 	}
+	if err := ensureM30bSchemaAndConstraints(DB); err != nil {
+		return fmt.Errorf("初始化 M30b 物理/逻辑双态约束失败: %w", err)
+	}
+	if err := pm.EnsureArchProcessPartitionIndexes(DB); err != nil {
+		return fmt.Errorf("初始化 M30b 流量分区物理归因索引失败: %w", err)
+	}
 	if err := EnsureBuiltinCheckRules(DB); err != nil {
 		return fmt.Errorf("初始化内置静态检查规则失败: %w", err)
 	}
@@ -529,11 +545,14 @@ END $$;
 	if err := ensureM30aDefaultSettings(DB); err != nil {
 		log.Printf("[%s] 提示: 初始化 M30a 现网发现默认参数未完成: %v", config.ServiceName, err)
 	}
+	if err := ensureM30bDefaultSettings(DB); err != nil {
+		log.Printf("[%s] 提示: 初始化 M30b 物理/逻辑解耦默认参数未完成: %v", config.ServiceName, err)
+	}
 
 	return nil
 }
 
-// EnsureDefaultSettings 幂等恢复模块运行参数与 M24/M30a 默认配置项
+// EnsureDefaultSettings 幂等恢复模块运行参数与 M24/M30a/M30b 默认配置项
 func EnsureDefaultSettings(db *gorm.DB) error {
 	if err := seedDefaultSettings(db); err != nil {
 		return fmt.Errorf("初始化默认运行参数失败: %w", err)
@@ -543,6 +562,9 @@ func EnsureDefaultSettings(db *gorm.DB) error {
 	}
 	if err := ensureM30aDefaultSettings(db); err != nil {
 		return fmt.Errorf("初始化 M30a 现网发现默认参数未完成: %w", err)
+	}
+	if err := ensureM30bDefaultSettings(db); err != nil {
+		return fmt.Errorf("初始化 M30b 物理/逻辑解耦默认参数未完成: %w", err)
 	}
 	return nil
 }

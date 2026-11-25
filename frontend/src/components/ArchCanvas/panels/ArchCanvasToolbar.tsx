@@ -377,7 +377,7 @@ export const ArchCanvasToolbar: React.FC<ArchCanvasToolbarProps> = ({
                 data-testid="env-agent-selector"
                 title="物理部署环境端点叠加"
               >
-                <option value="">纯架构蓝图 (设计态)</option>
+                <option value="">公共环境并集 (SHARED)</option>
                 {agents.map((ag) => (
                   <option key={ag.id} value={ag.id}>
                     [{ag.scope}] #{ag.id} {ag.name}

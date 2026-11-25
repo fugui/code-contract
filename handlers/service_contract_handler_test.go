@@ -84,7 +84,7 @@ func TestServiceContract_API_RBACAndConversion(t *testing.T) {
 
 	// 5. 存量独占服务一键转换 API (POST /api/arch/service-contracts/convert)
 	exclSvc := models.ModuleService{
-		ModuleID:    bizMod.ID,
+		ModuleID:    models.Uint64Ptr(bizMod.ID),
 		ServiceName: "demo.v1.ConvertibleService",
 		Description: "待转换独占服务",
 	}
@@ -120,7 +120,7 @@ func TestServiceContract_API_RBACAndConversion(t *testing.T) {
 
 	// 6. ADR-16 v2.0: 存量独占服务 (如 DH_SyncService) 通过 POST /api/arch/service-contracts/:id/attach 归入既有契约
 	exclAttachSvc := models.ModuleService{
-		ModuleID:    bizMod.ID,
+		ModuleID:    models.Uint64Ptr(bizMod.ID),
 		ServiceName: "DH_RBACService",
 		Description: "自定义名称存量独占服务",
 	}

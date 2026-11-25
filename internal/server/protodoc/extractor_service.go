@@ -919,9 +919,12 @@ func ResolveServiceLineage(db *gorm.DB, serviceName string) ServiceContractLinea
 			lineage.ClaimStatus = "SINGLE_IMPL"
 		}
 		for _, im := range impls {
+			if im.ModuleID == nil || *im.ModuleID == 0 {
+				continue
+			}
 			dto := ServiceImplementationDTO{
 				ServiceID:           im.ID,
-				ModuleID:            im.ModuleID,
+				ModuleID:            *im.ModuleID,
 				ImplKey:             im.ImplKey,
 				IsCustomServiceName: im.IsCustomServiceName,
 				ServiceName:         im.ServiceName,

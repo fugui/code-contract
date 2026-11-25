@@ -63,7 +63,7 @@ func TestProtoCompile_LinksDirectlyIntoBreakingChangeRadar(t *testing.T) {
 	db.Create(&modCons)
 
 	modSvc := models.ModuleService{
-		ModuleID:    modProv.ID,
+		ModuleID:    models.Uint64Ptr(modProv.ID),
 		ServiceName: "order.v1.OrderService",
 		CreatedBy:   adminUser.ID,
 	}

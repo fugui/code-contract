@@ -131,8 +131,8 @@ func (r *DBTopologyResolver) ResolveDestination(serviceName, operation string) *
 		return nil
 	}
 	var svc models.ModuleService
-	if err := r.DB.Where("service_name = ?", serviceName).First(&svc).Error; err == nil {
-		return &svc.ModuleID
+	if err := r.DB.Where("service_name = ? AND module_id IS NOT NULL", serviceName).First(&svc).Error; err == nil {
+		return svc.ModuleID
 	}
 	return nil
 }

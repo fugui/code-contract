@@ -191,7 +191,7 @@ func TestPartialUniqueIndexesAndFKConstraints(t *testing.T) {
 
 	// 1. 验证 ModuleService PROVIDE 相同 Service 全局唯一性拦截，以及 ModuleDependency 内部/外部依赖与唯一约束
 	prov1 := ModuleService{
-		ModuleID:    mod1.ID,
+		ModuleID:    Uint64Ptr(mod1.ID),
 		ServiceName: "pkg.order.OrderService",
 	}
 	if err := db.Create(&prov1).Error; err != nil {
@@ -199,7 +199,7 @@ func TestPartialUniqueIndexesAndFKConstraints(t *testing.T) {
 	}
 
 	prov2 := ModuleService{
-		ModuleID:    mod2.ID,
+		ModuleID:    Uint64Ptr(mod2.ID),
 		ServiceName: "pkg.order.OrderService",
 	}
 	// 期望被 uk_contract_mod_svc_name 唯一索引拦截
@@ -429,8 +429,8 @@ func TestCleanRebuild15Tables_MultiSharedEnvAndPortPartialUnique(t *testing.T) {
 	}
 
 	bizTables := BusinessTableNames()
-	if len(bizTables) != 31 {
-		t.Fatalf("BusinessTableNames() 期望返回 31 张业务表，实际为 %d", len(bizTables))
+	if len(bizTables) != 36 {
+		t.Fatalf("BusinessTableNames() 期望返回 36 张业务表，实际为 %d", len(bizTables))
 	}
 	for _, tbl := range bizTables {
 		if tbl == (ModuleSetting{}).TableName() {

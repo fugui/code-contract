@@ -15,6 +15,9 @@ export interface DiscoveryProcessTreeTableProps {
   onChangeScopeTab: (tab: 'local' | 'ldc') => void;
   searchQuery: string;
   onChangeSearchQuery: (q: string) => void;
+  selectedKeys?: Set<string>;
+  onToggleSelectKey?: (processKey: string) => void;
+  onToggleSelectAll?: (keys: string[], checked: boolean) => void;
 }
 
 const ROLE_META: Record<ObservedProcessRole, { label: string; cls: string }> = {
@@ -85,6 +88,9 @@ export const DiscoveryProcessTreeTable: React.FC<DiscoveryProcessTreeTableProps>
   onChangeScopeTab,
   searchQuery,
   onChangeSearchQuery,
+  selectedKeys,
+  onToggleSelectKey,
+  onToggleSelectAll,
 }) => {
   const [roleFilter, setRoleFilter] = useState<'ALL' | ObservedProcessRole>('ALL');
   const [transportFilter, setTransportFilter] = useState<'ALL' | 'TCP' | 'MESH'>('ALL');
@@ -195,6 +201,26 @@ export const DiscoveryProcessTreeTable: React.FC<DiscoveryProcessTreeTableProps>
           <table className="discovery-table" data-testid="discovery-process-table">
             <thead>
               <tr>
+                {scopeTab !== 'ldc' && (
+                  <th style={{ width: 34 }}>
+                    <input
+                      type="checkbox"
+                      aria-label="全选当前本机进程"
+                      checked={
+                        filtered.length > 0 &&
+                        filtered.every(({ group }) => Boolean(selectedKeys?.has(group.process_key)))
+                      }
+                      onChange={(e) => {
+                        if (onToggleSelectAll) {
+                          onToggleSelectAll(
+                            filtered.map(({ group }) => group.process_key),
+                            e.target.checked
+                          );
+                        }
+                      }}
+                    />
+                  </th>
+                )}
                 <th>进程主轴 / 多实例 PID</th>
                 <th>观测角色</th>
                 <th>纳管状态</th>
@@ -225,6 +251,21 @@ export const DiscoveryProcessTreeTable: React.FC<DiscoveryProcessTreeTableProps>
                       className="discovery-proc-row"
                       data-testid={`discovery-proc-row-${group.process_key}`}
                     >
+                      {scopeTab !== 'ldc' && (
+                        <td>
+                          <input
+                            type="checkbox"
+                            aria-label={`选择进程 ${group.proc_name}`}
+                            data-testid={`discovery-checkbox-${group.process_key}`}
+                            checked={Boolean(selectedKeys?.has(group.process_key))}
+                            onChange={() => {
+                              if (onToggleSelectKey) {
+                                onToggleSelectKey(group.process_key);
+                              }
+                            }}
+                          />
+                        </td>
+                      )}
                       <td>
                         <div className="discovery-proc-name-cell">
                           <div className="discovery-proc-title-line">
@@ -312,7 +353,7 @@ export const DiscoveryProcessTreeTable: React.FC<DiscoveryProcessTreeTableProps>
                         className="discovery-child-row"
                         data-testid={`discovery-child-row-${group.process_key}`}
                       >
-                        <td colSpan={7}>
+                        <td colSpan={scopeTab !== 'ldc' ? 8 : 7}>
                           <div className="discovery-child-section">
                             {group.services.length > 0 && (
                               <div className="discovery-child-block">

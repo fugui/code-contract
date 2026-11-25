@@ -173,11 +173,14 @@ func (s *ReplayScheduler) CreateAndExecuteTask(
 
 	// 5. 跨 Agent 同构进程模块兼容性校验 (F-12.1, ADR-09)
 	var provideServices []models.ModuleService
-	_ = s.db.WithContext(ctx).Find(&provideServices).Error
+	_ = s.db.WithContext(ctx).Where("module_id IS NOT NULL").Find(&provideServices).Error
 	provideMap := make(map[string]uint64)
 	for _, svc := range provideServices {
+		if svc.ModuleID == nil || *svc.ModuleID == 0 {
+			continue
+		}
 		k := strings.TrimSpace(svc.ServiceName)
-		provideMap[k] = svc.ModuleID
+		provideMap[k] = *svc.ModuleID
 	}
 
 	archProcModules := make(map[uint64][]uint64)

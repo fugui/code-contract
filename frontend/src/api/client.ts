@@ -15,11 +15,54 @@ const getBaseUrl = (): string => {
 
 const client = createApiClient(getBaseUrl, AUTH_TOKEN_KEY);
 
+export class ApiRequestError extends Error {
+  readonly status: number;
+  readonly data: unknown;
+
+  constructor(message: string, status: number, data: unknown) {
+    super(message);
+    this.name = 'ApiRequestError';
+    this.status = status;
+    this.data = data;
+  }
+}
+
 /**
  * 类型安全的模块内部 API 请求封装
  */
 export async function apiRequest<T>(endpoint: string, options: ApiFetchOptions = {}): Promise<T> {
   return (await client.apiFetch(endpoint, options)) as T;
+}
+
+/**
+ * 保留非 2xx 结构化响应体 (如 422 IDENTITY_AMBIGUOUS / LOW_CONFIDENCE_CONFIRM_REQUIRED) 的请求封装
+ */
+export async function apiRequestWithErrorPayload<T>(
+  endpoint: string,
+  options: RequestInit = {}
+): Promise<T> {
+  const token = typeof localStorage !== 'undefined' ? localStorage.getItem(AUTH_TOKEN_KEY) : null;
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+  if (options.headers) {
+    const incoming = new Headers(options.headers);
+    incoming.forEach((val, key) => {
+      headers[key] = val;
+    });
+  }
+  const url = endpoint.startsWith('http') ? endpoint : `${getBaseUrl()}${endpoint}`;
+  const res = await fetch(url, { ...options, headers });
+  if (res.status === 204) {
+    return undefined as T;
+  }
+  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!res.ok) {
+    const errMsg = typeof data.error === 'string' ? data.error : `请求失败 (${res.status})`;
+    throw new ApiRequestError(errMsg, res.status, data);
+  }
+  return data as T;
 }
 
 /**

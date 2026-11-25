@@ -150,9 +150,13 @@ func buildInternalDependencyGraph(tx *gorm.DB) (map[uint64][]uint64, error) {
 	svcModule := make(map[uint64]uint64, len(svcs))
 	contractImplModules := make(map[uint64][]uint64)
 	for _, s := range svcs {
-		svcModule[s.ID] = s.ModuleID
+		if s.ModuleID == nil || *s.ModuleID == 0 {
+			continue
+		}
+		modID := *s.ModuleID
+		svcModule[s.ID] = modID
 		if s.ContractID != nil && *s.ContractID > 0 {
-			contractImplModules[*s.ContractID] = append(contractImplModules[*s.ContractID], s.ModuleID)
+			contractImplModules[*s.ContractID] = append(contractImplModules[*s.ContractID], modID)
 		}
 	}
 
@@ -292,9 +296,11 @@ func ValidateDependencyGuard(tx *gorm.DB, dep *models.ModuleDependency) error {
 		if err := tx.Select("id, module_id").First(&svc, *dep.ServiceID).Error; err != nil {
 			return err
 		}
-		if provider, ok := snap[svc.ModuleID]; ok {
-			if err := checkLayerOrder(ErrCodeLayerViolation, consumer, provider, "服务依赖 (DEPEND)"); err != nil {
-				return err
+		if svc.ModuleID != nil {
+			if provider, ok := snap[*svc.ModuleID]; ok {
+				if err := checkLayerOrder(ErrCodeLayerViolation, consumer, provider, "服务依赖 (DEPEND)"); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -314,9 +320,11 @@ func ValidateDependencyGuard(tx *gorm.DB, dep *models.ModuleDependency) error {
 			return err
 		}
 		for _, impl := range impls {
-			if provider, ok := snap[impl.ModuleID]; ok {
-				if err := checkLayerOrder(ErrCodeLayerViolation, consumer, provider, "契约分发依赖 (DISPATCH)"); err != nil {
-					return err
+			if impl.ModuleID != nil {
+				if provider, ok := snap[*impl.ModuleID]; ok {
+					if err := checkLayerOrder(ErrCodeLayerViolation, consumer, provider, "契约分发依赖 (DISPATCH)"); err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -399,11 +407,15 @@ func ValidateAllTopologyLayerAndCycleConstraints(tx *gorm.DB) error {
 	svcModule := make(map[uint64]uint64, len(svcs))
 	contractImpls := make(map[uint64][]uint64)
 	for _, s := range svcs {
-		svcModule[s.ID] = s.ModuleID
+		if s.ModuleID == nil || *s.ModuleID == 0 {
+			continue
+		}
+		modID := *s.ModuleID
+		svcModule[s.ID] = modID
 		if s.ContractID != nil && *s.ContractID > 0 {
-			contractImpls[*s.ContractID] = append(contractImpls[*s.ContractID], s.ModuleID)
+			contractImpls[*s.ContractID] = append(contractImpls[*s.ContractID], modID)
 			if defModID, ok := contractDefiner[*s.ContractID]; ok {
-				if err := checkLayerOrder(ErrCodeRealizationLayerInversion, snap[s.ModuleID], snap[defModID], "契约实现 (REALIZATION)"); err != nil {
+				if err := checkLayerOrder(ErrCodeRealizationLayerInversion, snap[modID], snap[defModID], "契约实现 (REALIZATION)"); err != nil {
 					return err
 				}
 			}

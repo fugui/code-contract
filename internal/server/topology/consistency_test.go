@@ -233,21 +233,21 @@ func TestSC06_ArchitectureConsistencyVerification(t *testing.T) {
 
 	// 3. 服务契约与依赖定义
 	// (1) mod3 PROVIDE dophi.b-ServiceB
-	svcB := models.ModuleService{ModuleID: mod3.ID, ServiceName: "dophi.b-ServiceB", CreatedBy: 1}
+	svcB := models.ModuleService{ModuleID: models.Uint64Ptr(mod3.ID), ServiceName: "dophi.b-ServiceB", CreatedBy: 1}
 	db.Create(&svcB)
 	// (2) mod2 PROVIDE dophi.a-ServiceA2 (同在 procA)
-	svcA2 := models.ModuleService{ModuleID: mod2.ID, ServiceName: "dophi.a-ServiceA2", CreatedBy: 1}
+	svcA2 := models.ModuleService{ModuleID: models.Uint64Ptr(mod2.ID), ServiceName: "dophi.a-ServiceA2", CreatedBy: 1}
 	db.Create(&svcA2)
 	// (3) modUnmon PROVIDE dophi.unmon-ServiceUnmon 与 dophi.unmon-OutboundService
-	svcUnmon := models.ModuleService{ModuleID: modUnmon.ID, ServiceName: "dophi.unmon-ServiceUnmon", CreatedBy: 1}
+	svcUnmon := models.ModuleService{ModuleID: models.Uint64Ptr(modUnmon.ID), ServiceName: "dophi.unmon-ServiceUnmon", CreatedBy: 1}
 	db.Create(&svcUnmon)
-	svcUnmonOutbound := models.ModuleService{ModuleID: modUnmon.ID, ServiceName: "dophi.unmon-OutboundService", CreatedBy: 1}
+	svcUnmonOutbound := models.ModuleService{ModuleID: models.Uint64Ptr(modUnmon.ID), ServiceName: "dophi.unmon-OutboundService", CreatedBy: 1}
 	db.Create(&svcUnmonOutbound)
 	// (4) mod4 PROVIDE dophi.c-ServiceC
-	svcC := models.ModuleService{ModuleID: mod4.ID, ServiceName: "dophi.c-ServiceC", CreatedBy: 1}
+	svcC := models.ModuleService{ModuleID: models.Uint64Ptr(mod4.ID), ServiceName: "dophi.c-ServiceC", CreatedBy: 1}
 	db.Create(&svcC)
 	// (5) mod3 PROVIDE dophi.v-ViolationService (未被 mod1 声明依赖)
-	svcV := models.ModuleService{ModuleID: mod3.ID, ServiceName: "dophi.v-ViolationService", CreatedBy: 1}
+	svcV := models.ModuleService{ModuleID: models.Uint64Ptr(mod3.ID), ServiceName: "dophi.v-ViolationService", CreatedBy: 1}
 	db.Create(&svcV)
 
 	// 静态依赖声明：
@@ -450,8 +450,8 @@ func TestVerifySessionTopology_DispatchAndImplUnresolved(t *testing.T) {
 	}
 	db.Create(&contract)
 
-	msB := models.ModuleService{ModuleID: modB.ID, ContractID: &contract.ID, ServiceName: contract.ServiceName, ImplKey: "alipay", CreatedBy: 1}
-	msC := models.ModuleService{ModuleID: modC.ID, ContractID: &contract.ID, ServiceName: contract.ServiceName, ImplKey: "wechat", CreatedBy: 1}
+	msB := models.ModuleService{ModuleID: models.Uint64Ptr(modB.ID), ContractID: &contract.ID, ServiceName: contract.ServiceName, ImplKey: "alipay", CreatedBy: 1}
+	msC := models.ModuleService{ModuleID: models.Uint64Ptr(modC.ID), ContractID: &contract.ID, ServiceName: contract.ServiceName, ImplKey: "wechat", CreatedBy: 1}
 	db.Create(&msB)
 	db.Create(&msC)
 
@@ -589,8 +589,8 @@ func TestVerifySessionTopology_SpecificImplCrossCallViolation(t *testing.T) {
 	}
 	db.Create(&contract)
 
-	msB := models.ModuleService{ModuleID: modB.ID, ContractID: &contract.ID, ServiceName: contract.ServiceName, ImplKey: "alipay", CreatedBy: 1}
-	msC := models.ModuleService{ModuleID: modC.ID, ContractID: &contract.ID, ServiceName: contract.ServiceName, ImplKey: "wechat", CreatedBy: 1}
+	msB := models.ModuleService{ModuleID: models.Uint64Ptr(modB.ID), ContractID: &contract.ID, ServiceName: contract.ServiceName, ImplKey: "alipay", CreatedBy: 1}
+	msC := models.ModuleService{ModuleID: models.Uint64Ptr(modC.ID), ContractID: &contract.ID, ServiceName: contract.ServiceName, ImplKey: "wechat", CreatedBy: 1}
 	db.Create(&msB)
 	db.Create(&msC)
 

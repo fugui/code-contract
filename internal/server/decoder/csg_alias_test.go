@@ -49,14 +49,14 @@ func TestDecoderRegistry_64BServiceAliasesAndPidSuffixNormalization(t *testing.T
 	// CSG runtime service name uses 64B Class-Service format "OrderServiceImpl-OrderService",
 	// aliased via ProtoServiceName to "order.v1.OrderService".
 	msAlias := models.ModuleService{
-		ModuleID:         mod.ID,
+		ModuleID:         models.Uint64Ptr(mod.ID),
 		ServiceName:      "OrderServiceImpl-OrderService",
 		ProtoServiceName: "order.v1.OrderService",
 		DiffIgnorePaths:  datatypes.JSON(`["$.trace_id"]`),
 	}
 	// Another service registered with "-0" instance index receives live traffic with PID suffix "-12345".
 	msPid := models.ModuleService{
-		ModuleID:         mod.ID,
+		ModuleID:         models.Uint64Ptr(mod.ID),
 		ServiceName:      "OrderService-0",
 		ProtoServiceName: "order.v1.OrderService",
 		DiffIgnorePaths:  datatypes.JSON(`["$.server_ts"]`),

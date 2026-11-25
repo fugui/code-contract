@@ -1,10 +1,14 @@
-import { apiRequest } from './client';
+import { apiRequest, apiRequestWithErrorPayload } from './client';
 import type {
+  CSGPlaceholderMigrationRespDTO,
   DiscoveryLiveRespDTO,
   DiscoverySnapshotDTO,
   DiscoverySnapshotDiffDTO,
   DiscoverySnapshotSummaryDTO,
+  EnrollItemInput,
+  EnrollResultDTO,
   PaginatedResponse,
+  PhysicalAssetsRespDTO,
 } from '../types';
 
 export async function getLiveDiscovery(params: {
@@ -86,5 +90,71 @@ export async function diffDiscoverySnapshots(params: {
   }
   return apiRequest<DiscoverySnapshotDiffDTO>(
     `/discovery/snapshots/diff?${query.toString()}`
+  );
+}
+
+export async function enrollDiscoveryProcesses(data: {
+  agent_id: string | number;
+  csg_addr?: string;
+  items: EnrollItemInput[];
+}): Promise<EnrollResultDTO> {
+  return apiRequestWithErrorPayload<EnrollResultDTO>('/discovery/enroll', {
+    method: 'POST',
+    body: JSON.stringify({
+      agent_id: Number(data.agent_id),
+      csg_addr: data.csg_addr,
+      items: data.items,
+    }),
+  });
+}
+
+export async function getPhysicalAssets(params: {
+  agent_id?: string | number;
+  group_id?: string | number;
+  status?: string;
+  claim_status?: string;
+  transport?: string;
+  search?: string;
+  include_provisional?: boolean;
+  page?: number;
+  page_size?: number;
+}): Promise<PhysicalAssetsRespDTO> {
+  const query = new URLSearchParams();
+  if (params.agent_id) query.set('agent_id', String(params.agent_id));
+  if (params.group_id) query.set('group_id', String(params.group_id));
+  if (params.status) query.set('status', params.status);
+  if (params.claim_status) query.set('claim_status', params.claim_status);
+  if (params.transport) query.set('transport', params.transport);
+  if (params.search) query.set('search', params.search);
+  if (params.include_provisional) query.set('include_provisional', 'true');
+  if (params.page) query.set('page', String(params.page));
+  if (params.page_size) query.set('page_size', String(params.page_size));
+  return apiRequest<PhysicalAssetsRespDTO>(`/discovery/physical?${query.toString()}`);
+}
+
+export async function promoteArchProcess(
+  archProcessId: number | string,
+  data: { code?: string; name?: string } = {}
+): Promise<{ arch_process: Record<string, unknown> }> {
+  return apiRequest<{ arch_process: Record<string, unknown> }>(
+    `/admin/arch-processes/${archProcessId}/promote`,
+    {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }
+  );
+}
+
+export async function migrateCSGPlaceholderModules(data: {
+  dry_run?: boolean;
+  action?: 'EXECUTE' | 'ROLLBACK';
+  batch_id?: string;
+}): Promise<CSGPlaceholderMigrationRespDTO> {
+  return apiRequest<CSGPlaceholderMigrationRespDTO>(
+    '/admin/migrations/csg-placeholder-modules',
+    {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }
   );
 }

@@ -225,14 +225,14 @@ func TestSC14_LivingProtoDocsGoldenSamplesAndMarkdownExport(t *testing.T) {
 	}
 	db.Create(&contract)
 	db.Create(&models.ModuleService{
-		ModuleID:    modImplA.ID,
+		ModuleID:    models.Uint64Ptr(modImplA.ID),
 		ContractID:  &contract.ID,
 		ServiceName: "demo.billing.v1.BillingService",
 		ImplKey:     "cn-east",
 		CreatedBy:   adminUser.ID,
 	})
 	db.Create(&models.ModuleService{
-		ModuleID:    modImplB.ID,
+		ModuleID:    models.Uint64Ptr(modImplB.ID),
 		ContractID:  &contract.ID,
 		ServiceName: "demo.billing.v1.BillingService",
 		ImplKey:     "us-west",

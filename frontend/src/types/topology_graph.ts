@@ -8,6 +8,8 @@ export type GraphNodeType =
   | 'PROCESS'
   | 'UNDEPLOYED_CONTAINER'
   | 'EXTERNAL_ENDPOINT'
+  | 'REMOTE_LDC'
+  | 'OFFLINE_PROVIDER'
   | 'UNREGISTERED_INTERFACE'
   | 'EXTERNAL_CONTEXT';
 
@@ -91,6 +93,10 @@ export interface TopologyGraphDTO {
   structure_version?: string;
   nodes: GraphNode[];
   edges: GraphEdge[];
+  truncated?: boolean;
+  truncation_reason?: string;
+  default_collapsed?: boolean;
+  process_node_count?: number;
 }
 
 export type ConsistencyEdgeStatus =

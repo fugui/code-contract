@@ -168,9 +168,11 @@ func ReconcileLiveCSGWithSSOT(db *gorm.DB, agentID uint64, live *agentproto.CSGT
 
 	populateSSOTServiceMeta := func(item *ReconciledCSGService, svc models.ModuleService, includeExpectedPort bool) {
 		sid := svc.ID
-		mid := svc.ModuleID
 		item.SSOTServiceID = &sid
-		item.SSOTModuleID = &mid
+		if svc.ModuleID != nil && *svc.ModuleID > 0 {
+			mid := *svc.ModuleID
+			item.SSOTModuleID = &mid
+		}
 		item.SSOTProtoSvc = strings.TrimSpace(svc.ProtoServiceName)
 		if svc.Module != nil {
 			item.SSOTModuleCode = svc.Module.Code
@@ -532,7 +534,7 @@ func ImportCSGBlueprint(db *gorm.DB, in CSGBlueprintImportInput) (*CSGBlueprintI
 			err = tx.Where("service_name = ?", svcName).First(&existing).Error
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				ms := models.ModuleService{
-					ModuleID:        mod.ID,
+					ModuleID:        models.Uint64Ptr(mod.ID),
 					ServiceName:     svcName,
 					DiffIgnorePaths: datatypes.JSON("[]"),
 					Description:     fmt.Sprintf("Imported from CSG (%s %s)", ls.Transport, ls.Addr),
@@ -573,7 +575,7 @@ func ImportCSGBlueprint(db *gorm.DB, in CSGBlueprintImportInput) (*CSGBlueprintI
 				if err != nil {
 					return err
 				}
-				if consumerMod.ID == providerSvc.ModuleID {
+				if providerSvc.ModuleID != nil && consumerMod.ID == *providerSvc.ModuleID {
 					continue
 				}
 

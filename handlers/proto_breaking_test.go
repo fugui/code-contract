@@ -176,7 +176,7 @@ func TestSC09_BreakingChangeDetection_DownstreamAlert_AndAllowBreakingRollbackAu
 	_ = db.Create(&consumerMod).Error
 
 	modSvc := models.ModuleService{
-		ModuleID:    provMod.ID,
+		ModuleID:    models.Uint64Ptr(provMod.ID),
 		ServiceName: "account.v1.AccountService",
 		CreatedBy:   adminUser.ID,
 	}

@@ -199,7 +199,7 @@ func TestSC05_SC07_SC08_EndToEndRecordingAndReplayPipeline(t *testing.T) {
 
 	// 接口契约：Mod_Order PROVIDE OrderService, DEPEND StockService
 	svcProvide := models.ModuleService{
-		ModuleID:    modOrder.ID,
+		ModuleID:    models.Uint64Ptr(modOrder.ID),
 		ServiceName: "OrderService",
 	}
 	if err := db.Create(&svcProvide).Error; err != nil {
@@ -1248,9 +1248,9 @@ func TestSC12_MultiImplContractDispatchVerifyAndIsolatedMockReplay(t *testing.T)
 	db.Create(&modX)
 
 	// B, C, D 声明 PROVIDE 实现同一契约，分支各不相同
-	svcB := models.ModuleService{ModuleID: modB.ID, ServiceName: contract.ServiceName, ContractID: &contract.ID, ImplKey: "b"}
-	svcC := models.ModuleService{ModuleID: modC.ID, ServiceName: contract.ServiceName, ContractID: &contract.ID, ImplKey: "c"}
-	svcD := models.ModuleService{ModuleID: modD.ID, ServiceName: contract.ServiceName, ContractID: &contract.ID, ImplKey: "d"}
+	svcB := models.ModuleService{ModuleID: models.Uint64Ptr(modB.ID), ServiceName: contract.ServiceName, ContractID: &contract.ID, ImplKey: "b"}
+	svcC := models.ModuleService{ModuleID: models.Uint64Ptr(modC.ID), ServiceName: contract.ServiceName, ContractID: &contract.ID, ImplKey: "c"}
+	svcD := models.ModuleService{ModuleID: models.Uint64Ptr(modD.ID), ServiceName: contract.ServiceName, ContractID: &contract.ID, ImplKey: "d"}
 	db.Create(&svcB)
 	db.Create(&svcC)
 	db.Create(&svcD)

@@ -748,3 +748,138 @@ func TestBuildTopologyGraph_LogicalAndPhysicalContractLib(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildTopologyGraph_PhysicalV2_ZeroModulesDrawsProcessEdges_ExcludesPrivate_AndScaleGuard(t *testing.T) {
+	db := setupIsolatedTopologyDB(t)
+	if err := db.Model(&models.ModuleSetting{}).Where("setting_key = ?", "discovery.v2_enabled").Update("setting_val", "true").Error; err != nil {
+		t.Fatalf("enable v2: %v", err)
+	}
+
+	// 0 个 Module！完全依靠物理资产构建拓扑
+	aliceID := uint(21)
+	sharedAgent := models.Agent{Name: "topo-shared", Endpoint: "10.20.0.1:8090", Scope: models.ScopeShared, Status: models.AgentStatusOnline}
+	privAgent := models.Agent{Name: "topo-alice-priv", Endpoint: "10.20.0.2:8090", Scope: models.ScopePrivate, OwnerID: &aliceID, Status: models.AgentStatusOnline}
+	_ = db.Create(&sharedAgent).Error
+	_ = db.Create(&privAgent).Error
+
+	pgrp := models.ArchProcessGroup{Code: "PGRP_CSG_AUTO", Name: "自动纳管组"}
+	_ = db.Create(&pgrp).Error
+	apA := models.ArchProcess{GroupID: pgrp.ID, Code: "gw-proc", Name: "网关进程", Lifecycle: models.ArchProcLifecycleConfirmed}
+	apB := models.ArchProcess{GroupID: pgrp.ID, Code: "pay-proc", Name: "支付进程", Lifecycle: models.ArchProcLifecycleConfirmed}
+	apPriv := models.ArchProcess{GroupID: pgrp.ID, Code: fmt.Sprintf("prv%d-secret", privAgent.ID), Name: "私有进程", Lifecycle: models.ArchProcLifecycleProvisional, OriginAgentID: &privAgent.ID}
+	_ = db.Create(&apA).Error
+	_ = db.Create(&apB).Error
+	_ = db.Create(&apPriv).Error
+
+	procA := models.Process{AgentID: sharedAgent.ID, ArchProcessID: apA.ID, ExtraDownstreams: datatypes.JSON("[]"), EnrollSource: models.EnrollSourceDiscovery, ProbeDesiredState: models.ProbeDesiredStateDisarmed, ProbeStatus: models.ProbeStatusDisarmed}
+	procB := models.Process{AgentID: sharedAgent.ID, ArchProcessID: apB.ID, ExtraDownstreams: datatypes.JSON("[]"), EnrollSource: models.EnrollSourceDiscovery, ProbeDesiredState: models.ProbeDesiredStateDisarmed, ProbeStatus: models.ProbeStatusDisarmed}
+	procPriv := models.Process{AgentID: privAgent.ID, ArchProcessID: apPriv.ID, ExtraDownstreams: datatypes.JSON("[]"), EnrollSource: models.EnrollSourceDiscovery, ProbeDesiredState: models.ProbeDesiredStateDisarmed, ProbeStatus: models.ProbeStatusDisarmed}
+	_ = db.Create(&procA).Error
+	_ = db.Create(&procB).Error
+	_ = db.Create(&procPriv).Error
+
+	svcPay := models.ModuleService{ModuleID: nil, ServiceName: "pay.v1.Charge", Source: models.ServiceSourceCSGDiscovered}
+	svcPriv := models.ModuleService{ModuleID: nil, ServiceName: "priv.v1.Hide", Source: models.ServiceSourceCSGDiscovered}
+	_ = db.Create(&svcPay).Error
+	_ = db.Create(&svcPriv).Error
+	_ = db.Create(&models.ServicePlacement{ModuleServiceID: svcPay.ID, ProcessID: procB.ID, ObservedTransport: models.ObservedTransportTCP, Status: models.PlacementStatusActive}).Error
+	_ = db.Create(&models.ServicePlacement{ModuleServiceID: svcPriv.ID, ProcessID: procPriv.ID, ObservedTransport: models.ObservedTransportTCP, Status: models.PlacementStatusActive}).Error
+
+	_ = db.Create(&models.ProcessDependency{
+		ConsumerProcessID: procA.ID, ServiceName: "pay.v1.Charge", ServiceID: &svcPay.ID,
+		ProviderKind: models.ProviderKindLocalEnrolled, ProviderProcessID: &procB.ID, ProviderArchProcessID: &apB.ID, Status: models.PlacementStatusActive,
+	}).Error
+	_ = db.Create(&models.ProcessDependency{
+		ConsumerProcessID: procA.ID, ServiceName: "ldc.v1.RemoteRisk",
+		ProviderKind: models.ProviderKindRemoteLDC, RemoteNode: "LDC-SZ-01", Status: models.PlacementStatusActive,
+	}).Error
+	_ = db.Create(&models.ProcessDependency{
+		ConsumerProcessID: procA.ID, ServiceName: "missing.v1.DownSvc",
+		ProviderKind: models.ProviderKindOffline, Status: models.PlacementStatusActive,
+	}).Error
+
+	// 1. 全局并集 (envAgentID=0)：0 模块照常画出 PROCESS->PROCESS、REMOTE_LDC、OFFLINE_PROVIDER，并剔除 PRIVATE PROVISIONAL
+	gUnion, err := BuildTopologyGraph(db, TopologyViewPhysical)
+	if err != nil {
+		t.Fatalf("BuildTopologyGraph V2 failed: %v", err)
+	}
+	var hasEdgeAB, hasRemote, hasOffline bool
+	for _, n := range gUnion.Nodes {
+		if n.ID == fmt.Sprintf("proc_%d", apPriv.ID) {
+			t.Fatalf("全局并集视图严禁泄露 PRIVATE PROVISIONAL 节点 %s", n.ID)
+		}
+		if n.Type == NodeTypeRemoteLDC && n.Name == "LDC-SZ-01" {
+			hasRemote = true
+		}
+		if n.Type == NodeTypeOfflineProvider {
+			hasOffline = true
+		}
+	}
+	for _, e := range gUnion.Edges {
+		if e.SourceNodeID == fmt.Sprintf("proc_%d", apA.ID) && e.TargetNodeID == fmt.Sprintf("proc_%d", apB.ID) {
+			hasEdgeAB = true
+		}
+	}
+	if !hasEdgeAB || !hasRemote || !hasOffline {
+		t.Fatalf("0 模块下物理视图缺少关键边/虚拟节点: AB=%v remote=%v offline=%v", hasEdgeAB, hasRemote, hasOffline)
+	}
+
+	// 2. 指定 PRIVATE envAgentID=privAgent.ID -> 包含该私有环境的 PROVISIONAL 节点
+	gPriv, err := BuildTopologyGraph(db, TopologyViewPhysical, privAgent.ID)
+	if err != nil {
+		t.Fatalf("BuildTopologyGraph V2 priv failed: %v", err)
+	}
+	var sawPriv bool
+	for _, n := range gPriv.Nodes {
+		if n.ID == fmt.Sprintf("proc_%d", apPriv.ID) {
+			sawPriv = true
+		}
+	}
+	if !sawPriv {
+		t.Fatalf("指定私有 env_agent_id=%d 应包含该环境 PROVISIONAL 节点", privAgent.ID)
+	}
+
+	// 3. 规模护栏：创建 160 个 -> default_collapsed=true；再加至 510 个 -> truncated=true 且 process_node_count<=500
+	bulkProcs := make([]models.ArchProcess, 0, 165)
+	for i := 0; i < 165; i++ {
+		bulkProcs = append(bulkProcs, models.ArchProcess{
+			GroupID: pgrp.ID, Code: fmt.Sprintf("scale-a-%03d", i), Name: fmt.Sprintf("规模A-%d", i), Lifecycle: models.ArchProcLifecycleConfirmed,
+		})
+	}
+	if err := db.CreateInBatches(&bulkProcs, 100).Error; err != nil {
+		t.Fatalf("bulk create 165 failed: %v", err)
+	}
+	gCollapse, err := BuildTopologyGraph(db, TopologyViewPhysical)
+	if err != nil {
+		t.Fatalf("BuildTopologyGraph collapse check failed: %v", err)
+	}
+	if !gCollapse.DefaultCollapsed || gCollapse.Truncated {
+		t.Fatalf("期望 >150 且 <=500 时 default_collapsed=true, truncated=false，实际: collapsed=%v truncated=%v count=%d", gCollapse.DefaultCollapsed, gCollapse.Truncated, gCollapse.ProcessNodeCount)
+	}
+
+	bulk510 := make([]models.ArchProcess, 0, 360)
+	for i := 0; i < 360; i++ {
+		bulk510 = append(bulk510, models.ArchProcess{
+			GroupID: pgrp.ID, Code: fmt.Sprintf("scale-b-%03d", i), Name: fmt.Sprintf("规模B-%d", i), Lifecycle: models.ArchProcLifecycleConfirmed,
+		})
+	}
+	if err := db.CreateInBatches(&bulk510, 100).Error; err != nil {
+		t.Fatalf("bulk create 360 failed: %v", err)
+	}
+	gTrunc, err := BuildTopologyGraph(db, TopologyViewPhysical)
+	if err != nil {
+		t.Fatalf("BuildTopologyGraph truncate check failed: %v", err)
+	}
+	if !gTrunc.Truncated || gTrunc.TruncationReason == "" {
+		t.Fatalf("超过 500 进程节点期望 truncated=true，实际: %+v", gTrunc)
+	}
+	actualProcNodes := 0
+	for _, n := range gTrunc.Nodes {
+		if n.Type == NodeTypeProcess {
+			actualProcNodes++
+		}
+	}
+	if actualProcNodes > 500 {
+		t.Fatalf("截断后 PROCESS 节点数不得超过 500，实际 %d", actualProcNodes)
+	}
+}

@@ -883,54 +883,20 @@ func UpdateModule(db *gorm.DB, id uint64, in ModuleInput) (*models.Module, *mode
 	return &before, &after, nil
 }
 
-// DeleteModule 删除功能模块
+// DeleteModule 删除功能模块（委托 DeleteModuleTx 按 I6/I7 原子迁移并清理）
 func DeleteModule(db *gorm.DB, id uint64) (*models.Module, error) {
-	var mod models.Module
-	if err := db.First(&mod, id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrModuleNotFound
+	var deleted *models.Module
+	err := db.Transaction(func(tx *gorm.DB) error {
+		res, txErr := DeleteModuleTx(tx, id)
+		if txErr != nil {
+			return txErr
 		}
+		m := res.Module
+		deleted = &m
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
-
-	var svcCount int64
-	if err := db.Model(&models.ModuleService{}).Where("module_id = ?", id).Count(&svcCount).Error; err != nil {
-		return nil, err
-	}
-	if svcCount > 0 {
-		return nil, ErrModuleNotEmpty
-	}
-
-	if mod.ModuleKind == models.ModuleKindContractLib {
-		var contractCount int64
-		if err := db.Model(&models.ServiceContract{}).Where("definer_module_id = ?", id).Count(&contractCount).Error; err != nil {
-			return nil, err
-		}
-		if contractCount > 0 {
-			return nil, ErrContractLibHasContractsCannotDelete
-		}
-	}
-
-	var depCount int64
-	if err := db.Model(&models.ModuleDependency{}).Where("consumer_module_id = ? OR provider_module_id = ?", id, id).Count(&depCount).Error; err != nil {
-		return nil, err
-	}
-	if depCount > 0 {
-		return nil, ErrModuleNotEmpty
-	}
-
-	if mod.ArchProcessID != nil {
-		var procCount int64
-		if err := db.Model(&models.Process{}).Where("arch_process_id = ?", *mod.ArchProcessID).Count(&procCount).Error; err != nil {
-			return nil, err
-		}
-		if procCount > 0 {
-			return nil, ErrModuleNotEmpty
-		}
-	}
-
-	if err := db.Delete(&mod).Error; err != nil {
-		return nil, err
-	}
-	return &mod, nil
+	return deleted, nil
 }

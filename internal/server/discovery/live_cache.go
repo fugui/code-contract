@@ -2,13 +2,10 @@ package discovery
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -36,11 +33,6 @@ var (
 	ErrPinLimitExceeded   = errors.New("discovery: snapshot pin limit exceeded")
 	ErrSnapshotPinned     = errors.New("discovery: cannot delete pinned snapshot")
 	ErrInvalidDiffTarget  = errors.New("discovery: invalid diff target")
-
-	procPIDSuffixRe = regexp.MustCompile(`^(.+)-(\d+)$`)
-	ipv4TokenRe     = regexp.MustCompile(`\b\d{1,3}(?:\.\d{1,3}){3}\b`)
-	hexLongTokenRe  = regexp.MustCompile(`^[0-9a-fA-F]{8,}$`)
-	pureDigitsRe    = regexp.MustCompile(`^\d+$`)
 )
 
 // AgentDiscoveryFetcher abstracts Agent live discovery RPCs for production HubManager and unit tests.
@@ -94,6 +86,7 @@ type DiscoveryProcessGroupDTO struct {
 	ObservedTransports    []string                  `json:"observed_transports"` // ["TCP"] / ["MESH"] / ["TCP","MESH"]
 	EnrollStatus          string                    `json:"enroll_status"`       // UNENROLLED | ENROLLED_DISARMED | ARMED_READY | ARMED_NEED_RECONNECT
 	IdentityMatch         string                    `json:"identity_match"`      // MATCHED | AMBIGUOUS | LOW_CONFIDENCE | NEW
+	Candidates            []ProcessCandidateDTO     `json:"candidates,omitempty"`
 	ArchProcessID         *uint64                   `json:"arch_process_id,omitempty"`
 	ArchProcessCode       string                    `json:"arch_process_code,omitempty"`
 	ArchProcessName       string                    `json:"arch_process_name,omitempty"`
@@ -190,100 +183,15 @@ func (s *LiveDiscoveryService) ResetCache() {
 	s.rateMu.Unlock()
 }
 
-// StripProcPIDSuffix normalizes runtime process names ending in -<pid>.
-func StripProcPIDSuffix(name string) string {
-	trimmed := strings.TrimSpace(name)
-	if m := procPIDSuffixRe.FindStringSubmatch(trimmed); len(m) == 3 {
-		return m[1]
-	}
-	return trimmed
-}
-
-// ComputeIdentityFingerprint computes ADR-24 §5.5 stable process fingerprint and canonical grouping key.
-func ComputeIdentityFingerprint(exeName, cmdline, procName string) (fingerprint string, canonicalKey string, isLowConfidence bool) {
-	redacted := RedactCmdline(cmdline)
-	fields := strings.Fields(redacted)
-
-	exeBase := strings.TrimSpace(exeName)
-	if exeBase == "" && len(fields) > 0 {
-		exeBase = fields[0]
-	}
-	if exeBase != "" {
-		exeBase = filepath.Base(exeBase)
-	}
-
-	if len(fields) == 0 {
-		baseName := strings.ToLower(StripProcPIDSuffix(firstNonEmpty(exeBase, procName, "unknown")))
-		sum := sha256.Sum256([]byte("v1|proc|" + baseName))
-		return hex.EncodeToString(sum[:]), "proc:" + baseName, true
-	}
-
-	entryToken := ""
-	argsStart := 1
-	lowerExe := strings.ToLower(exeBase)
-	switch {
-	case strings.HasPrefix(lowerExe, "java"):
-		for i := 1; i < len(fields); i++ {
-			tok := fields[i]
-			if tok == "-jar" && i+1 < len(fields) {
-				entryToken = filepath.Base(fields[i+1])
-				break
-			}
-			if !strings.HasPrefix(tok, "-") && !strings.Contains(tok, "=") {
-				entryToken = filepath.Base(tok)
-				break
-			}
-		}
-	case strings.HasPrefix(lowerExe, "python") || lowerExe == "node" || lowerExe == "sh" || lowerExe == "bash":
-		for i := 1; i < len(fields); i++ {
-			tok := fields[i]
-			if !strings.HasPrefix(tok, "-") && !strings.Contains(tok, "=") {
-				entryToken = filepath.Base(tok)
-				break
-			}
+// InvalidateCache clears cached live discovery entries for the specified agent.
+func (s *LiveDiscoveryService) InvalidateCache(agentID uint64) {
+	s.cacheMu.Lock()
+	for k := range s.cache {
+		if k.agentID == agentID {
+			delete(s.cache, k)
 		}
 	}
-
-	stableArgs := make([]string, 0, len(fields))
-	for i := argsStart; i < len(fields); i++ {
-		tok := strings.TrimSpace(fields[i])
-		if tok == "" || isSensitiveArg(tok) || isVolatileArg(tok) {
-			continue
-		}
-		stableArgs = append(stableArgs, tok)
-	}
-	sort.Strings(stableArgs)
-
-	canonical := "v1|" + strings.ToLower(exeBase) + "|" + strings.ToLower(entryToken) + "|" + strings.Join(stableArgs, " ")
-	sum := sha256.Sum256([]byte(canonical))
-	fp := hex.EncodeToString(sum[:])
-	return fp, "fp:" + fp[:24], false
-}
-
-func isVolatileArg(tok string) bool {
-	lower := strings.ToLower(tok)
-	if pureDigitsRe.MatchString(tok) || hexLongTokenRe.MatchString(tok) {
-		return true
-	}
-	if ipv4TokenRe.MatchString(tok) || strings.Contains(tok, "::") {
-		return true
-	}
-	if strings.HasPrefix(lower, "/tmp/") || strings.HasPrefix(lower, "/var/run/") {
-		return true
-	}
-	if idx := strings.IndexByte(lower, '='); idx >= 0 {
-		k := strings.TrimLeft(lower[:idx], "-")
-		v := lower[idx+1:]
-		for _, volatileKey := range []string{"port", "listen", "pid", "host", "ip", "addr", "endpoint", "instance", "node_id", "worker_id"} {
-			if k == volatileKey || strings.HasSuffix(k, "_"+volatileKey) || strings.HasSuffix(k, "-"+volatileKey) {
-				return true
-			}
-		}
-		if pureDigitsRe.MatchString(v) || hexLongTokenRe.MatchString(v) || ipv4TokenRe.MatchString(v) {
-			return true
-		}
-	}
-	return false
+	s.cacheMu.Unlock()
 }
 
 // GetLiveDiscovery fetches live discovery for (agentID, csgAddr) with singleflight, 5s TTL cache,
@@ -360,7 +268,7 @@ func (s *LiveDiscoveryService) GetLiveDiscovery(ctx context.Context, agentID uin
 			report.Errors = append(report.Errors, "proc discover: "+procErr.Error())
 		}
 
-		resp, aggErr := AggregateProcessCentric(s.db, agentID, report, discovered)
+		resp, aggErr := AggregateProcessCentricForUser(s.db, agentID, report, discovered, userID, isAdmin)
 		if aggErr != nil {
 			return nil, aggErr
 		}
@@ -458,6 +366,11 @@ func (s *LiveDiscoveryService) fallbackFromSnapshot(agent *models.Agent, csgAddr
 
 // AggregateProcessCentric folds CSGTopologyReport + /proc DiscoveredProcess into process-centric DTOs.
 func AggregateProcessCentric(db *gorm.DB, agentID uint64, report *agentproto.CSGTopologyReport, discovered []agentproto.DiscoveredProcess) (*DiscoveryLiveRespDTO, error) {
+	return AggregateProcessCentricForUser(db, agentID, report, discovered, 0, true)
+}
+
+// AggregateProcessCentricForUser folds CSGTopologyReport + /proc DiscoveredProcess with V2 PROVISIONAL visibility filtering.
+func AggregateProcessCentricForUser(db *gorm.DB, agentID uint64, report *agentproto.CSGTopologyReport, discovered []agentproto.DiscoveredProcess, userID uint, isAdmin bool) (*DiscoveryLiveRespDTO, error) {
 	cleanReport := RedactCSGReport(report)
 	if cleanReport == nil {
 		cleanReport = &agentproto.CSGTopologyReport{}
@@ -465,7 +378,7 @@ func AggregateProcessCentric(db *gorm.DB, agentID uint64, report *agentproto.CSG
 	cleanDisc := RedactDiscoveredProcesses(discovered)
 
 	// Load read-only SSOT & mounted process metadata when DB is available.
-	ssotMeta := loadSSOTReadOnlyMeta(db, agentID)
+	ssotMeta := loadSSOTReadOnlyMeta(db, agentID, userID, isAdmin)
 
 	discByPID := make(map[uint32]agentproto.DiscoveredProcess, len(cleanDisc))
 	for _, dp := range cleanDisc {
@@ -729,7 +642,7 @@ func AggregateProcessCentric(db *gorm.DB, agentID uint64, report *agentproto.CSG
 	// Precompute SSOT match per process group once for O(1) reuse across process rows and subscriptions.
 	matchByGroupKey := make(map[string]procSSOTMatchResult, len(groups))
 	for k, g := range groups {
-		matchByGroupKey[k] = matchProcessSSOT(ssotMeta, g.fingerprint, g.procName, g.cmdline, g.lowConf)
+		matchByGroupKey[k] = matchProcessSSOT(ssotMeta, g.exeName, g.cmdline, g.procName, g.lowConf)
 	}
 
 	// Build final DTO lists
@@ -796,9 +709,9 @@ func AggregateProcessCentric(db *gorm.DB, agentID uint64, report *agentproto.CSG
 
 			if ms, ok := ssotMeta.svcByName[sa.serviceName]; ok {
 				sid := ms.ID
-				mid := ms.ModuleID
 				svcDTO.SSOTServiceID = &sid
-				if mid > 0 {
+				if ms.ModuleID != nil && *ms.ModuleID > 0 {
+					mid := *ms.ModuleID
 					svcDTO.SSOTModuleID = &mid
 					svcDTO.ClaimStatus = "CLAIMED"
 					claimedCnt++
@@ -885,6 +798,7 @@ func AggregateProcessCentric(db *gorm.DB, agentID uint64, report *agentproto.CSG
 			ObservedTransports:    transports,
 			EnrollStatus:          matchResult.enrollStatus,
 			IdentityMatch:         matchResult.identityMatch,
+			Candidates:            matchResult.candidates,
 			ArchProcessID:         matchResult.archProcessID,
 			ArchProcessCode:       matchResult.archProcessCode,
 			ArchProcessName:       matchResult.archProcessName,
@@ -964,7 +878,7 @@ type ssotReadOnlyMeta struct {
 	protoOpsByName  map[string]string
 }
 
-func loadSSOTReadOnlyMeta(db *gorm.DB, agentID uint64) ssotReadOnlyMeta {
+func loadSSOTReadOnlyMeta(db *gorm.DB, agentID uint64, userID uint, isAdmin bool) ssotReadOnlyMeta {
 	meta := ssotReadOnlyMeta{
 		mountedByArchID: make(map[uint64]models.Process),
 		svcByName:       make(map[string]models.ModuleService),
@@ -981,9 +895,21 @@ func loadSSOTReadOnlyMeta(db *gorm.DB, agentID uint64) ssotReadOnlyMeta {
 		}
 	}
 
+	var agents []models.Agent
+	agentMap := make(map[uint64]*models.Agent)
+	if err := db.Select("id, scope, owner_id").Find(&agents).Error; err == nil {
+		for i := range agents {
+			agentMap[agents[i].ID] = &agents[i]
+		}
+	}
+
 	var aps []models.ArchProcess
 	if err := db.Order("id ASC").Find(&aps).Error; err == nil {
-		meta.archProcesses = aps
+		for _, ap := range aps {
+			if IsArchProcessVisibleToUser(ap, agentMap, userID, isAdmin) {
+				meta.archProcesses = append(meta.archProcesses, ap)
+			}
+		}
 	}
 
 	var svcs []models.ModuleService
@@ -1021,6 +947,7 @@ func loadSSOTReadOnlyMeta(db *gorm.DB, agentID uint64) ssotReadOnlyMeta {
 type procSSOTMatchResult struct {
 	enrollStatus    string
 	identityMatch   string
+	candidates      []ProcessCandidateDTO
 	archProcessID   *uint64
 	archProcessCode string
 	archProcessName string
@@ -1028,46 +955,46 @@ type procSSOTMatchResult struct {
 	probeStatus     string
 }
 
-func matchProcessSSOT(meta ssotReadOnlyMeta, fp, procName, cmdline string, lowConf bool) procSSOTMatchResult {
+func matchProcessSSOT(meta ssotReadOnlyMeta, exeName, cmdline, procName string, lowConf bool) procSSOTMatchResult {
 	res := procSSOTMatchResult{
 		enrollStatus:  "UNENROLLED",
 		identityMatch: "NEW",
 	}
-	if lowConf {
+
+	resolved := ResolveProcessIdentity(meta.archProcesses, meta.mountedByArchID, exeName, cmdline, procName, nil, false)
+	if lowConf || resolved.IsLowConfidence {
 		res.identityMatch = "LOW_CONFIDENCE"
 	}
 
-	var candidates []models.ArchProcess
-	lowerCmd := strings.ToLower(cmdline)
-	lowerProc := strings.ToLower(procName)
-	for _, ap := range meta.archProcesses {
-		pat := strings.ToLower(strings.TrimSpace(ap.DefaultCmdPattern))
-		code := strings.ToLower(strings.TrimSpace(ap.Code))
-		if pat != "" && lowerCmd != "" && strings.Contains(lowerCmd, pat) {
-			candidates = append(candidates, ap)
-			continue
+	switch resolved.MatchStatus {
+	case "AMBIGUOUS":
+		res.identityMatch = "AMBIGUOUS"
+		res.candidates = resolved.Candidates
+		return res
+	case "LOW_CONFIDENCE":
+		res.identityMatch = "LOW_CONFIDENCE"
+		res.candidates = resolved.Candidates
+		if len(resolved.Candidates) == 1 {
+			c := resolved.Candidates[0]
+			res.archProcessID = &c.ArchProcessID
+			res.archProcessCode = c.Code
+			res.archProcessName = c.Name
+		} else {
+			return res
 		}
-		if code != "" && (code == lowerProc || (pat != "" && pat == lowerProc)) {
-			candidates = append(candidates, ap)
+	case "MATCHED":
+		if resolved.Matched != nil {
+			ap := *resolved.Matched
+			apID := ap.ID
+			res.archProcessID = &apID
+			res.archProcessCode = ap.Code
+			res.archProcessName = ap.Name
+			res.identityMatch = "MATCHED"
 		}
 	}
 
-	if len(candidates) > 1 {
-		res.identityMatch = "AMBIGUOUS"
-		return res
-	}
-	if len(candidates) == 1 {
-		ap := candidates[0]
-		apID := ap.ID
-		res.archProcessID = &apID
-		res.archProcessCode = ap.Code
-		res.archProcessName = ap.Name
-		if lowConf {
-			res.identityMatch = "LOW_CONFIDENCE"
-		} else {
-			res.identityMatch = "MATCHED"
-		}
-		if mounted, ok := meta.mountedByArchID[ap.ID]; ok {
+	if res.archProcessID != nil {
+		if mounted, ok := meta.mountedByArchID[*res.archProcessID]; ok {
 			pid := mounted.ID
 			res.processID = &pid
 			res.probeStatus = mounted.ProbeStatus

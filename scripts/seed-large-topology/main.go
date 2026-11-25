@@ -208,7 +208,7 @@ func main() {
 	servicesList := make([]models.ModuleService, 0, totalModules)
 	for idx, mod := range modulesList {
 		servicesList = append(servicesList, models.ModuleService{
-			ModuleID:        mod.ID,
+			ModuleID:        models.Uint64Ptr(mod.ID),
 			ServiceName:     fmt.Sprintf("svc.v1.Mod%04dService", idx+1),
 			DiffIgnorePaths: datatypes.JSON([]byte("[]")),
 			Description:     fmt.Sprintf("模块 %s 标准对外服务", mod.Code),

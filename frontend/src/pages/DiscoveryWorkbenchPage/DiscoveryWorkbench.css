@@ -614,3 +614,109 @@
     grid-template-columns: 1fr;
   }
 }
+
+.discovery-batch-action-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--color-primary-border);
+  background: var(--color-primary-subtle);
+  color: var(--color-text-primary);
+  font-size: 13px;
+}
+
+.discovery-batch-action-bar__summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.discovery-batch-action-bar__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.discovery-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.discovery-modal-notice {
+  padding: 10px 12px;
+  border-radius: 7px;
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-muted);
+  color: var(--color-text-primary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.discovery-modal-subnotice {
+  margin-top: 6px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.discovery-enroll-preview-list,
+.discovery-candidate-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.discovery-enroll-preview-item,
+.discovery-candidate-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: 7px;
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-surface);
+}
+
+.discovery-candidate-item {
+  justify-content: flex-start;
+  cursor: pointer;
+}
+
+.discovery-candidate-item:hover {
+  background: var(--color-bg-hover);
+}
+
+.discovery-candidate-item__info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.discovery-candidate-item__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.discovery-candidate-item__tier {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.discovery-enroll-preview-item__main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.discovery-enroll-preview-item__meta {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}

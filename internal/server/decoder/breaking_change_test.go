@@ -704,14 +704,14 @@ func TestFindAffectedDependents_MultiImplContract(t *testing.T) {
 
 	// 实现服务
 	msB := models.ModuleService{
-		ModuleID:    modB.ID,
+		ModuleID:    models.Uint64Ptr(modB.ID),
 		ContractID:  &contract.ID,
 		ServiceName: "cros.pay.PaymentGateway",
 		ImplKey:     "alipay",
 		CreatedBy:   1,
 	}
 	msC := models.ModuleService{
-		ModuleID:    modC.ID,
+		ModuleID:    models.Uint64Ptr(modC.ID),
 		ContractID:  &contract.ID,
 		ServiceName: "cros.pay.PaymentGateway",
 		ImplKey:     "wechat",

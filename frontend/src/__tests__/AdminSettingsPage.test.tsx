@@ -80,4 +80,38 @@ describe('AdminSettingsPage CI Gate Token Governance', () => {
     expect(html).not.toContain('code_notifier_token_enc');
     expect(html).not.toContain('smtp_password_enc');
   });
+
+  it('renders Discovery V2 governance settings and CSG placeholder migration controls for admin', () => {
+    const html = renderToString(
+      <MemoryRouter>
+        <ModuleUserProvider
+          value={{
+            user: adminUser,
+            loadingUser: false,
+            isEmbedded: false,
+            reloadUser: async () => {},
+          }}
+        >
+          <AdminSettingsPage />
+        </ModuleUserProvider>
+      </MemoryRouter>
+    );
+
+    expect(html).toContain('现网发现与物理资产 (Discovery V2)');
+    expect(html).toContain('discovery.v2_enabled');
+    expect(html).toContain('discovery.enroll_batch_limit_shared');
+    expect(html).toContain('discovery.reconcile_interval_sec');
+    expect(html).toContain('discovery.stale_miss_threshold');
+    expect(html).toContain('discovery.stale_hours');
+    expect(html).toContain('discovery.retire_days');
+    expect(html).toContain('discovery.gc_days');
+    expect(html).toContain('discovery.auto_downstreams');
+    expect(html).toContain('discovery.snapshot_retention_count');
+    expect(html).toContain('discovery.snapshot_pin_limit');
+
+    expect(html).toContain('CSG 占位模块迁移治理');
+    expect(html).toContain('admin-migration-dryrun-btn');
+    expect(html).toContain('admin-migration-execute-btn');
+    expect(html).toContain('admin-migration-rollback-btn');
+  });
 });

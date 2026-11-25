@@ -46,6 +46,8 @@ CREATE TABLE IF NOT EXISTS contract_traffic_records (
     span_id VARCHAR(32) NOT NULL DEFAULT '',
     father_span_id VARCHAR(32) NOT NULL DEFAULT '',
     subsystem_id BIGINT,
+    src_arch_process_id BIGINT,
+    dst_arch_process_id BIGINT,
     src_module_id BIGINT,
     src_attribution_mode VARCHAR(32) NOT NULL DEFAULT '',
     src_candidate_module_ids JSONB,
@@ -70,9 +72,80 @@ CREATE INDEX IF NOT EXISTS idx_contract_tr_session_svc ON contract_traffic_recor
 CREATE INDEX IF NOT EXISTS idx_contract_tr_conn_sno ON contract_traffic_records (conn_key, sno);
 CREATE INDEX IF NOT EXISTS idx_contract_tr_session_req_ns ON contract_traffic_records (session_id, req_captured_at_ns, id);
 ALTER TABLE contract_traffic_records ADD COLUMN IF NOT EXISTS dst_contract_id BIGINT;
+ALTER TABLE contract_traffic_records ADD COLUMN IF NOT EXISTS src_arch_process_id BIGINT;
+ALTER TABLE contract_traffic_records ADD COLUMN IF NOT EXISTS dst_arch_process_id BIGINT;
 CREATE INDEX IF NOT EXISTS idx_contract_tr_dst_contract ON contract_traffic_records (dst_contract_id) WHERE dst_contract_id IS NOT NULL;
 `
 	return db.Exec(ddl).Error
+}
+
+// EnsureArchProcessPartitionIndexes 幂等在母表建立 ON ONLY 索引并逐分区并发挂接物理进程归因索引 (M30b, ADR-24 §4.6)
+func (pm *PartitionManager) EnsureArchProcessPartitionIndexes(db *gorm.DB) error {
+	parentDDL := `
+CREATE INDEX IF NOT EXISTS idx_contract_tr_src_arch_proc ON ONLY contract_traffic_records (src_arch_process_id);
+CREATE INDEX IF NOT EXISTS idx_contract_tr_dst_arch_proc ON ONLY contract_traffic_records (dst_arch_process_id);
+`
+	if err := db.Exec(parentDDL).Error; err != nil {
+		return fmt.Errorf("创建母表物理进程归因索引失败: %w", err)
+	}
+
+	var partitionNames []string
+	if err := db.Raw(`
+SELECT c.relname
+FROM pg_inherits i
+JOIN pg_class c ON c.oid = i.inhrelid
+JOIN pg_class p ON p.oid = i.inhparent
+WHERE p.relname = 'contract_traffic_records'
+ORDER BY c.relname ASC
+`).Scan(&partitionNames).Error; err != nil {
+		return fmt.Errorf("查询流量分区子表失败: %w", err)
+	}
+
+	type archColIdx struct {
+		parentIdx string
+		col       string
+		suffix    string
+	}
+	specs := []archColIdx{
+		{parentIdx: "idx_contract_tr_src_arch_proc", col: "src_arch_process_id", suffix: "src_arch_proc"},
+		{parentIdx: "idx_contract_tr_dst_arch_proc", col: "dst_arch_process_id", suffix: "dst_arch_proc"},
+	}
+
+	for _, partName := range partitionNames {
+		if !partitionNameRegex.MatchString(partName) {
+			continue
+		}
+		for _, sp := range specs {
+			partIdxName := fmt.Sprintf("idx_%s_%s", partName, sp.suffix)
+			var attached int64
+			if err := db.Raw(`
+SELECT COUNT(*)
+FROM pg_inherits i
+JOIN pg_class c ON c.oid = i.inhrelid
+JOIN pg_class p ON p.oid = i.inhparent
+WHERE p.relname = ? AND c.relname = ?
+`, sp.parentIdx, partIdxName).Scan(&attached).Error; err != nil {
+				return err
+			}
+			if attached > 0 {
+				continue
+			}
+
+			createSQL := fmt.Sprintf("CREATE INDEX CONCURRENTLY IF NOT EXISTS %s ON %s (%s)", partIdxName, partName, sp.col)
+			if err := db.Exec(createSQL).Error; err != nil {
+				// 若调用方处于事务内导致 CONCURRENTLY 不可用，则退化为普通索引创建以保证测试/迁移健壮性
+				fallbackSQL := fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s (%s)", partIdxName, partName, sp.col)
+				if fbErr := db.Exec(fallbackSQL).Error; fbErr != nil {
+					return fmt.Errorf("创建分区索引 [%s] 失败: %w", partIdxName, fbErr)
+				}
+			}
+			attachSQL := fmt.Sprintf("ALTER INDEX %s ATTACH PARTITION %s", sp.parentIdx, partIdxName)
+			if err := db.Exec(attachSQL).Error; err != nil {
+				return fmt.Errorf("挂接分区索引 [%s -> %s] 失败: %w", partIdxName, sp.parentIdx, err)
+			}
+		}
+	}
+	return nil
 }
 
 // FormatPartitionName 计算按日分区表名

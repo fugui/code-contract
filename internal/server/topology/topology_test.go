@@ -256,25 +256,14 @@ func TestDeleteNonEmptyArchElementsConflict(t *testing.T) {
 	if _, err := DeleteFunctionalGroup(db, childGrp.ID); !errors.Is(err, ErrGroupNotEmpty) {
 		t.Fatalf("删除含模块的功能组期望 ErrGroupNotEmpty，实际为: %v", err)
 	}
-	// 4. 删除已声明接口且关联进程的模块 -> 409
-	if _, err := DeleteModule(db, mod.ID); !errors.Is(err, ErrModuleNotEmpty) {
-		t.Fatalf("删除含服务与进程关联的模块期望 ErrModuleNotEmpty，实际为: %v", err)
+	// 4. 删除模块走 DeleteModuleTx（解耦物理进程，若无下游引用则自动清理无放置手工服务；若有服务被消费则 409）
+	if _, err := DeleteModule(db, mod.ID); err != nil {
+		t.Fatalf("ADR-24 解耦后删除无依赖引用的模块应成功，实际报错: %v", err)
 	}
-	// 仅删除服务但仍关联进程 -> 依然 409
-	if _, err := DeleteModuleService(db, svc.ID); err != nil {
-		t.Fatalf("DeleteModuleService 失败: %v", err)
-	}
-	if _, err := DeleteModule(db, mod.ID); !errors.Is(err, ErrModuleNotEmpty) {
-		t.Fatalf("删除仍被进程挂载的模块期望 ErrModuleNotEmpty，实际为: %v", err)
-	}
-
-	// 5. 解除进程关联并自底向上逐级删除 -> 全部成功
 	if _, err := DeleteProcess(db, proc.ID); err != nil {
 		t.Fatalf("DeleteProcess 失败: %v", err)
 	}
-	if _, err := DeleteModule(db, mod.ID); err != nil {
-		t.Fatalf("解除全部关联后删除模块应成功，实际报错: %v", err)
-	}
+	_ = svc // svc 随无放置手工服务清理
 	if _, err := DeleteFunctionalGroup(db, childGrp.ID); err != nil {
 		t.Fatalf("清空模块后删除子功能组应成功，实际报错: %v", err)
 	}

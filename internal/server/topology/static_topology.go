@@ -256,7 +256,9 @@ func CreateModuleService(db *gorm.DB, in ModuleServiceInput) (*models.ModuleServ
 				findErr := tx.Where("service_name = ? AND (contract_id IS NULL OR is_custom_service_name = true)", publishedName).First(&existing).Error
 				if findErr == nil {
 					var holder models.Module
-					_ = tx.First(&holder, existing.ModuleID).Error
+					if existing.ModuleID != nil {
+						_ = tx.First(&holder, *existing.ModuleID).Error
+					}
 					return &ProvideConflictError{
 						ServiceName:      publishedName,
 						HolderModuleID:   holder.ID,
@@ -304,7 +306,7 @@ func CreateModuleService(db *gorm.DB, in ModuleServiceInput) (*models.ModuleServ
 			}
 
 			svc := &models.ModuleService{
-				ModuleID:            in.ModuleID,
+				ModuleID:            models.Uint64Ptr(in.ModuleID),
 				ContractID:          in.ContractID,
 				ServiceName:         publishedName,
 				ProtoServiceName:    protoSvcName,
@@ -368,7 +370,9 @@ func CreateModuleService(db *gorm.DB, in ModuleServiceInput) (*models.ModuleServ
 		err := tx.Where("service_name = ? AND (contract_id IS NULL OR is_custom_service_name = true)", serviceName).First(&existing).Error
 		if err == nil {
 			var holder models.Module
-			_ = tx.First(&holder, existing.ModuleID).Error
+			if existing.ModuleID != nil {
+				_ = tx.First(&holder, *existing.ModuleID).Error
+			}
 			return &ProvideConflictError{
 				ServiceName:      serviceName,
 				HolderModuleID:   holder.ID,
@@ -380,7 +384,7 @@ func CreateModuleService(db *gorm.DB, in ModuleServiceInput) (*models.ModuleServ
 		}
 
 		svc := &models.ModuleService{
-			ModuleID:         in.ModuleID,
+			ModuleID:         models.Uint64Ptr(in.ModuleID),
 			ServiceName:      serviceName,
 			ProtoServiceName: protoSvcName,
 			DiffIgnorePaths:  datatypes.JSON(diffPathsJSON),
@@ -523,7 +527,9 @@ func UpdateModuleServiceWithOptions(db *gorm.DB, in UpdateModuleServiceInput) (*
 			findErr := tx.Where("service_name = ? AND (contract_id IS NULL OR is_custom_service_name = true) AND id != ?", newServiceName, before.ID).First(&existing).Error
 			if findErr == nil {
 				var holder models.Module
-				_ = tx.First(&holder, existing.ModuleID).Error
+				if existing.ModuleID != nil {
+					_ = tx.First(&holder, *existing.ModuleID).Error
+				}
 				return &ProvideConflictError{
 					ServiceName:      newServiceName,
 					HolderModuleID:   holder.ID,
@@ -536,8 +542,8 @@ func UpdateModuleServiceWithOptions(db *gorm.DB, in UpdateModuleServiceInput) (*
 		}
 
 		// 从自定义名切换回共享契约名时，须校验 A-09 进程互斥
-		if !newIsCustom && (before.IsCustomServiceName || newServiceName != before.ServiceName) {
-			if err := AssertContractImplProcessDisjoint(tx, before.ModuleID, before.ContractID, nil); err != nil {
+		if !newIsCustom && (before.IsCustomServiceName || newServiceName != before.ServiceName) && before.ModuleID != nil {
+			if err := AssertContractImplProcessDisjoint(tx, *before.ModuleID, before.ContractID, nil); err != nil {
 				return err
 			}
 		}
@@ -697,7 +703,10 @@ func CreateModuleDependency(db *gorm.DB, in ModuleDependencyInput) (*models.Modu
 				return err
 			}
 
-			if targetSvc.ModuleID == in.ConsumerModuleID {
+			if targetSvc.ModuleID == nil || *targetSvc.ModuleID == 0 {
+				return ErrModuleServiceNotFound
+			}
+			if *targetSvc.ModuleID == in.ConsumerModuleID {
 				return ErrSelfDependency
 			}
 
@@ -715,7 +724,8 @@ func CreateModuleDependency(db *gorm.DB, in ModuleDependencyInput) (*models.Modu
 			}
 
 			dep.ServiceID = in.ServiceID
-			dep.ProviderModuleID = &targetSvc.ModuleID
+			provModID := *targetSvc.ModuleID
+			dep.ProviderModuleID = &provModID
 		}
 
 		if err := tx.Create(dep).Error; err != nil {
@@ -771,7 +781,7 @@ func ListModuleDependencies(db *gorm.DB, moduleID uint64) ([]models.ModuleDepend
 // ListAvailableServices 查询系统中所有可供依赖的内部服务清单 (排除自身)
 func ListAvailableServices(db *gorm.DB, excludeModuleID uint64) ([]AvailableServiceDTO, error) {
 	var services []models.ModuleService
-	query := db.Preload("Contract").Preload("Module").Preload("Module.Subsystem")
+	query := db.Preload("Contract").Preload("Module").Preload("Module.Subsystem").Where("module_id IS NOT NULL")
 	if excludeModuleID > 0 {
 		query = query.Where("module_id != ?", excludeModuleID)
 	}
@@ -788,7 +798,7 @@ func ListAvailableServices(db *gorm.DB, excludeModuleID uint64) ([]AvailableServ
 			ImplKey:             s.ImplKey,
 			IsCustomServiceName: s.IsCustomServiceName,
 			IsMultiImpl:         s.ContractID != nil && *s.ContractID > 0,
-			ModuleID:            s.ModuleID,
+			ModuleID:            s.ModuleIDVal(),
 			Description:         s.Description,
 		}
 		if s.Contract != nil {
@@ -1337,7 +1347,10 @@ func BuildStaticTopology(db *gorm.DB, view string, subsystemID *uint64) (*Static
 			continue
 		}
 
-		dstModID := dep.Service.ModuleID
+		if dep.Service == nil || dep.Service.ModuleID == nil {
+			continue
+		}
+		dstModID := *dep.Service.ModuleID
 		dstProcIDVal, hasDstProc := moduleProcMap[dstModID]
 		var dstProcID *uint64
 		if hasDstProc {
@@ -1520,9 +1533,9 @@ func CompileProcessDownstreams(db *gorm.DB, procID uint64, batchProcessIDs []uin
 				}
 			} else if dep.ServiceID != nil {
 				var svc models.ModuleService
-				if err := db.First(&svc, *dep.ServiceID).Error; err == nil {
+				if err := db.First(&svc, *dep.ServiceID).Error; err == nil && svc.ModuleID != nil {
 					var pm models.Module
-					if err := db.Preload("ArchProcess").First(&pm, svc.ModuleID).Error; err == nil && pm.ArchProcessID != nil {
+					if err := db.Preload("ArchProcess").First(&pm, *svc.ModuleID).Error; err == nil && pm.ArchProcessID != nil {
 						targetArchPID = *pm.ArchProcessID
 						if pm.ArchProcess != nil {
 							archCode = pm.ArchProcess.Code

@@ -47,12 +47,20 @@ func ResetGlobalDiscoveryService(svc *discovery.LiveDiscoveryService) {
 
 func respondDiscoveryError(c *gin.Context, err error) {
 	switch {
+	case errors.Is(err, discovery.ErrDiscoveryV2Disabled):
+		c.JSON(http.StatusNotFound, gin.H{"error": "现网发现 V2 功能未开启"})
 	case errors.Is(err, discovery.ErrAgentNotFound), errors.Is(err, discovery.ErrSnapshotNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 	case errors.Is(err, discovery.ErrAgentForbidden):
 		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问或操作该私有环境资源"})
 	case errors.Is(err, discovery.ErrRefreshRateLimited):
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": "手动刷新过于频繁，请 3 秒后重试"})
+	case errors.Is(err, discovery.ErrEnrollRateLimited):
+		c.JSON(http.StatusTooManyRequests, gin.H{"code": "RATE_LIMITED", "error": "物理纳管请求过于频繁，请 5 秒后重试"})
+	case errors.Is(err, discovery.ErrEnrollBatchLimit):
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"code": "ENROLL_BATCH_LIMIT", "error": err.Error()})
+	case errors.Is(err, discovery.ErrEnrollTargetMissing):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	case errors.Is(err, discovery.ErrPinLimitExceeded):
 		c.JSON(http.StatusBadRequest, gin.H{"error": "该环境下置顶快照数量已达上限 (20)"})
 	case errors.Is(err, discovery.ErrSnapshotPinned):
@@ -366,4 +374,174 @@ func DiffDiscoverySnapshots(c *gin.Context) {
 
 	diff := discovery.DiffSnapshots(leftPayload, rightPayload, mode, leftLabel, rightLabel)
 	c.JSON(http.StatusOK, diff)
+}
+
+// EnrollDiscoveryReq defines POST /api/discovery/enroll request body.
+type EnrollDiscoveryReq struct {
+	AgentID FlexUint64                  `json:"agent_id" binding:"required"`
+	CSGAddr string                      `json:"csg_addr"`
+	Items   []discovery.EnrollItemInput `json:"items"`
+}
+
+// EnrollDiscoveryProcesses handles POST /api/discovery/enroll.
+func EnrollDiscoveryProcesses(c *gin.Context) {
+	if !discovery.IsV2Enabled(models.DB) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "现网发现 V2 功能未开启"})
+		return
+	}
+
+	var req EnrollDiscoveryReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数错误: " + err.Error()})
+		return
+	}
+	if uint64(req.AgentID) == 0 || len(req.Items) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "agent_id 与非空 items 参数必填"})
+		return
+	}
+
+	uc := commonAuth.GetUserContext(c)
+	isAdmin := isCurrentUserAdmin(uc)
+	userID := uint(0)
+	operator := "system"
+	if uc != nil {
+		userID = uc.UserID
+		operator = uc.Username
+	}
+
+	res, err := discovery.Enroll(c.Request.Context(), models.DB, GetDiscoveryService(), discovery.EnrollInput{
+		AgentID:    uint64(req.AgentID),
+		CSGAddr:    strings.TrimSpace(req.CSGAddr),
+		Items:      req.Items,
+		OperatorID: userID,
+		IsAdmin:    isAdmin,
+	})
+	if err != nil {
+		var valErr *discovery.EnrollValidationError
+		if errors.As(err, &valErr) {
+			c.JSON(http.StatusUnprocessableEntity, valErr)
+			return
+		}
+		respondDiscoveryError(c, err)
+		return
+	}
+
+	commonAudit.SetAuditContext(
+		c,
+		"contract_discovery",
+		"enroll",
+		commonModels.AuditLevelP2,
+		fmt.Sprintf("用户 [%s] 在 Agent #%d 零侵扰物理纳管 %d 个进程（放置 %d，依赖 %d）", operator, req.AgentID, len(res.Enrolled), res.PlacementsCount, res.DependenciesCount),
+		"agent",
+		strconv.FormatUint(uint64(req.AgentID), 10),
+		fmt.Sprintf("agent_%d", req.AgentID),
+		nil,
+		res,
+	)
+
+	c.JSON(http.StatusOK, res)
+}
+
+// GetDiscoveryPhysical handles GET /api/discovery/physical.
+func GetDiscoveryPhysical(c *gin.Context) {
+	var agentID uint64
+	if raw := strings.TrimSpace(c.Query("agent_id")); raw != "" {
+		parsed, err := strconv.ParseUint(raw, 10, 64)
+		if err != nil || parsed == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "agent_id 参数无效"})
+			return
+		}
+		agentID = parsed
+	}
+	var groupID uint64
+	if raw := strings.TrimSpace(c.Query("group_id")); raw != "" {
+		parsed, err := strconv.ParseUint(raw, 10, 64)
+		if err != nil || parsed == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "group_id 参数无效"})
+			return
+		}
+		groupID = parsed
+	}
+	includeProv := strings.EqualFold(strings.TrimSpace(c.Query("include_provisional")), "true") || strings.TrimSpace(c.Query("include_provisional")) == "1"
+	page, pageSize := parsePagination(c)
+
+	uc := commonAuth.GetUserContext(c)
+	isAdmin := isCurrentUserAdmin(uc)
+	userID := uint(0)
+	if uc != nil {
+		userID = uc.UserID
+	}
+
+	resp, err := discovery.QueryPhysicalAssets(models.DB, discovery.PhysicalAssetQuery{
+		AgentID:            agentID,
+		GroupID:            groupID,
+		Status:             strings.TrimSpace(c.Query("status")),
+		ClaimStatus:        strings.TrimSpace(c.Query("claim_status")),
+		Transport:          strings.TrimSpace(c.Query("transport")),
+		Search:             strings.TrimSpace(c.Query("search")),
+		IncludeProvisional: includeProv,
+		Page:               page,
+		PageSize:           pageSize,
+	}, userID, isAdmin)
+	if err != nil {
+		respondDiscoveryError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+// MigratePlaceholdersReq defines POST /api/admin/migrations/csg-placeholder-modules body.
+type MigratePlaceholdersReq struct {
+	DryRun  bool   `json:"dry_run"`
+	Action  string `json:"action"`
+	BatchID string `json:"batch_id"`
+}
+
+// MigrateCSGPlaceholderModulesHandler handles POST /api/admin/migrations/csg-placeholder-modules (AdminOnly).
+func MigrateCSGPlaceholderModulesHandler(c *gin.Context) {
+	var req MigratePlaceholdersReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数错误: " + err.Error()})
+		return
+	}
+
+	uc := commonAuth.GetUserContext(c)
+	userID := uint(0)
+	operator := "system"
+	if uc != nil {
+		userID = uc.UserID
+		operator = uc.Username
+	}
+
+	res, err := discovery.MigrateCSGPlaceholderModules(c.Request.Context(), models.DB, discovery.MigratePlaceholdersInput{
+		DryRun:     req.DryRun,
+		Action:     req.Action,
+		BatchID:    req.BatchID,
+		OperatorID: userID,
+	})
+	if err != nil {
+		if errors.Is(err, discovery.ErrMigBackupNotFound) {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			return
+		}
+		respondDiscoveryError(c, err)
+		return
+	}
+
+	if res.Mode != "DRY_RUN" {
+		commonAudit.SetAuditContext(
+			c,
+			"contract_admin",
+			"migrate_placeholders",
+			commonModels.AuditLevelP1,
+			fmt.Sprintf("管理员 [%s] 执行 CSG 占位模块迁移 [%s]（模块 %d，服务 %d，批次 %s）", operator, res.Mode, res.ClearedModules, res.MigratedServices, res.BackupBatchID),
+			"csg_migration",
+			res.BackupBatchID,
+			"csg_placeholder_modules",
+			nil,
+			res,
+		)
+	}
+
+	c.JSON(http.StatusOK, res)
 }

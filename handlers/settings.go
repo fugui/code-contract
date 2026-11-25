@@ -102,7 +102,41 @@ func redactSettingsForAudit(allSettings []models.ModuleSetting) []models.ModuleS
 	return masked
 }
 
-var validSettingKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{1,63}$`)
+var validSettingKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9_.]*[a-z0-9]$`)
+
+func validateDiscoverySetting(key, val string) error {
+	switch key {
+	case "discovery.v2_enabled", "discovery.auto_downstreams":
+		if val != "true" && val != "false" {
+			return fmt.Errorf("%s 必须为 true 或 false", key)
+		}
+	case "discovery.enroll_batch_limit_shared":
+		return validateIntRange(key, val, 1, 200)
+	case "discovery.reconcile_interval_sec":
+		return validateIntRange(key, val, 60, 86400)
+	case "discovery.stale_miss_threshold":
+		return validateIntRange(key, val, 1, 20)
+	case "discovery.stale_hours":
+		return validateIntRange(key, val, 1, 720)
+	case "discovery.retire_days":
+		return validateIntRange(key, val, 1, 90)
+	case "discovery.gc_days":
+		return validateIntRange(key, val, 7, 365)
+	case "discovery.snapshot_retention_count":
+		return validateIntRange(key, val, 10, 500)
+	case "discovery.snapshot_pin_limit":
+		return validateIntRange(key, val, 5, 100)
+	}
+	return nil
+}
+
+func validateIntRange(key, val string, minVal, maxVal int) error {
+	n, err := strconv.Atoi(val)
+	if err != nil || n < minVal || n > maxVal {
+		return fmt.Errorf("%s 必须为 %d 至 %d 之间的整数", key, minVal, maxVal)
+	}
+	return nil
+}
 
 // GetModuleSettings 读取模块级参数列表 GET /api/admin/settings（仅模块管理员/超级管理员可访问）
 func GetModuleSettings(c *gin.Context) {
@@ -170,11 +204,15 @@ func UpdateModuleSettings(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "禁止通过通用配置接口直接写入内部安全保留键 " + key})
 			return
 		}
-		if !validSettingKeyPattern.MatchString(key) {
+		if len(key) > 64 || strings.Contains(key, "..") || !validSettingKeyPattern.MatchString(key) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("配置键名 [%s] 格式不合法", key)})
 			return
 		}
 		val := strings.TrimSpace(entry.SettingVal)
+		if dErr := validateDiscoverySetting(key, val); dErr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": dErr.Error()})
+			return
+		}
 		maxLen := 512
 		if key == SettingKeyOutboundTrustedCIDRs {
 			maxLen = 4096

@@ -26,9 +26,14 @@ const (
 	NodeTypeProcess               GraphNodeType = "PROCESS"
 	NodeTypeUndeployedContainer   GraphNodeType = "UNDEPLOYED_CONTAINER"
 	NodeTypeExternalEndpoint      GraphNodeType = "EXTERNAL_ENDPOINT"
+	NodeTypeRemoteLDC             GraphNodeType = "REMOTE_LDC"
+	NodeTypeOfflineProvider       GraphNodeType = "OFFLINE_PROVIDER"
 	NodeTypeUnregisteredInterface GraphNodeType = "UNREGISTERED_INTERFACE" // 前端一致性叠加态按需动态注入
 
-	EdgeKindRealization = "REALIZATION"
+	EdgeKindRealization           = "REALIZATION"
+	physicalMaxProcessNodes       = 500
+	physicalDefaultCollapseThresh = 150
+	physicalMaxEdges              = 2000
 )
 
 // GraphNode 复合图节点传输对象
@@ -79,6 +84,35 @@ type TopologyGraphDTO struct {
 	StructureVersion string      `json:"structure_version"` // 仅基于排序后的 (id, parent_id) 树结构计算的 SHA-256 指纹 (如 "s1-LOGICAL-a1b2c3d4e5f60718")
 	Nodes            []GraphNode `json:"nodes"`
 	Edges            []GraphEdge `json:"edges"`
+	Truncated        bool        `json:"truncated,omitempty"`
+	TruncationReason string      `json:"truncation_reason,omitempty"`
+	DefaultCollapsed bool        `json:"default_collapsed,omitempty"`
+	ProcessNodeCount int         `json:"process_node_count,omitempty"`
+}
+
+func isDiscoveryV2Enabled(db *gorm.DB) bool {
+	if db == nil {
+		return false
+	}
+	var setting models.ModuleSetting
+	if err := db.Select("setting_val").Where("setting_key = ?", "discovery.v2_enabled").First(&setting).Error; err != nil {
+		return false
+	}
+	v := strings.TrimSpace(strings.ToLower(setting.SettingVal))
+	return v == "true" || v == "1"
+}
+
+func sanitizeVirtualNodeSuffix(raw string) string {
+	cleaned := strings.TrimSpace(raw)
+	if cleaned == "" {
+		return "unknown"
+	}
+	cleaned = nonCodeCharsPattern.ReplaceAllString(cleaned, "_")
+	cleaned = strings.Trim(cleaned, "_")
+	if cleaned == "" {
+		return "unknown"
+	}
+	return cleaned
 }
 
 // extractHostFromEndpoint 提取 Agent 端点中的 Hostname/IP（兼容 http(s):// 或裸 host:port）
@@ -222,9 +256,13 @@ func buildLogicalTopologyGraph(db *gorm.DB, dto *TopologyGraphDTO) error {
 	provideCountMap := make(map[uint64]int)                     // moduleID -> count
 	contractImplsMap := make(map[uint64][]models.ModuleService) // contractID -> impl services
 	for _, svc := range services {
-		svcProvideMap[svc.ID] = svc.ModuleID
+		if svc.ModuleID == nil || *svc.ModuleID == 0 {
+			continue
+		}
+		modID := *svc.ModuleID
+		svcProvideMap[svc.ID] = modID
 		svcNameMap[svc.ID] = svc.ServiceName
-		provideCountMap[svc.ModuleID]++
+		provideCountMap[modID]++
 		if svc.ContractID != nil && *svc.ContractID > 0 {
 			contractImplsMap[*svc.ContractID] = append(contractImplsMap[*svc.ContractID], svc)
 			if c, ok := contractMap[*svc.ContractID]; ok {
@@ -420,9 +458,13 @@ func buildLogicalTopologyGraph(db *gorm.DB, dto *TopologyGraphDTO) error {
 
 	// 5.1 生成实现边 REALIZATION (实现模块 -> 契约定义库)
 	for _, svc := range services {
+		if svc.ModuleID == nil || *svc.ModuleID == 0 {
+			continue
+		}
+		modID := *svc.ModuleID
 		if svc.ContractID != nil && *svc.ContractID > 0 {
 			if c, ok := contractMap[*svc.ContractID]; ok {
-				srcNodeID := fmt.Sprintf("mod_%d", svc.ModuleID)
+				srcNodeID := fmt.Sprintf("mod_%d", modID)
 				dstNodeID := fmt.Sprintf("mod_%d", c.DefinerModuleID)
 				key := edgeKey{src: srcNodeID, dst: dstNodeID, kind: EdgeKindRealization}
 				edge, exists := edgeMap[key]
@@ -430,11 +472,11 @@ func buildLogicalTopologyGraph(db *gorm.DB, dto *TopologyGraphDTO) error {
 				definerID := c.DefinerModuleID
 				if !exists {
 					edge = &GraphEdge{
-						ID:              fmt.Sprintf("edge_realization_%d_%d", svc.ModuleID, c.DefinerModuleID),
+						ID:              fmt.Sprintf("edge_realization_%d_%d", modID, c.DefinerModuleID),
 						Kind:            EdgeKindRealization,
 						SourceNodeID:    srcNodeID,
 						TargetNodeID:    dstNodeID,
-						SrcModuleID:     svc.ModuleID,
+						SrcModuleID:     modID,
 						DstModuleID:     &definerID,
 						ContractID:      &cID,
 						DefinerModuleID: &definerID,
@@ -500,8 +542,11 @@ func buildLogicalTopologyGraph(db *gorm.DB, dto *TopologyGraphDTO) error {
 
 			// 2) 同步发射展开边 (X -> 各实际实现模块 B/C，携带 ImplKey 与运行期服务名，供 EXPAND 模式切换)
 			for _, impl := range contractImplsMap[*dep.ContractID] {
-				implDstNodeID := fmt.Sprintf("mod_%d", impl.ModuleID)
-				implModID := impl.ModuleID
+				if impl.ModuleID == nil || *impl.ModuleID == 0 {
+					continue
+				}
+				implModID := *impl.ModuleID
+				implDstNodeID := fmt.Sprintf("mod_%d", implModID)
 				var implProcID *uint64
 				if implMod, ok2 := modMap[implModID]; ok2 && implMod.ArchProcessID != nil && *implMod.ArchProcessID > 0 {
 					implProcID = implMod.ArchProcessID
@@ -630,16 +675,18 @@ func buildLogicalTopologyGraph(db *gorm.DB, dto *TopologyGraphDTO) error {
 	return nil
 }
 
-// buildPhysicalTopologyGraph 物理进程架构蓝图去 Agent 拓扑与可选环境端点叠加 (F-04, ADR-09)
+// buildPhysicalTopologyGraph 物理进程架构蓝图去 Agent 拓扑与可选环境端点叠加 (F-04, ADR-09, ADR-24 M30b V2)
 func buildPhysicalTopologyGraph(db *gorm.DB, dto *TopologyGraphDTO, envAgentID uint64) error {
+	v2Enabled := isDiscoveryV2Enabled(db)
+
 	// 1. 查询全部架构进程组与架构进程蓝图
 	var pgrps []models.ArchProcessGroup
 	if err := db.Order("sort_order ASC, id ASC").Find(&pgrps).Error; err != nil {
 		return err
 	}
 
-	var archProcs []models.ArchProcess
-	if err := db.Order("group_id ASC, id ASC").Find(&archProcs).Error; err != nil {
+	var allArchProcs []models.ArchProcess
+	if err := db.Order("group_id ASC, id ASC").Find(&allArchProcs).Error; err != nil {
 		return err
 	}
 
@@ -683,9 +730,10 @@ func buildPhysicalTopologyGraph(db *gorm.DB, dto *TopologyGraphDTO, envAgentID u
 		sharedCountMap[c.ArchProcessID] = c.Count
 	}
 
-	// 4. 若指定 envAgentID，加载该环境 Agent 及其挂载实例
+	// 4. 若指定 envAgentID，加载该环境 Agent 及其挂载实例；全局视图统计权威 SHARED Agent 集合
 	var envAgent models.Agent
 	agentProcMap := make(map[uint64]models.Process)
+	sharedAgentIDs := make([]uint64, 0)
 	if envAgentID > 0 {
 		_ = db.First(&envAgent, envAgentID).Error
 		var envProcs []models.Process
@@ -693,6 +741,38 @@ func buildPhysicalTopologyGraph(db *gorm.DB, dto *TopologyGraphDTO, envAgentID u
 		for _, p := range envProcs {
 			agentProcMap[p.ArchProcessID] = p
 		}
+	} else {
+		_ = db.Model(&models.Agent{}).Where("scope = ?", models.ScopeShared).Pluck("id", &sharedAgentIDs).Error
+	}
+
+	// M30b V2 可见性裁剪与规模护栏（envAgentID==0 时剔除 PROVISIONAL；>150 默认折叠；>500 进程截断）
+	archProcs := make([]models.ArchProcess, 0, len(allArchProcs))
+	for _, ap := range allArchProcs {
+		if v2Enabled && ap.Lifecycle == models.ArchProcLifecycleProvisional {
+			if envAgentID == 0 {
+				continue
+			}
+			if _, mountedOnEnv := agentProcMap[ap.ID]; !mountedOnEnv {
+				continue
+			}
+		}
+		archProcs = append(archProcs, ap)
+	}
+	if v2Enabled {
+		if len(archProcs) > physicalDefaultCollapseThresh {
+			dto.DefaultCollapsed = true
+		}
+		if len(archProcs) > physicalMaxProcessNodes {
+			archProcs = archProcs[:physicalMaxProcessNodes]
+			dto.Truncated = true
+			dto.TruncationReason = "PHYSICAL_SCALE_GUARD_500_2000"
+		}
+		dto.ProcessNodeCount = len(archProcs)
+	}
+
+	visibleArchProcIDs := make(map[uint64]bool, len(archProcs))
+	for _, ap := range archProcs {
+		visibleArchProcIDs[ap.ID] = true
 	}
 
 	// 5. 加载服务供给、契约与依赖关系
@@ -712,9 +792,13 @@ func buildPhysicalTopologyGraph(db *gorm.DB, dto *TopologyGraphDTO, envAgentID u
 	provideCountMap := make(map[uint64]int)
 	contractImplsMap := make(map[uint64][]models.ModuleService)
 	for _, svc := range services {
-		svcProvideMap[svc.ID] = svc.ModuleID
+		if svc.ModuleID == nil || *svc.ModuleID == 0 {
+			continue
+		}
+		modID := *svc.ModuleID
+		svcProvideMap[svc.ID] = modID
 		svcNameMap[svc.ID] = svc.ServiceName
-		provideCountMap[svc.ModuleID]++
+		provideCountMap[modID]++
 		if svc.ContractID != nil && *svc.ContractID > 0 {
 			contractImplsMap[*svc.ContractID] = append(contractImplsMap[*svc.ContractID], svc)
 		}
@@ -1059,8 +1143,11 @@ func buildPhysicalTopologyGraph(db *gorm.DB, dto *TopologyGraphDTO, envAgentID u
 				definerID = &dID
 			}
 			for _, impl := range contractImplsMap[*dep.ContractID] {
-				implDstNodeID := fmt.Sprintf("mod_%d", impl.ModuleID)
-				implModID := impl.ModuleID
+				if impl.ModuleID == nil || *impl.ModuleID == 0 {
+					continue
+				}
+				implModID := *impl.ModuleID
+				implDstNodeID := fmt.Sprintf("mod_%d", implModID)
 				var implDstProcID *uint64
 				if dstMod, ok2 := moduleMap[implModID]; ok2 && dstMod.ArchProcessID != nil && *dstMod.ArchProcessID > 0 {
 					implDstProcID = dstMod.ArchProcessID
@@ -1214,6 +1301,159 @@ func buildPhysicalTopologyGraph(db *gorm.DB, dto *TopologyGraphDTO, envAgentID u
 
 	for _, edge := range edgeMap {
 		dto.Edges = append(dto.Edges, *edge)
+	}
+
+	// 11. M30b V2：在 0 Module 或模块与物理混合态下，从 ProcessDependency 合成 PROCESS->PROCESS / REMOTE_LDC / OFFLINE 边
+	if v2Enabled {
+		eligibleAgentIDs := sharedAgentIDs
+		if envAgentID > 0 {
+			eligibleAgentIDs = []uint64{envAgentID}
+		}
+		if len(eligibleAgentIDs) > 0 {
+			var procDeps []models.ProcessDependency
+			if err := db.Where("agent_id IN ? AND status IN ?", eligibleAgentIDs, []string{models.PlacementStatusActive, models.PlacementStatusStale}).
+				Order("consumer_arch_process_id ASC, service_name ASC, id ASC").
+				Find(&procDeps).Error; err != nil {
+				return err
+			}
+
+			hasExtContainer := false
+			existingNodeIDs := make(map[string]bool, len(dto.Nodes))
+			for _, n := range dto.Nodes {
+				existingNodeIDs[n.ID] = true
+				if n.ID == "ext_container" {
+					hasExtContainer = true
+				}
+			}
+			ensureExtContainer := func() {
+				if !hasExtContainer {
+					dto.Nodes = append(dto.Nodes, GraphNode{
+						ID:        "ext_container",
+						Type:      NodeTypeExternalContainer,
+						ParentID:  "",
+						Ancestors: []string{},
+						Depth:     0,
+						Name:      "外部依赖与网络端点",
+						SortOrder: 9999,
+					})
+					hasExtContainer = true
+					existingNodeIDs["ext_container"] = true
+				}
+			}
+
+			v2EdgeMap := make(map[edgeKey]*GraphEdge)
+			for _, dep := range procDeps {
+				if !visibleArchProcIDs[dep.ConsumerArchProcessID] {
+					continue
+				}
+				srcNodeID := fmt.Sprintf("proc_%d", dep.ConsumerArchProcessID)
+				srcArchCopy := dep.ConsumerArchProcessID
+				var dstNodeID, kind, extSys string
+				var dstArchPtr *uint64
+
+				switch dep.ProviderKind {
+				case models.ProviderKindLocalEnrolled:
+					if dep.ProviderArchProcessID == nil || *dep.ProviderArchProcessID == 0 || !visibleArchProcIDs[*dep.ProviderArchProcessID] {
+						continue
+					}
+					dstArchCopy := *dep.ProviderArchProcessID
+					dstArchPtr = &dstArchCopy
+					dstNodeID = fmt.Sprintf("proc_%d", dstArchCopy)
+					if srcArchCopy == dstArchCopy {
+						kind = EdgeKindIntraProcess
+					} else {
+						kind = EdgeKindCrossProcess
+					}
+				case models.ProviderKindRemoteLDC:
+					ensureExtContainer()
+					remoteName := strings.TrimSpace(dep.RemoteNode)
+					if remoteName == "" {
+						remoteName = "remote-ldc"
+					}
+					dstNodeID = "remote_ldc_" + sanitizeVirtualNodeSuffix(remoteName)
+					if !existingNodeIDs[dstNodeID] {
+						dto.Nodes = append(dto.Nodes, GraphNode{
+							ID:        dstNodeID,
+							Type:      NodeTypeRemoteLDC,
+							ParentID:  "ext_container",
+							Ancestors: []string{"ext_container"},
+							Depth:     1,
+							Name:      remoteName,
+							SortOrder: 9100,
+						})
+						existingNodeIDs[dstNodeID] = true
+					}
+					kind = EdgeKindExternalUnregistered
+					extSys = remoteName
+				default:
+					ensureExtContainer()
+					dstNodeID = "offline_provider_root"
+					if !existingNodeIDs[dstNodeID] {
+						dto.Nodes = append(dto.Nodes, GraphNode{
+							ID:        dstNodeID,
+							Type:      NodeTypeOfflineProvider,
+							ParentID:  "ext_container",
+							Ancestors: []string{"ext_container"},
+							Depth:     1,
+							Name:      "未上线 / 离线服务提供方",
+							SortOrder: 9200,
+						})
+						existingNodeIDs[dstNodeID] = true
+					}
+					kind = EdgeKindExternalUnregistered
+					extSys = "OFFLINE"
+				}
+
+				key := edgeKey{src: srcNodeID, dst: dstNodeID}
+				edge, exists := v2EdgeMap[key]
+				if !exists {
+					edge = &GraphEdge{
+						ID:             fmt.Sprintf("edge_phys_%s_%s", srcNodeID, dstNodeID),
+						Kind:           kind,
+						SourceNodeID:   srcNodeID,
+						TargetNodeID:   dstNodeID,
+						SrcProcessID:   &srcArchCopy,
+						DstProcessID:   dstArchPtr,
+						Services:       make([]EdgeServiceItem, 0),
+						ExternalSystem: extSys,
+					}
+					v2EdgeMap[key] = edge
+				}
+				alreadySvc := false
+				for _, item := range edge.Services {
+					if item.ServiceName == dep.ServiceName {
+						alreadySvc = true
+						break
+					}
+				}
+				if !alreadySvc {
+					edge.Services = append(edge.Services, EdgeServiceItem{
+						ServiceID:   dep.ServiceID,
+						ServiceName: dep.ServiceName,
+					})
+				}
+			}
+
+			v2Keys := make([]edgeKey, 0, len(v2EdgeMap))
+			for k := range v2EdgeMap {
+				v2Keys = append(v2Keys, k)
+			}
+			sort.Slice(v2Keys, func(i, j int) bool {
+				if v2Keys[i].src != v2Keys[j].src {
+					return v2Keys[i].src < v2Keys[j].src
+				}
+				return v2Keys[i].dst < v2Keys[j].dst
+			})
+			for _, k := range v2Keys {
+				dto.Edges = append(dto.Edges, *v2EdgeMap[k])
+			}
+		}
+
+		if len(dto.Edges) > physicalMaxEdges {
+			dto.Edges = dto.Edges[:physicalMaxEdges]
+			dto.Truncated = true
+			dto.TruncationReason = "PHYSICAL_SCALE_GUARD_500_2000"
+		}
 	}
 
 	return nil

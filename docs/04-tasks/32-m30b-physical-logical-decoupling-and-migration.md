@@ -5,7 +5,7 @@
 > **所属阶段**: 阶段三/四（TDD 实施路线与工程作战卡）  
 > **上位基线**: [`ADR-24` (v1.1.0)](../05-adr/24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md) · [`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.26.0, `F-02`, `F-33`, `F-37`, `SC-20`) · [`01-system-architecture.md`](../02-design/01-system-architecture.md) (v1.12.0) · [`03-architecture-elements-and-topology.md`](../02-design/03-architecture-elements-and-topology.md) (v1.11.0, §7.1~§7.5) · [`04-control-plane-and-web-console.md`](../02-design/04-control-plane-and-web-console.md) (v1.15.0, §1.10, §4.12) · [`05-database-schema.md`](../02-design/05-database-schema.md) (v1.11.0, 36 核心表 + `contract_settings`) · [`01-http-api-contract.md`](../03-api/01-http-api-contract.md) (v1.11.0, §2.4, §2.10)  
 > **前置依赖**: `M30a`（已交付且全绿）  
-> **交付状态**: 📋 待实施
+> **交付状态**: ✅ 已交付
 
 ---
 

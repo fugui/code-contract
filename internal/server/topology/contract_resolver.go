@@ -80,6 +80,10 @@ func LoadContractResolver(ctx context.Context, db *gorm.DB) (*ContractResolver, 
 	}
 
 	for _, svc := range services {
+		if svc.ModuleID == nil || *svc.ModuleID == 0 {
+			continue
+		}
+		modID := *svc.ModuleID
 		svcName := strings.TrimSpace(svc.ServiceName)
 		var archProcID *uint64
 		if svc.Module != nil && svc.Module.ArchProcessID != nil {
@@ -90,7 +94,7 @@ func LoadContractResolver(ctx context.Context, db *gorm.DB) (*ContractResolver, 
 			// 独占服务
 			info := ExclusiveServiceInfo{
 				ServiceID:     svc.ID,
-				ModuleID:      svc.ModuleID,
+				ModuleID:      modID,
 				ArchProcessID: archProcID,
 			}
 			resolver.exclusiveMap[svcName] = info
@@ -107,7 +111,7 @@ func LoadContractResolver(ctx context.Context, db *gorm.DB) (*ContractResolver, 
 			impl := ContractImplInfo{
 				ServiceID:           svc.ID,
 				ContractID:          cID,
-				ModuleID:            svc.ModuleID,
+				ModuleID:            modID,
 				ArchProcessID:       archProcID,
 				ImplKey:             svc.ImplKey,
 				ServiceName:         svcName,

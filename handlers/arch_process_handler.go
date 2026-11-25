@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -11,12 +12,24 @@ import (
 
 	commonAuth "code-common/backend/auth"
 	commonModels "code-common/backend/models"
+	"code-contract/internal/server/discovery"
 	"code-contract/models"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
+
+func loadAgentScopeMapForVisibility() map[uint64]*models.Agent {
+	var agents []models.Agent
+	_ = models.DB.Select("id", "scope", "owner_id").Find(&agents).Error
+	res := make(map[uint64]*models.Agent, len(agents))
+	for i := range agents {
+		ag := agents[i]
+		res[ag.ID] = &ag
+	}
+	return res
+}
 
 var pgrpCodeRegex = regexp.MustCompile(`^[A-Z0-9_-]{2,64}$`)
 
@@ -310,8 +323,19 @@ func GetArchProcessTree(c *gin.Context) {
 		Processes []ArchProcessTreeNode `json:"processes"`
 	}
 
+	uc := commonAuth.GetUserContext(c)
+	isAdmin := isCurrentUserAdmin(uc)
+	userID := uint(0)
+	if uc != nil {
+		userID = uc.UserID
+	}
+	agentMap := loadAgentScopeMapForVisibility()
+
 	groupProcMap := make(map[uint64][]ArchProcessTreeNode)
 	for _, p := range processes {
+		if !discovery.IsArchProcessVisibleToUser(p, agentMap, userID, isAdmin) {
+			continue
+		}
 		node := ArchProcessTreeNode{
 			ArchProcess: p,
 			MountCount:  mountMap[p.ID],
@@ -366,18 +390,36 @@ func ListArchProcesses(c *gin.Context) {
 		query = query.Where("contract_arch_processes.code ILIKE ? OR contract_arch_processes.name ILIKE ?", s, s)
 	}
 
-	var total int64
-	if err := query.Count(&total).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "统计标准进程列表失败"})
+	uc := commonAuth.GetUserContext(c)
+	isAdmin := isCurrentUserAdmin(uc)
+	userID := uint(0)
+	if uc != nil {
+		userID = uc.UserID
+	}
+	agentMap := loadAgentScopeMapForVisibility()
+
+	var allItems []models.ArchProcess
+	if err := query.Order("contract_arch_processes.sort_order ASC, contract_arch_processes.id ASC").
+		Find(&allItems).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询标准进程列表失败"})
 		return
 	}
 
-	items := make([]models.ArchProcess, 0)
+	visible := make([]models.ArchProcess, 0, len(allItems))
+	for _, item := range allItems {
+		if discovery.IsArchProcessVisibleToUser(item, agentMap, userID, isAdmin) {
+			visible = append(visible, item)
+		}
+	}
+	total := int64(len(visible))
 	offset := (page - 1) * pageSize
-	if err := query.Order("contract_arch_processes.sort_order ASC, contract_arch_processes.id ASC").
-		Offset(offset).Limit(pageSize).Find(&items).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询标准进程列表失败"})
-		return
+	items := make([]models.ArchProcess, 0)
+	if offset < len(visible) {
+		end := offset + pageSize
+		if end > len(visible) {
+			end = len(visible)
+		}
+		items = visible[offset:end]
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -415,6 +457,17 @@ func GetArchProcess(c *gin.Context) {
 		return
 	}
 
+	uc := commonAuth.GetUserContext(c)
+	isAdmin := isCurrentUserAdmin(uc)
+	userID := uint(0)
+	if uc != nil {
+		userID = uc.UserID
+	}
+	if !discovery.IsArchProcessVisibleToUser(archProc, loadAgentScopeMapForVisibility(), userID, isAdmin) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "标准架构进程不存在"})
+		return
+	}
+
 	// 查询该进程承载的功能模块所对外提供的服务与外部依赖
 	moduleIDs := make([]uint64, 0, len(archProc.Modules))
 	for _, m := range archProc.Modules {
@@ -434,9 +487,6 @@ func GetArchProcess(c *gin.Context) {
 	}
 
 	// 查询多环境 Agent 挂载血缘，严格经 ScopeReadGuard 过滤！
-	uc := commonAuth.GetUserContext(c)
-	isAdmin := isCurrentUserAdmin(uc)
-
 	var allMounts []models.Process
 	_ = models.DB.Preload("Agent.Owner").Where("arch_process_id = ?", id).Order("id ASC").Find(&allMounts).Error
 
@@ -870,4 +920,92 @@ func DeleteArchProcess(c *gin.Context) {
 
 	recordAudit(c, "delete", commonModels.AuditLevelP2, fmt.Sprintf("删除标准架构进程 [%s]", existing.Name), "arch_process", existing.ID, existing.Name, existing, nil)
 	c.JSON(http.StatusOK, gin.H{"message": "标准架构进程已删除"})
+}
+
+// PromoteArchProcessReq POST /api/admin/arch-processes/:id/promote 请求体（可选）
+type PromoteArchProcessReq struct {
+	Code string `json:"code"`
+	Name string `json:"name"`
+}
+
+// PromoteArchProcess POST /api/admin/arch-processes/:id/promote (AdminOnly)
+func PromoteArchProcess(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "非法的标准架构进程 ID"})
+		return
+	}
+
+	var req PromoteArchProcessReq
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数错误: " + err.Error()})
+		return
+	}
+
+	var archProc models.ArchProcess
+	if err := models.DB.First(&archProc, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "标准架构进程不存在"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询标准架构进程失败"})
+		return
+	}
+
+	if archProc.Lifecycle == models.ArchProcLifecycleConfirmed {
+		c.JSON(http.StatusConflict, gin.H{"error": "该标准架构进程已处于 CONFIRMED 状态"})
+		return
+	}
+
+	before := archProc
+	targetCode := strings.TrimSpace(req.Code)
+	if targetCode == "" {
+		candidate := archProc.Code
+		if archProc.OriginAgentID != nil && *archProc.OriginAgentID > 0 {
+			pfx := fmt.Sprintf("prv%d-", *archProc.OriginAgentID)
+			candidate = strings.TrimPrefix(candidate, pfx)
+		}
+		base := discovery.NormalizeArchProcessCode(candidate)
+		targetCode = base
+		for suffix := 0; suffix < 64; suffix++ {
+			if suffix > 0 {
+				targetCode = fmt.Sprintf("%s-%d", base, suffix+1)
+			}
+			var cnt int64
+			_ = models.DB.Model(&models.ArchProcess{}).Where("code = ? AND id != ?", targetCode, archProc.ID).Count(&cnt).Error
+			if cnt == 0 {
+				break
+			}
+		}
+	} else {
+		var dup int64
+		_ = models.DB.Model(&models.ArchProcess{}).Where("code = ? AND id != ?", targetCode, archProc.ID).Count(&dup).Error
+		if dup > 0 {
+			c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("标准进程编码 %q 已被占用", targetCode)})
+			return
+		}
+	}
+
+	uc := commonAuth.GetUserContext(c)
+	userID := uint(0)
+	if uc != nil {
+		userID = uc.UserID
+	}
+	updates := map[string]interface{}{
+		"lifecycle":  models.ArchProcLifecycleConfirmed,
+		"code":       targetCode,
+		"updated_by": userID,
+	}
+	if strings.TrimSpace(req.Name) != "" {
+		updates["name"] = strings.TrimSpace(req.Name)
+	}
+	if err := models.DB.Model(&models.ArchProcess{}).Where("id = ?", archProc.ID).Updates(updates).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "提升标准架构进程失败: " + err.Error()})
+		return
+	}
+
+	_ = models.DB.Preload("Group").First(&archProc, archProc.ID).Error
+	recordAudit(c, "promote_arch_process", commonModels.AuditLevelP1, fmt.Sprintf("将试用标准进程 [%s] 提升为全局 CONFIRMED (%s)", before.Code, archProc.Code), "arch_process", archProc.ID, archProc.Name, before, archProc)
+
+	c.JSON(http.StatusOK, gin.H{"arch_process": archProc})
 }

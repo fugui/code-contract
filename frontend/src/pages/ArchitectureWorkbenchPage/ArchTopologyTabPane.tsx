@@ -278,12 +278,14 @@ export function buildTopoUrlParams(
 export interface ArchTopologyTabPaneProps {
   initialView?: 'LOGICAL' | 'PHYSICAL';
   initialSessionId?: string | null;
+  initialGraphData?: TopologyGraphDTO | null;
   onViewChange?: (view: 'LOGICAL' | 'PHYSICAL') => void;
 }
 
 export const ArchTopologyTabPane: React.FC<ArchTopologyTabPaneProps> = ({
   initialView = 'LOGICAL',
   initialSessionId = null,
+  initialGraphData = null,
   onViewChange,
 }) => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -305,7 +307,7 @@ export const ArchTopologyTabPane: React.FC<ArchTopologyTabPaneProps> = ({
   );
   const initialUrlState = parseTopoUrlParams(searchParams);
 
-  const [graphData, setGraphData] = useState<TopologyGraphDTO | null>(null);
+  const [graphData, setGraphData] = useState<TopologyGraphDTO | null>(initialGraphData);
   const [loadingGraph, setLoadingGraph] = useState(false);
   const [expandState, setExpandState] = useState<ExpandStateMap>({});
   const [depthLevel, setDepthLevel] = useState<number>(0);
@@ -525,6 +527,10 @@ export const ArchTopologyTabPane: React.FC<ArchTopologyTabPaneProps> = ({
       try {
         const res = await archApi.getTopologyGraph(targetView, targetEnvAgentId);
         setGraphData(res);
+        if (targetView === 'PHYSICAL' && res?.default_collapsed) {
+          setExpandState({});
+          setDepthLevel(0);
+        }
       } catch (err) {
         toast.error(err instanceof Error ? err.message : '加载全系统架构拓扑图失败');
       } finally {
@@ -1472,6 +1478,28 @@ export const ArchTopologyTabPane: React.FC<ArchTopologyTabPaneProps> = ({
             setIsBookmarkDrawerOpen(false);
           }}
         />
+      )}
+
+      {view === 'PHYSICAL' && graphData?.default_collapsed && (
+        <div className="code-arch-guard-banner" data-testid="physical-collapse-banner">
+          <AlertTriangle size={14} />
+          <span>
+            物理视图标准进程已达{' '}
+            <strong>{graphData.process_node_count ?? '>150'}</strong>{' '}
+            个，已默认按进程组折叠展示以保障浏览性能，请点击或聚焦目标进程组下钻。
+          </span>
+        </div>
+      )}
+
+      {view === 'PHYSICAL' && graphData?.truncated && (
+        <div className="code-arch-guard-banner" data-testid="physical-truncated-banner">
+          <AlertTriangle size={14} />
+          <span>
+            物理视图触发单图渲染规模保护（上限 500 进程节点 / 2000 边，当前已截断至{' '}
+            <strong>{graphData.process_node_count ?? 500}</strong>{' '}
+            个进程），建议筛选具体 Agent 环境或聚焦子域查看完整拓扑。
+          </span>
+        </div>
       )}
 
       {/* 画布主体 */}

@@ -171,7 +171,7 @@ func TestResetLocalData_TruncatesBusinessPreservesSettingsAndRestoresBuiltins(t 
 	}
 
 	svc := models.ModuleService{
-		ModuleID:        mod.ID,
+		ModuleID:        models.Uint64Ptr(mod.ID),
 		ServiceName:     "demo.temp.TempService",
 		DiffIgnorePaths: datatypes.JSON([]byte("[]")),
 	}

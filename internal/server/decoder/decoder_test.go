@@ -1165,7 +1165,7 @@ func TestCompiledRegistry_CustomServiceNameAliasAndPerImplIgnores(t *testing.T) 
 
 	dhIgnores, _ := json.Marshal([]string{"trace_id"})
 	db.Create(&models.ModuleService{
-		ModuleID:            bizModDH.ID,
+		ModuleID:            models.Uint64Ptr(bizModDH.ID),
 		ContractID:          &contract.ID,
 		ServiceName:         "DH_TradePayService",
 		ImplKey:             "DH",
@@ -1173,7 +1173,7 @@ func TestCompiledRegistry_CustomServiceNameAliasAndPerImplIgnores(t *testing.T) 
 		DiffIgnorePaths:     dhIgnores,
 	})
 	db.Create(&models.ModuleService{
-		ModuleID:            bizModKH.ID,
+		ModuleID:            models.Uint64Ptr(bizModKH.ID),
 		ContractID:          &contract.ID,
 		ServiceName:         "KH_TradePayService",
 		ImplKey:             "KH",

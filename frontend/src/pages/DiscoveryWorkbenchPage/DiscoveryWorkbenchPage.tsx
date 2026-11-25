@@ -3,17 +3,23 @@ import { useSearchParams } from 'react-router-dom';
 import { Modal } from '@code/common';
 import * as agentApi from '../../api/agent';
 import * as discoveryApi from '../../api/discovery';
+import { ApiRequestError } from '../../api/client';
 import { useToast } from '../../utils/toast';
 import type {
   Agent,
   DiscoveryLiveRespDTO,
   DiscoverySnapshotDiffDTO,
   DiscoverySnapshotSummaryDTO,
+  EnrollItemInput,
+  EnrollValidationErrorPayload,
 } from '../../types';
 import { DiscoveryTopBar } from './DiscoveryTopBar';
 import { DiscoveryProcessTreeTable } from './DiscoveryProcessTreeTable';
 import { DiscoveryLiveDepGraph } from './DiscoveryLiveDepGraph';
 import { DiscoverySnapshotDiffDrawer } from './DiscoverySnapshotDiffDrawer';
+import { DiscoveryBatchActionBar } from './DiscoveryBatchActionBar';
+import { EnrollProcessModal } from './EnrollProcessModal';
+import { IdentityDisambiguationModal } from './IdentityDisambiguationModal';
 import './DiscoveryWorkbench.css';
 
 export interface DiscoveryWorkbenchPageProps {
@@ -25,6 +31,9 @@ export interface DiscoveryWorkbenchPageProps {
   initialViewMode?: 'tree' | 'graph';
   initialScopeTab?: 'local' | 'ldc';
   initialSearch?: string;
+  initialSelectedKeys?: string[];
+  initialEnrollModalOpen?: boolean;
+  initialDisambiguation?: EnrollValidationErrorPayload | null;
 }
 
 export const DiscoveryWorkbenchPage: React.FC<DiscoveryWorkbenchPageProps> = ({
@@ -36,6 +45,9 @@ export const DiscoveryWorkbenchPage: React.FC<DiscoveryWorkbenchPageProps> = ({
   initialViewMode,
   initialScopeTab,
   initialSearch,
+  initialSelectedKeys,
+  initialEnrollModalOpen = false,
+  initialDisambiguation = null,
 }) => {
   const toast = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -94,6 +106,17 @@ export const DiscoveryWorkbenchPage: React.FC<DiscoveryWorkbenchPageProps> = ({
   const [snapshotLabel, setSnapshotLabel] = useState('');
   const [snapshotPinned, setSnapshotPinned] = useState(false);
   const [savingSnapshot, setSavingSnapshot] = useState(false);
+
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(
+    () => new Set(initialSelectedKeys ?? [])
+  );
+  const [enrollModalOpen, setEnrollModalOpen] = useState(initialEnrollModalOpen);
+  const [enrolling, setEnrolling] = useState(false);
+  const [enrollOverrides, setEnrollOverrides] = useState<Record<string, Partial<EnrollItemInput>>>(
+    {}
+  );
+  const [disambiguationPayload, setDisambiguationPayload] =
+    useState<EnrollValidationErrorPayload | null>(initialDisambiguation);
 
   const syncQuery = useCallback(
     (patch: Record<string, string | null>) => {
@@ -239,6 +262,56 @@ export const DiscoveryWorkbenchPage: React.FC<DiscoveryWorkbenchPageProps> = ({
 
   const selectedAgent = agents.find((a) => String(a.id) === String(selectedAgentId)) ?? null;
   const summary = liveData?.summary;
+  const selectedProcesses = (liveData?.processes ?? []).filter((p) =>
+    selectedKeys.has(p.process_key)
+  );
+
+  const submitEnroll = useCallback(
+    async (nextOverrides?: Record<string, Partial<EnrollItemInput>>) => {
+      if (!selectedAgentId || selectedKeys.size === 0) return;
+      const overridesMap = nextOverrides ?? enrollOverrides;
+      setEnrolling(true);
+      try {
+        const items: EnrollItemInput[] = Array.from(selectedKeys).map((pk) => ({
+          process_key: pk,
+          ...(overridesMap[pk] ?? {}),
+        }));
+        const res = await discoveryApi.enrollDiscoveryProcesses({
+          agent_id: selectedAgentId,
+          csg_addr: selectedCsgAddr || undefined,
+          items,
+        });
+        toast.success(
+          `成功零侵扰纳管 ${res.enrolled.length} 个进程（放置 ${res.placements_count}，订阅 ${res.dependencies_count}）`
+        );
+        setEnrollModalOpen(false);
+        setDisambiguationPayload(null);
+        setSelectedKeys(new Set());
+        setEnrollOverrides({});
+        const refreshed = await discoveryApi.getLiveDiscovery({
+          agent_id: selectedAgentId,
+          csg_addr: selectedCsgAddr || undefined,
+        });
+        setLiveData(refreshed);
+      } catch (err) {
+        if (err instanceof ApiRequestError && err.status === 422 && err.data && typeof err.data === 'object') {
+          const payload = err.data as EnrollValidationErrorPayload;
+          if (
+            payload.code === 'IDENTITY_AMBIGUOUS' ||
+            payload.code === 'LOW_CONFIDENCE_CONFIRM_REQUIRED'
+          ) {
+            setEnrollModalOpen(false);
+            setDisambiguationPayload(payload);
+            return;
+          }
+        }
+        toast.error(err instanceof Error ? err.message : '物理纳管提交失败');
+      } finally {
+        setEnrolling(false);
+      }
+    },
+    [selectedAgentId, selectedCsgAddr, selectedKeys, enrollOverrides, toast]
+  );
 
   return (
     <div className="discovery-workbench-page" data-testid="discovery-workbench-page">
@@ -249,6 +322,8 @@ export const DiscoveryWorkbenchPage: React.FC<DiscoveryWorkbenchPageProps> = ({
           setSelectedAgentId(nextId);
           setSelectedCsgAddr('');
           setLiveData(null);
+          setSelectedKeys(new Set());
+          setEnrollOverrides({});
           syncQuery({ agent_id: nextId, csg_addr: null });
         }}
         selectedCsgAddr={selectedCsgAddr}
@@ -296,20 +371,49 @@ export const DiscoveryWorkbenchPage: React.FC<DiscoveryWorkbenchPageProps> = ({
       )}
 
       {viewMode === 'tree' ? (
-        <DiscoveryProcessTreeTable
-          localProcesses={liveData?.processes ?? []}
-          remoteLdcProcesses={liveData?.remote_ldc_processes ?? []}
-          scopeTab={scopeTab}
-          onChangeScopeTab={(tab) => {
-            setScopeTab(tab);
-            syncQuery({ scope_tab: tab });
-          }}
-          searchQuery={searchQuery}
-          onChangeSearchQuery={(q) => {
-            setSearchQuery(q);
-            syncQuery({ search: q || null });
-          }}
-        />
+        <>
+          {scopeTab === 'local' && (
+            <DiscoveryBatchActionBar
+              selectedCount={selectedKeys.size}
+              enrolling={enrolling}
+              onClearSelection={() => setSelectedKeys(new Set())}
+              onOpenEnrollModal={() => setEnrollModalOpen(true)}
+            />
+          )}
+          <DiscoveryProcessTreeTable
+            localProcesses={liveData?.processes ?? []}
+            remoteLdcProcesses={liveData?.remote_ldc_processes ?? []}
+            scopeTab={scopeTab}
+            onChangeScopeTab={(tab) => {
+              setScopeTab(tab);
+              syncQuery({ scope_tab: tab });
+            }}
+            searchQuery={searchQuery}
+            onChangeSearchQuery={(q) => {
+              setSearchQuery(q);
+              syncQuery({ search: q || null });
+            }}
+            selectedKeys={selectedKeys}
+            onToggleSelectKey={(pk) => {
+              setSelectedKeys((prev) => {
+                const next = new Set(prev);
+                if (next.has(pk)) next.delete(pk);
+                else next.add(pk);
+                return next;
+              });
+            }}
+            onToggleSelectAll={(keys, checked) => {
+              setSelectedKeys((prev) => {
+                const next = new Set(prev);
+                for (const k of keys) {
+                  if (checked) next.add(k);
+                  else next.delete(k);
+                }
+                return next;
+              });
+            }}
+          />
+        </>
       ) : (
         <DiscoveryLiveDepGraph
           localProcesses={liveData?.processes ?? []}
@@ -409,6 +513,48 @@ export const DiscoveryWorkbenchPage: React.FC<DiscoveryWorkbenchPageProps> = ({
           </label>
         </div>
       </Modal>
+
+      <EnrollProcessModal
+        open={enrollModalOpen}
+        agent={selectedAgent}
+        selectedProcesses={selectedProcesses}
+        submitting={enrolling}
+        onClose={() => setEnrollModalOpen(false)}
+        onConfirm={() => void submitEnroll()}
+      />
+
+      <IdentityDisambiguationModal
+        payload={disambiguationPayload}
+        processGroup={
+          (liveData?.processes ?? []).find(
+            (p) => p.process_key === disambiguationPayload?.process_key
+          ) ?? null
+        }
+        submitting={enrolling}
+        onClose={() => setDisambiguationPayload(null)}
+        onResolveAmbiguous={(processKey, archProcessId) => {
+          const nextOverrides = {
+            ...enrollOverrides,
+            [processKey]: {
+              ...(enrollOverrides[processKey] ?? {}),
+              force_arch_process_id: archProcessId,
+            },
+          };
+          setEnrollOverrides(nextOverrides);
+          void submitEnroll(nextOverrides);
+        }}
+        onConfirmLowConfidence={(processKey) => {
+          const nextOverrides = {
+            ...enrollOverrides,
+            [processKey]: {
+              ...(enrollOverrides[processKey] ?? {}),
+              confirm_low_confidence: true,
+            },
+          };
+          setEnrollOverrides(nextOverrides);
+          void submitEnroll(nextOverrides);
+        }}
+      />
     </div>
   );
 };

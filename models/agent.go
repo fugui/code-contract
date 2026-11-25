@@ -22,6 +22,9 @@ const (
 
 	ProbeDesiredStateArmed    = "ARMED"
 	ProbeDesiredStateDisarmed = "DISARMED"
+
+	EnrollSourceManual    = "MANUAL"
+	EnrollSourceDiscovery = "DISCOVERY"
 )
 
 // 8. Agent 数据面宿主机守护进程纳管与动态排他租约表 (contract_agents)
@@ -83,6 +86,12 @@ type Process struct {
 	Description         string         `gorm:"type:text" json:"description"`
 
 	// eBPF 默认自动预挂期望状态与最近一次宿主机 /proc 就绪诊断快照
+	EnrollSource       string         `gorm:"size:16;not null;default:'MANUAL';index:idx_contract_proc_enroll_src" json:"enroll_source"`
+	ObservedRole       string         `gorm:"size:16;not null;default:'UNKNOWN'" json:"observed_role"`
+	ObservedTransports datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"observed_transports"`
+	ObservedPIDs       datatypes.JSON `gorm:"column:observed_pids;type:jsonb;not null;default:'[]'" json:"observed_pids"`
+	LastObservedAt     *time.Time     `json:"last_observed_at,omitempty"`
+
 	ProbeDesiredState string     `gorm:"size:16;not null;default:'ARMED';check:chk_contract_proc_desired,probe_desired_state IN ('ARMED','DISARMED')" json:"probe_desired_state"`
 	ProbeStatus       string     `gorm:"size:32;not null;default:'DISARMED';index:idx_contract_proc_probe_status" json:"probe_status"`
 	ResolvedPID       uint32     `gorm:"not null;default:0" json:"resolved_pid"`

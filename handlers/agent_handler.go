@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -722,14 +723,26 @@ func DisarmAllProbes(c *gin.Context) {
 	})
 }
 
+// ArmAllProbesReq 可选批量激活筛选参数 (M30b ADR-24)
+type ArmAllProbesReq struct {
+	GroupID           *FlexUint64 `json:"group_id"`
+	IncludeDiscovered bool        `json:"include_discovered"`
+}
+
 // ArmAllProbes POST /api/agents/:id/probes/arm-all
-// 一键激活该 Agent 上全部进程探针
+// 一键激活该 Agent 上符合条件的进程探针（M30b 默认跳过 DISCOVERY 挂载）
 func ArmAllProbes(c *gin.Context) {
 	uc := commonAuth.GetUserContext(c)
 	isAdmin := isCurrentUserAdmin(uc)
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "非法的 Agent ID"})
+		return
+	}
+
+	var req ArmAllProbesReq
+	if bindErr := c.ShouldBindJSON(&req); bindErr != nil && !errors.Is(bindErr, io.EOF) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数错误: " + bindErr.Error()})
 		return
 	}
 
@@ -758,7 +771,14 @@ func ArmAllProbes(c *gin.Context) {
 			diag = "已设为待命，等待 Agent 宿主机上线"
 		}
 
-		if err := tx.Model(&models.Process{}).Where("agent_id = ?", id).Updates(map[string]interface{}{
+		procQuery := tx.Model(&models.Process{}).Where("agent_id = ?", id)
+		if !req.IncludeDiscovered {
+			procQuery = procQuery.Where("enroll_source != ?", models.EnrollSourceDiscovery)
+		}
+		if req.GroupID != nil && *req.GroupID > 0 {
+			procQuery = procQuery.Where("arch_process_id IN (SELECT id FROM contract_arch_processes WHERE group_id = ?)", uint64(*req.GroupID))
+		}
+		if err := procQuery.Updates(map[string]interface{}{
 			"probe_desired_state": models.ProbeDesiredStateArmed,
 			"probe_status":        status,
 			"diag_message":        diag,

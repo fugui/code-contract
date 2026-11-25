@@ -317,7 +317,7 @@ func TestGateEvaluate_MockServerSandbox_SubAuditAndZeroLeak(t *testing.T) {
 	}
 	db.Create(&depMod)
 	depSvc := models.ModuleService{
-		ModuleID:    depMod.ID,
+		ModuleID:    models.Uint64Ptr(depMod.ID),
 		ServiceName: "UndeclaredSvc-0",
 	}
 	db.Create(&depSvc)
@@ -579,7 +579,7 @@ func TestSC17_EndToEnd_DiscoveryBlueprintDecodeAndThreeModeSimulation(t *testing
 	}
 	db.Create(&stubDepMod)
 	stubDepSvc := models.ModuleService{
-		ModuleID:    stubDepMod.ID,
+		ModuleID:    models.Uint64Ptr(stubDepMod.ID),
 		ServiceName: "ConflictDownstream-ConflictDownstream",
 	}
 	db.Create(&stubDepSvc)

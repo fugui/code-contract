@@ -376,7 +376,10 @@ func GetOverview(ctx context.Context, db *gorm.DB, subsystemID *uint64) (*Dashbo
 
 	claimedServicesMap := make(map[string]bool)
 	for _, ms := range modServices {
-		if mod, ok := moduleMap[ms.ModuleID]; ok {
+		if ms.ModuleID == nil || *ms.ModuleID == 0 {
+			continue
+		}
+		if mod, ok := moduleMap[*ms.ModuleID]; ok {
 			if subsystemID != nil && *subsystemID > 0 {
 				if mod.SubsystemID == *subsystemID {
 					claimedServicesMap[ms.ServiceName] = true

@@ -92,6 +92,8 @@ type TrafficRecord struct {
 	SpanID                string         `gorm:"column:span_id;size:32;not null;default:'';index:idx_contract_tr_span" json:"span_id"`
 	FatherSpanID          string         `gorm:"column:father_span_id;size:32;not null;default:'';index:idx_contract_tr_father_span" json:"father_span_id"`
 	SubsystemID           *uint64        `gorm:"column:subsystem_id;index:idx_contract_tr_subsystem" json:"subsystem_id,omitempty"`
+	SrcArchProcessID      *uint64        `gorm:"column:src_arch_process_id" json:"src_arch_process_id,omitempty"`
+	DstArchProcessID      *uint64        `gorm:"column:dst_arch_process_id" json:"dst_arch_process_id,omitempty"`
 	SrcModuleID           *uint64        `gorm:"column:src_module_id;index:idx_contract_tr_src_mod" json:"src_module_id,omitempty"`
 	SrcAttributionMode    string         `gorm:"column:src_attribution_mode;size:32;not null;default:''" json:"src_attribution_mode"`
 	SrcCandidateModuleIDs datatypes.JSON `gorm:"column:src_candidate_module_ids;type:jsonb" json:"src_candidate_module_ids,omitempty"`

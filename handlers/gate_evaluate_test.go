@@ -217,7 +217,7 @@ func TestGateEvaluate_ObservedEgressCallsBlocksViolationWith422(t *testing.T) {
 	}
 	db.Create(&targetMod)
 	paySvc := models.ModuleService{
-		ModuleID:    targetMod.ID,
+		ModuleID:    models.Uint64Ptr(targetMod.ID),
 		ServiceName: "com.demo.PaymentService",
 	}
 	db.Create(&paySvc)
@@ -695,7 +695,7 @@ func TestSC10_CICDQualityGateHardEvaluationAndReport(t *testing.T) {
 	}
 	db.Create(&invMod)
 	invSvc := models.ModuleService{
-		ModuleID:    invMod.ID,
+		ModuleID:    models.Uint64Ptr(invMod.ID),
 		ServiceName: "com.demo.InventoryService",
 	}
 	db.Create(&invSvc)
