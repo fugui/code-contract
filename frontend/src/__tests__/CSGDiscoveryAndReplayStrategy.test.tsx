@@ -181,10 +181,18 @@ describe('M28 CSG Discovery, Blueprint Import & 3-Mode Simulation Console', () =
     expect(adminHtml).toContain('dophi_mesh');
     expect(adminHtml).toContain('LegacyAudit-0');
     expect(adminHtml).toContain('csg-endpoints-selector');
+    expect(adminHtml).toContain('csg-endpoint-select');
     expect(adminHtml).toContain('127.0.0.1:31806');
+    expect(adminHtml).toContain('csg-refresh-topology-btn');
+    expect(adminHtml).toContain('aria-label="刷新现网探测"');
+    expect(adminHtml).not.toContain('csg-addr-probe-input');
+    expect(adminHtml).not.toContain('重新探测现网拓扑');
+    expect(adminHtml).not.toContain('csg-kpi-strip');
+    expect(adminHtml).not.toContain('发现模式');
     expect(adminHtml).toContain('csg-discovery-errors-banner');
     expect(adminHtml).toContain('rpcmon: native probe warning');
-    expect(adminHtml).toContain('1<!-- --> / <!-- -->2');
+    expect(adminHtml).toContain('csg-live-coverage-badge');
+    expect(adminHtml).toContain('已纳管 1/2');
     expect(adminHtml).toContain('一键导入 SSOT 蓝图');
     expect(adminHtml).not.toContain('csg-admin-only-notice');
 

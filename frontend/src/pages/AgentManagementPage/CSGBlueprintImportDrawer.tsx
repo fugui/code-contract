@@ -205,7 +205,7 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
   const hasInitialSubsystems = initialSubsystems !== undefined;
   const resolvedInitialSubsystems = initialSubsystems ?? [];
 
-  const [csgAddrInput, setCsgAddrInput] = useState('');
+  const [selectedCsgAddr, setSelectedCsgAddr] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [report, setReport] = useState<CSGTopologyReconcileResp | null>(initialReport);
@@ -279,7 +279,7 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
       try {
         const res = await agentApi.getAgentCSGTopology(
           agent.id,
-          explicitAddr !== undefined ? explicitAddr : csgAddrInput.trim() || undefined
+          explicitAddr !== undefined ? explicitAddr : selectedCsgAddr || undefined
         );
         setReport(res);
         const undeclared = new Set<string>();
@@ -298,7 +298,7 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
         setLoading(false);
       }
     },
-    [agent?.id, csgAddrInput]
+    [agent?.id, selectedCsgAddr]
   );
 
   useEffect(() => {
@@ -368,7 +368,7 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
     try {
       const res = await agentApi.importAgentCSGBlueprint(agent.id, {
         subsystem_id: Number(selectedSubsystemId),
-        csg_addr: csgAddrInput.trim() || undefined,
+        csg_addr: selectedCsgAddr || undefined,
         service_names: Array.from(selectedServices),
         import_dependencies: importDeps,
       });
@@ -411,16 +411,20 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
     () => report?.subscriptions || [],
     [report]
   );
-  const endpoints = report?.csg_endpoints || [];
+  const endpoints = useMemo(() => report?.csg_endpoints || [], [report]);
   const discoveryErrors = report?.errors || [];
+
+  const activeEndpointAddr = useMemo(() => {
+    if (selectedCsgAddr) return selectedCsgAddr;
+    if (endpoints.length > 0) {
+      return `${endpoints[0].listen_ip}:${endpoints[0].listen_port}`;
+    }
+    return '';
+  }, [selectedCsgAddr, endpoints]);
 
   const liveServiceCount = report
     ? report.summary.live_service_count ??
     report.summary.matched_count + report.summary.undeclared_count
-    : 0;
-  const liveSubCount = report
-    ? report.summary.live_sub_count ??
-    (report.summary.sub_matched_count ?? 0) + (report.summary.sub_undeclared_count ?? 0)
     : 0;
   const isProcOnlyDegraded =
     Boolean(report) &&
@@ -694,30 +698,61 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
 
   return (
     <div className="csg-drawer-shell">
-      {/* ── Zone A: 顶部固定探测栏 + 告警 + KPI 汇总 ── */}
+      {/* ── Zone A: 顶部固定探测栏 + 告警 ── */}
       <div className="csg-drawer-top">
         <div className="csg-probe-bar">
           <span className="csg-probe-node-label">
-            <Compass size={16} style={{ color: 'var(--color-primary)' }} />
+            <Compass size={15} style={{ color: 'var(--color-primary)' }} />
             目标节点：{agent.name}
           </span>
-          <input
-            type="text"
-            value={csgAddrInput}
-            onChange={(e) => setCsgAddrInput(e.target.value)}
-            placeholder="可选指定 CSG dlink 地址 (如 127.0.0.1:31806)"
-            data-testid="csg-addr-probe-input"
-            className="csg-probe-input"
-          />
+
+          <span className="csg-probe-divider" aria-hidden="true" />
+
+          <div data-testid="csg-endpoints-selector" className="csg-probe-endpoint-group">
+            <label className="csg-probe-endpoint-label" htmlFor="csg-endpoint-select">
+              CSG 控制面{endpoints.length > 1 ? ` (${endpoints.length})` : ''}：
+            </label>
+            {endpoints.length > 0 ? (
+              <select
+                id="csg-endpoint-select"
+                data-testid="csg-endpoint-select"
+                aria-label="候选 CSG 控制面"
+                className="csg-probe-select"
+                value={activeEndpointAddr}
+                disabled={loading}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setSelectedCsgAddr(next);
+                  void loadTopology(next);
+                }}
+              >
+                {endpoints.map((ep, idx) => {
+                  const epAddr = `${ep.listen_ip}:${ep.listen_port}`;
+                  return (
+                    <option key={`${epAddr}-${ep.source}-${idx}`} value={epAddr}>
+                      {epAddr} ({ep.exe_name ? `${ep.exe_name} · ` : ''}
+                      {ep.source})
+                    </option>
+                  );
+                })}
+              </select>
+            ) : (
+              <span className="csg-probe-empty-endpoint">
+                {loading && !report ? '正在探测本机 CSG 端点...' : '未发现候选 CSG 端点'}
+              </span>
+            )}
+          </div>
+
           <button
             type="button"
             onClick={() => void loadTopology()}
             disabled={loading}
             data-testid="csg-refresh-topology-btn"
-            className="csg-probe-btn"
+            className="csg-probe-icon-btn"
+            title={loading ? '探测中...' : '刷新现网探测'}
+            aria-label="刷新现网探测"
           >
-            <RefreshCw size={14} />
-            {loading ? '探测中...' : '重新探测现网拓扑'}
+            <RefreshCw size={14} className={loading ? 'csg-spin' : undefined} />
           </button>
         </div>
 
@@ -730,34 +765,6 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
 
         {report && (
           <>
-            {endpoints.length > 0 && (
-              <div data-testid="csg-endpoints-selector" className="csg-endpoints-bar">
-                <span className="csg-endpoints-label">
-                  候选 CSG 控制面 ({endpoints.length})：
-                </span>
-                {endpoints.map((ep, idx) => {
-                  const epAddr = `${ep.listen_ip}:${ep.listen_port}`;
-                  const active =
-                    csgAddrInput.trim() === epAddr || (csgAddrInput.trim() === '' && idx === 0);
-                  return (
-                    <button
-                      key={`${epAddr}-${ep.source}-${idx}`}
-                      type="button"
-                      disabled={loading}
-                      onClick={() => {
-                        setCsgAddrInput(epAddr);
-                        void loadTopology(epAddr);
-                      }}
-                      className={`csg-endpoint-chip${active ? ' csg-endpoint-chip--active' : ''}`}
-                    >
-                      {epAddr} ({ep.exe_name ? `${ep.exe_name} · ` : ''}
-                      {ep.source})
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-
             {discoveryErrors.length > 0 && (
               <div data-testid="csg-discovery-errors-banner" className="csg-banner-warning">
                 <div className="csg-banner-warning-header">
@@ -829,68 +836,6 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
                 </div>
               </div>
             )}
-
-            <div className="csg-kpi-strip">
-              <div className="csg-kpi-card">
-                <span className="csg-kpi-label">发现模式</span>
-                <span className="csg-kpi-value" title={report.discovery_mode || 'PROC_ONLY'}>
-                  {report.discovery_mode || 'PROC_ONLY'}
-                </span>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveTab('services');
-                  setServiceStateFilter((prev) => (prev === 'MATCHED' ? 'ALL' : 'MATCHED'));
-                  setServicePage(1);
-                }}
-                className={`csg-kpi-card csg-kpi-card--interactive${activeTab === 'services' && serviceStateFilter === 'MATCHED'
-                    ? ' csg-kpi-card--active'
-                    : ''
-                  }`}
-              >
-                <span className="csg-kpi-label">已纳管 / 现网数</span>
-                <span className="csg-kpi-value csg-kpi-value--success">
-                  {report.summary.matched_count} / {liveServiceCount}
-                </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveTab('services');
-                  setServiceStateFilter((prev) =>
-                    prev === 'UNDECLARED_IN_SSOT' ? 'ALL' : 'UNDECLARED_IN_SSOT'
-                  );
-                  setServicePage(1);
-                }}
-                className={`csg-kpi-card csg-kpi-card--interactive${activeTab === 'services' && serviceStateFilter === 'UNDECLARED_IN_SSOT'
-                    ? ' csg-kpi-card--active'
-                    : ''
-                  }`}
-              >
-                <span className="csg-kpi-label">待导入 SSOT</span>
-                <span className="csg-kpi-value csg-kpi-value--warning">
-                  {report.summary.undeclared_count}
-                </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveTab('subscriptions');
-                  setSubPage(1);
-                }}
-                className={`csg-kpi-card csg-kpi-card--interactive${activeTab === 'subscriptions' ? ' csg-kpi-card--active' : ''
-                  }`}
-              >
-                <span className="csg-kpi-label">现网缺失 / 订阅边</span>
-                <span className="csg-kpi-value">
-                  {report.summary.missing_in_live_count} / {liveSubCount}
-                </span>
-              </button>
-            </div>
           </>
         )}
       </div>
@@ -908,7 +853,13 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
               >
                 <Server size={14} />
                 <span>现网服务列表</span>
-                <span className="csg-tab-count">{services.length}</span>
+                <span
+                  data-testid="csg-live-coverage-badge"
+                  className={`csg-tab-count${report.summary.matched_count > 0 ? ' csg-tab-count--coverage' : ''}`}
+                  title={`现网发现 ${liveServiceCount} 个服务，已纳管 ${report.summary.matched_count} 个（列表共 ${services.length} 条）`}
+                >
+                  {`已纳管 ${report.summary.matched_count}/${liveServiceCount}`}
+                </span>
               </button>
 
               <button
