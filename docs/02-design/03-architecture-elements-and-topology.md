@@ -1,12 +1,12 @@
 # 架构与活体契约治理 (`code-contract`) 架构元素建模与拓扑一致性验证设计
 
 - **文档编号**：`03-architecture-elements-and-topology.md`
-- **文档版本**：v1.10.0
-- **更新日期**：2026-11-18
+- **文档版本**：v1.11.0
+- **更新日期**：2026-11-25
 - **归属阶段**：阶段二：系统架构与数据模型设计 (`02-design`)
-- **状态**：M1~M27 已交付；ADR-21 v2.1.0 (M28) SDD 详细设计定稿
-- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.22.0)、[`01-system-architecture.md`](./01-system-architecture.md) (v1.9.0)、[`09-arch-process-ssot-and-ebpf-premount-standby-adr.md`](../05-adr/09-arch-process-ssot-and-ebpf-premount-standby-adr.md) (ADR-09 v1.1.0)、[`15-scalable-topology-focus-and-layout-persistence-adr.md`](../05-adr/15-scalable-topology-focus-and-layout-persistence-adr.md) (ADR-15 v1.3.0)、[`16-multi-implementation-service-contract-adr.md`](../05-adr/16-multi-implementation-service-contract-adr.md) (ADR-16 v2.0.0)、[`17-topology-single-layer-drilldown-and-layout-ux-adr.md`](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md) (ADR-17 v1.1.0)、[`18-proto-full-lifecycle-and-git-mr-governance-adr.md`](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (ADR-18 v1.3.0)、[`21-csg-aware-agent-service-discovery-and-replay-mock-adr.md`](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (ADR-21 v2.1.0)
-- **关联工程作战卡**：[`docs/04-tasks/21-m20-multi-implementation-service-contract.md`](../04-tasks/21-m20-multi-implementation-service-contract.md) (M20)、[`docs/04-tasks/22-m21-topology-single-layer-drilldown-and-layout-ux.md`](../04-tasks/22-m21-topology-single-layer-drilldown-and-layout-ux.md) (M21)、[`docs/04-tasks/23-m22-protocompile-layering-and-dependency-graph.md`](../04-tasks/23-m22-protocompile-layering-and-dependency-graph.md) (M22)、[`docs/04-tasks/29-m28-csg-service-discovery-and-multi-mode-simulation.md`](../04-tasks/29-m28-csg-service-discovery-and-multi-mode-simulation.md) (M28)
+- **状态**：M1~M29 已交付；ADR-24 v1.1.0 (`M30a ~ M32`) SDD 详细设计定稿
+- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.26.0)、[`01-system-architecture.md`](./01-system-architecture.md) (v1.12.0)、[`09-arch-process-ssot-and-ebpf-premount-standby-adr.md`](../05-adr/09-arch-process-ssot-and-ebpf-premount-standby-adr.md) (ADR-09 v1.1.0)、[`15-scalable-topology-focus-and-layout-persistence-adr.md`](../05-adr/15-scalable-topology-focus-and-layout-persistence-adr.md) (ADR-15 v1.3.0)、[`16-multi-implementation-service-contract-adr.md`](../05-adr/16-multi-implementation-service-contract-adr.md) (ADR-16 v2.0.0)、[`17-topology-single-layer-drilldown-and-layout-ux-adr.md`](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md) (ADR-17 v1.1.0)、[`18-proto-full-lifecycle-and-git-mr-governance-adr.md`](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (ADR-18 v1.3.0)、[`21-csg-aware-agent-service-discovery-and-replay-mock-adr.md`](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (ADR-21 v2.2.0)、[`24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md`](../05-adr/24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md) (ADR-24 v1.1.0)
+- **关联工程作战卡**：[`docs/04-tasks/21-m20-multi-implementation-service-contract.md`](../04-tasks/21-m20-multi-implementation-service-contract.md) (M20)、[`docs/04-tasks/22-m21-topology-single-layer-drilldown-and-layout-ux.md`](../04-tasks/22-m21-topology-single-layer-drilldown-and-layout-ux.md) (M21)、[`docs/04-tasks/23-m22-protocompile-layering-and-dependency-graph.md`](../04-tasks/23-m22-protocompile-layering-and-dependency-graph.md) (M22)、[`docs/04-tasks/29-m28-csg-service-discovery-and-multi-mode-simulation.md`](../04-tasks/29-m28-csg-service-discovery-and-multi-mode-simulation.md) (M28)、[`docs/04-tasks/31-m30a-discovery-workbench-and-snapshot-diff.md`](../04-tasks/31-m30a-discovery-workbench-and-snapshot-diff.md) (M30a)、[`docs/04-tasks/32-m30b-physical-logical-decoupling-and-migration.md`](../04-tasks/32-m30b-physical-logical-decoupling-and-migration.md) (M30b)、[`docs/04-tasks/33-m31-quick-record-two-stage-attribution-and-catalog-radar.md`](../04-tasks/33-m31-quick-record-two-stage-attribution-and-catalog-radar.md) (M31)、[`docs/04-tasks/34-m32-architecture-inbox-dependency-synthesis-and-mr-impact.md`](../04-tasks/34-m32-architecture-inbox-dependency-synthesis-and-mr-impact.md) (M32)
 
 ### 修订记录
 
@@ -19,6 +19,7 @@
 | v1.8.0 | 2026-11-13 | 依据 [`ADR-18` (v1.1.0)](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (`M22`) 增补：1. §2.3 可配置架构层级 (`layer_level`) 校验规则与模块间有向环路检测守卫；2. §4.4 `GraphNode.Meta` 补充有效层级元数据；3. §6.5 `/topology` 客户端 SVG / PNG 导出设计 (`F-32`) |
 | v1.9.0 | 2026-11-13 | 依据 [`ADR-18` (v1.2.0)](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) 检视意见修订 §2.3 与 §6.5：1. 明确更新入参使用 `*int` 区分「未传保持原值」与「传 `0` 显式豁免」、补充绑定多实现 `ContractID` 时对既有 `DISPATCH` 消费方的反向层级校核及 `CONTRACT_LIB` DIP 倒挂分层约定；2. §6.5 废弃易触发 Canvas 跨域污染或 CSS 变量丢失的 `<foreignObject>` 方案，改为基于画布模型数据的程序化纯矢量 `<svg>` + `getComputedStyle` 解析 `--color-*` Token + 离屏 2x `<canvas>` PNG 导出 |
 | v1.10.0 | 2026-11-18 | 依据 [`ADR-21` (v2.1.0)](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (`M28`) 同步 CSG 现网自动发现与蓝图对齐设计：1. §2.1 演进 `A-07` 与服务名映射契约（允许 `ModuleService.service_name` 存储最长 64B 的 CSG 物理发布名如 `OrderSvc-1024-8`，并新增 `proto_service_name` 注入 `CompiledRegistry.ServiceAliases` 与 `^(.+-\d+)-(\d+)$` 实例号剥离归一化）；2. 新增 §3.4 基于 CSG 双层自动发现（`dlink` + `RPCMonitorService`）的架构 SSOT 三态对账（`MATCHED`/`UNDECLARED`/`GHOST`）与 `POST /api/agents/:id/csg/import-blueprint` 一键架构导入闭环 |
+| **v1.11.0** | **2026-11-25** | **依据 [`ADR-24` (v1.1.0)](../05-adr/24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md) (`M30a ~ M32`) 新增 §7 以现网发现为中心的双态建模、生命周期对账与渐进式治理引擎设计**：1. §7.1 L0/L1-T/L1-I/L2 分层、服务双态状态机（I1~I8）与 `DeleteModule` 显式迁移流程；2. §7.2 分层身份指纹算法（P1~P3、`fingerprint_version`、多实例折叠）；3. §7.3 `Enroll` 观测纳管单事务契约（`DISARMED`、不覆盖人工字段、`PROVISIONAL/CONFIRMED`）；4. §7.4 `PhysicalReconciler` 周期对账、离线冻结与受限 GC；5. §7.5 无逻辑模块物理拓扑聚合与规模护栏；6. §7.6 两阶段渐进归因与可续跑任务；7. §7.7 统一契约目录、三级 `.pb` 撮合、五态雷达、架构收件箱（单宿主/多宿主/反向依赖合成）与 MR 权威环境影响面 |
 
 ---
 
@@ -852,3 +853,150 @@ export interface ScopedGraph {
 1. **程序化纯矢量重建导出（零 `<foreignObject>` HTML 节点裁切与污染风险）**：鉴于 ReactFlow 画布节点本体为 HTML `DOM` 元素，直接克隆 DOM `.react-flow__viewport` 转 SVG 会触发 `<foreignObject>` 跨浏览器光栅化失败或缺失节点框体；改为在客户端 `exportTopology.ts` 直接消费当前可见子图布局产物（`flowNodes` 的 `position / width / height / label / status / kind` 与 `flowEdges` 的 `bendPoints` / 锚点坐标 / 标签 / 一致性状态），计算完整视口包围盒与内边距（`padding = 32px`），**程序化生成纯正交矢量 `<svg>` 元素树（`<rect>` / `<path>` / `<text>` / `<marker>`）**，支持高可编辑性与零失真缩放；
 2. **CSS Semantic Token 静态内联解析**：生成导出 SVG 前，通过 `getComputedStyle(document.documentElement)` 读取当前激活亮/暗色 `--color-*` 语义 Token 的计算色值并静态写入图形 `fill` / `stroke` / `color` 属性（确保导出文件脱离浏览器 CSS 上下文独立打开时与当前主题视觉 100% 一致，且无任何 HTML 字符串拼接或 `dangerouslySetInnerHTML`）；
 3. **高清离屏光栅化与 CSP 安全下载**：`SVG` 导出直接生成 UTF-8 `image/svg+xml` Blob；`PNG` 导出经同源 `SVG Data URL` 载入 `2x` 高分辨率离屏 `<canvas>` 光栅化生成 `image/png` Blob，通过 `URL.createObjectURL` 触发下载并立即 `revokeObjectURL` 释放内存（`cmd/server` CSP `img-src` 已允许 `data: blob:`）；文件命名遵循 `contract-topology-{view}-{focus_scope}-{YYYYMMDD_HHmm}.svg|png`。
+
+---
+
+## 7. 以现网发现为中心的双态建模、生命周期对账与渐进式治理引擎 (`ADR-24` / `M30a ~ M32`)
+
+本节落地 [`ADR-24` (v1.1.0)](../05-adr/24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md) 的工程级设计，彻底消除「先手工建逻辑模块、再发现匹配」的冷启动壁垒与 `CSG_DISCOVERED / MOD_*` 假模块污染，形成 **L0 现网实况 ➔ L1 物理资产（L1-T 类型 / L1-I 实例）➔ L2 逻辑治理** 三层解耦闭环。
+
+### 7.1 L0 / L1-T / L1-I / L2 分层职责、服务双态状态机与不变量 (`I1 ~ I8`)
+
+1. **四层实体职责划分**：
+   - **L0 现网实况层**：Agent `DiscoverAndFuse` 瞬时观测与控制面 `contract_discovery_snapshots`（持久化快照、内容哈希去重、脱敏与双模 Diff）。
+   - **L1-T 物理类型层（环境无关）**：`ArchProcess`（全局标准进程类型蓝图，新增 `declared_role`、`identity_fingerprint`、`fingerprint_version`、`lifecycle`、`origin`、`origin_agent_id`）与 `ModuleService` 身份行（`module_id` 允许为 `NULL`，**绝不新增单值 `arch_process_id`**）。
+   - **L1-I 物理实例层（按 Agent 环境）**：`Process`（1:1 挂载实例 + `enroll_source` + `observed_*`）、`ServicePlacement`（`(module_service_id, process_id)` 唯一，记录端点、传输制式、多实例数与存活衰减状态）与 `ProcessDependency`（按 `consumer_process_id` 维度的环境级订阅边与提供方解析类型）。
+   - **L2 逻辑治理层**：`Subsystem` / `FunctionalGroup` / `Module` / `ServiceContract` / `ModuleDependency` / `LayerLevel` / `DependencyDecision`。
+
+2. **服务双态状态机与 `I1 ~ I8` 不变量**：
+
+```mermaid
+stateDiagram-v2
+    [*] --> UNCLAIMED: Enroll 发现新服务名 (module_id=NULL, source=CSG_DISCOVERED)
+    [*] --> CLAIMED: 人工建模 (source=MANUAL)
+    UNCLAIMED --> CLAIMED: 单宿主认领 Claim (回填 module_id, claimed_at, claimed_by)
+    UNCLAIMED --> CLAIMED: 多宿主 MULTI_IMPL 拆分 (生成 N 个实现行并迁移放置后删除身份行)
+    CLAIMED --> UNCLAIMED: Unclaim 或 DeleteModule (存在放置: 清空字段置 MIGRATED 或合并至既有未认领身份)
+    CLAIMED --> [*]: DeleteModule (无放置的纯手工服务直接删除)
+    UNCLAIMED --> [*]: PhysicalReconciler GC (放置全部 RETIRED 满 30 天且无引用)
+```
+
+| 不变量 | 规则描述 | 强制保障位置 |
+| :---: | :--- | :--- |
+| **I1** | 未认领行（`module_id IS NULL`）必须满足 `contract_id IS NULL AND impl_key = '' AND source IN ('CSG_DISCOVERED', 'MIGRATED')` | DB `CHECK chk_contract_mod_svc_unclaimed` |
+| **I2** | 每个 64B `service_name` 在「独占或未认领」作用域内至多存在一行身份记录 | 既有部分唯一索引 `uk_contract_mod_svc_name_excl` |
+| **I3** | 未认领身份必须至少关联一条非 `RETIRED` 放置，否则满 `30` 天无引用进入 GC 候选 | `PhysicalReconciler` 每日巡检 |
+| **I4** | **A-03 认领一致性**：认领进 `Module M` 时，该服务在权威 `SHARED` 环境的全部 `ACTIVE` 放置必须同属同一 `ArchProcess P`，且 `M.arch_process_id ∈ {NULL, P}`；为 `NULL` 时同事务回填 `P` | `ClaimServices` 事务校验（不满足返 `422 CLAIM_PLACEMENT_MISMATCH`） |
+| **I5** | **放置漂移仅告警不改写**：已认领服务出现 `ArchProcess ≠ Module.arch_process_id` 的 `ACTIVE` 放置时，五态雷达标为 `PLACEMENT_DRIFT` | 雷达聚合计算（禁止自动改写 `Module.arch_process_id`） |
+| **I6** | **依赖守卫**：Unclaim 或 `DeleteModule` 前，若服务被 `ModuleDependency.service_id` 引用，拒绝操作 | 服务层校验（返 `409 DEPENDENCY_REFERENCED` 并列出引用模块） |
+| **I7** | **回退合并**：服务回退为未认领时，若同名未认领身份已存在（`MULTI_IMPL` 场景），将放置合并至既有未认领行、并集合并 `diff_ignore_paths` 后删除回退行；否则原地清空 `module_id / contract_id / impl_key / is_custom_service_name` 并置 `source = 'MIGRATED'` | 服务层单事务迁移 |
+| **I8** | **放置与订阅边单一写路径**：`contract_service_placements` 与 `contract_process_dependencies` 仅允许 `Enroll`、`PhysicalReconciler` 与迁移任务写入 | 路由不暴露直接 CRUD + 单测断言 |
+
+3. **`DeleteModule` 单事务显式迁移伪代码（因 `module_services.module_id` FK 由 `CASCADE` 改为 `RESTRICT`）**：
+```go
+func DeleteModuleTx(tx *gorm.DB, moduleID uint64) error {
+    // 1. 锁定 Module 行并校验无下属 Contract / Consumer / Active 进程占用约束
+    // 2. 查询该 Module 下全部 ModuleService
+    // 3. I6 依赖守卫：若任一 svc.ID 被 contract_module_dependencies.service_id 引用 -> 返回 409 DEPENDENCY_REFERENCED
+    // 4. 遍历服务执行 I7：
+    //    - 统计 ServicePlacement 数量 (plcCount)
+    //    - 若 plcCount == 0 && svc.Source == "MANUAL": 删除该 svc
+    //    - 若 plcCount > 0:
+    //        查找是否存在同名未认领身份 (service_name = svc.ServiceName AND module_id IS NULL)
+    //        若存在: 将 svc 名下 placement 合并至已有未认领行 (按 process_id 去重保留最新), 并集合并 diff_ignore_paths, 删除 svc
+    //        若不存在: 更新 svc -> module_id = NULL, contract_id = NULL, impl_key = '', is_custom_service_name = false, source = 'MIGRATED', claimed_at = NULL, claimed_by = 0
+    // 5. 删除 Module 自身并写入 P1 审计
+}
+```
+
+### 7.2 分层身份指纹算法与多实例折叠 (`internal/server/discovery/fingerprint.go`)
+
+```go
+const CurrentFingerprintVersion int16 = 1
+
+// ComputeIdentityFingerprint 按 ADR-24 §5.5 计算规范化版本指纹（严禁包含任何发布服务名）
+func ComputeIdentityFingerprint(cmdline, exeName string) (fp string, entryToken string, stableArgs []string)
+```
+
+1. **三阶身份匹配优先级**（仅在同一 `fingerprint_version` 内比对；`fingerprint_version` 递增时后台渐进重算存活观测进程，新旧并存优先匹配新版本）：
+   - **P1 蓝图模式命中**：`/proc/<pid>/cmdline` 或 `exe` 匹配既有 `Process.OverrideCmdPattern` / `ArchProcess.DefaultCmdPattern`（子串或 `re:` RE2）➔ 直接确定候选；
+   - **P2 规范化指纹命中**（`sha256("v1|" + exeBase + "|" + entryToken + "|" + strings.Join(stableArgs, "|"))`）：
+     - `exeBase`：`filepath.Base(exeName)`（兼容跨环境安装路径差异）；
+     - `entryToken`：对 `java` 提取 `-jar` 后的 JAR basename 或主类名；对 `python*` / `node` / `sh` / `bash` 提取首个非 `-` 标志参数（入口脚本 basename）；其余编译型二进制为空；
+     - `stableArgs`：剔除以下易变/敏感参数后按字典序排序去重：
+       1. 敏感键值：`--password=...` / `passwd=` / `token=` / `secret=` / `api_key=` / `key=` 及其后续值；
+       2. 易变运行参数：`--port` / `-p` / `--pid` / `--bind` / `--listen` 及其值、IPv4/IPv6 字面量、`/tmp/` 或 `/var/run/` 临时路径、纯数字实例号、长度 `>= 8` 的十六进制串；
+   - **P3 `procName` 兜底**：`cmdline` 不可读（如权限受限）时提取 `StripProcPIDSuffix(procName)`（剥离尾部 `-<pid>`），标为**低置信 (`LOW_CONFIDENCE`)**，纳管时需显式传 `confirm_low_confidence = true`。
+2. **候选裁决与多实例折叠**：
+   - `0` 个候选 ➔ 新建 `ArchProcess`；`1` 个候选 ➔ 自动绑定；`>= 2` 个候选 ➔ 返回 `IDENTITY_AMBIGUOUS` 与候选列表，禁止自动绑定；
+   - 同机多 PID 命中同一身份时折叠为单一一级行：`Process.observed_pids = [pid1, pid2, ...]`，服务放置 `ServicePlacement.instance_count` 与 `endpoints` 自动并集汇总。
+
+### 7.3 观测纳管事务引擎 (`internal/server/discovery/enroll.go`, M30b)
+
+`POST /api/discovery/enroll`（守卫 `ScopeEnrollGuard`）单事务幂等执行：
+1. **锁与串行化**：`SELECT * FROM contract_agents WHERE id = ? FOR UPDATE` 锁定 Agent 行（与 `PUT /api/agents/:id/process-mounts` 串行化）；
+2. **身份解析与守卫**：按 §7.2 解析待纳管进程；多候选且未传 `identity_overrides` ➔ 标记 `AMBIGUOUS` 跳过；仅 P3 命中且 `!confirm_low_confidence` ➔ 标记 `LOW_CONFIDENCE` 跳过；
+3. **`ArchProcess` 类型维护**：缺失则新建（`group_id` 默认 `PGRP_CSG_AUTO`；`origin = 'DISCOVERY'`、`origin_agent_id = agent.ID`、`declared_role = 'UNKNOWN'`；`PRIVATE` 环境创建 `lifecycle = 'PROVISIONAL'` 且 `code = prv<agent_id>-<norm>`，`SHARED` 环境创建 `lifecycle = 'CONFIRMED'`）；若已存在则**绝不覆盖** `Name / GroupID / DefaultCmdPattern / declared_role / Description`；若已有 `PROVISIONAL` 进程在 `SHARED` 环境被纳管则原地提升 `lifecycle = 'CONFIRMED'`（若规范化编码空闲则更新编码）；
+4. **`Process` 实例维护**：缺失则新建（`enroll_source = 'DISCOVERY'`、`probe_desired_state = 'DISARMED'`、无覆盖项）并递增 `agent.mounts_revision`；**绝不修改 `agent.expected_armed_digest`，不下发 `/agent/v1/monitors/arm`**；若实例已存在仅更新 `observed_role`、`observed_transports`、`observed_pids`、`last_observed_at`，绝不修改其 `probe_desired_state` 或覆盖项；**因不改变 Agent 布防状态，允许在他人持有排他租约期间执行**；
+5. **服务身份与 `ServicePlacement`**：按字典序排序 `StripCSGPIDSuffix(ServiceName)` 加锁防死锁，逐个解析目标 `ModuleService`：
+   - `(a)` `uk_contract_mod_svc_name_excl` 作用域已有同名行 ➔ 直接复用；
+   - `(b)` 否则存在同名 `MULTI_IMPL` 非自定义名实现行 ➔ 优先匹配 `Module.arch_process_id == archProcess.ID` 的唯一实现行；若无唯一匹配，新建未认领身份（不阻断纳管，交由雷达标记 `PLACEMENT_DRIFT` / 收件箱裁决）；
+   - `(c)` 否则新建未认领身份（`module_id = NULL, source = 'CSG_DISCOVERED'`）；
+   - Upsert `ServicePlacement`（`agent_id`、`arch_process_id` 强制从 `Process` 派生，`status = 'ACTIVE'`、`miss_count = 0`、合并 `endpoints`、刷新 `observed_transport` / `instance_count` / `last_seen_at`）；
+6. **环境级订阅边 `ProcessDependency`**：按 `(consumer_process_id, StripCSGPIDSuffix(ServiceName))` Upsert，`provider_kind` 按「同环境已纳管放置 ➔ `LOCAL_ENROLLED`；L0 同机未纳管 ➔ `LOCAL_UNENROLLED`；跨板 LDC ➔ `REMOTE_LDC`；其余 ➔ `OFFLINE`」解析并写入 `resolved_endpoint` 与 `service_id`；
+7. **提交后钩子**：写入 `P2` 审计；异步触发关联服务 `.pb` 三级撮合；若实时探测内容哈希变化则写入 `AUTO` 快照。
+
+### 7.4 `PhysicalReconciler` 周期对账、离线冻结与受限 GC (`internal/server/discovery/reconciler.go`, M30b)
+
+1. **周期探测（共享 singleflight）**：后台 Worker 每 `discovery.reconcile_interval_sec`（默认 `600s` ±10% 抖动）扫描 `status = 'ONLINE'` 且至少存在 1 个 `enroll_source = 'DISCOVERY'` 挂载的 Agent；通过与 `/api/discovery/live` 共用的 singleflight 缓存获取最新报告（若 Agent 正在持锁录制/重放则降级为低优先级，不影响租约）；内容哈希变更时写入 `trigger_type = 'SCHEDULED'` 快照；
+2. **仅刷新已纳管实例（绝不自动纳管新进程）**：对既有 `Process` 刷新 `observed_*`；比对关联的 `ServicePlacement` 与 `ProcessDependency`：
+   - 本轮仍观测到 ➔ `status = 'ACTIVE', miss_count = 0, last_seen_at = now`；
+   - 本轮未观测到 ➔ `miss_count += 1`；当 `miss_count >= discovery.stale_miss_threshold`（默认 `3`）或 `now - last_seen_at >= discovery.stale_hours`（默认 `24h`）➔ 转 `STALE`；`STALE` 持续满 `discovery.retire_days`（默认 `7d`）➔ 转 `RETIRED`；
+3. **离线冻结**：当 Agent `status = 'OFFLINE'` 或探测报错时，**完全跳过该 Agent 的 miss 计数与衰减流转**，避免停机维护误退役；
+4. **每日受限 GC**：每日凌晨执行一次：
+   - 清理**未认领**且名下全部分放置均处于 `RETIRED` 满 `discovery.gc_days`（默认 `30d`）、未被 `ModuleDependency` / `GoldenSuiteItem` 引用、且 `diff_ignore_paths = '[]'` 的 `ModuleService`（**已认领服务永不 GC**）；
+   - 清理无任何 `contract_processes` 挂载满 `30` 天的 `PROVISIONAL` `ArchProcess`。
+
+### 7.5 无逻辑模块物理拓扑聚合与规模护栏 (`internal/server/topology/graph_topology.go`, M30b)
+
+当 `discovery.v2_enabled = true` 时，`BuildTopologyGraph(view = "PHYSICAL", envAgentID)` 切换为以 L1 物理资产为主数据源：
+1. **节点范围**：渲染 `ArchProcessGroup -> ArchProcess -> (已挂载已认领的 BUSINESS Module)`；**0 个 `Module` 时同样完整输出全部已纳管 `CONFIRMED` `ArchProcess` 节点**（若传入 `env_agent_id` 指向某 `PRIVATE` Agent 且调用方为其 owner/管理员，额外包含该私有环境下的 `PROVISIONAL` 进程）；
+2. **边合成**：从 `contract_process_dependencies`（过滤 `status != 'RETIRED'`；`env_agent_id == nil` 时仅聚合 `SHARED` 权威环境）按 `(consumer_arch_process_id, service_name)` 聚合合成 `PROCESS -> PROCESS` 连线，边详情携带服务名列表、出现环境数及认领状态；`REMOTE_LDC` 聚合并挂载至每个远端节点一个虚拟外部节点（`remote_node`），`OFFLINE` 挂载至“未上线服务”虚拟节点；若目标服务已认领且消费方已关联模块，同连线叠加 `VERIFIED / VIOLATION` 合规徽章；
+3. **规模护栏**：当物理视图进程节点总数 `> 150` 时，前端默认按 `ArchProcessGroup` 折叠为分组级视图；后端/前端单视图渲染上限为 `500` 节点 / `2000` 边，超限时返回/提示收窄 `env_agent_id` 或 `ArchProcessGroup`。
+
+### 7.6 两阶段渐进归因与可续跑回补任务 (`attribution.go` & `attribution_job.go`, M31~M32)
+
+1. **Stage 1 · 物理进程级归因与 `.pb` 解码（M31，录制实时/批次结算必跑）**：
+   - 写入 `TrafficRecord.SrcArchProcessID` / `DstArchProcessID`；本地端由 `TrafficRecord.ProcessID ➔ Process.ArchProcessID` 确定（`INGRESS` 写 `DstArchProcessID`，`EGRESS` 写 `SrcArchProcessID`）；
+   - 对端端按严格 4 级优先级解析：
+     1. 本会话 `RecordingSession.CSGSnapshots` 中的端点匹配服务 ➔ 同环境 `ServicePlacement`；
+     2. 报文对端 `IP:Port` 匹配同环境放置 `endpoints`（次选其他权威环境唯一端点）；
+     3. `ServiceName` 对应身份在权威 `SHARED` 环境**恰有 1 个** `ACTIVE` 放置的 `ArchProcess`；
+     4. 以上均不唯一 ➔ 对应 `*_arch_process_id` 保持 `NULL`，在 `headers_json.meta` 标记 `peer_attribution_mode = "AMBIGUOUS"` 并写入候选 `arch_process_id` 列表，**严禁猜错强归因**；
+   - 同步通过已确认的 `proto_service_name`（或 `EXACT` 撮合结果）完成 `.pb` 解码写入 `payload_json`。
+2. **Stage 2 · 逻辑模块级归因与可续跑回补（M32）**：
+   - 对已认领服务继续执行既有 4 级逻辑归因（`SINGLE_MODULE_PROC` / `TRACE_SPAN` / `UNIQUE_DEPEND` / `PROCESS_LEVEL`）；
+   - 在 `/architecture` 认领完成时，自动插入一条 `job_type = 'REATTRIBUTE'` 的 `contract_attribution_jobs` 任务（`scope_json = {"service_names": [...]}`），由后台限速 Worker 按 `RecordingSession` 主键递增游标 (`cursor_session_id`) 扫描命中 `idx_contract_tr_session_svc` 的历史会话并回补 `src_module_id / dst_module_id`，支持 `POST /api/attribution-jobs/:id/cancel` 取消、断点续跑及 SSE `attribution_job.updated` 推送。
+
+### 7.7 统一契约服务目录、三级撮合、五态雷达与架构收件箱 (`M31 ~ M32`)
+
+1. **统一契约目录与三级 `.pb` 撮合（M31，合并 `claimable_service.go` 与 `csg_reconcile.go` 为 `catalog.go`）**：
+   - **`EXACT`**（最高置信）：64B `service_name`（或 `StripCSGPIDSuffix`）完全匹配生效 `ProtoOperation.ServiceName` 或已有 `ModuleService.ProtoServiceName` ➔ **自动写入 `proto_service_name` 与 `proto_match_confidence = 'EXACT'`**；
+   - **`HEURISTIC`**（中等置信）：拆解 `<Class[:31]>-<Svr[:31]>` 两段，与已激活 `ProtoOperation.ProtoService` / `ProtoPackage` 比对，若全局唯一命中 ➔ **仅写入 `proto_suggested_name` 与 `proto_match_confidence = 'HEURISTIC'`**（待人工确认，不自动生效）；
+   - **`FINGERPRINT`**（方法指纹）：存在录制流量且尚未映射时，统计该服务最近录制 `Operation` 集合与已激活 `ProtoOperation` 的方法覆盖率，若覆盖度 `>= 80%` 且唯一命中某个 `.pb` Service ➔ **仅写入 `proto_suggested_name` 与 `proto_match_confidence = 'FINGERPRINT'`**；
+   - 人工确认 `POST /api/catalog/services/:id/confirm-proto`：写入 `proto_service_name` 并置 `proto_match_confidence = 'MANUAL'`，重载 `decoder.Registry.ServiceAliases`；未认领服务允许任意可见用户确认（`P2` 审计），已认领服务仅限 `contract_admin` 或所属模块/子系统负责人确认（`P1` 审计）。
+
+2. **五态健康雷达（M31，仅统计 `SHARED` 权威环境观测，接入 `/dashboard` 与 `/proto-docs`）**：
+   - 🔴 **现网裸奔 (`SHADOW_LIVE`)**：存在权威环境非 `RETIRED` 放置，但 `proto_service_name` 为空且 `service_name` 未命中任何生效 `ProtoOperation`；
+   - 🟡 **无主孤儿 (`UNCLAIMED_ORPHAN`)**：已有确认 `.pb` 映射且存在权威环境非 `RETIRED` 放置，但 `module_id IS NULL`；
+   - ⚪ **纸面僵尸 (`PHANTOM_PROTO`)**：已激活 `ProtoOperation` 定义的 Service，在权威环境既无非 `RETIRED` 放置，也无非 `RETIRED` 订阅边；
+   - 🟣 **认领后消失 (`VANISHED_CLAIMED`)**：已认领服务在权威环境曾存在放置记录，但当前权威环境放置已全部处于 `RETIRED`；
+   - 🟠 **放置漂移 (`PLACEMENT_DRIFT`)**：已认领服务存在 `arch_process_id != Module.arch_process_id` 的权威环境 `ACTIVE` 放置（I5）。
+
+3. **架构收件箱（M32，`/architecture` Discovery Inbox）与 MR 权威影响面**：
+   - **单宿主认领 (`POST /api/arch/services/claim`)**：支持按 `CONFIRMED` `ArchProcess` 批量勾选服务分别认领进不同的 `Module`（实现 `1 进程 : N 模块`）；事务内严格校验 I4（权威环境 `ACTIVE` 放置同属 `ArchProcess P`，且目标 `Module.arch_process_id ∈ {NULL, P}`，否则 `422 CLAIM_PLACEMENT_MISMATCH`）；权限允许 `Module.owner`、`Subsystem.owner` 或 `contract_admin`；
+   - **多宿主裁决**：同一未认领身份在权威环境存在 `>= 2` 个不同 `ArchProcess` 的 `ACTIVE` 放置时：
+     - ① 冗余部署误拆：引导管理员在物理进程页签合并 `ArchProcess` 后再单宿主认领；
+     - ② `MULTI_IMPL` 拆分（`POST /api/arch/services/split-multi-impl`，仅 `contract_admin`）：指定或新建 `ServiceContract`，为各 `ArchProcess` 指定目标 `Module` 与 `impl_key`，在单事务内生成各实现行（`is_custom_service_name = false`）、将各放置按 `arch_process_id` 迁移至对应实现行，校验不变量后删除原未认领身份行；
+   - **逻辑依赖反向合成 (`POST /api/arch/dependency-suggestions/decide`)**：对类型级聚合订阅边 `(consumer_arch_process_id, service_id)`，若目标服务已认领且消费方进程已承载业务模块、且尚无 `ModuleDependency` 或 `contract_dependency_decisions` 记录，生成建议；当消费方进程承载 `N > 1` 个模块时，优先使用 Stage 2 归因命中的源模块（无流量则列出全部候选模块供管理员选择）；批准时经 `ValidateDependencyGuard`（层级 + 环路校验）生成 `ModuleDependency`，标记 `IGNORED / VIOLATION` 则写入 `contract_dependency_decisions` 抑制重复提示；
+   - **MR 门禁权威环境影响面（`ADR-18` `mr_runner.go`）**：Breaking Change 检查时查询目标服务在权威 `SHARED` 环境的 `ACTIVE` `ServicePlacement`（统计环境数、发布进程数）与 `ProcessDependency`（统计订阅进程数），向 Git MR 评审评论输出精确影响面摘要；`PRIVATE` 环境绝不计入、绝不披露。

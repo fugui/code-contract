@@ -1,11 +1,11 @@
 # 架构与活体契约治理 (`code-contract`) 数据面引擎与 CROS RPC 协议栈设计
 
 - **文档编号**：`02-data-plane-and-cros-rpc-engine.md`
-- **文档版本**：v1.8.0
-- **更新日期**：2026-11-23
+- **文档版本**：v1.9.0
+- **更新日期**：2026-11-25
 - **归属阶段**：阶段二：系统架构与数据模型设计 (`02-design`)
-- **状态**：M1~M29 已全部交付
-- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.25.0)、[`01-cros-rpc-protocol-spec.md`](../07-references/01-cros-rpc-protocol-spec.md) (v1.0.0)、[`01-system-architecture.md`](./01-system-architecture.md) (v1.11.0)、[`09-arch-process-ssot-and-ebpf-premount-standby-adr.md`](../05-adr/09-arch-process-ssot-and-ebpf-premount-standby-adr.md) (ADR-09 v1.1.0)、[`11-single-process-bidirectional-capture-and-recording-ux-adr.md`](../05-adr/11-single-process-bidirectional-capture-and-recording-ux-adr.md) (ADR-11 v1.0.0)、[`12-packet-causality-call-tree-and-sequence-ux-adr.md`](../05-adr/12-packet-causality-call-tree-and-sequence-ux-adr.md) (ADR-12 v1.0.0)、[`21-csg-aware-agent-service-discovery-and-replay-mock-adr.md`](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (ADR-21 v2.2.0)、[`22-pluggable-transport-driver-and-mesh-capture-adr.md`](../05-adr/22-pluggable-transport-driver-and-mesh-capture-adr.md) (ADR-22 v2.0.0)、[`23-dophi-mesh-uprobe-bypass-capture-adr.md`](../05-adr/23-dophi-mesh-uprobe-bypass-capture-adr.md) (ADR-23 v1.1.0)
+- **状态**：M1~M29 已全部交付；ADR-24 (M31 多实例 `TargetPIDs` 与自动下游联动) SDD 增补定稿
+- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.26.0)、[`01-cros-rpc-protocol-spec.md`](../07-references/01-cros-rpc-protocol-spec.md) (v1.0.0)、[`01-system-architecture.md`](./01-system-architecture.md) (v1.12.0)、[`09-arch-process-ssot-and-ebpf-premount-standby-adr.md`](../05-adr/09-arch-process-ssot-and-ebpf-premount-standby-adr.md) (ADR-09 v1.1.0)、[`11-single-process-bidirectional-capture-and-recording-ux-adr.md`](../05-adr/11-single-process-bidirectional-capture-and-recording-ux-adr.md) (ADR-11 v1.0.0)、[`12-packet-causality-call-tree-and-sequence-ux-adr.md`](../05-adr/12-packet-causality-call-tree-and-sequence-ux-adr.md) (ADR-12 v1.0.0)、[`21-csg-aware-agent-service-discovery-and-replay-mock-adr.md`](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (ADR-21 v2.2.0)、[`22-pluggable-transport-driver-and-mesh-capture-adr.md`](../05-adr/22-pluggable-transport-driver-and-mesh-capture-adr.md) (ADR-22 v2.0.0)、[`23-dophi-mesh-uprobe-bypass-capture-adr.md`](../05-adr/23-dophi-mesh-uprobe-bypass-capture-adr.md) (ADR-23 v1.1.0)、[`24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md`](../05-adr/24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md) (ADR-24 v1.1.0)
 
 ### 修订记录
 
@@ -15,6 +15,7 @@
 | v1.6.0 | 2026-11-18 | **依据 ADR-21 (v2.1.0 / M28) 增补 CSG 控制面协议栈、双层自动发现与三模仿真测试引擎设计**：新增 §4（`pkg/csgdlink` 32B 帧头/248B 实例/`Observer` 与 `pkg/rpcmon` 基于 `pkg/crosrpc` 标准帧及零 `protoregistry` Wire 编解码）、§5（`internal/agent/csg/discoverer.go` 多租户定位、L1/L2/L3 融合与跨板 LDC 隔离）及 §6（`pkg/csgmock.MockCSGServer` 与 `SimulationController` `CLIENT_INJECT`/`PUB_STUB`/`MOCK_SERVER` 状态机及五出口清理） |
 | v1.7.0 | 2026-11-19 | **依据 ADR-22 (v2.0.0) 与 ADR-23 (v1.1.0 / M29) 增补纯 Go 可插拔传输驱动与 `dophi_mesh` 采集 ➔ TCP 重放跨传输闭环设计**：1. 更新 §1.1 `ValidateCommHead` 放宽 `ucProtocol ∈ [0..7]`（含 `TransportMesh=4`）同时保持 §1.2 TCP `StreamFramer` 默认 `<= 1` 防伪帧隔离；2. 更新 §3.1/§3.3 `ReplayExecutor` 与 `HealSingleResponseFrame` 发送副本 `ucProtocol (4 -> 1)` 原地归一化；3. 更新 §6 `MockCSGServer` / `SimController` `MOCK_SERVER` 模式放行 `dophi_mesh://` 改写 `tcp://`（取消 `422` 误阻断）；4. 新增 **§7 纯 Go 可插拔传输驱动层 (`pkg/transport`) 与 `builtin-drt-uprobe` 内核 uprobe 采集引擎**（`debug/elf` `.dynsym` 解析、`uprobe/DRT_WriteBulk` + `drt_ringbuf`、方向/四元组相关性归一化与五出口探针卫生） |
 | v1.8.0 | 2026-11-23 | **依据 ADR-21 (v2.2.0) 增补 §5.2 纯 Go `CrosMeshBackend`（4 次 128B HELLO + 40B 数据头 + CROS `ucProtocol=4`）并彻底移除外部 C++ 探针 `rpcmon_probe`**：`pkg/rpcmon` 统一支持纯 Go `CrosTCP` 与纯 Go `CrosMesh` 双后端直连现网 `RPCMonitorService` |
+| **v1.9.0** | **2026-11-25** | **依据 [`ADR-24`](../05-adr/24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md) (`v1.1.0` / M31) 增补 §7.5 多实例进程 `target_pids[]` 采集扩展与 `discovery.auto_downstreams` 零 Agent 协议变更说明**，继续严格恪守九包零 DB / 零 `.pb` / 零 CGO 防腐红线 |
 
 ---
 
@@ -772,3 +773,16 @@ struct {
    - ① **`ARMED` 待命期 0 uprobe 挂载**：`ArmStandby` 仅预挂 TCP 低频钩子，绝不挂载任何 `DRT_WriteBulk` uprobe，平时业务零陷页损耗；
    - ② **PID 级匿名 `bpf_link` 零 tracefs 污染**：通过 `link.UprobeOptions{Offset, PID}` 使用内核匿名 `perf_event_open(pid)` FD 挂载，不修改 `/sys/kernel/tracing/uprobe_events`，宿主机其他非监控进程不触发 uprobe 陷页；
    - ③ **五出口幂等清理与负控门禁**：停录 (`StopCapture`)、单进程移除、取消、`/purge`、5m Watchdog 失联与 `SIGINT/SIGTERM` 均幂等 `Close()` 全部 uprobe `link.Link` 与 `drt_ringbuf` Reader，单测强制执行摘针后负控断言（再发流量事件数恒为 `0`）。
+
+### 7.5 多实例进程 `target_pids[]` 采集扩展与 `discovery.auto_downstreams` 边界 (`ADR-24` / M31)
+
+面对现网同一主机同一标准进程存在多个活体 PID（如 M30a/M30b 多实例折叠 `Process.observed_pids = [12345, 12398]`）的采集诉求，M31 在严格保持 `cmd/agent` 及九包（`pkg/{crosrpc,agentproto,csgdlink,rpcmon,csgmock,ebpf,transport,replay}`）零 DB / 零 `.pb` / 零 CGO 防腐红线的前提下，执行向后兼容协议扩展：
+
+1. **协议与驱动数据结构扩展**：
+   - `pkg/agentproto.ProcessMonitorSpec` 新增可选字段 `TargetPIDs []uint32 \`json:"target_pids,omitempty"\``（空切片时 100% 退化为既有基于 `CmdPattern` / `ListenPort` 解析单个 `ResolvedPID` 语义；旧版 Agent 忽略该字段时回退单 PID 并在 `ProcessDiagStatus.Message` 中提示版本差异）；
+   - `pkg/transport.TargetProcess` 新增 `PIDs []uint32`（`DRTUprobeDriver` 与 `TCPDriver` 统一读取 `PIDs`，若为空则回退 `[ResolvedPID]`）。
+2. **双传输驱动多 PID 协同采集与五出口清理**：
+   - **`builtin-tcp` (`pkg/ebpf.Manager`)**：将去重后的全部存活 `TargetPIDs` 批量写入 `target_pids_map` 指向同一 `(ProcessID, SessionID)`（`EgressProxy` `connect4` 重定向与 `IngressReader` 按需入站拷贝同组生效）；`StopCapture`、`RemoveTarget`、`/purge`、5m Watchdog 与信号退出时整组摘除全部 PID 映射；
+   - **`builtin-drt-uprobe` (`DRTUprobeDriver`)**：遍历 `TargetPIDs` 中每一个存活且映射 `libdopra.so` 的 PID，分别调用 `link.OpenExecutable(soPath).Uprobe("DRT_WriteBulk", prog, &link.UprobeOptions{Offset: off, PID: int(pid)})` 创建独立的 PID 级匿名 `perf_event` `bpf_link`（保持 `ARMED` 待命期 0 挂载与零 tracefs 污染），收集至同一会话的 `links []link.Link`，并在五出口统一幂等 `link.Close()`；`DRTUprobeDriver` 内部 `inflightReqs` 按 `(ullSNO, ServiceName)` 与实际 `CapturedPID` 精确投递至对应信封的 `EnvelopeHeader.CapturedPID` 字段。
+3. **`ADR-09` `discovery.auto_downstreams` 联动零 Agent 协议改动**：
+   - M31 在控制面通过 `ModuleSetting` 开关 `discovery.auto_downstreams`（缺省 `false`）控制，当对**已常驻布防 (`probe_desired_state = 'ARMED'`)** 的挂载实例编译下发 `ArmStandbyReq` / `SyncMonitorReq` 时，控制面将同环境 `status = 'ACTIVE'` 且 `resolved_endpoint` 为 TCP 端点的 `contract_process_dependencies` 订阅边解析为 `DownstreamEndpoint{IP, Port}` 并与 `ExtraDownstreams` 取并集写入 `ProcessMonitorSpec.Downstreams`（**`dophi_mesh://` 订阅边不需要 `connect4` 规则，自动跳过**），重算 `ExpectedArmedDigest` 并刷新 `READY / NEED_RECONNECT`；Agent 侧无需任何新增字段或专用逻辑。

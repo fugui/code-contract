@@ -1,11 +1,11 @@
 # 架构与活体契约治理 (`code-contract`) 管理面服务、微前端控制台与回归断言设计
 
 - **文档编号**：`04-control-plane-and-web-console.md`
-- **文档版本**：v1.14.0
-- **更新日期**：2026-11-19
+- **文档版本**：v1.15.0
+- **更新日期**：2026-11-25
 - **归属阶段**：阶段二：系统架构与数据模型设计 (`02-design`)
-- **状态**：M1~M28 已交付；ADR-22 v2.0.0 & ADR-23 v1.1.0 (M29) SDD 详细设计定稿
-- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.24.0)、[`01-system-architecture.md`](./01-system-architecture.md) (v1.10.0)、[`02-data-plane-and-cros-rpc-engine.md`](./02-data-plane-and-cros-rpc-engine.md) (v1.7.0)、[`03-architecture-elements-and-topology.md`](./03-architecture-elements-and-topology.md) (v1.10.0)、[`07-console-ia-restructuring-and-workflow-workbench-adr.md`](../05-adr/07-console-ia-restructuring-and-workflow-workbench-adr.md) (ADR-07)、[`08-recording-drawer-and-process-tree-selection-adr.md`](../05-adr/08-recording-drawer-and-process-tree-selection-adr.md) (ADR-08)、[`09-arch-process-ssot-and-ebpf-premount-standby-adr.md`](../05-adr/09-arch-process-ssot-and-ebpf-premount-standby-adr.md) (ADR-09 v1.1.0)、[`10-enhanced-proto-schema-file-management-adr.md`](../05-adr/10-enhanced-proto-schema-file-management-adr.md) (ADR-10 v1.1.0)、[`11-single-process-bidirectional-capture-and-recording-ux-adr.md`](../05-adr/11-single-process-bidirectional-capture-and-recording-ux-adr.md) (ADR-11 v1.0.0)、[`12-packet-causality-call-tree-and-sequence-ux-adr.md`](../05-adr/12-packet-causality-call-tree-and-sequence-ux-adr.md) (ADR-12 v1.0.0)、[`15-scalable-topology-focus-and-layout-persistence-adr.md`](../05-adr/15-scalable-topology-focus-and-layout-persistence-adr.md) (ADR-15 v1.3.0)、[`16-multi-implementation-service-contract-adr.md`](../05-adr/16-multi-implementation-service-contract-adr.md) (ADR-16 v2.0.0)、[`17-topology-single-layer-drilldown-and-layout-ux-adr.md`](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md) (ADR-17 v1.1.0)、[`18-proto-full-lifecycle-and-git-mr-governance-adr.md`](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (ADR-18 v1.3.0)、[`19-proto-contract-ia-unbundling-and-four-workbenches-adr.md`](../05-adr/19-proto-contract-ia-unbundling-and-four-workbenches-adr.md) (ADR-19 v1.0.0)、[`21-csg-aware-agent-service-discovery-and-replay-mock-adr.md`](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (ADR-21 v2.1.0)、[`22-pluggable-transport-driver-and-mesh-capture-adr.md`](../05-adr/22-pluggable-transport-driver-and-mesh-capture-adr.md) (ADR-22 v2.0.0)、[`23-dophi-mesh-uprobe-bypass-capture-adr.md`](../05-adr/23-dophi-mesh-uprobe-bypass-capture-adr.md) (ADR-23 v1.1.0)
+- **状态**：M1~M29 已交付；ADR-24 v1.1.0 (`M30a ~ M32`) SDD 详细设计定稿
+- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.26.0)、[`01-system-architecture.md`](./01-system-architecture.md) (v1.12.0)、[`02-data-plane-and-cros-rpc-engine.md`](./02-data-plane-and-cros-rpc-engine.md) (v1.9.0)、[`03-architecture-elements-and-topology.md`](./03-architecture-elements-and-topology.md) (v1.11.0)、[`07-console-ia-restructuring-and-workflow-workbench-adr.md`](../05-adr/07-console-ia-restructuring-and-workflow-workbench-adr.md) (ADR-07)、[`08-recording-drawer-and-process-tree-selection-adr.md`](../05-adr/08-recording-drawer-and-process-tree-selection-adr.md) (ADR-08)、[`09-arch-process-ssot-and-ebpf-premount-standby-adr.md`](../05-adr/09-arch-process-ssot-and-ebpf-premount-standby-adr.md) (ADR-09 v1.1.0)、[`10-enhanced-proto-schema-file-management-adr.md`](../05-adr/10-enhanced-proto-schema-file-management-adr.md) (ADR-10 v1.1.0)、[`11-single-process-bidirectional-capture-and-recording-ux-adr.md`](../05-adr/11-single-process-bidirectional-capture-and-recording-ux-adr.md) (ADR-11 v1.0.0)、[`12-packet-causality-call-tree-and-sequence-ux-adr.md`](../05-adr/12-packet-causality-call-tree-and-sequence-ux-adr.md) (ADR-12 v1.0.0)、[`15-scalable-topology-focus-and-layout-persistence-adr.md`](../05-adr/15-scalable-topology-focus-and-layout-persistence-adr.md) (ADR-15 v1.3.0)、[`16-multi-implementation-service-contract-adr.md`](../05-adr/16-multi-implementation-service-contract-adr.md) (ADR-16 v2.0.0)、[`17-topology-single-layer-drilldown-and-layout-ux-adr.md`](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md) (ADR-17 v1.1.0)、[`18-proto-full-lifecycle-and-git-mr-governance-adr.md`](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (ADR-18 v1.3.0)、[`19-proto-contract-ia-unbundling-and-four-workbenches-adr.md`](../05-adr/19-proto-contract-ia-unbundling-and-four-workbenches-adr.md) (ADR-19 v1.0.0)、[`21-csg-aware-agent-service-discovery-and-replay-mock-adr.md`](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (ADR-21 v2.2.0)、[`22-pluggable-transport-driver-and-mesh-capture-adr.md`](../05-adr/22-pluggable-transport-driver-and-mesh-capture-adr.md) (ADR-22 v2.0.0)、[`23-dophi-mesh-uprobe-bypass-capture-adr.md`](../05-adr/23-dophi-mesh-uprobe-bypass-capture-adr.md) (ADR-23 v1.1.0)、[`24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md`](../05-adr/24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md) (ADR-24 v1.1.0)
 
 ### 修订记录
 
@@ -19,6 +19,7 @@
 | `v1.12.0` | `2026-11-15` | Architecture Team | 依据 [`ADR-19` (`v1.0.0`)](../05-adr/19-proto-contract-ia-unbundling-and-four-workbenches-adr.md) (`M27`) 拆解重构 Proto 控制台信息架构 |
 | `v1.13.0` | `2026-11-18` | Architecture Team | **依据 [`ADR-21` (`v2.1.0`)](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (`M28`) 增补 CSG 控制面协同编排与前端工作台设计**：1. 更新 §1.2 录制期 `csg_snapshots` 固化、`EVENT_CSG_OBSERVATION` 接收与 §1.3 重放调度器四档 `csg_strategy`（`PASSTHROUGH`/`CLIENT_INJECT`/`PUB_STUB`/`MOCK_SERVER`）及 `CSGSandboxReport` 门禁订阅核验；2. 更新 §2.1 `decoder.Registry` 加载 `ModuleService.proto_service_name` 至 `ServiceAliases` 及 PID 后缀归一化解码；3. 新增 §4.11 `/agents` CSG 现网拓扑透视与一键蓝图导入抽屉 & `/replay` 四档 CSG 仿真策略选择器完整 TypeScript 契约 |
 | `v1.14.0` | `2026-11-19` | Architecture Team | **依据 [`ADR-22` (`v2.0.0`)](../05-adr/22-pluggable-transport-driver-and-mesh-capture-adr.md) 与 [`ADR-23` (`v1.1.0`)](../05-adr/23-dophi-mesh-uprobe-bypass-capture-adr.md) (`M29`) 同步多传输协议解析与跨传输重放控制面设计**：1. 更新 §1.2 `ExchangeAssembler` 通过 `resolveTransportProto(env.TransportProto, comm.TransportProto)` 零 DDL 迁移落盘 `transport_proto = 1 \| 4`；2. 更新 §1.3 重放调度器对 Mesh 录制批次经 `MOCK_SERVER` / `PUB_STUB` 改道 TCP 无缝放行；3. 更新 §4.3 `CommHeadAnatomyDTO` 精确映射 `4 -> "RPC_TRANSPORT_MESH"` (`"CSE.TCP" + MESH(4)`) 与 §4.11 `HandshakeResp.transport_drivers` 驱动能力展示 |
+| **`v1.15.0`** | **`2026-11-25`** | **Architecture Team** | **依据 [`ADR-24` (`v1.1.0`)](../05-adr/24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md) (`M30a ~ M32`) 增补现网发现引擎、5 组 14 项控制台 IA 与渐进治理设计**：1. 新增 §1.10 `internal/server/discovery`（`live_cache` singleflight/离线回退、脱敏、时间轴/跨环境双模 Diff、一键直录 4 步 Saga、仿真编排、`MigrateCSGPlaceholderModules` 迁移与 10 项 `ModuleSetting` 参数）；2. §4.1/§4.2 菜单升级为 5 组 14 项（新增 `/discovery`），新增 §4.12 现网发现工作台、`/agents` 抽屉降级深链、`/architecture` 架构收件箱、`/dashboard` 五态雷达卡片及 `/admin/settings` 迁移与治理面板；3. 更新 §5 RBAC 权限（`ScopeEnrollGuard` / 模块负责人认领权）与 `commonAudit` 审计埋点 |
 
 ---
 
@@ -242,6 +243,55 @@ flowchart LR
 - `ComplianceRatePct`：跨全部纳管 Git 仓最近一次有效 `CheckReport.ComplianceScore` 加权均值（或无 Git 仓时为 `null`/未启用引导态）；
 - `EvaluatedRepoCount`、`OpenErrorViolations`、`OpenWarningViolations`、`DuplicateMessageGroups`、`MRGates30d`、`MRGatePassRate30d`。
 
+### 1.10 现网发现引擎、快照 Diff、一键直录 Saga、仿真编排与存量迁移 (`internal/server/discovery`, `ADR-24` / M30a~M32)
+
+控制面新增内聚包 `internal/server/discovery`，作为「发现 ➔ 纳管 ➔ 直录/仿真 ➔ 对账 ➔ 迁移」的执行编排中心（100% 运行于 `cmd/server`）：
+
+| 文件路径 | 阶段 | 核心职责 |
+| :--- | :---: | :--- |
+| `live_cache.go` | M30a | 按 `(agent_id, csg_addr)` 维护进程内 `singleflight.Group` + 5 秒 TTL 缓存；`refresh=true` 绕过缓存（每用户每 Agent 限 1 次 / 3 秒）；Agent 离线或超时自动回退最近 `contract_discovery_snapshots` 并标注 `stale=true, captured_at`；进程主轴聚合（多 PID 折叠、纯客户端一级行、跨板 LDC 分组、结合既有蓝图/身份填充匹配与撮合徽章） |
+| `redactor.go` | M30a | `RedactionVersion = 1`：`cmdline` / 环境变量敏感参数规则（`password`, `passwd`, `token`, `secret`, `api_key`, `key=` 等）脱敏为 `***`，供快照落盘 `payload_json` 与前端展示共用 |
+| `snapshot_diff.go` | M30a | 计算规范化内容 SHA-256 `content_hash`（剔除 PID、动态端口数值、时间戳，对齐键为 `规范化进程键 + StripCSGPIDSuffix(service_name)`）；执行 `AUTO/SCHEDULED` 连续去重、每 `(agent_id, csg_addr)` FIFO 保留 `50` 条非置顶（`is_pinned` 上限 `20` 条）；提供同环境时间轴 Diff 与跨环境 Diff 引擎 |
+| `fingerprint.go` | M30b | 三阶进程身份解析（P1 `CmdPattern` ➔ P2 版本化 `identity_fingerprint` ➔ P3 低置信 `procName`）与版本滚动重算（算法细节见 [`03-architecture-elements-and-topology.md` §7.2](./03-architecture-elements-and-topology.md)） |
+| `enroll.go` | M30b | `POST /api/discovery/enroll` 单事务幂等观测纳管（`ScopeEnrollGuard`、`DISARMED` 缺省、`PROVISIONAL/CONFIRMED` 规则）与提交后 `.pb` 撮合 / `AUTO` 快照钩子 |
+| `reconciler.go` | M30b | `PhysicalReconciler` 周期巡检、共享 singleflight 探测、`ACTIVE ➔ STALE ➔ RETIRED` 状态衰减、Agent 离线冻结衰减与每日受限 GC |
+| `quick_record_saga.go` | M31 | 一键直录 4 步 Saga 状态机、按 `request_id` 幂等去重、租约期临时布防与失败逐级补偿 |
+| `sim_planner.go` | M31 | 基于目标进程 `ProcessDependency`（及实况订阅边）在线状态与传输制式自动推荐 `CLIENT_INJECT` / `PUB_STUB` / `MOCK_SERVER` 策略及预填 `ServiceNames` |
+| `migration.go` | M30b | 存量占位假模块识别、阻断检测、单事务备份至 `contract_mig_backups`、迁移转换、`MIGRATION` 流量改写作业与 dry-run/rollback 引擎 |
+
+1. **一键直录 4 步 Saga 状态机与补偿表 (`quick_record_saga.go`, M31)**：
+   - 携带幂等键 `request_id`（服务端在内存/表缓存同 `(user_id, request_id)` 映射，重复提交返回同一 `RecordingSession`）：
+
+| 步骤 | 执行动作 | 失败或异常补偿策略 |
+| :---: | :--- | :--- |
+| **Step 1** | 对尚未纳管的选中 `process_keys[]` 执行 `Enroll`（**独立事务先提交**） | 遇 `IDENTITY_AMBIGUOUS` / `LOW_CONFIDENCE_CONFIRM_REQUIRED` 返回 `422` 终止；已提交的 `DISARMED` 挂载保留（零网络副作用） |
+| **Step 2** | 调用 `AcquireAgentLeases` 抢占目标 Agent `RECORDING` 排他租约 | 冲突直接返回 `409 LEASE_CONFLICT`（附当前持锁人与过期时间） |
+| **Step 3** | 创建 `RecordingSession`（携带 `target_pids[] = Process.observed_pids`，按 `observed_transports` 选择 `builtin-tcp` / `builtin-drt-uprobe` 驱动并固化 `process_snapshots` / `endpoint_snapshots`） | 释放 Step 2 持有的 Agent 排他租约 |
+| **Step 4** | 下发 Agent `/agent/v1/monitors/sync`（租约期临时布防，注入 `target_pids[]` 开启采集闸门） | 将会话状态置 `FAILED` 并释放 Agent 排他租约 |
+
+   - 响应同时返回采集覆盖度警告：若存在未常驻布防的 `builtin-tcp` 进程且具备存量直连 (`NEED_RECONNECT`)，如实提示“入站完整覆盖，出向仅覆盖录制开始后新建连接”。
+
+2. **存量占位假模块一次性迁移 (`MigrateCSGPlaceholderModules`, M30b)**：
+   - **识别条件**：功能组 `code = 'CSG_DISCOVERED'`、模块 `code LIKE 'MOD\_%'`、`arch_process_id IS NOT NULL`，且未被人工改造（名称为导入生成值、`updated_by = created_by`、描述为空或默认导入文案）；
+   - **5 类阻断条件（跳过并输出至 `blocked_items` 清单交人工处理）**：模块作为 `ModuleDependency` 消费方或提供方；名下服务被 `ModuleDependency.service_id` 引用；模块为 `ServiceContract` 定义方；名下服务 `contract_id IS NOT NULL`；模块包含 `source != 'CSG_DISCOVERED'` 的手工服务；
+   - **单事务迁移动作**：将模块/服务完整快照写入 `contract_mig_backups` ➔ 名下服务置 `module_id = NULL, source = 'MIGRATED'` ➔ 为挂载了 `module.arch_process_id` 的每个 `Process` 生成 `ServicePlacement (status = 'STALE')` 等待 `PhysicalReconciler` 复核 ➔ `ArchProcess.origin = 'MIGRATED', lifecycle = 'CONFIRMED'` ➔ 删除假模块（功能组变空后一并删除）➔ 创建 `job_type = 'MIGRATION'` 的 `contract_attribution_jobs` 分批改写 `contract_traffic_records` 中指向假模块的 `src/dst_module_id` 为 `src/dst_arch_process_id` 并清空模块 ID；
+   - **Dry-Run 与回滚**：正式执行前必须运行 `dry_run = true` 审阅可迁移数量、影响会话数与阻断列表；以 `migration_key` 保证幂等；`rollback` 依据 `contract_mig_backups` 恢复原模块与未再认领服务的归属。
+
+3. **新增 10 项 `ModuleSetting` 治理参数字典 (`models/setting.go`)**：
+
+| 参数键 (`setting_key`) | 默认值 | 生效阶段 | 合法范围与说明 |
+| :--- | :---: | :---: | :--- |
+| `discovery.v2_enabled` | `false` | M30b | 特性开关：控制 `Enroll`、`quick-record`、L1 物理拓扑数据源与 `import-blueprint` 委托；关闭可功能回滚 |
+| `discovery.enroll_batch_limit_shared` | `50` | M30b | `SHARED` 环境单次 `Enroll` 进程上限（`1..200`） |
+| `discovery.reconcile_interval_sec` | `600` | M30b | `PhysicalReconciler` 周期对账间隔秒数（`60..86400`） |
+| `discovery.stale_miss_threshold` | `3` | M30b | 连续未观测触发 `STALE` 的次数阈值（`1..20`） |
+| `discovery.stale_hours` | `24` | M30b | 未观测触发 `STALE` 的时长阈值（小时，`1..720`） |
+| `discovery.retire_days` | `7` | M30b | `STALE` 转 `RETIRED` 的等待天数（`1..90`） |
+| `discovery.gc_days` | `30` | M30b | 全放置 `RETIRED` 后未认领身份/孤立 `PROVISIONAL` 进程 GC 保留天数（`7..365`） |
+| `discovery.snapshot_retention_count` | `50` | M30a | 每个 `(agent_id, csg_addr)` 保留的非置顶快照上限（`10..500`） |
+| `discovery.snapshot_pin_limit` | `20` | M30a | 每个 `(agent_id, csg_addr)` 置顶基线快照上限（`5..100`） |
+| `discovery.auto_downstreams` | `false` | M31 | 是否将同环境 `ACTIVE` TCP 订阅边自动并入常驻布防进程 `connect4` 下游集合 |
+
 ---
 
 ## 2. IDL 描述集引擎、跨集依赖闭包与 `dynamicpb` 动态编解码 (`internal/server/decoder`)
@@ -391,15 +441,16 @@ type FieldDiff struct {
 
 ## 4. 微前端控制台架构与组件设计 (`frontend/src/`)
 
-### 4.1 模块联邦导出契约、五组十三项菜单与路由矩阵 (`ADR-07`, `ADR-14`, `ADR-18`, `ADR-19`)
+### 4.1 模块联邦导出契约、五组十四项菜单与路由矩阵 (`ADR-07`, `ADR-14`, `ADR-18`, `ADR-19`, `ADR-24`)
 
-前端通过 `vite.config.ts` 固定 `base: '/contract/'`，向外暴露 `./App` 与 `./menu`（`contractMenuConfig`）。依据 [`ADR-14`](../05-adr/14-governance-dashboard-golden-suite-and-ci-gate-adr.md) 演进为 4 组 10 项后，进一步依据 [`ADR-19`](../05-adr/19-proto-contract-ia-unbundling-and-four-workbenches-adr.md) (`M27`) 将重载的 `Proto 契约` 拆解为独立 **`Proto 契约治理`** 一级分组，全局菜单形成 **5 组 13 项（`全局概览 ➔ 架构数字孪生 ➔ Proto 契约治理 ➔ 契约核验与回归 ➔ 环境与治理`）**，站内持久化通知挂载在页面右上角全局铃铛气泡与详情抽屉（`WorkspaceUtilityHeader` + `StandaloneShell`），`StandaloneShell` 直接消费 `contractMenuConfig` 保持单一真实源：
+前端通过 `vite.config.ts` 固定 `base: '/contract/'`，向外暴露 `./App` 与 `./menu`（`contractMenuConfig`）。继 [`ADR-19`](../05-adr/19-proto-contract-ia-unbundling-and-four-workbenches-adr.md) (`M27`) 拆分为 5 组 13 项后，依据 [`ADR-24`](../05-adr/24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md) (`M30a`) 在「架构数字孪生」分组首位新增 **`现网发现` (`/discovery`)**，全局菜单演进为 **5 组 14 项（`全局概览 ➔ 架构数字孪生 ➔ Proto 契约治理 ➔ 契约核验与回归 ➔ 环境与治理`）**，确立 `/discovery` 为平台发现驱动流水线的单一权威起点；站内持久化通知挂载在页面右上角全局铃铛气泡与详情抽屉（`WorkspaceUtilityHeader` + `StandaloneShell`），`StandaloneShell` 直接消费 `contractMenuConfig` 保持单一真实源：
 
 | 菜单分组 | 菜单名称 | 子路由路径 (`MODULE_BASE_PATH = '/contract'`) | 页面组件 | 可见角色 | URL Search Params 状态同步项 |
 | :--- | :--- | :--- | :--- | :---: | :--- |
-| **全局概览** *(默认首页)* | **治理大盘** | `/dashboard` | `DashboardWorkbenchPage` | 全体登录用户 | `subsystem_id`（含三维健康分 + **`F-24` 静态规范合标率独立卡片**） |
+| **全局概览** *(默认首页)* | **治理大盘** | `/dashboard` | `DashboardWorkbenchPage` | 全体登录用户 | `subsystem_id`（含三维健康分 + **`F-24` 静态规范合标率卡片** + **`F-38` 五态服务雷达卡片**） |
+| **架构数字孪生** | **现网发现** *(M30a 新增)* | `/discovery` | `DiscoveryWorkbenchPage` | 全体登录用户（受 Agent 可见性守卫） | `agent_id`, `csg_addr`, `mode` (`tree` \| `graph`), `scope_tab` (`local` \| `ldc`), `search`, `diff_left`, `diff_right` |
 | **架构数字孪生** | **架构拓扑** | `/topology` | `TopologyWorkbenchPage` | 全体登录用户 | `view` (`LOGICAL` \| `PHYSICAL`), `env_agent_id`, `session_id`, `focus` / `topo_focus`, `topo_ego`, `topo_ego_hops`, `topo_subsystems`, `topo_my`, `topo_status`, `topo_hide_isolated`, `topo_hub_fold`, `topo_contract_mode` (`AGG` \| `EXPAND`), `topo_realization` (`1` \| `0`), `topo_layout_id`（支持高清 `PNG/SVG` 导出） |
-| **架构数字孪生** | **架构元素** | `/architecture` | `ArchitectureWorkbenchPage` | 全体登录用户 | `tree` (`logical` \| `physical`), `subsystem_id`, `group_id`, `module_id`, `proc_group_id`, `arch_process_id` |
+| **架构数字孪生** | **架构元素** | `/architecture` | `ArchitectureWorkbenchPage` | 全体登录用户 | `tree` (`logical` \| `physical` \| `inbox`), `subsystem_id`, `group_id`, `module_id`, `proc_group_id`, `arch_process_id` |
 | **Proto 契约治理** | **接口参考文档** | `/proto-docs` | `ProtoDocsWorkbenchPage` | 全体登录用户 | `docs_view` (`reference` \| `catalog-ops`), `service_name`, `schema_id`, `claimed_status`, `search`, `page`, `page_size` |
 | **Proto 契约治理** | **源码与 Git 仓** | `/proto-sources` | `ProtoSourcesWorkbenchPage` | 全体登录用户 | `file_id`, `schema_id`, `source_id`, `repo_id`, `search`, `#L<n>` 行号锚点 |
 | **Proto 契约治理** | **MR 门禁与规范** | `/proto-governance` | `ProtoGovernanceWorkbenchPage` | 全体登录用户 | `gov_tab` (`mr-gates` \| `rules` \| `vocab` \| `report`), `runId`, `mr_page`, `mr_page_size`, `repo` |
@@ -475,9 +526,17 @@ src/
 │       ├── ExtendHeadTraceCard.tsx         # ③ DOTR 扩展头 TLV 原始段与时间戳 (折叠区子组件)
 │       └── PayloadJsonHexSplitView.tsx     # ④ 16B 对齐 Raw Hex 与底层报文对照视窗 (折叠区子组件)
 ├── pages/
+│   ├── DiscoveryWorkbenchPage/             # 0a. [架构数字孪生] 现网发现工作台 (/discovery - ADR-24, M30a~M31)
+│   │   ├── DiscoveryTopBar.tsx             # Agent(SHARED/PRIVATE 过滤)、单行 csg_addr 选择器、离线 stale 横幅、[刷新]/[保存快照]/[快照对比] 与 [树表|依赖图] 切换
+│   │   ├── DiscoveryProcessTreeTable.tsx   # 默认模式 A: 进程主轴树表(多PID折叠/观测角色/纳管状态/身份置信/纯客户端一级行/本机与跨板LDC页签/服务撮合与多宿主徽章)
+│   │   ├── DiscoveryLiveDepGraph.tsx       # 模式 B: 零抓包实时依赖图 (订阅进程 -> 服务名 -> 发布进程, 1-Hop Ego 聚焦)
+│   │   ├── DiscoverySnapshotDiffDrawer.tsx # 680px Drawer: 快照时间线(置顶/标签/删除) + 时间轴与跨环境双模 Diff
+│   │   ├── DiscoveryBatchActionBar.tsx     # 底部批处理条: [纳管到物理蓝图](M30b) / [一键立即录制](M31) / [编排仿真任务](M31)
+│   │   └── IdentityDisambiguationModal.tsx # 身份歧义候选选择 & P3 低置信确认弹窗
 │   ├── DashboardWorkbenchPage/             # 0. [全局概览] 契约治理全景大盘 (/dashboard - F-24)
 │   │   ├── DashboardWorkbenchPage.tsx      # 三维健康指数总分 (40+30+30)、漂移雷达、契约认领看板、回归防线
-│   │   └── StaticComplianceCard.tsx        # [M25/F-24] 独立 Proto 静态规范合标率指标卡（Git 合标均值、ERROR/WARNING 分布、MR 门禁率与跳转 /schemas?tab=mr-gates）
+│   │   ├── StaticComplianceCard.tsx        # [M25/F-24] 独立 Proto 静态规范合标率指标卡（Git 合标均值、ERROR/WARNING 分布、MR 门禁率与跳转 /schemas?tab=mr-gates）
+│   │   └── FiveStateRadarCard.tsx          # [M31/F-38] 权威 SHARED 环境五态服务健康雷达 (现网裸奔/无主孤儿/纸面僵尸/认领后消失/放置漂移)
 │   ├── RecordingWorkbenchPage/             # 1. [契约核验与回归] 契约采集工作台 (/record)
 │   │   ├── ActiveRecordingBanner.tsx       # 活跃录制状态卡: 实时帧计数、A-01 存量长连接重连告警、一键停录与【实时跟流调试】
 │   │   ├── RecordingStartDrawer.tsx        # 发起协同录制抽屉(680px Drawer): 卡片式作用域、Agent 在线/租约防呆与预挂就绪分组进程树
@@ -1534,6 +1593,43 @@ export interface CSGSandboxReportDTO {
 }
 ```
 
+### 4.12 现网发现工作台 (`/discovery`)、架构收件箱与五态雷达控制台设计 (`ADR-24` / M30a~M32)
+
+1. **`现网发现` 一级工作台 (`/discovery`, `DiscoveryWorkbenchPage`, M30a~M31)**：
+   - **顶部环境与动作栏 (`DiscoveryTopBar`)**：受 `ScopeReadGuard` 过滤的 Agent 下拉框（`PRIVATE` 显示“私有 · 仅本人可见”徽章）+ 单行候选 `csg_addr` 选择器 + `[刷新]`（3s 防抖限流）+ `[保存快照]` + `[快照对比]` + `[进程树表 | 实时依赖图]` 视图切换；Agent 离线时自动显示最近快照并提示“离线 · 采集于 HH:mm”；仅在 `PROC_ONLY` 降级或失败时呈现诊断告警。
+   - **模式 A · 进程主轴分组树表 (`DiscoveryProcessTreeTable`)**：
+     - 一级行（物理进程）：`[勾选框] | 进程名 (多实例徽章 "2 PIDs · 12345, 12398") | 观测角色 (SERVER / CLIENT_ONLY / DUAL) | 纳管状态 (未纳管 / 已纳管·未布防 / 已布防·就绪态) | 身份匹配 (已匹配 / 歧义待选 / 低置信) | 提供服务数 | 传输制式 (TCP / MESH / MIXED) | 订阅下游数 | 行内操作 ([直录] / [仿真])`；纯客户端进程（`0` 服务）作为一等公民入树；
+     - 二级子行：64B `ServiceName`、监听端点、`Proto` 撮合徽章（已匹配 / 建议待确认 / 裸奔）、逻辑认领状态、多宿主标记与订阅方数；
+     - 本机进程（可纳管/可直录）与跨板 LDC 远端节点（只读参考）页签切换；搜索服务名/进程名自动高亮并展开命中父行。
+   - **模式 B · 零抓包实时依赖图 (`DiscoveryLiveDepGraph`)**：直接用 `rpcmon` 的 `Servers + Clients` 构建 `订阅进程 ➔ 服务名 ➔ 发布进程` 关系图，支持单击节点 1-Hop Ego 聚焦。
+   - **快照与 Diff 抽屉 (`DiscoverySnapshotDiffDrawer`)** & **批处理动作条 (`DiscoveryBatchActionBar`)**：支持置顶（上限 `20`）、时间轴/跨环境双模 Diff；勾选本机进程后底部滑出 `[纳管到物理蓝图]`（M30b，缺省 `PGRP_CSG_AUTO`，遇 `AMBIGUOUS`/`LOW_CONFIDENCE` 弹 `IdentityDisambiguationModal`）、`[一键立即录制]`（M31）与 `[编排仿真任务]`（M31）。
+2. **关联工作台增量演进**：
+   - **`/agents`（M30a/M31）**：M30a 将 CSG 探测抽屉降级为轻量摘要与 `/discovery?agent_id=:id` 深链；M31 在 `import-blueprint` 连续 14 天零调用后移除旧抽屉入口；
+   - **`/topology`（M30b）**：物理视图增加 `env_agent_id` 选择器（缺省“全部权威 `SHARED` 环境”聚合视图），`>150` 进程默认按 `ArchProcessGroup` 折叠提示；
+   - **`/dashboard`（M31）**：新增 `FiveStateRadarCard`（展示权威 `SHARED` 环境五态计数并带参跳往 `/proto-docs` 或 `/architecture?tree=inbox`，**不改动既有 `40+30+30` 健康分公式**）；
+   - **`/architecture`（M32）**：新增 `DiscoveryInboxPane`（`?tree=inbox`，按 `CONFIRMED` `ArchProcess` 分组承载单宿主认领、多宿主 `MULTI_IMPL` 拆分、放置漂移告警、逻辑依赖反向审批与归因回补进度条）；
+   - **`/admin/settings`（M30b）**：新增 10 项 `discovery.*` 参数配置与 `MigrateCSGPlaceholderModules` dry-run/执行/回滚面板。
+3. **前端红线**：全部新组件与抽屉 100% 复用 `@code/common` `<Drawer>` / `<Modal>` / `useConfirm`、`--color-*` 语义 Token、标准 `15/25/50/100` URL 分页，严禁 `any` 与硬编码色值。
+
+```typescript
+export interface DiscoveryProcessGroupDTO {
+  process_key: string;
+  proc_name: string;
+  exe_name: string;
+  identity_fingerprint: string;
+  pids: number[];
+  observed_role: 'SERVER' | 'CLIENT_ONLY' | 'DUAL';
+  observed_transports: Array<'TCP' | 'MESH'>;
+  enroll_status: 'UNENROLLED' | 'ENROLLED_DISARMED' | 'ARMED_READY' | 'ARMED_NEED_RECONNECT';
+  identity_match: 'MATCHED' | 'AMBIGUOUS' | 'LOW_CONFIDENCE' | 'NEW';
+  arch_process_id?: number;
+  process_id?: number;
+  is_remote_ldc: boolean;
+  services: DiscoveryLiveServiceDTO[];
+  subscriptions: DiscoveryLiveSubDTO[];
+}
+```
+
 ---
 
 ## 5. RBAC 权限矩阵与操作审计接入规范 (RBAC & Audit Governance)
@@ -1545,8 +1641,12 @@ export interface CSGSandboxReportDTO {
 | 业务资源与操作动作 | 免密访客 | 普通认证用户 (JWT) | 模块管理员 (`contract_admin` / `super_admin`) |
 | :--- | :---: | :---: | :---: |
 | 健康检查 (`/api/health`) 与认证配置 (`/api/auth/*`) | 允许 | 允许 | 允许 |
-| 查看公共三级逻辑架构、**物理进程蓝图 (`ArchProcessGroup / ArchProcess`)**、**多实现服务契约 (`ServiceContract`)**、模块契约、静态拓扑与 `.pb` 映射 | `401` | **允许** | **允许** |
-| 新增 / 修改 / 移动 / 删除公共逻辑架构元素（含 `layer_level` 分层调整）、**接口契约库与多实现服务契约登记/独占升级**、**物理进程组与标准架构进程蓝图**、`.pb` 描述集与在线源码编译入池、**一键导入 CSG 架构蓝图** (`POST /api/agents/:id/csg/import-blueprint`) | `401` | `403` | **允许** |
+| 查看公共三级逻辑架构、**物理进程蓝图 (`ArchProcessGroup / CONFIRMED ArchProcess`)**、**多实现服务契约 (`ServiceContract`)**、模块契约、静态拓扑与 `.pb` 映射 | `401` | **允许**（`PROVISIONAL` 进程仅 `origin_agent_id` 的 owner 与管理员可见） | **允许** |
+| **L0 现网实况与快照（`/discovery`、实时探测、时间轴/跨环境 Diff）** | `401` | **允许**（`SHARED` 全员可读；`PRIVATE` 仅本人可读，`SHARED` 快照置顶/删除限创建人与管理员） | **允许** |
+| **L1 物理观测纳管（`POST /api/discovery/enroll`）、一键直录/仿真与未认领身份 `.pb` 建议确认** | `401` | **允许**（受 `ScopeEnrollGuard` 限制：`DISARMED` 零副作用、`SHARED` 单次 ≤ 50；直录受排他租约 `409` 保护） | **允许** |
+| **L1 资产提升 (`PROVISIONAL ➔ CONFIRMED`)、新建 `ArchProcessGroup`、批量上限/对账/迁移接口** | `401` | `403` | **允许** |
+| **L2 服务认领 / 取消认领 (`claim` / `unclaim`) 与已认领服务 `.pb` 建议确认** | `401` | **模块/子系统负责人 (`Module.owner` / `Subsystem.owner`) 允许操作本人负责模块**；非负责人返 `403` | **允许** |
+| **L2 逻辑蓝图结构 CRUD、多宿主 `MULTI_IMPL` 拆分与依赖建议裁决 (`decide`)** | `401` | `403` | **允许** |
 | **活体接口参考文档中心 / 只读 Git 源码与 Diff / MR 门禁列表 / 依赖图查看与文档/图片导出** (`F-18`, `F-28`, `F-29`, `F-32`) | `401` | **允许**（只读浏览、导出 Markdown 与 SVG/PNG） | **允许** |
 | **Git 仓库集成 CRUD、手动全量同步、规则矩阵 (`CheckRule`) 与词库 (`VocabularyTerm`) 配置、MR 门禁 `Override` 人工豁免** | `401` | `403` | **允许**（MR 门禁列表查验与触发 `rerun` 按配置允许开发者使用，涉及秘钥/豁免仅限管理员） |
 | **手动静态扫描 (`POST /api/check-reports/scan`)** 与 **个人持久化通知收件箱** (`/api/notifications*`) | `401` | **允许**（通知严格按 `recipient_user_id == currentUser.ID` 防横向越权隔离） | **允许** |
@@ -1564,7 +1664,9 @@ export interface CSGSandboxReportDTO {
 
 | 审计子模块 (`module`) | 动作标识 (`action`) | 风险等级 | `before` / `after` 快照策略与必含上下文 |
 | :--- | :--- | :---: | :--- |
-| `contract_arch` | `create` / `update` / `move` / `delete` / `convert_contract` / `import_csg_blueprint` | `P1` (删除/转换/蓝图导入) / `P2` | 传入变更前后的 `Subsystem` / `FunctionalGroup` / `Module` / `ServiceContract` / `ModuleService`（含 `proto_service_name`） / `ModuleDependency` / `ArchProcessGroup` / `ArchProcess` 结构体快照；`import_csg_blueprint` 附带来源 `agent_id`、`csg_addr` 与批量新增实体计数 |
+| `contract_arch` | `create` / `update` / `move` / `delete` / `convert_contract` / `import_csg_blueprint` / **`promote_arch_process`** / **`claim_services`** / **`unclaim_service`** / **`split_multi_impl`** / **`decide_dep_suggestion`** / **`delete_module_migrate_services`** | `P1` (删除/转换/蓝图导入/提升/认领/拆分/裁决) / `P2` | 传入变更前后的 `Subsystem` / `FunctionalGroup` / `Module` / `ServiceContract` / `ModuleService`（含 `proto_service_name`） / `ModuleDependency` / `DependencyDecision` / `ArchProcessGroup` / `ArchProcess`（含 `lifecycle`）结构体快照；`import_csg_blueprint` 附带来源 `agent_id`、`csg_addr` 与批量新增实体计数 |
+| `contract_discovery` | **`save_snapshot`** / **`update_snapshot`** / **`delete_snapshot`** / **`enroll`** / **`quick_record`** / **`confirm_proto`** | `P2` (`P1` 当已认领服务确认 `.pb`) | 记录快照 `id` / `agent_id` / `content_hash`（禁存未脱敏 `cmdline`）、`Enroll` 纳管进程/服务/依赖边计数、`quick_record` `request_id` 与租约目标、`confirm_proto` 映射前后值 |
+| `contract_migration` | **`migrate_csg_placeholders`** / **`rollback_csg_placeholders`** | `P1` | 记录 `migration_key`、迁移假模块数、生成放置数、阻断项清单与关联 `MIGRATION` 归因任务 ID |
 | `contract_agent` | `create` / `update` / `delete` / `sync_mounts` / `toggle_probe` / `force_unlock_lease` | `P1` | 传入 `Agent`（含 `scope`、`owner_id`、`endpoint`）或 `Process` 挂载实例（含 `arch_process_id`、`override_listen_port`、`override_cmd_pattern`、`probe_desired_state`）快照；管理员强制解锁记录原持锁人及原因 |
 | `contract_schema` | `upload` / `compile` / `activate` / `delete` / `update_op_ignores` | `P1` | 记录描述集 `name`、`version`、`source_type`、`file_sha256`、`is_active` 切换前后版本对比及方法级 `diff_ignore_paths` 变更（剔除大体积 `descriptor_bytes` 二进制字段与编译源码内容） |
 | `contract_git` | `create_repo` / `update_repo` / `delete_repo` / `upsert_bundle` / `manual_sync` | `P1` (删除/修改) / `P2` | 记录仓库 `name`、`provider`、`repo_url`、Bundle `target_schema_name`、`default_branch`；**严禁在审计前后快照中写入 `credentials_encrypted`、`webhook_secret_encrypted` 或明文密钥；`settings:update` 同理严禁将 `llm_api_key` / `smtp_password` / `code_notifier_token` 明文写入 `commonAudit` 字段级 Diff** |

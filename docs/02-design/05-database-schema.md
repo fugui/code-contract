@@ -1,11 +1,11 @@
 # 架构与活体契约治理 (`code-contract`) 数据库物理模型与 GORM 建模字典
 
 - **文档编号**：`05-database-schema.md`
-- **文档版本**：v1.10.1
-- **更新日期**：2026-11-19
+- **文档版本**：v1.11.0
+- **更新日期**：2026-11-25
 - **归属阶段**：阶段二：系统架构与数据模型设计 (`02-design`)
-- **状态**：M1~M28 已交付；ADR-22 v2.0.0 & ADR-23 v1.1.0 (M29) 零 DDL 迁移兼容定稿
-- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.24.0)、[`01-system-architecture.md`](./01-system-architecture.md) (v1.10.0)、[`04-traffic-storage-partitioning-and-relational-normalization.md`](../05-adr/04-traffic-storage-partitioning-and-relational-normalization.md)、[`09-arch-process-ssot-and-ebpf-premount-standby-adr.md`](../05-adr/09-arch-process-ssot-and-ebpf-premount-standby-adr.md) (ADR-09 v1.1.0)、[`12-packet-causality-call-tree-and-sequence-ux-adr.md`](../05-adr/12-packet-causality-call-tree-and-sequence-ux-adr.md) (ADR-12 v1.0.0)、[`14-governance-dashboard-golden-suite-and-ci-gate-adr.md`](../05-adr/14-governance-dashboard-golden-suite-and-ci-gate-adr.md) (ADR-14 v1.1.0)、[`15-scalable-topology-focus-and-layout-persistence-adr.md`](../05-adr/15-scalable-topology-focus-and-layout-persistence-adr.md) (ADR-15 v1.3.0)、[`16-multi-implementation-service-contract-adr.md`](../05-adr/16-multi-implementation-service-contract-adr.md) (ADR-16 v2.0.0)、[`17-topology-single-layer-drilldown-and-layout-ux-adr.md`](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md) (ADR-17 v1.1.0)、[`18-proto-full-lifecycle-and-git-mr-governance-adr.md`](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (ADR-18 v1.3.0)、[`21-csg-aware-agent-service-discovery-and-replay-mock-adr.md`](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (ADR-21 v2.1.0)、[`22-pluggable-transport-driver-and-mesh-capture-adr.md`](../05-adr/22-pluggable-transport-driver-and-mesh-capture-adr.md) (ADR-22 v2.0.0)、[`23-dophi-mesh-uprobe-bypass-capture-adr.md`](../05-adr/23-dophi-mesh-uprobe-bypass-capture-adr.md) (ADR-23 v1.1.0)
+- **状态**：M1~M29 已交付；ADR-24 v1.1.0 (`M30a ~ M32`) Schema 演进与增量建模定稿（共 `36` 核心业务表 + `contract_settings` = `37` 表）
+- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.26.0)、[`01-system-architecture.md`](./01-system-architecture.md) (v1.12.0)、[`04-traffic-storage-partitioning-and-relational-normalization.md`](../05-adr/04-traffic-storage-partitioning-and-relational-normalization.md)、[`09-arch-process-ssot-and-ebpf-premount-standby-adr.md`](../05-adr/09-arch-process-ssot-and-ebpf-premount-standby-adr.md) (ADR-09 v1.1.0)、[`12-packet-causality-call-tree-and-sequence-ux-adr.md`](../05-adr/12-packet-causality-call-tree-and-sequence-ux-adr.md) (ADR-12 v1.0.0)、[`14-governance-dashboard-golden-suite-and-ci-gate-adr.md`](../05-adr/14-governance-dashboard-golden-suite-and-ci-gate-adr.md) (ADR-14 v1.1.0)、[`15-scalable-topology-focus-and-layout-persistence-adr.md`](../05-adr/15-scalable-topology-focus-and-layout-persistence-adr.md) (ADR-15 v1.3.0)、[`16-multi-implementation-service-contract-adr.md`](../05-adr/16-multi-implementation-service-contract-adr.md) (ADR-16 v2.0.0)、[`17-topology-single-layer-drilldown-and-layout-ux-adr.md`](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md) (ADR-17 v1.1.0)、[`18-proto-full-lifecycle-and-git-mr-governance-adr.md`](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (ADR-18 v1.3.0)、[`21-csg-aware-agent-service-discovery-and-replay-mock-adr.md`](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (ADR-21 v2.2.0)、[`22-pluggable-transport-driver-and-mesh-capture-adr.md`](../05-adr/22-pluggable-transport-driver-and-mesh-capture-adr.md) (ADR-22 v2.0.0)、[`23-dophi-mesh-uprobe-bypass-capture-adr.md`](../05-adr/23-dophi-mesh-uprobe-bypass-capture-adr.md) (ADR-23 v1.1.0)、[`24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md`](../05-adr/24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md) (ADR-24 v1.1.0)
 
 ### 修订记录
 
@@ -19,12 +19,13 @@
 | v1.9.0 | 2026-11-13 | 依据 [`ADR-18`](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (v1.3.0) 清除无用的外部旧库迁移设计：鉴于 `code-proto` 与 `protohub` 均未开发完成且从未运行，正式移除 `scripts/migrate_protohub_vocab` SQLite/JSON 迁移清单、`PROTOHUB_IMPORT` 枚举值与 SQLite 列对照表；`VocabularyTerm.Source` 收敛为 `MANUAL \| BUILTIN_SEED \| LLM_SUGGESTED`，并在 `SetupWithDB` 内直接完成通用基础词根与默认规则的幂等 Seed 初始化 |
 | v1.10.0 | 2026-11-18 | 依据 [`ADR-21` (v2.1.0)](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (`M28`) 扩充 CSG 现网自动发现与三模仿真审计字段（**零新增物理表**，维持 `30` 张核心业务表 + `contract_settings` = `31` 张表）：1. `contract_module_services` 增补 `proto_service_name` 映射实际 Protobuf `service` 名并建立前缀索引；2. `contract_recording_sessions` 与 `contract_golden_suite_items` 增补 `csg_snapshots` 固化 CSG `dlink` 与 LDC 订阅快照；3. `contract_replay_tasks` 增补 `csg_strategy`（`AUTO\|CLIENT_INJECT\|PUB_STUB\|MOCK_SERVER`）与 `csg_sandbox_report` 审计字段；4. 同步 §4 索引/约束与 §5 `409 CSG_SERVICE_ALREADY_PUBLISHED` / `422 CSG_DATAPLANE_MESH_UNSUPPORTED` 冲突矩阵 |
 | v1.10.1 | 2026-11-19 | 同步 [`ADR-22` (v2.0.0)](../05-adr/22-pluggable-transport-driver-and-mesh-capture-adr.md) & [`ADR-23` (v1.1.0)](../05-adr/23-dophi-mesh-uprobe-bypass-capture-adr.md) (`M29`) **零 DDL 迁移兼容约定**：复用既有分区表列 `contract_traffic_records.transport_proto SMALLINT NOT NULL DEFAULT 1` 直接落盘区分 `1 = TCP` 与 `4 = MESH (dophi_mesh)`；同步 §5 冲突矩阵中 `MOCK_SERVER` 放行 Mesh 改道 TCP 策略 |
+| **v1.11.0** | **2026-11-25** | **依据 [`ADR-24` (v1.1.0)](../05-adr/24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md) (`M30a ~ M32`) 演进至 `36` 张核心业务表 + `contract_settings`（共 `37` 张表）**：1. **M30a 新增表 #31** `contract_discovery_snapshots`（持久化发现快照、去重 `content_hash`、置顶基线与脱敏）；2. **M30b 新增 5 张表**：#32 `contract_service_placements`（L1-I 服务放置事实）、#33 `contract_process_dependencies`（L1-I 环境级订阅边）、#34 `contract_dependency_decisions`（L2 裁决记录）、#35 `contract_attribution_jobs`（可续跑归因/迁移作业）与 #36 `contract_mig_backups`（存量迁移备份）；3. 增量演进 `contract_arch_processes`（`declared_role`/版本化指纹/`lifecycle`/`origin`/`origin_agent_id`）、`contract_processes`（`enroll_source`/`observed_*`）、`contract_module_services`（`module_id` 可空、`ON DELETE RESTRICT`、`source`/撮合/认领列及 CHECK I1，**不新增 `arch_process_id`**）与 `contract_traffic_records`（`src_arch_process_id`/`dst_arch_process_id` + 母表 `ON ONLY` 逐分区并发索引）；4. 同步 §1 幂等迁移顺序、§2 ER 图、§4 索引字典与 §5 外键/冲突矩阵 |
 
 ---
 
 ## 1. 数据库共享隔离原则、分区规范与类型安全约定
 
-1. **共享库表名前缀强制隔离**：`code-contract-server` 与宿主门户 `code-bench` 共享同一 PostgreSQL 实例，直接复用 `code-common/backend/models` 中的 `users`、`departments`、`audit_logs` 公共表；本子系统全部 **30 张核心业务实体表**（及平台治理参数表 `contract_settings`，共 `31` 张表）必须显式实现 `TableName() string` 并冠以 `config.TablePrefix`（**`contract_`**）前缀。
+1. **共享库表名前缀强制隔离**：`code-contract-server` 与宿主门户 `code-bench` 共享同一 PostgreSQL 实例，直接复用 `code-common/backend/models` 中的 `users`、`departments`、`audit_logs` 公共表；本子系统全部 **36 张核心业务实体表**（当前 M1~M29 已落地 `30` 张；M30a 新增 `1` 张；M30b 新增 `5` 张；及平台治理参数表 `contract_settings`，共 `37` 张表）必须显式实现 `TableName() string` 并冠以 `config.TablePrefix`（**`contract_`**）前缀。
 2. **架构物理进程蓝图解耦与「单 Agent 单环境」关系规范化（[`ADR-09`](../05-adr/09-arch-process-ssot-and-ebpf-premount-standby-adr.md)）**：
    - 将全局架构物理进程蓝图独立建模为 **`contract_arch_process_groups`** 与 **`contract_arch_processes`**，通过 `contract_modules.arch_process_id` 唯一表达 `1 ArchProcess : N Module` 组装关系（守护 `A-03` 单模块单标准进程归属）；
    - **1 台 `Agent` 即代表 1 套独立运行环境**（支持多套 `SHARED` 公共测试环境与多套 `PRIVATE` 个人环境对等并存，不同 `SHARED` Agent 允许各自挂载同一 `ArchProcess`；`contract_agents.fallback_agent_id` 支持可选关联某套公共基准环境用于混合下游推导）；
@@ -47,6 +48,14 @@
    - **M28 CSG 自动发现与三模仿真零建表幂等加列迁移（`ADR-21` v2.1.0，维持 30+1 表总数不变）**：
      1. `GORM AutoMigrate` 为 4 张既有表幂等追加轻量列（零数据破坏，100% 向后兼容）：`contract_module_services.proto_service_name VARCHAR(128) NOT NULL DEFAULT ''`、`contract_recording_sessions.csg_snapshots JSONB NOT NULL DEFAULT '[]'`、`contract_golden_suite_items.csg_snapshots JSONB NOT NULL DEFAULT '[]'`、`contract_replay_tasks.csg_strategy VARCHAR(24) NOT NULL DEFAULT 'PASSTHROUGH'` 与 `contract_replay_tasks.csg_sandbox_report JSONB`；
      2. 显式幂等维护 `idx_contract_mod_svc_proto_name` 普通索引与 `chk_contract_replay_csg_strategy` (`CHECK (csg_strategy IN ('PASSTHROUGH','CLIENT_INJECT','PUB_STUB','MOCK_SERVER'))`) 枚举约束。
+   - **M30a ~ M30b 以「现网发现」为中心与物理/逻辑双态解耦增量迁移（`ADR-24` v1.1.0，扩充至 `36` 核心表 + `contract_settings` = `37` 表）**：
+     1. **M30a（只读破冰）**：`GORM AutoMigrate` 新增表 #31 `contract_discovery_snapshots`（`idx_contract_disc_snap_agent_time`、`idx_contract_disc_snap_hash`、`trigger_type` CHECK）；
+     2. **M30b（按 [`ADR-24` §7.1](../05-adr/24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md#71-schema-迁移顺序m30b幂等经-modelsdbgo-执行) 严格顺序幂等执行）**：
+        - ① 为 `contract_arch_processes` 新增 6 列 + `lifecycle`/`origin`/`declared_role` CHECK + 非唯一索引 `idx_contract_arch_proc_fp (fingerprint_version, identity_fingerprint)` + `origin_agent_id` FK (`ON DELETE SET NULL`)；为 `contract_processes` 新增 5 列 + `enroll_source`/`observed_role` CHECK；
+        - ② 对 `contract_module_services` 执行 `ALTER COLUMN module_id DROP NOT NULL`，将 FK `fk_contract_mod_svc_module` 从 `CASCADE` 替换为 `ON DELETE RESTRICT`（删除路径移交服务层 `DeleteModuleTx` 显式迁移），新增 `source`/`proto_match_confidence`/`proto_suggested_name`/`claimed_at`/`claimed_by` 列、CHECK I1 `chk_contract_mod_svc_unclaimed` 及部分索引 `idx_contract_mod_svc_unclaimed`（**保留 `uk_contract_mod_svc_name_excl` 不变且不加 `arch_process_id`**）；
+        - ③ `AutoMigrate` 按序新建 #32 `contract_service_placements`、#33 `contract_process_dependencies`、#34 `contract_dependency_decisions`、#35 `contract_attribution_jobs`、#36 `contract_mig_backups` 并建立全部 `CASCADE/SET NULL` 外键、唯一索引与 CHECK；
+        - ④ 为 `contract_traffic_records` 母表追加可空列 `src_arch_process_id BIGINT NULL`、`dst_arch_process_id BIGINT NULL`，在 M31 索引迁移任务中通过 `CREATE INDEX ... ON ONLY` + 逐子分区 `CREATE INDEX CONCURRENTLY` + `ALTER INDEX ... ATTACH PARTITION` 完成零长锁表建索引；
+        - ⑤ 启动幂等注入 10 项 `discovery.*` 默认 `ModuleSetting`（`discovery.v2_enabled = 'false'`）。
 4. **海量流量时间范围物理分区 (`Range Partitioning`)**：
    - 核心流量往返表 **`contract_traffic_records`** 采用 PostgreSQL 原生 **`PARTITION BY RANGE (created_at)`** 按日（或按周）自动建表；
    - 30 天保留期清理流水线采用轻量级 **`DROP TABLE contract_traffic_records_yYYYYmMMdDD`**，实现磁盘空间毫秒级无锁释放。
@@ -122,11 +131,19 @@ erDiagram
     CONTRACT_REPLAY_TASKS ||--o{ CONTRACT_REPLAY_ITEMS : "task_id (CASCADE)"
     CONTRACT_TRAFFIC_RECORDS |o--o{ CONTRACT_REPLAY_ITEMS : "record_id (弱引用)"
     CONTRACT_GOLDEN_SUITE_ITEMS |o--o{ CONTRACT_REPLAY_ITEMS : "suite_item_id (SET NULL)"
+
+    CONTRACT_AGENTS ||--o{ CONTRACT_DISCOVERY_SNAPSHOTS : "agent_id (CASCADE, M30a 快照)"
+    CONTRACT_MODULE_SERVICES ||--o{ CONTRACT_SERVICE_PLACEMENTS : "module_service_id (CASCADE, M30b 放置)"
+    CONTRACT_PROCESSES ||--o{ CONTRACT_SERVICE_PLACEMENTS : "process_id (CASCADE)"
+    CONTRACT_PROCESSES ||--o{ CONTRACT_PROCESS_DEPENDENCIES : "consumer_process_id (CASCADE, M30b 物理边)"
+    CONTRACT_MODULE_SERVICES |o--o{ CONTRACT_PROCESS_DEPENDENCIES : "service_id (SET NULL)"
+    CONTRACT_MODULES ||--o{ CONTRACT_DEPENDENCY_DECISIONS : "consumer_module_id (CASCADE, M30b/M32 裁决)"
+    CONTRACT_MODULE_SERVICES ||--o{ CONTRACT_DEPENDENCY_DECISIONS : "service_id (CASCADE)"
 ```
 
 ---
 
-## 3. 30 张 `contract_*` 核心业务表完整 GORM 模型定义
+## 3. 36 张 `contract_*` 核心业务表完整 GORM 模型定义（`M1~M29` 30 表 + `ADR-24` 新增 6 表）
 
 ### 3.1 逻辑架构元素领域表（表 1 ~ 表 3）
 
@@ -247,28 +264,33 @@ type ServiceContract struct {
 
 func (ServiceContract) TableName() string { return config.TablePrefix + "service_contracts" }
 
-// 5. ModuleService 模块级对外供给服务契约/实现表 (contract_module_services，修订 A-05, F-02.1, ADR-16 §3.3)
+// 5. ModuleService 模块级对外供给服务契约/双态身份表 (contract_module_services，演进自 ADR-16 & ADR-24)
 // 索引与约束（由 db.go 显式维护）：
-//   - 移除旧无条件唯一索引 uk_contract_mod_svc_name；
-//   - uk_contract_mod_svc_name_excl: UNIQUE (service_name) WHERE contract_id IS NULL（独占契约服务名全局唯一）；
-//   - uk_contract_mod_svc_contract_impl: UNIQUE (contract_id, impl_key) WHERE contract_id IS NOT NULL（同契约下实现身份唯一）；
-//   - uk_contract_mod_svc_contract_mod: UNIQUE (contract_id, module_id) WHERE contract_id IS NOT NULL（同契约下同一模块至多实现一次）；
-//   - chk_contract_mod_svc_impl_key: CHECK ((contract_id IS NULL AND impl_key = '') OR (contract_id IS NOT NULL AND impl_key <> ''))。
+//   - M30b 起 module_id 允许为 NULL（未认领身份），外键由 CASCADE 改为 RESTRICT（删除 Module 走 DeleteModuleTx）；
+//   - uk_contract_mod_svc_name_excl: UNIQUE (service_name) WHERE contract_id IS NULL OR is_custom_service_name = true（保持不变，未认领行恒满足 I2）；
+//   - uk_contract_mod_svc_contract_impl / uk_contract_mod_svc_contract_mod / chk_contract_mod_svc_impl_key / chk_contract_mod_svc_custom_name；
+//   - chk_contract_mod_svc_unclaimed (I1): CHECK (module_id IS NOT NULL OR (contract_id IS NULL AND impl_key = '' AND source IN ('CSG_DISCOVERED','MIGRATED')))；
+//   - 注意：严禁新增单值 arch_process_id 列，物理放置下沉至 contract_service_placements (表 #32)。
 type ModuleService struct {
-	ID              uint64           `gorm:"primaryKey;autoIncrement" json:"id"`
-	ModuleID        uint64           `gorm:"not null;index:idx_contract_mod_svc_mod" json:"module_id"` // 供给/实现方模块 ID（必须为 BUSINESS 模块）
-	Module          *Module          `gorm:"foreignKey:ModuleID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE" json:"module,omitempty"`
-	ContractID          *uint64          `gorm:"index:idx_contract_mod_svc_contract" json:"contract_id,omitempty"` // NULL 表示独占契约 (EXCLUSIVE)；非 NULL 指向 contract_service_contracts(id) ON DELETE RESTRICT
-	Contract            *ServiceContract `gorm:"foreignKey:ContractID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT" json:"contract,omitempty"`
-	ServiceName         string           `gorm:"size:128;not null;index:idx_contract_mod_svc_name" json:"service_name"`                   // 线网运行期服务名：点分 {package}.{serviceName} 或 CSG 64B 运行期名 <ClassName[:31]>-<svrName[:31]> (修订 A-07)
-	ProtoServiceName    string           `gorm:"size:128;not null;default:'';index:idx_contract_mod_svc_proto_name" json:"proto_service_name"` // 可选 .pb 契约全名 {package}.{service}；非空且不等于 service_name 时自动注入 decoder.Registry.ServiceAliases (ADR-21)
-	IsCustomServiceName bool             `gorm:"not null;default:false" json:"is_custom_service_name"`                                    // 是否为多实现契约下自定义独立运行期发布名 (ADR-16 v2.0)
-	ImplKey             string           `gorm:"size:64;not null;default:''" json:"impl_key"`                                             // 实现身份标识（如 "b"），多实现时必填 (^[A-Za-z0-9._-]{1,64}$)，独占时恒为 ""
-	DiffIgnorePaths datatypes.JSON   `gorm:"type:jsonb;not null;default:'[]'" json:"diff_ignore_paths"`            // 服务级默认回归 Diff 忽略字段路径 []string (F-14)
-	Description     string           `gorm:"type:text" json:"description"`
-	CreatedBy       uint             `gorm:"not null;default:0" json:"created_by"`
-	CreatedAt       time.Time        `json:"created_at"`
-	UpdatedAt       time.Time        `json:"updated_at"`
+	ID                   uint64           `gorm:"primaryKey;autoIncrement" json:"id"`
+	ModuleID             *uint64          `gorm:"index:idx_contract_mod_svc_mod" json:"module_id,omitempty"` // NULL 表示未认领物理服务身份；非 NULL 指向 Module (ON DELETE RESTRICT)
+	Module               *Module          `gorm:"foreignKey:ModuleID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT" json:"module,omitempty"`
+	ContractID           *uint64          `gorm:"index:idx_contract_mod_svc_contract" json:"contract_id,omitempty"` // NULL 表示独占契约或未认领；非 NULL 指向 ServiceContract
+	Contract             *ServiceContract `gorm:"foreignKey:ContractID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT" json:"contract,omitempty"`
+	ServiceName          string           `gorm:"size:128;not null;index:idx_contract_mod_svc_name" json:"service_name"`                   // 线网运行期 64B 服务名 (修订 A-07)
+	ProtoServiceName     string           `gorm:"size:128;not null;default:'';index:idx_contract_mod_svc_proto_name" json:"proto_service_name"` // 确认绑定的 .pb 全名
+	IsCustomServiceName  bool             `gorm:"not null;default:false" json:"is_custom_service_name"`
+	ImplKey              string           `gorm:"size:64;not null;default:''" json:"impl_key"`
+	Source               string           `gorm:"size:24;not null;default:'MANUAL';check:chk_contract_mod_svc_source,source IN ('MANUAL','CSG_DISCOVERED','MIGRATED')" json:"source"`
+	ProtoMatchConfidence string           `gorm:"size:16;not null;default:'NONE';check:chk_contract_mod_svc_proto_conf,proto_match_confidence IN ('NONE','FINGERPRINT','HEURISTIC','EXACT','MANUAL')" json:"proto_match_confidence"`
+	ProtoSuggestedName   string           `gorm:"size:128;not null;default:''" json:"proto_suggested_name"`
+	ClaimedAt            *time.Time       `json:"claimed_at,omitempty"`
+	ClaimedBy            uint             `gorm:"not null;default:0" json:"claimed_by"`
+	DiffIgnorePaths      datatypes.JSON   `gorm:"type:jsonb;not null;default:'[]'" json:"diff_ignore_paths"`
+	Description          string           `gorm:"type:text" json:"description"`
+	CreatedBy            uint             `gorm:"not null;default:0" json:"created_by"`
+	CreatedAt            time.Time        `json:"created_at"`
+	UpdatedAt            time.Time        `json:"updated_at"`
 }
 
 func (ModuleService) TableName() string { return config.TablePrefix + "module_services" }
@@ -402,20 +424,26 @@ type ArchProcessGroup struct {
 
 func (ArchProcessGroup) TableName() string { return config.TablePrefix + "arch_process_groups" }
 
-// 8. ArchProcess 全局架构标准业务进程蓝图表 (contract_arch_processes)
-// 在 /architecture?tree=physical 中作为全局唯一 SSOT 维护，零 Agent 机器耦合
+// 8. ArchProcess 全局架构标准业务进程蓝图表 (contract_arch_processes，演进自 ADR-09 & ADR-24)
+// 在 /architecture?tree=physical 中维护全局类型蓝图，M30b 增补 declared_role、版本化身份指纹与 PROVISIONAL/CONFIRMED 可见性生命周期
 type ArchProcess struct {
 	ID                      uint64            `gorm:"primaryKey;autoIncrement" json:"id"`
 	GroupID                 uint64            `gorm:"not null;index:idx_contract_arch_proc_group" json:"group_id"`
 	Group                   *ArchProcessGroup `gorm:"foreignKey:GroupID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT" json:"group,omitempty"`
-	Code                    string            `gorm:"size:64;not null;uniqueIndex:uk_contract_arch_proc_code" json:"code"` // 全局唯一标准进程编码，如 "sut-order"
+	Code                    string            `gorm:"size:64;not null;uniqueIndex:uk_contract_arch_proc_code" json:"code"` // 全局唯一标准进程编码，PROVISIONAL 时为 prv<agent_id>-<norm>
 	Name                    string            `gorm:"size:128;not null;index:idx_contract_arch_proc_name" json:"name"`
-	DefaultListenPort       int               `gorm:"not null;default:0;check:chk_contract_arch_proc_port,default_listen_port >= 0 AND default_listen_port <= 65535" json:"default_listen_port"` // 0 表示纯客户端进程；1..65535 为默认监听端口
+	DefaultListenPort       int               `gorm:"not null;default:0;check:chk_contract_arch_proc_port,default_listen_port >= 0 AND default_listen_port <= 65535" json:"default_listen_port"` // 静态端口提示，不再隐式代表角色 (A-02)
 	DefaultCmdPattern       string            `gorm:"size:512;not null;default:''" json:"default_cmd_pattern"`                                                                                   // 默认 /proc/<pid>/cmdline 匹配特征
 	DefaultExtraDownstreams datatypes.JSON    `gorm:"type:jsonb;not null;default:'[]'" json:"default_extra_downstreams"`                                                                         // 默认补充下游 ["IP:Port"]
+	DeclaredRole            string            `gorm:"size:16;not null;default:'UNKNOWN';check:chk_contract_arch_proc_role,declared_role IN ('UNKNOWN','SERVER','CLIENT_ONLY','DUAL')" json:"declared_role"`
+	IdentityFingerprint     string            `gorm:"size:64;not null;default:'';index:idx_contract_arch_proc_fp,priority:2" json:"identity_fingerprint"` // SHA-256 规范化指纹，不含服务名 (ADR-24 §5.5)
+	FingerprintVersion      int16             `gorm:"not null;default:0;index:idx_contract_arch_proc_fp,priority:1" json:"fingerprint_version"`
+	Lifecycle               string            `gorm:"size:16;not null;default:'CONFIRMED';check:chk_contract_arch_proc_lifecycle,lifecycle IN ('PROVISIONAL','CONFIRMED')" json:"lifecycle"`
+	Origin                  string            `gorm:"size:16;not null;default:'MANUAL';check:chk_contract_arch_proc_origin,origin IN ('MANUAL','DISCOVERY','MIGRATED')" json:"origin"`
+	OriginAgentID           *uint64           `gorm:"index:idx_contract_arch_proc_origin_agent" json:"origin_agent_id,omitempty"` // 发现来源的首个 Agent (ON DELETE SET NULL)
 	SortOrder               int               `gorm:"not null;default:0" json:"sort_order"`
 	Description             string            `gorm:"type:text" json:"description"`
-	Modules                 []Module          `gorm:"foreignKey:ArchProcessID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL" json:"modules,omitempty"` // 组装承载的 FM 功能模块集合 (1:N，仅 BUSINESS 模块；同一多实现契约的实现模块受 A-09 互斥保护)
+	Modules                 []Module          `gorm:"foreignKey:ArchProcessID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL" json:"modules,omitempty"` // 组装承载的 FM 功能模块集合 (1:N，仅 BUSINESS 模块)
 	CreatedBy               uint              `gorm:"not null;default:0" json:"created_by"`
 	UpdatedBy               uint              `gorm:"not null;default:0" json:"updated_by"`
 	CreatedAt               time.Time         `json:"created_at"`
@@ -479,14 +507,19 @@ type Process struct {
 	ExtraDownstreams    datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"extra_downstreams"`                                                                                                                                                             // 本地附加补充下游 ["IP:Port"]
 	Description         string         `gorm:"type:text" json:"description"`
 
-	// eBPF 默认自动预挂期望状态与最近一次宿主机 /proc 就绪诊断快照
-	ProbeDesiredState string     `gorm:"size:16;not null;default:'ARMED';check:chk_contract_proc_desired,probe_desired_state IN ('ARMED','DISARMED')" json:"probe_desired_state"`
-	ProbeStatus       string     `gorm:"size:32;not null;default:'DISARMED';index:idx_contract_proc_probe_status" json:"probe_status"`
-	ResolvedPID       uint32     `gorm:"not null;default:0" json:"resolved_pid"`
-	EstablishedConns  int        `gorm:"not null;default:0" json:"established_conns"`
-	NeedReconnect     bool       `gorm:"not null;default:false" json:"need_reconnect"`
-	DiagMessage       string     `gorm:"size:512;not null;default:''" json:"diag_message"`
-	LastDiagAt        *time.Time `json:"last_diag_at,omitempty"`
+	// eBPF 默认自动预挂期望状态、现网发现纳管来源与最近一次宿主机 /proc 就绪诊断快照
+	ProbeDesiredState  string         `gorm:"size:16;not null;default:'ARMED';check:chk_contract_proc_desired,probe_desired_state IN ('ARMED','DISARMED')" json:"probe_desired_state"`
+	EnrollSource       string         `gorm:"size:16;not null;default:'MANUAL';index:idx_contract_proc_enroll_src;check:chk_contract_proc_enroll_src,enroll_source IN ('MANUAL','DISCOVERY')" json:"enroll_source"` // MANUAL(手动挂载默认ARMED) | DISCOVERY(现网发现纳管默认DISARMED, M30b ADR-24)
+	ObservedRole       string         `gorm:"size:16;not null;default:'';check:chk_contract_proc_obs_role,observed_role IN ('','SERVER','CLIENT','DUAL')" json:"observed_role"`                             // 现网观测角色 (SERVER/CLIENT/DUAL, M30b ADR-24)
+	ObservedTransports datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"observed_transports"`                                                                                                       // 现网观测传输栈 ["TCP","MESH"] (M30b ADR-24)
+	ObservedPIDs       datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"observed_pids"`                                                                                                             // 同蓝图多实例运行期 PIDs []uint32 (M30b/M31 ADR-24)
+	LastObservedAt     *time.Time     `json:"last_observed_at,omitempty"`                                                                                                                                        // 最近一次 Discovery 快照或对账观测时间戳 (M30b ADR-24)
+	ProbeStatus        string         `gorm:"size:32;not null;default:'DISARMED';index:idx_contract_proc_probe_status" json:"probe_status"`
+	ResolvedPID        uint32         `gorm:"not null;default:0" json:"resolved_pid"`
+	EstablishedConns   int            `gorm:"not null;default:0" json:"established_conns"`
+	NeedReconnect      bool           `gorm:"not null;default:false" json:"need_reconnect"`
+	DiagMessage        string         `gorm:"size:512;not null;default:''" json:"diag_message"`
+	LastDiagAt         *time.Time     `json:"last_diag_at,omitempty"`
 
 	// DTO 序列化便捷透出字段（由预加载的 ArchProcess 自动计算填充，不落冗余列）
 	GroupID     uint64 `gorm:"-" json:"group_id"`
@@ -676,8 +709,10 @@ type TrafficRecord struct {
 	SpanID                string         `gorm:"size:32;not null;default:'';index:idx_contract_tr_span" json:"span_id"`
 	FatherSpanID          string         `gorm:"size:32;not null;default:'';index:idx_contract_tr_father_span" json:"father_span_id"`
 
-	// 架构模块与多实现契约穿透定位列
+	// 架构模块、物理进程双层与多实现契约穿透定位列
 	SubsystemID           *uint64        `gorm:"index:idx_contract_tr_subsystem" json:"subsystem_id,omitempty"`
+	SrcArchProcessID      *uint64        `gorm:"column:src_arch_process_id;index:idx_contract_tr_src_arch_proc" json:"src_arch_process_id,omitempty"` // 源标准物理进程蓝图 ID (Stage 1/2 归因落盘, M30b/M31 ADR-24)
+	DstArchProcessID      *uint64        `gorm:"column:dst_arch_process_id;index:idx_contract_tr_dst_arch_proc" json:"dst_arch_process_id,omitempty"` // 目的标准物理进程蓝图 ID (Stage 1/2 归因落盘, M30b/M31 ADR-24)
 	SrcModuleID           *uint64        `gorm:"index:idx_contract_tr_src_mod" json:"src_module_id,omitempty"`
 	SrcAttributionMode    string         `gorm:"size:32;not null;default:''" json:"src_attribution_mode"`
 	SrcCandidateModuleIDs datatypes.JSON `gorm:"type:jsonb" json:"src_candidate_module_ids,omitempty"`
@@ -1233,16 +1268,156 @@ type Notification struct {
 func (Notification) TableName() string { return config.TablePrefix + "notifications" }
 ```
 
-> **附：治理配置表与自定义 GIN 索引迁移说明**：
+### 3.9 现网发现、双粒度物理资产与渐进治理表组（表 31 ~ 表 36，`ADR-24`）
+
+> 从 30 张核心业务表扩展至 **36 张核心业务表 + `contract_settings`**（总计 **37 张**）：M30a 增量建表 `#31`；M30b 增量建表 `#32 ~ #36` 与 `contract_arch_processes`/`contract_processes`/`contract_module_services`/`contract_traffic_records` 增量迁移列。完整物理/逻辑边界、双态转换（`I1~I8`）及 `DeleteModuleTx` 原子级联规则参见 [`03-architecture-elements-and-topology.md` §7](../02-design/03-architecture-elements-and-topology.md)。
+
+```go
+// 31. DiscoverySnapshot 现网进程、CSG 与 L1 流量探测持久化快照表 (contract_discovery_snapshots, M30a ADR-24)
+// 自动按 (agent_id, csg_addr) 非置顶 FIFO 保留最近 discovery.snapshot_retention_count (默认 50) 份；置顶上限 discovery.snapshot_pin_limit (默认 20)
+type DiscoverySnapshot struct {
+	ID               uint64         `gorm:"primaryKey;autoIncrement" json:"id"`
+	AgentID          uint64         `gorm:"not null;index:idx_contract_disc_snap_agent_time,priority:1;index:idx_contract_disc_snap_hash,priority:1" json:"agent_id"`
+	Agent            *Agent         `gorm:"foreignKey:AgentID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE" json:"-"`
+	TriggerMode      string         `gorm:"size:24;not null;default:'MANUAL';check:chk_contract_disc_snap_trigger,trigger_mode IN ('MANUAL','SCHEDULED','AUTO','QUICK_RECORD')" json:"trigger_mode"`
+	CSGAddr          string         `gorm:"size:128;not null;default:'';index:idx_contract_disc_snap_agent_time,priority:2;index:idx_contract_disc_snap_hash,priority:2" json:"csg_addr"`
+	Label            string         `gorm:"size:128;not null;default:''" json:"label"`
+	IsPinned         bool           `gorm:"not null;default:false" json:"is_pinned"`
+	RedactionVersion int            `gorm:"not null;default:1" json:"redaction_version"`
+	SummaryJSON      datatypes.JSON `gorm:"type:jsonb;not null;default:'{}'" json:"summary_json"`    // {process_count, client_only_count, remote_ldc_count, total_services}
+	PayloadJSON      datatypes.JSON `gorm:"type:jsonb;not null;default:'{}'" json:"payload_json"`    // 经 Redactor 脱敏后的 CSGReport + 进程主轴分组快照
+	ContentHash      string         `gorm:"size:64;not null;index:idx_contract_disc_snap_hash,priority:3" json:"content_hash"` // 剔除 PID/端口/时间戳后的规范化 SHA-256
+	CreatedBy        uint           `gorm:"not null;default:0" json:"created_by"`
+	CapturedAt       time.Time      `gorm:"not null;index:idx_contract_disc_snap_agent_time,priority:3" json:"captured_at"`
+	CreatedAt        time.Time      `json:"created_at"`
+}
+
+func (DiscoverySnapshot) TableName() string { return config.TablePrefix + "discovery_snapshots" }
+
+// 32. ServicePlacement 物理进程蓝图 ⇄ 逻辑服务实例挂载关系真相表 (contract_service_placements, M30b ADR-24)
+// 收口原 ModuleService.arch_process_id（I1: ModuleService 不再持有物理列，且多实现不同进程或环境部署差异由此表权威刻画）
+type ServicePlacement struct {
+	ID              uint64         `gorm:"primaryKey;autoIncrement" json:"id"`
+	ServiceName     string         `gorm:"size:128;not null;index:idx_contract_sp_svc;uniqueIndex:uk_contract_sp_proc_svc_env,priority:2" json:"service_name"`
+	ModuleServiceID *uint64        `gorm:"index:idx_contract_sp_mod_svc" json:"module_service_id,omitempty"` // 关联的权威逻辑/未认领身份；I1: ModuleService 禁持物理列
+	ModuleService   *ModuleService `gorm:"foreignKey:ModuleServiceID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT" json:"module_service,omitempty"`
+	ArchProcessID   uint64         `gorm:"not null;uniqueIndex:uk_contract_sp_proc_svc_env,priority:1;index:idx_contract_sp_arch_proc" json:"arch_process_id"`
+	ArchProcess     *ArchProcess   `gorm:"foreignKey:ArchProcessID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE" json:"arch_process,omitempty"`
+	EnvAgentID      *uint64        `gorm:"uniqueIndex:uk_contract_sp_proc_svc_env,priority:3;index:idx_contract_sp_env_agent" json:"env_agent_id,omitempty"` // 关联所属环境 Agent
+	EnvAgent        *Agent         `gorm:"foreignKey:EnvAgentID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE" json:"-"`
+	PlacementSource string         `gorm:"size:32;not null;default:'MANUAL';check:chk_contract_sp_source,placement_source IN ('MANUAL','CONFIRMED_BY_DISCOVERY','MIGRATED','AUTO_INFERRED')" json:"placement_source"`
+	Confidence      string         `gorm:"size:24;not null;default:'HIGH';check:chk_contract_sp_conf,confidence IN ('HIGH','MEDIUM','LOW','IDENTITY_AMBIGUOUS')" json:"confidence"`
+	TransportProto  string         `gorm:"size:16;not null;default:'TCP';check:chk_contract_sp_trans,transport_proto IN ('TCP','MESH','DUAL')" json:"transport_proto"`
+	InstanceCount   int            `gorm:"not null;default:1" json:"instance_count"`                                                                                                       // 同宿主折叠多 PID 实例数量
+	Endpoints       datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"endpoints"`                                                                                              // []EndpointSnapshot 支持 Stage 1 对端精准定址
+	LifecycleState  string         `gorm:"size:24;not null;default:'ACTIVE';index:idx_contract_sp_state;check:chk_contract_sp_state,lifecycle_state IN ('ACTIVE','STALE','RETIRED')" json:"lifecycle_state"` // PhysicalReconciler 衰减状态机 (离线冻结)
+	MissCount       int            `gorm:"not null;default:0" json:"miss_count"`
+	LastSeenAt      *time.Time     `json:"last_seen_at,omitempty"`
+	CreatedBy       uint           `gorm:"not null;default:0" json:"created_by"`
+	UpdatedBy       uint           `gorm:"not null;default:0" json:"updated_by"`
+	CreatedAt       time.Time      `json:"created_at"`
+	UpdatedAt       time.Time      `json:"updated_at"`
+}
+
+func (ServicePlacement) TableName() string { return config.TablePrefix + "service_placements" }
+
+// 33. ProcessDependency 进程级（L0/L1-T）观测与已决物理依赖边表 (contract_process_dependencies, M30b ADR-24)
+// 支持模块尚未建模前的物理拓扑边落库，并严格隔离 PRIVATE/SHARED 域；生命周期受 PhysicalReconciler 管理
+type ProcessDependency struct {
+	ID                  uint64       `gorm:"primaryKey;autoIncrement" json:"id"`
+	SrcArchProcessID    uint64       `gorm:"not null;uniqueIndex:uk_contract_pdep_edge,priority:1;index:idx_contract_pdep_src" json:"src_arch_process_id"`
+	SrcArchProcess      *ArchProcess `gorm:"foreignKey:SrcArchProcessID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT" json:"src_arch_process,omitempty"`
+	DstArchProcessID    *uint64      `gorm:"uniqueIndex:uk_contract_pdep_edge,priority:2;index:idx_contract_pdep_dst" json:"dst_arch_process_id,omitempty"` // NULL 表示 OFFLINE/REMOTE_LDC 等外部依赖
+	DstArchProcess      *ArchProcess `gorm:"foreignKey:DstArchProcessID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT" json:"dst_arch_process,omitempty"`
+	ServiceName         string       `gorm:"size:128;not null;uniqueIndex:uk_contract_pdep_edge,priority:3;index:idx_contract_pdep_svc" json:"service_name"`
+	EnvScope            string       `gorm:"size:16;not null;default:'SHARED';uniqueIndex:uk_contract_pdep_edge,priority:4;check:chk_contract_pdep_env_scope,env_scope IN ('SHARED','PRIVATE')" json:"env_scope"`
+	SourceAgentID       *uint64      `gorm:"index:idx_contract_pdep_src_agent" json:"source_agent_id,omitempty"` // 记录来源 Agent（用于 PRIVATE 隔离与卸载清理）
+	DiscoverySource     string       `gorm:"size:24;not null;default:'CSG_SUB';check:chk_contract_pdep_src_kind,discovery_source IN ('CSG_SUB','TRAFFIC_L1T','TRAFFIC_L1I','MANUAL','MIGRATED')" json:"discovery_source"`
+	Confidence          string       `gorm:"size:24;not null;default:'HIGH';check:chk_contract_pdep_conf,confidence IN ('HIGH','MEDIUM','LOW','IDENTITY_AMBIGUOUS')" json:"confidence"`
+	LifecycleState      string       `gorm:"size:24;not null;default:'ACTIVE';index:idx_contract_pdep_state;check:chk_contract_pdep_state,lifecycle_state IN ('ACTIVE','STALE','RETIRED')" json:"lifecycle_state"`
+	ResolvedModuleDepID *uint64      `gorm:"index:idx_contract_pdep_mod_dep" json:"resolved_module_dep_id,omitempty"` // 收敛提升至逻辑 ModuleDependency 后回链 ID
+	HitCount            int64        `gorm:"not null;default:1" json:"hit_count"`
+	MissCount           int          `gorm:"not null;default:0" json:"miss_count"`
+	FirstSeenAt         time.Time    `json:"first_seen_at"`
+	LastSeenAt          time.Time    `json:"last_seen_at"`
+	CreatedBy           uint         `gorm:"not null;default:0" json:"created_by"`
+	UpdatedBy           uint         `gorm:"not null;default:0" json:"updated_by"`
+	CreatedAt           time.Time    `json:"created_at"`
+	UpdatedAt           time.Time    `json:"updated_at"`
+}
+
+func (ProcessDependency) TableName() string { return config.TablePrefix + "process_dependencies" }
+
+// 34. DependencyDecision 架构收敛收件箱人工裁决与持久豁免记录表 (contract_dependency_decisions, M30b/M32 ADR-24)
+type DependencyDecision struct {
+	ID                     uint64             `gorm:"primaryKey;autoIncrement" json:"id"`
+	ConsumerArchProcessID  uint64             `gorm:"not null;uniqueIndex:uk_contract_ddec_proc_svc,priority:1;index:idx_contract_ddec_proc" json:"consumer_arch_process_id"`
+	ServiceID              uint64             `gorm:"not null;uniqueIndex:uk_contract_ddec_proc_svc,priority:2;index:idx_contract_ddec_svc" json:"service_id"`
+	ProcessDependencyID    *uint64            `gorm:"index:idx_contract_ddec_pdep" json:"process_dependency_id,omitempty"`
+	ProcessDependency      *ProcessDependency `gorm:"foreignKey:ProcessDependencyID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL" json:"-"`
+	Decision               string             `gorm:"size:24;not null;check:chk_contract_ddec_type,decision IN ('APPROVE','IGNORE','VIOLATION')" json:"decision"` // APPROVE(建逻辑边) | IGNORE(抑制建议) | VIOLATION(标记违规)
+	ConsumerModuleID       *uint64            `gorm:"index:idx_contract_ddec_consumer" json:"consumer_module_id,omitempty"`
+	TargetImplServiceID    *uint64            `gorm:"index:idx_contract_ddec_impl_svc" json:"target_impl_service_id,omitempty"`
+	Rationale              string             `gorm:"size:512;not null;default:''" json:"rationale"`
+	DecidedBy              uint               `gorm:"not null" json:"decided_by"`
+	DecidedAt              time.Time          `json:"decided_at"`
+}
+
+func (DependencyDecision) TableName() string { return config.TablePrefix + "dependency_decisions" }
+
+// 35. AttributionJob 阶段 2 异步批量归因与历史流量回填任务表 (contract_attribution_jobs, M30b/M31/M32 ADR-24)
+// 认领/拆分/绑定转换后自动创建，按 Session 游标每批 500 行限速扫回填历史流量并支持取消与断点续跑
+type AttributionJob struct {
+	ID               uint64         `gorm:"primaryKey;autoIncrement" json:"id"`
+	JobType          string         `gorm:"size:24;not null;default:'REATTRIBUTE';check:chk_contract_ajob_type,job_type IN ('REATTRIBUTE','BACKFILL_ARCH','PROTO_REDECODE')" json:"job_type"`
+	TriggerType      string         `gorm:"size:32;not null;check:chk_contract_ajob_trigger,trigger_type IN ('PLACEMENTS_UPDATED','MODULE_SVC_CLAIMED','PROTO_ACTIVATED','MANUAL_REATTRIB')" json:"trigger_type"`
+	TargetID         uint64         `gorm:"not null;index:idx_contract_ajob_target" json:"target_id"`
+	ScopeFilterJSON  datatypes.JSON `gorm:"type:jsonb;not null;default:'{}'" json:"scope_filter_json"` // {service_names?: [], arch_process_ids?: [], session_ids?: [], lookback_days?: 30}
+	Status           string         `gorm:"size:24;not null;default:'PENDING';index:idx_contract_ajob_status;check:chk_contract_ajob_status,status IN ('PENDING','RUNNING','COMPLETED','CANCELLED','FAILED')" json:"status"`
+	TotalCount       int64          `gorm:"not null;default:0" json:"total_count"`
+	ProcessedCount   int64          `gorm:"not null;default:0" json:"processed_count"`
+	MatchedCount     int64          `gorm:"not null;default:0" json:"matched_count"`
+	UnresolvedCount  int64          `gorm:"not null;default:0" json:"unresolved_count"`
+	ConflictCount    int64          `gorm:"not null;default:0" json:"conflict_count"`
+	CursorSessionID  uint64         `gorm:"not null;default:0" json:"cursor_session_id"`
+	LastCursorID     uint64         `gorm:"not null;default:0" json:"last_cursor_id"`
+	ErrorMessage     string         `gorm:"type:text" json:"error_message"`
+	StartedAt        *time.Time     `json:"started_at,omitempty"`
+	FinishedAt       *time.Time     `json:"finished_at,omitempty"`
+	CreatedBy        uint           `gorm:"not null;default:0" json:"created_by"`
+	CreatedAt        time.Time      `gorm:"index:idx_contract_ajob_created" json:"created_at"`
+	UpdatedAt        time.Time      `json:"updated_at"`
+}
+
+func (AttributionJob) TableName() string { return config.TablePrefix + "attribution_jobs" }
+
+// 36. MigrationBackup M30b CSG 占位模块无损迁移与可逆回滚快照表 (contract_mig_backups, M30b ADR-24)
+type MigrationBackup struct {
+	ID            uint64         `gorm:"primaryKey;autoIncrement" json:"id"`
+	MigrationKey  string         `gorm:"size:64;not null;uniqueIndex:uk_contract_mig_key_entity,priority:1;index:idx_contract_mig_key" json:"migration_key"` // 如 "m30b_csg_placeholder_cleanup"
+	EntityType    string         `gorm:"size:48;not null;uniqueIndex:uk_contract_mig_key_entity,priority:2" json:"entity_type"`                             // Module | ModuleService | ModuleDependency | TrafficRecord
+	EntityID      uint64         `gorm:"not null;uniqueIndex:uk_contract_mig_key_entity,priority:3" json:"entity_id"`
+	SnapshotJSON  datatypes.JSON `gorm:"type:jsonb;not null" json:"snapshot_json"`
+	MigratedState string         `gorm:"size:24;not null;default:'APPLIED';check:chk_contract_mig_state,migrated_state IN ('APPLIED','ROLLED_BACK')" json:"migrated_state"`
+	AppliedAt     time.Time      `json:"applied_at"`
+	RolledBackAt  *time.Time     `json:"rolled_back_at,omitempty"`
+}
+
+func (MigrationBackup) TableName() string { return config.TablePrefix + "mig_backups" }
+```
+
+> **附：`BusinessTableNames()` 全量业务表注册（36 + 1 = 37 张）与治理配置/分区增量说明**：
+> - `BusinessTableNames()` 完整注册表清单（含删除重置逆序考量）：`contract_discovery_snapshots`（M30a 新增）、`contract_mig_backups`、`contract_attribution_jobs`、`contract_dependency_decisions`、`contract_process_dependencies`、`contract_service_placements`（M30b 新增），连同既有 30 核心表（`contract_subsystems`、`contract_functional_groups`、`contract_modules`、`contract_service_contracts`、`contract_module_services`、`contract_module_dependencies`、`contract_arch_process_groups`、`contract_arch_processes`、`contract_agents`、`contract_processes`、`contract_proto_schemas`、`contract_proto_operations`、`contract_recording_sessions`、`contract_traffic_records`、`contract_replay_tasks`、`contract_replay_items`、`contract_topology_layouts`、`contract_golden_suites`、`contract_golden_suite_items`、`contract_audit_reports`、`contract_git_repos`、`contract_git_proto_bundles`、`contract_proto_files`、`contract_proto_file_versions`、`contract_proto_doc_symbols`、`contract_check_rules`、`contract_vocabulary_terms`、`contract_check_reports`、`contract_mr_check_runs`、`contract_notifications`）及系统配置表 `contract_settings`。
 > 1. 工程初始化模板自带的 `ModuleSetting`（`contract_settings`）保留用于持久化管理员可调模块治理参数：
 >    - 既有运维参数：`traffic_retention_days`、`default_max_frames`、`default_max_duration_sec`、新挂载进程默认预挂策略 `default_probe_desired_state_shared='ARMED'` / `default_probe_desired_state_private='ARMED'`、以及 `F-27` CI 门禁机器凭据摘要 `ci_gate_token_sha256`（**仅存 SHA-256 哈希，永不存明文且不在通用配置列表中回显**）；
 >    - ADR-18 (`v1.2.0`) 新增可选协同配置键（均使用环境主密钥 **`CONTRACT_CRYPTO_KEY`** 执行 AES-256-GCM 加密，且放宽配置值长度上限，如 `outbound_trusted_cidrs` 支持 `4096` 字符）：
 >      - **出站信任白名单**：`outbound_trusted_cidrs`（逗号分隔的内网 CIDR / 精确 `host:port`，供 `SafeDialer` 在永久阻断云元数据与组播段后放行同内网 GitLab、内网 LLM 与**跨机独立部署的 `code-notifier` 机器**）；
 >      - **可选 LLM 建议**：`llm_enabled` (`true|false`)、`llm_base_url`、`llm_model`、`llm_timeout_ms`（默认 `3000`）、`llm_api_key_enc`（AES-256-GCM 密文）；
 >      - **跨机 `code-notifier` / SMTP 邮件外发**：`code_notifier_enabled` (`true|false`)、`code_notifier_url`（指向独立机器上的 `code-notifier`，服务端发起 `POST <url>/api/notify/email` 时校验非空 `markdown_content`、HTML 正文与解析后的真实收件邮箱）、`code_notifier_token_enc`（AES-256-GCM 密文）；`smtp_host`、`smtp_port`、`smtp_username`、`smtp_from`、`smtp_password_enc`（AES-256-GCM 密文）；
+>      - **ADR-24 (`v1.1.0`) 现网发现与双态演进特性开关（10 键，`M30a ~ M32`）**：`discovery.v2_enabled`（默认 `"false"` 灰度总开关）、`discovery.snapshot_retention_count`（默认 `"50"`）、`discovery.snapshot_pin_limit`（默认 `"20"`）、`discovery.enroll_batch_limit_shared`（默认 `"50"`）、`discovery.shared_enroll_enabled`（默认 `"true"` / 按角色授权 `SHARED` 观测纳管）、`discovery.reconcile_interval_sec`（默认 `"600"`）、`discovery.reconcile_stale_miss_count`（默认 `"3"`）、`discovery.reconcile_retired_days`（默认 `"7"`）、`discovery.gc_unclaimed_retired_days`（默认 `"30"`）与 `discovery.auto_downstreams`（默认 `"false"`，控制面自动并入已布防 `ACTIVE` TCP 订阅下游）；
 >      - **严密脱敏与审计红线**：`handlers/settings.go` 对所有 `*_enc` / `*_secret` / `*_sha256` 键在 `GET /api/admin/settings` 中强制过滤，仅返回布尔状态位（`ci_token_configured` / `llm_key_configured` / `code_notifier_token_configured` / `smtp_password_configured`），拒绝通过通用配置直改摘要键，且写入 `commonAudit` 前将所有密钥替换成 `***REDACTED***` 占位符；
 >    - 模板示例占位表 `contract_items` 在阶段四 M1 迁移时已彻底移除；
-> 2. `contract_traffic_records` 分区母表 DDL 由独立 SQL 执行（M20 起幂等追加 `dst_contract_id BIGINT` 及索引 `idx_contract_tr_dst_contract`）：
+> 2. `contract_traffic_records` 分区母表 DDL 由独立 SQL 执行（M20 起幂等追加 `dst_contract_id BIGINT`；M30b 起幂等追加 `src_arch_process_id BIGINT`、`dst_arch_process_id BIGINT`，并通过 **`CREATE INDEX ... ON ONLY` + 各分区 `CREATE INDEX CONCURRENTLY` + `ALTER INDEX ... ATTACH PARTITION`** 无锁在线建索引）：
 >    ```sql
 >    CREATE TABLE IF NOT EXISTS contract_traffic_records (
 >        id BIGSERIAL,
@@ -1272,6 +1447,8 @@ func (Notification) TableName() string { return config.TablePrefix + "notificati
 >        span_id VARCHAR(32) NOT NULL DEFAULT '',
 >        father_span_id VARCHAR(32) NOT NULL DEFAULT '',
 >        subsystem_id BIGINT,
+>        src_arch_process_id BIGINT,
+>        dst_arch_process_id BIGINT,
 >        src_module_id BIGINT,
 >        src_attribution_mode VARCHAR(32) NOT NULL DEFAULT '',
 >        src_candidate_module_ids JSONB,
@@ -1290,7 +1467,12 @@ func (Notification) TableName() string { return config.TablePrefix + "notificati
 >        PRIMARY KEY (id, created_at)
 >    ) PARTITION BY RANGE (created_at);
 >    ALTER TABLE contract_traffic_records ADD COLUMN IF NOT EXISTS dst_contract_id BIGINT;
+>    ALTER TABLE contract_traffic_records ADD COLUMN IF NOT EXISTS src_arch_process_id BIGINT;
+>    ALTER TABLE contract_traffic_records ADD COLUMN IF NOT EXISTS dst_arch_process_id BIGINT;
 >    CREATE INDEX IF NOT EXISTS idx_contract_tr_dst_contract ON contract_traffic_records (dst_contract_id);
+>    CREATE INDEX IF NOT EXISTS idx_contract_tr_src_arch_proc ON ONLY contract_traffic_records (src_arch_process_id);
+>    CREATE INDEX IF NOT EXISTS idx_contract_tr_dst_arch_proc ON ONLY contract_traffic_records (dst_arch_process_id);
+>    -- 各既有子分区并发创建后执行 ALTER INDEX ... ATTACH PARTITION 完成零写锁挂接
 >    ```
 > 3. 每个月度/每日子分区自动继承局部索引（含幂等创建的 `idx_contract_tr_session_req_ns (session_id, req_captured_at_ns, id)` 支撑发起序扫描与调用树构建）并支持单独附加 `CREATE INDEX IF NOT EXISTS idx_contract_tr_payload_gin ON contract_traffic_records USING GIN (payload_json jsonb_path_ops)`；
 > 4. **零 DDL 破坏的调用图轻量摘要约定 (`headers_json.meta`, [`ADR-12`](../05-adr/12-packet-causality-call-tree-and-sequence-ux-adr.md))**：慢轨落盘时在既有 `headers_json` 内写入可选 `meta: { peer_proc_name, biz_error, biz_status_summary, produced_entities, consumed_entities }`，使批次级事务树与实体生命线列表无需加载大体积 `payload_json` 或 `bytea` 列即可在 `< 30ms` 内完成聚合。
@@ -1342,10 +1524,20 @@ func (Notification) TableName() string { return config.TablePrefix + "notificati
 | `contract_check_rules` | `uk_contract_check_rule_code` | `UNIQUE (rule_code)` | **F-30 (ADR-18 / M24)**：静态规范规则编码全局唯一，支持内置规则幂等初始化 |
 | `contract_vocabulary_terms` | `uk_contract_vocab_term` | `UNIQUE (term)` | **F-30 (ADR-18 / M24)**：标准小写词根全局唯一，保证内置 `BUILTIN_SEED` 与词库写入 `ON CONFLICT DO NOTHING` 幂等 |
 | `contract_notifications` | `idx_contract_notif_user_read` | `BTREE (recipient_user_id, is_read, created_at DESC)` | **F-31 / M26 (ADR-18)**：支撑全站未读通知角标与用户分页收件箱毫秒级覆盖扫描 |
+| `contract_discovery_snapshots` | `idx_contract_disc_snap_agent_time` / `idx_contract_disc_snap_hash` / `chk_contract_disc_snap_trigger` | `BTREE (agent_id, csg_addr, captured_at DESC)`；`BTREE (agent_id, csg_addr, content_hash)`；`CHECK (trigger_mode IN ('MANUAL','SCHEDULED','AUTO','QUICK_RECORD'))` | **F-36 (ADR-24 / M30a)**：支撑时间轴分页、置顶跳过与同哈希去重，控制单 Agent 留存配额 (`retention=50`) |
+| `contract_arch_processes` | `idx_contract_arch_proc_fp` / `chk_contract_arch_proc_lifecycle` | `BTREE (identity_fingerprint, fingerprint_version)`；`CHECK (lifecycle IN ('CONFIRMED','PROVISIONAL'))` | **F-37 (ADR-24 / M30b)**：分层身份指纹去重与 `PRIVATE` `PROVISIONAL` 草稿源隔离 |
+| `contract_processes` | `idx_contract_proc_enroll_src` / `chk_contract_proc_enroll_src` / `chk_contract_proc_obs_role` | `BTREE (enroll_source)`；`CHECK (enroll_source IN ('MANUAL','DISCOVERY'))`；`CHECK (observed_role IN ('','SERVER','CLIENT','DUAL'))` | **F-37 (ADR-24 / M30b)**：区分布防源（手动 `ARMED` vs 发现 `DISARMED`）与进程主轴观测角色约束 |
+| `contract_module_services` | `idx_contract_mod_svc_unclaimed` / `chk_contract_mod_svc_lifecycle` | `BTREE (lifecycle_state, unclaimed_at) WHERE module_id IS NULL`；`CHECK (lifecycle_state IN ('ACTIVE','STALE','RETIRED'))`；I1 绝无 `arch_process_id` | **F-37 / F-38 (ADR-24 / M30b)**：支撑统一目录扫描与未认领服务退避 GC（已认领永不 GC） |
+| `contract_service_placements` | `uk_contract_sp_proc_svc_env` / `idx_contract_sp_state` / `chk_contract_sp_state` | `UNIQUE (arch_process_id, service_name, env_agent_id)`；`CHECK (lifecycle_state IN ('ACTIVE','STALE','RETIRED'))` | **F-37 (ADR-24 / M30b)**：同一环境进程上服务放置唯一，支撑 `PhysicalReconciler` 离线冻结衰减 |
+| `contract_process_dependencies` | `uk_contract_pdep_edge` / `chk_contract_pdep_env_scope` | `UNIQUE (src_arch_process_id, dst_arch_process_id, service_name, env_scope)`；`CHECK (env_scope IN ('SHARED','PRIVATE'))` | **F-37 / F-39 (ADR-24 / M30b)**：0 模块物理依赖拓扑去重，隔离 `PRIVATE`/`SHARED` |
+| `contract_dependency_decisions` | `uk_contract_ddec_proc_svc` / `chk_contract_ddec_type` | `UNIQUE (consumer_arch_process_id, service_id)`；`CHECK (decision IN ('APPROVE','IGNORE','VIOLATION'))` | **F-39 (ADR-24 / M32)**：收件箱人工依赖审批与持久豁免去重，防止重复推送 |
+| `contract_attribution_jobs` | `idx_contract_ajob_status` / `chk_contract_ajob_status` | `BTREE (status)`；`CHECK (status IN ('PENDING','RUNNING','COMPLETED','CANCELLED','FAILED'))` | **F-38 / F-39 (ADR-24 / M30b~M32)**：支撑可取消/可断点续跑的历史流量归因回填 |
+| `contract_mig_backups` | `uk_contract_mig_key_entity` / `chk_contract_mig_state` | `UNIQUE (migration_key, entity_type, entity_id)`；`CHECK (migrated_state IN ('APPLIED','ROLLED_BACK'))` | **F-37 (ADR-24 / M30b)**：确保存量占位假模块清理与全量回滚幂等可逆 |
+| `contract_traffic_records` | `idx_contract_tr_src_arch_proc` / `idx_contract_tr_dst_arch_proc` | 母表 `ON ONLY` + 既有子分区 `CREATE INDEX CONCURRENTLY` + `ATTACH PARTITION` | **F-38 (ADR-24 / M30b~M31)**：零写锁建立双端物理进程归因索引，加速阶段 1/2 检索 |
 
 ---
 
-## 5. 外键级联、排他租约与 `409 / 403` 业务拦截策略矩阵
+## 5. 外键级联、排他租约与 `409 / 403 / 422` 业务拦截策略矩阵
 
 为防止误删主数据导致历史流量悬空或多人并发串包，应用层前置校验与数据库外键策略执行双重守卫：
 
@@ -1353,18 +1545,18 @@ func (Notification) TableName() string { return config.TablePrefix + "notificati
 | :--- | :--- | :---: | :---: |
 | 删除 `Subsystem` | 存在 `FunctionalGroup` 或 `Module` 引用 | `409 Conflict` | `ON DELETE RESTRICT` |
 | 删除 `FunctionalGroup` | 存在子 `FunctionalGroup`（`parent_id`）或挂载的 `Module` | `409 Conflict` | `ON DELETE RESTRICT` |
-| 删除或修改 `Module`（含 `CONTRACT_LIB` 守卫） | 1. 存在已对外提供且已被其他 FM 依赖的 `ModuleService`，或仍装载于某 `ArchProcess`（`arch_process_id IS NOT NULL`）；<br>2. `CONTRACT_LIB` 库模块下仍存在已登记的 `ServiceContract` 时尝试删除或改回 `BUSINESS`；<br>3. `BUSINESS` 模块已绑定进程或存在 `PROVIDE/DEPEND` 时尝试改为 `CONTRACT_LIB`；<br>4. 尝试为 `CONTRACT_LIB` 绑定进程或创建运行期 `ModuleService` / `ModuleDependency` | `409 Conflict`<br>`400 Bad Request` | `ON DELETE RESTRICT`（`fk_contract_svc_contract_definer`）+ `chk_contract_modules_lib_no_proc` 数据库兜底 |
+| 删除或修改 `Module`（含 `CONTRACT_LIB` & `DeleteModuleTx` I6/I7） | 1. 存在已对外提供且已被其他 FM 依赖的 `ModuleService`（I6 校验存在 `contract_module_dependencies.service_id` 引用返 `409 DEPENDENCY_REFERENCED`），或仍装载于某 `ArchProcess`（`arch_process_id IS NOT NULL`）；<br>2. `DeleteModuleTx` 对有有效 `ServicePlacement` 的 `ModuleService` 按 I7 回退为 `module_id=NULL`（或同规范身份合并迁移 Placement，见 [`03-architecture-elements-and-topology.md` §7.1](../02-design/03-architecture-elements-and-topology.md)）；<br>3. `CONTRACT_LIB` 库模块下仍存在已登记 `ServiceContract` 时禁止删除/改回 `BUSINESS`；尝试为 `CONTRACT_LIB` 绑进程或建运行期契约返 `400` | `409 Conflict` (`DEPENDENCY_REFERENCED`)<br>`400 Bad Request` | `contract_module_services.module_id` 由 `CASCADE` 收紧为 **`ON DELETE RESTRICT`** + `fk_contract_svc_contract_definer` + `chk_contract_modules_lib_no_proc` 数据库兜底 |
 | 创建 / 删除 `ServiceContract` | 1. `definer_module_id` 非 `CONTRACT_LIB` 模块；<br>2. 创建时同名 `service_name` 已存在契约或独占 `ModuleService` 行；<br>3. 删除时该契约仍存在实现行（`contract_module_services.contract_id`）或分发依赖（`contract_module_dependencies.contract_id`） | `400 Bad Request`<br>`409 Conflict` | `pg_advisory_xact_lock(hashtext(service_name))` 串行化 + `uk_contract_svc_contract_name` + `ON DELETE RESTRICT` |
 | 创建 / 修改 `ModuleService` 或绑定模块至进程（**A-09 同名多实现进程互斥**） | 1. 独占或自定义运行期服务名已被占用，或指定多实现 `contract_id` 却未提供合法 `impl_key`，或同契约下 `impl_key` / `module_id` 重复；<br>2. **A-09 (`AssertContractImplProcessDisjoint`)**：新增/修改共享契约名实现（`is_custom_service_name = false`）或绑定进程时，同一 `contract_id` 下两个共享契约名的实现模块落在同一非空 `arch_process_id`（自定义唯一服务名实现豁免 A-09） | `400 Bad Request`<br>`409 Conflict` | 事务内持有契约咨询锁执行 `AssertContractImplProcessDisjoint`（返回冲突契约名、`impl_key` 与模块编码）+ 部分唯一索引兜底 |
 | 创建 `ModuleDependency`（含 `DISPATCH` 分发依赖） | 1. `service_id`、`contract_id`、`is_external=true` 未严格三选一；<br>2. 同一消费方对同一多实现契约同时声明 `DISPATCH` 分发依赖与具体实现依赖（语义重复） | `400 Bad Request`<br>`409 Conflict` | `chk_contract_dep_target_xor` + `uk_contract_dep_tuple` + `uk_contract_dep_consumer_contract` |
-| 删除 `ModuleService` | 该 Service 已被其他内部功能模块作为依赖引用 (`ModuleDependency`) | `409 Conflict` | 拦截强校验，需先移除消费方模块的契约绑定 |
+| 删除 / `Unclaim` `ModuleService` | 该 Service 已被其他内部功能模块作为依赖引用 (`ModuleDependency`) | `409 DEPENDENCY_REFERENCED` | `ServicePlacement` 存在时 `Unclaim` 回退 `module_id=NULL`（I7）；`ON DELETE RESTRICT` + 拦截强校验 |
 | 删除 `ArchProcessGroup` | 组下仍存在 `ArchProcess` 标准架构进程 | `409 Conflict` | `ON DELETE RESTRICT` |
-| 删除 `ArchProcess` | 已被任何宿主机 Agent 挂载实例化（`contract_processes` 存在引用）或被历史 `ReplayTask` 引用 | `409 Conflict` | `ON DELETE RESTRICT`（无引用时删除自动将 `Module.arch_process_id` 置 `NULL`） |
+| 删除 `ArchProcess` | 已被任何宿主机 Agent 挂载实例化（`contract_processes` 存在引用）、仍被 `ProcessDependency`（I8）或历史 `ReplayTask` 引用 | `409 Conflict` | `ON DELETE RESTRICT`（`contract_service_placements` 关联由生命周期/迁移处理，无引用时删除自动将 `Module.arch_process_id` 置 `NULL`） |
 | 同机重复挂载 `ArchProcess` 或端口冲突 | 同一台 `Agent`（无论 `SHARED` 或 `PRIVATE`）重复挂载同一 `arch_process_id`，或同机非零 `effective_listen_port` 冲突 | `409 Conflict` | `uk_contract_proc_agent_arch` / `uk_contract_proc_agent_port`（支持多套 `SHARED` 公共测试环境各自 `1:1` 挂载同一 `ArchProcess`） |
 | 配置 `Agent.FallbackAgentID` | `fallback_agent_id` 指向自身，或指向非 `SHARED` 域的 `PRIVATE` Agent | `400 Bad Request` | 应用层域隔离强校验 + 数据库外键 `ON DELETE SET NULL` |
 | 访问/查看 `PRIVATE` 资源 | 非 `owner_id` 本人且非 `contract_admin` 操作 `PRIVATE` Agent、挂载实例或 `PRIVATE` 录制素材 | `403 Forbidden` | 应用层 `owner_id` 鉴权过滤（管理员可穿透查看/审计） |
 | 操作/租用 `PRIVATE` 资源 | 非 `owner_id` 本人尝试修改挂载/探针或租用他人 `PRIVATE` Agent（即使是管理员也不得代为持锁录制） | `403 Forbidden` | 应用层排他租约与挂载写权限强校验 |
-| 并发租用 `Agent`（录制/重放） | 目标 `Agent`（无论 `SHARED` 还是 `PRIVATE`）存在未过期的活跃租约（`lease_type != '' && now < lease_expires_at`） | `409 Conflict` | 升序 `SELECT ... FOR UPDATE` 行锁 + Agent 内存 `SingleTenantGuard` |
+| 并发租用 `Agent`（录制/重放） | 目标 `Agent`（无论 `SHARED` 还是 `PRIVATE`）存在未过期的活跃租约（`lease_type != '' && now < lease_expires_at`） | `409 Conflict` / `409 LEASE_CONFLICT` | 升序 `SELECT ... FOR UPDATE` 行锁 + Agent 内存 `SingleTenantGuard` |
 | 删除 `Agent` | 仍纳管任何 `Process` 挂载实例或持有活跃排他租约（`lease_type != ''`） | `409 Conflict` | `ON DELETE RESTRICT`（被引用的 `fallback_agent_id` 自动 `SET NULL`） |
 | 删除/卸载 `Process` | 所属 Agent 当前持有涉及该进程的活跃排他租约（空闲态允许随时卸载，不受历史录制/重放阻碍） | `409 Conflict` | 流量母表逻辑解耦；`RecordingSession` 保存 `ProcessSnapshots` 快照，历史 `ReplayTask` 外键自动 `ON DELETE SET NULL`；Agent 在线时递增 `mounts_revision` 热卸载规则 |
 | 激活 / 批量激活 / 停用 `ProtoSchema` | 1. 与生效池其他描述集存在 `(service_name, operation)` 冲突或 `CompileTrialPool` 预编译破坏反向依赖闭包；<br>2. **F-26 (ADR-14)**：同名版本升级检出 `FATAL` 级 AST 破坏性变更且未携带管理员 `allow_breaking=true` + `breaking_reason` | `409 Conflict` | `pg_advisory_xact_lock` 事务咨询锁串行化 + `uk_contract_active_proto_op` 部分唯一索引兜底 + 强制逃生 `P1` 审计 |
@@ -1378,7 +1570,8 @@ func (Notification) TableName() string { return config.TablePrefix + "notificati
 | Git 仓/Bundle 配置、Sync、Webhook 与路径校验 (`contract_git_repos` / `contract_git_proto_bundles` / `contract_proto_files`) | 1. 优先匹配 `/api/webhooks/git-mr/:repoId` 并对 Webhook Header `X-Gitlab-Token` / `X-Hub-Signature-256` / `X-Gitea-Signature` 执行 `subtle.ConstantTimeCompare` 校验；<br>2. 出站 URL 解析命中云元数据或未列入 `outbound_trusted_cidrs` 的回环/私网（`SafeDialer` 拦截 SSRF）或 `proto_include_dirs` / `file_path` 含 `..` 路径穿越；<br>3. `GitProtoBundle.TargetSchemaName` 与既有 Bundle 冲突或正在运行全量同步并发争用 | `401 / 403`<br>`400 Bad Request`<br>`409 Conflict` | 使用 `CONTRACT_CRYPTO_KEY` AES-256-GCM 解密校验凭据；删除 `GitRepo` 级联 `CASCADE` 清理 `GitProtoBundle` / `ProtoFile` / `MRCheckRun`，并对已入池 `ProtoSchema.git_repo_id` / `source_bundle_id` 执行 `ON DELETE SET NULL` |
 | MR 门禁人工豁免 `POST /api/mr-check-runs/:id/override` | 1. 非 `contract_admin` 尝试覆盖豁免；<br>2. 当前状态非 `FAILED`、包含 `compile_passed=false` 语法编译错误或 `override_reason` 缺失 | `403 Forbidden`<br>`409 / 400` | `requireAdmin` + `override_reason` 必填 + 禁止豁免语法编译失败（仅可豁免 Breaking/规则冲突）+ 强制产生 `P1` 级高危审计并向 Git 平台回写豁免状态 |
 | 静态规则与通知收件箱 (`CheckRule` / `Notification`) | 1. 非 `contract_admin` 增删改 `CheckRule` 或 `VocabularyTerm`，或尝试删除 `is_builtin=true` 内置规则；<br>2. 普通用户读写他人 `Notification`（IDOR） | `403 Forbidden`<br>`409 Conflict` | `requireAdmin` + 内置规则仅允许关闭 `enabled=false` 或调规则正则，禁止物理删除；通知接口强制 `WHERE recipient_user_id = currentUserID` 过滤 |
-| CSG 自动发现蓝图导入与三模仿真 (`import-blueprint` / `PUB_STUB` / `MOCK_SERVER`) | 1. 非 `contract_admin` 调用 `POST /api/agents/:id/csg/import-blueprint`，或普通用户查看他人 `PRIVATE` Agent 的 `/csg/topology`；<br>2. `PUB_STUB` 模式下前置 `csgdlink.Sub(svcName)` 检测到同名服务已在线 (`> 0` 实例)；<br>3. `CLIENT_INJECT` 检测到现网目标服务仅发布了纯 `dophi_mesh://` 且无 TCP 监听端口（注：`MOCK_SERVER` 模式下已依据 `ADR-22 v2.0` 自动改写 `dophi_mesh:// -> tcp://` 放行，不再报 `422`） | `403 Forbidden`<br>`409 CSG_SERVICE_ALREADY_PUBLISHED`<br>`422 CSG_DATAPLANE_MESH_UNSUPPORTED` | `import-blueprint` 强制 `RequireAdmin` + 单事务幂等补齐 + `commonAudit`；`PUB_STUB` 拒接防污染同租户并引导切换 `MOCK_SERVER` 沙箱；`CLIENT_INJECT` 纯 `mesh` 显式报错引导切换 `MOCK_SERVER`；重放退出执行 5 出口清理 |
+| CSG 仿真测试策略与废弃蓝图入口 (`import-blueprint` / `PUB_STUB` / `MOCK_SERVER`) | 1. M30b 期 `POST /api/agents/:id/csg/import-blueprint` 委托 `Enroll`（M31 下线），普通用户查看他人 `PRIVATE` Agent 的 `/csg/topology` 返 `403`；<br>2. `PUB_STUB` 模式下前置 `csgdlink.Sub(svcName)` 检测到同名服务已在线 (`> 0` 实例)；<br>3. `CLIENT_INJECT` 检测到现网目标服务仅发布了纯 `dophi_mesh://` 且无 TCP 监听端口（注：`MOCK_SERVER` 模式下依据 `ADR-22 v2.0` 自动改写 `dophi_mesh:// -> tcp://` 放行，不再报 `422`） | `403 Forbidden`<br>`409 CSG_SERVICE_ALREADY_PUBLISHED`<br>`422 CSG_DATAPLANE_MESH_UNSUPPORTED` | `import-blueprint` 强制 `RequireAdmin` + `commonAudit`；`PUB_STUB` 拒接防污染同租户并引导切换 `MOCK_SERVER` 沙箱；`CLIENT_INJECT` 纯 `mesh` 显式报错引导切换 `MOCK_SERVER`；重放退出执行 5 出口清理 |
+| 现网发现、`Enroll` 纳管、单宿主认领与直录 (`Discovery` / `Claim` / `QuickRecord`, `ADR-24`) | 1. `POST /api/discovery/enroll` / `quick-record` 命中 `>= 2` 候选进程身份、P3 低置信未传 `confirm_low_confidence=true` 或 `SHARED` 单批 `> 50`；<br>2. 删除置顶 `DiscoverySnapshot` (`is_pinned == true`) 或置顶数达上限 `20`；<br>3. `POST /api/arch/services/claim` 非目标模块/子系统负责人且非管理员（`403`），或违反 I4 权威 placement 与模块归属（`M.arch_process_id ∈ {NULL, P}`）约束 | `422 IDENTITY_AMBIGUOUS`<br>`422 LOW_CONFIDENCE_CONFIRM_REQUIRED`<br>`422 ENROLL_BATCH_LIMIT`<br>`422 CLAIM_PLACEMENT_MISMATCH`<br>`409 Conflict` / `403 Forbidden` | 事务内锁定 Agent / 目标模块行 + `ScopeEnrollGuard` / `ModuleOwnerOrAdminGuard` + I4 强校验，绝不自动猜测绑定身份或修改 `ExpectedArmedDigest` |
 
 ---
 

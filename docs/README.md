@@ -17,18 +17,18 @@ docs/
 │   ├── 04-tdd-implementation-prompt.md            # 阶段四：TDD 红-绿-重构编码实施与全链路交付验证提示词
 │   └── 05-e2e-browser-test-and-ux-review-goal-prompt.md # 阶段四/验收：微前端全链路端到端黑盒测试与产品交互体验走查 Goal 提示词
 ├── 01-features/     # 特性与需求边界：特性清单矩阵 (Feature Matrix)、P0~P2 优先级与 Non-Goals
-│   └── 01-feature-matrix.md                       # 阶段一：需求范围、核心特性矩阵 (F-01~F-35 含子特性) 与验收场景 (SC-01~SC-18)
+│   └── 01-feature-matrix.md                       # 阶段一：需求范围、核心特性矩阵 (F-01~F-39 含子特性) 与验收场景 (SC-01~SC-22)
 ├── 02-design/       # 系统技术架构 (SDD)：双子系统边界、数据面引擎、业务拓扑与数据模型
-│   ├── 01-system-architecture.md                  # 【总览篇】系统总体架构、双模拓扑、主从信道与全链路时序（含 pkg/transport 与 Mesh➔TCP 闭环）
-│   ├── 02-data-plane-and-cros-rpc-engine.md       # 【数据面篇】CROS RPC 协议栈、Agent eBPF 采集、纯 Go 可插拔传输驱动 (`pkg/transport` / `builtin-drt-uprobe`)、自愈重放引擎与 CSG 协议/监控/沙箱底座 (`pkg/{csgdlink,rpcmon,csgmock}`)
-│   ├── 03-architecture-elements-and-topology.md   # 【业务篇】架构元素建模 (SSOT)、64B 服务名映射、CSG 三态对账蓝图导入与拓扑验证
-│   ├── 04-control-plane-and-web-console.md        # 【管理面篇】Server 控制面、微前端控制台、CSG 拓扑/三模策略台、Protobuf 编译文档与 MR 门禁
-│   ├── 05-database-schema.md                      # 【数据模型篇】30 张核心 contract_* 业务表 + contract_settings 物理表 GORM 字典、CSG 增量字段、分区表与索引设计
+│   ├── 01-system-architecture.md                  # 【总览篇】系统总体架构、双模拓扑、纳管/布防分离与可见性隔离、主从信道与全链路时序 (v1.12.0)
+│   ├── 02-data-plane-and-cros-rpc-engine.md       # 【数据面篇】CROS RPC 协议栈、Agent eBPF 采集、纯 Go 可插拔传输驱动 (`pkg/transport` / `builtin-drt-uprobe` / `target_pids[]`)、自愈重放与 CSG 底座 (v1.9.0)
+│   ├── 03-architecture-elements-and-topology.md   # 【业务篇】架构元素建模 (SSOT)、双态服务身份、L1 双粒度放置/依赖、分层身份指纹、PhysicalReconciler、两阶段归因、统一目录五态雷达与架构收件箱 (v1.11.0)
+│   ├── 04-control-plane-and-web-console.md        # 【管理面篇】Server 控制面、5 组 14 项菜单、`/discovery` 现网发现工作台、直录 Saga、假模块迁移、架构收件箱与 RBAC 审计 (v1.15.0)
+│   ├── 05-database-schema.md                      # 【数据模型篇】36 张核心 contract_* 业务表 + contract_settings 物理表 GORM 字典（含 ADR-24 新增 6 表）、分区并发索引与迁移顺序 (v1.11.0)
 │   └── 06-agent-observability-and-self-healing-design.md # 【运维可观测与自愈篇】Agent 探针特权感知、体检诊断与全链路闭环自愈设计
 ├── 03-api/          # 接口与数据契约：RESTful / SSE API 签名、主从信道契约、RBAC 权限与审计规范
-│   └── 01-http-api-contract.md                    # 【API 契约】控制面 REST/SSE 字典（含 CSG 自动发现/蓝图导入、活体文档、只读源码与 MR 门禁）、主从 HTTP/WS (`0x01~0x08`, `TransportProto`, `TransportDrivers`) 与 RBAC 守卫
-├── 04-tasks/        # TDD 实施规划与验收：Milestone 1~29 依赖拓扑、任务作战卡与自动化验收标准 (AC)
-│   ├── 01-roadmap.md                              # 【工程路线图】模板清理策略、M1~M29 DAG 拓扑、F/SC 覆盖矩阵与安全质量门禁
+│   └── 01-http-api-contract.md                    # 【API 契约】控制面 REST/SSE 字典（含 ADR-24 现网发现/快照/纳管/直录/目录/收件箱 21 项接口）、主从 HTTP/WS (`target_pids[]`, `0x01~0x08`) 与 RBAC 守卫 (v1.11.0)
+├── 04-tasks/        # TDD 实施规划与验收：Milestone 1~32 依赖拓扑、任务作战卡与自动化验收标准 (AC)
+│   ├── 01-roadmap.md                              # 【工程路线图】模板清理策略、M1~M32 DAG 拓扑、F-01~F-39 / SC-01~SC-22 覆盖矩阵与安全质量门禁 (v1.20.0)
 │   ├── 02-m1-crosrpc-and-domain-models.md         # 【M1 作战卡】协议栈 (pkg/crosrpc)、信封协议与 13 张表/分区管理器
 │   ├── 03-m2-arch-proto-and-agent-control.md      # 【M2 作战卡】三级架构元素、.pb 动态编解码与公私域 Agent 排他租约管控
 │   ├── 04-m3-agent-dataplane-ebpf-and-replay.md   # 【M3 作战卡】数据面 Agent 信道、cilium/ebpf 采集与零 .pb 二进制自愈重放
@@ -57,7 +57,11 @@ docs/
 │   ├── 27-m26-mr-gates-notifications-and-compliance-dashboard.md     # 【M26 作战卡 | ✅ 已交付】MR 四合一门禁 (FF 去重/原位评论/Override P1)、SSE 按 userID 定向、持久化通知 (LAN code-notifier/SMTP) 与 F-24 合标卡片
 │   ├── 28-m27-proto-ia-unbundling-and-four-workbenches.md            # 【M27 作战卡 | ✅ 已交付】Proto 契约控制台 IA 拆解：5 组 13 项菜单、四工作台正交拆分与无损深链兼容 (ADR-19)
 │   ├── 29-m28-csg-service-discovery-and-multi-mode-simulation.md     # 【M28 作战卡 | ✅ 已交付】CSG 双层自动发现 (纯 Go CrosTCP/CrosMesh)、蓝图一键导入、64B 服务名映射与三模仿真闭环 (ADR-21 v2.2.0)
-│   └── 30-m29-pluggable-transport-and-mesh-uprobe-capture.md         # 【M29 作战卡 | ✅ 已交付】纯 Go 可插拔传输驱动 (pkg/transport)、builtin-drt-uprobe 零侵入 Mesh 采集与 Mesh➔TCP 仿真重放闭环 (ADR-22 v2.0.0 & ADR-23 v1.1.0)
+│   ├── 30-m29-pluggable-transport-and-mesh-uprobe-capture.md         # 【M29 作战卡 | ✅ 已交付】纯 Go 可插拔传输驱动 (pkg/transport)、builtin-drt-uprobe 零侵入 Mesh 采集与 Mesh➔TCP 仿真重放闭环 (ADR-22 v2.0.0 & ADR-23 v1.1.0)
+│   ├── 31-m30a-discovery-workbench-and-snapshot-diff.md              # 【M30a 作战卡 | 📋 待实施】只读破冰：/discovery 进程主轴工作台、实时缓存/离线回退与持久化快照双模 Diff (ADR-24)
+│   ├── 32-m30b-physical-logical-decoupling-and-migration.md          # 【M30b 作战卡 | 📋 待实施】物理/逻辑双态解耦：L1 双粒度 Schema、Enroll/Arm 分离、Reconciler、无模块物理拓扑与假模块迁移 (ADR-24)
+│   ├── 33-m31-quick-record-two-stage-attribution-and-catalog-radar.md # 【M31 作战卡 | 📋 待实施】倍增层：target_pids[]、一键直录 Saga、两阶段归因 Stage 1 与统一契约目录五态雷达 (ADR-24)
+│   └── 34-m32-architecture-inbox-dependency-synthesis-and-mr-impact.md # 【M32 作战卡 | 📋 待实施】护城河层：架构收件箱 (1:N 拆分/多宿主裁决)、依赖反向审批、归因回补与 MR 权威影响面 (ADR-24)
 ├── 05-adr/          # 架构决策记录 (ADR)：重大技术选型与权衡记录 (Architecture Decision Records)
 │   ├── 01-microfrontend-and-table-prefix-isolation.md                  # ADR-01：微前端集成、共享库表前缀隔离与 TDD 测试策略
 │   ├── 02-ebpf-hook-and-dual-subsystem-adr.md                          # ADR-02：eBPF 入站旁路钩子、Cookie 原目的还原与无 Schema 数据面解耦
