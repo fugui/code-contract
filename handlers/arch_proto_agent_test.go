@@ -215,6 +215,15 @@ func RegisterRoutesForTest(r *gin.Engine) {
 		protected.GET("/arch/services/available", handlers.ListAvailableServices)
 		protected.GET("/arch/proto-services/claimable", handlers.ListClaimableProtoServices)
 
+		// M32 架构收件箱、认领/拆分/取消认领、逻辑依赖反向审批与归因回补作业
+		protected.GET("/arch/inbox", handlers.GetArchInbox)
+		protected.POST("/arch/services/claim", handlers.ClaimArchServices)
+		protected.POST("/arch/services/split-multi-impl", requireAdmin, handlers.SplitMultiImplServices)
+		protected.POST("/arch/services/unclaim", handlers.UnclaimArchService)
+		protected.POST("/arch/dependency-suggestions/decide", requireAdmin, handlers.DecideArchDependencySuggestion)
+		protected.GET("/attribution-jobs/:id", handlers.GetAttributionJobHandler)
+		protected.POST("/attribution-jobs/:id/cancel", handlers.CancelAttributionJobHandler)
+
 		// 4.0 多实现服务契约域 (ADR-16, M20)
 		protected.GET("/arch/service-contracts", handlers.ListServiceContracts)
 		protected.GET("/arch/service-contracts/:id", handlers.GetServiceContract)

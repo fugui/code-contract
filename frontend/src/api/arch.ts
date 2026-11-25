@@ -18,6 +18,15 @@ import type {
   AutoPinnedOverride,
   ServiceContract,
   ModuleKind,
+  ArchInboxQuery,
+  ArchInboxResponseDTO,
+  ClaimServiceItemInput,
+  ClaimArchServicesResp,
+  SplitMultiImplReq,
+  UnclaimArchServiceResp,
+  DecideDependencySuggestionReq,
+  DecideDependencySuggestionResp,
+  AttributionJobDTO,
 } from '../types';
 import type {
   TopologyGraphDTO,
@@ -667,3 +676,60 @@ export async function deletePersonalTopologyLayout(
   );
 }
 
+
+// ---------------------------------------------------------------------------
+// M32 架构收件箱：未认领/多宿主/放置漂移、依赖建议裁决与归因回补作业
+// ---------------------------------------------------------------------------
+
+export async function getArchInbox(params?: ArchInboxQuery) {
+  const query = new URLSearchParams();
+  if (params?.kind) query.set('kind', params.kind);
+  if (params?.arch_process_id) query.set('arch_process_id', String(params.arch_process_id));
+  if (params?.search) query.set('search', params.search);
+  if (params?.page) query.set('page', String(params.page));
+  if (params?.page_size) query.set('page_size', String(params.page_size));
+  const qs = query.toString();
+  return apiRequest<ArchInboxResponseDTO>(`/arch/inbox${qs ? `?${qs}` : ''}`);
+}
+
+export async function claimArchServices(items: ClaimServiceItemInput[]) {
+  return apiRequest<ClaimArchServicesResp>('/arch/services/claim', {
+    method: 'POST',
+    body: JSON.stringify({ items }),
+  });
+}
+
+export async function splitMultiImpl(body: SplitMultiImplReq) {
+  return apiRequest<{
+    contract: ServiceContract;
+    implementations: ModuleService[];
+    attribution_job_id?: number;
+  }>('/arch/services/split-multi-impl', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function unclaimArchService(serviceId: number) {
+  return apiRequest<UnclaimArchServiceResp>('/arch/services/unclaim', {
+    method: 'POST',
+    body: JSON.stringify({ service_id: serviceId }),
+  });
+}
+
+export async function decideDependencySuggestion(body: DecideDependencySuggestionReq) {
+  return apiRequest<DecideDependencySuggestionResp>('/arch/dependency-suggestions/decide', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function getAttributionJob(id: number) {
+  return apiRequest<AttributionJobDTO>(`/attribution-jobs/${id}`);
+}
+
+export async function cancelAttributionJob(id: number) {
+  return apiRequest<AttributionJobDTO | { message?: string }>(`/attribution-jobs/${id}/cancel`, {
+    method: 'POST',
+  });
+}

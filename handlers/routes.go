@@ -105,6 +105,15 @@ func RegisterAPIRoutes(r *gin.Engine) {
 		protected.GET("/arch/services/available", ListAvailableServices)
 		protected.GET("/arch/proto-services/claimable", ListClaimableProtoServices)
 
+		// 4.0.1 M32 架构收件箱、认领/拆分/取消认领、逻辑依赖反向审批与归因回补作业 (ADR-24, F-39)
+		protected.GET("/arch/inbox", GetArchInbox)
+		protected.POST("/arch/services/claim", ClaimArchServices)
+		protected.POST("/arch/services/split-multi-impl", requireAdmin, SplitMultiImplServices)
+		protected.POST("/arch/services/unclaim", UnclaimArchService)
+		protected.POST("/arch/dependency-suggestions/decide", requireAdmin, DecideArchDependencySuggestion)
+		protected.GET("/attribution-jobs/:id", GetAttributionJobHandler)
+		protected.POST("/attribution-jobs/:id/cancel", CancelAttributionJobHandler)
+
 		// 4.0 多实现服务契约域 (ADR-16, M20)
 		protected.GET("/arch/service-contracts", ListServiceContracts)
 		protected.GET("/arch/service-contracts/:id", GetServiceContract)

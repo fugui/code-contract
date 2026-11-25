@@ -1,6 +1,7 @@
 export * from './types/arch';
 export * from './types/agent';
 export * from './types/catalog';
+export * from './types/inbox';
 export * from './types/discovery';
 export * from './types/schema';
 export * from './types/schema_tree';

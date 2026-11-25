@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Layers, Server } from 'lucide-react';
+import { Inbox, Layers, Server } from 'lucide-react';
 import { Drawer } from '@code/common';
 import { useToast } from '../../utils/toast';
 import { useModuleUser } from '../../context/ModuleUserContext';
@@ -22,6 +22,14 @@ import { SubsystemGroupTreePanel } from './SubsystemGroupTreePanel';
 import { ModuleContractDetailPane } from './ModuleContractDetailPane';
 import { ArchProcessTreePanel } from './ArchProcessTreePanel';
 import { ArchProcessDetailPane } from './ArchProcessDetailPane';
+import { DiscoveryInboxPane } from './DiscoveryInboxPane';
+import { InboxCountBadge } from './DiscoveryInboxParts';
+
+function parseArchTreeViewParam(raw: string | null): 'logical' | 'physical' | 'inbox' {
+  if (raw === 'physical') return 'physical';
+  if (raw === 'inbox') return 'inbox';
+  return 'logical';
+}
 
 function findGroupInTree(
   nodes: FunctionalGroupTreeNode[],
@@ -107,9 +115,10 @@ export const ArchitectureWorkbenchPage: React.FC = () => {
     module_kind: 'BUSINESS',
     layer_level: '',
   });
-  // 视图模式: 逻辑架构 vs 物理进程 (URL 参数 ?tree=logical|physical)
-  const initialTree = searchParams.get('tree') === 'physical' ? 'physical' : 'logical';
-  const [treeView, setTreeView] = useState<'logical' | 'physical'>(initialTree);
+  // 视图模式: 逻辑架构 vs 物理进程 vs 架构收件箱 (URL 参数 ?tree=logical|physical|inbox)
+  const initialTree = parseArchTreeViewParam(searchParams.get('tree'));
+  const [treeView, setTreeView] = useState<'logical' | 'physical' | 'inbox'>(initialTree);
+  const [inboxPendingCount, setInboxPendingCount] = useState<number>(0);
 
   // 物理进程蓝图数据状态
   const urlProcessId = searchParams.get('process_id') || '';
@@ -226,7 +235,7 @@ export const ArchitectureWorkbenchPage: React.FC = () => {
     const subId = searchParams.get('subsystem_id') || '';
     const grpId = searchParams.get('group_id') || '';
     const modId = searchParams.get('module_id') || '';
-    const tree = searchParams.get('tree') === 'physical' ? 'physical' : 'logical';
+    const tree = parseArchTreeViewParam(searchParams.get('tree'));
     const procId = searchParams.get('process_id') || '';
 
     setTreeView((prev) => (prev !== tree ? tree : prev));
@@ -286,6 +295,23 @@ export const ArchitectureWorkbenchPage: React.FC = () => {
   useEffect(() => {
     void loadProcesses();
   }, [loadProcesses]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void archApi
+      .getArchInbox({ page: 1, page_size: 15 })
+      .then((res) => {
+        if (!cancelled) {
+          setInboxPendingCount(res.summary.total_pending);
+        }
+      })
+      .catch(() => {
+        // 静默容错，避免影响主架构工作台初始化
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const loadSubsystemTree = useCallback(
     async (subsystemId: string) => {
@@ -943,20 +969,45 @@ export const ArchitectureWorkbenchPage: React.FC = () => {
             <Server size={14} style={{ marginRight: 6, verticalAlign: 'text-bottom' }} />
             物理架构
           </button>
+          <button
+            type="button"
+            className={`code-arch-segmented__item ${treeView === 'inbox' ? 'code-arch-segmented__item--active' : ''}`}
+            onClick={() => {
+              setTreeView('inbox');
+              updateParams({ tree: 'inbox' });
+            }}
+            data-testid="toggle-tree-inbox"
+          >
+            <Inbox size={14} style={{ marginRight: 6, verticalAlign: 'text-bottom' }} />
+            架构收件箱
+            {inboxPendingCount > 0 && <InboxCountBadge count={inboxPendingCount} />}
+          </button>
         </div>
 
         <div className="code-arch-toolbar__divider" style={{ height: 20 }} />
 
         <span className="code-workbench-subtitle" style={{ fontSize: '0.8125rem', color: 'var(--color-text-secondary)' }}>
-          {treeView === 'physical'
+          {treeView === 'inbox'
+            ? '汇总权威 SHARED 环境未认领服务、多宿主拆分、放置漂移与逻辑依赖反向审批'
+            : treeView === 'physical'
             ? '维护标准物理进程、默认端口、特征命令行与多环境 Agent 探针挂载血缘'
             : '维护子系统、功能组与模块契约 (PROVIDE / DEPEND)'}
         </span>
       </div>
 
-      {/* 视图主体：纯双栏布局（根据 treeView 切换） */}
+      {/* 视图主体：纯双栏布局或架构收件箱（根据 treeView 切换） */}
       <div className="code-workbench-body">
-        {treeView === 'physical' ? (
+        {treeView === 'inbox' ? (
+          <DiscoveryInboxPane
+            isAdmin={isAdmin}
+            modules={subsystemModules}
+            onPendingCountChange={setInboxPendingCount}
+            onGovernanceChanged={() => {
+              void loadSubsystemModules();
+              void loadSubsystems();
+            }}
+          />
+        ) : treeView === 'physical' ? (
           <div className="code-arch-split-layout">
             <ArchProcessTreePanel
               panelWidth={treePanelWidth}

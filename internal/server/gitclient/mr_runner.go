@@ -382,9 +382,10 @@ func (r *MRGateRunner) ExecuteCheckRun(ctx context.Context, runID uint64, patchF
 		}
 	}
 
-	// Step 4: F-26 破坏性变更检测与 BASE_LIB 反向 import 穿透影响面分析
+	// Step 4: F-26 破坏性变更检测与 BASE_LIB 反向 import 穿透影响面分析 + ADR-18/M32 权威 SHARED 现网影响面
 	var breakingViolations []decoder.BreakingRuleViolation
 	var affectedDependents []decoder.AffectedDependent
+	var liveImpacts []MRLiveImpactItem
 	if compilePassed && compiled != nil {
 		oldOwnFiles := r.loadBaselineDescriptorFiles(ctx, &bundle)
 		if len(oldOwnFiles) > 0 {
@@ -396,6 +397,7 @@ func (r *MRGateRunner) ExecuteCheckRun(ctx context.Context, runID uint64, patchF
 			if len(affectedDependents) == 0 && bundle.Category == models.ProtoCategoryBaseLib {
 				affectedDependents = r.resolveBaseLibDependentsFromProtoFiles(ctx, changedFiles)
 			}
+			liveImpacts = r.QueryAuthoritativeLiveImpact(ctx, breakingViolations)
 		} else if bundle.Category == models.ProtoCategoryBaseLib && len(changedFiles) > 0 {
 			affectedDependents = r.resolveBaseLibDependentsFromProtoFiles(ctx, changedFiles)
 		}
@@ -430,7 +432,7 @@ func (r *MRGateRunner) ExecuteCheckRun(ctx context.Context, runID uint64, patchF
 
 	// Step 6: 远端 Git MR 原位评论 Upsert (remote_comment_id) + Commit Status 回写
 	commentBody := buildMRBotCommentMarkdown(&run, &bundle, finalStatus, compilePassed, compileErrorText,
-		lintErrCnt, lintWarnCnt, dupGroupCnt, breakingViolations, affectedDependents, checkReport)
+		lintErrCnt, lintWarnCnt, dupGroupCnt, breakingViolations, affectedDependents, liveImpacts, checkReport)
 	remoteCommentID := r.upsertRemoteMRComment(ctx, &repo, run.MRIID, run.RemoteCommentID, commentBody)
 	if remoteCommentID == "" {
 		remoteCommentID = run.RemoteCommentID
@@ -613,7 +615,7 @@ func (r *MRGateRunner) failRunWithCompileError(
 	durationMs := int(completedAt.Sub(startedAt).Milliseconds())
 	changedBytes, _ := json.Marshal(nonNilStrings(changedFiles))
 
-	commentBody := buildMRBotCommentMarkdown(run, bundle, models.MRCheckStatusFailed, false, errMsg, 0, 0, 0, nil, nil, nil)
+	commentBody := buildMRBotCommentMarkdown(run, bundle, models.MRCheckStatusFailed, false, errMsg, 0, 0, 0, nil, nil, nil, nil)
 	remoteCommentID := r.upsertRemoteMRComment(ctx, repo, run.MRIID, run.RemoteCommentID, commentBody)
 	if remoteCommentID == "" {
 		remoteCommentID = run.RemoteCommentID
@@ -1283,6 +1285,98 @@ func (r *MRGateRunner) enrichMissingPatchContents(
 	return out
 }
 
+// MRLiveImpactItem 权威 SHARED 环境现网物理发布与订阅影响面摘要 (ADR-18 / ADR-24 M32)
+type MRLiveImpactItem struct {
+	ServiceName            string `json:"service_name"`
+	EnvCount               int    `json:"env_count"`
+	PublisherProcessCount  int    `json:"publisher_process_count"`
+	SubscriberProcessCount int    `json:"subscriber_process_count"`
+}
+
+// QueryAuthoritativeLiveImpact 仅查询权威 SHARED + CONFIRMED 环境的 ACTIVE 放置与非 RETIRED 订阅边，严禁统计或披露 PRIVATE 环境
+func (r *MRGateRunner) QueryAuthoritativeLiveImpact(ctx context.Context, breaking []decoder.BreakingRuleViolation) []MRLiveImpactItem {
+	if r == nil || r.db == nil || len(breaking) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	pbServices := make([]string, 0, len(breaking))
+	for _, b := range breaking {
+		name := strings.TrimSpace(b.ServiceName)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; !ok {
+			seen[name] = struct{}{}
+			pbServices = append(pbServices, name)
+		}
+	}
+	if len(pbServices) == 0 {
+		return nil
+	}
+	sort.Strings(pbServices)
+
+	out := make([]MRLiveImpactItem, 0, len(pbServices))
+	for _, pbSvc := range pbServices {
+		var contractIDs []uint64
+		_ = r.db.WithContext(ctx).Model(&models.ServiceContract{}).
+			Where("service_name = ?", pbSvc).
+			Pluck("id", &contractIDs).Error
+
+		var matchedSvcs []models.ModuleService
+		svcQ := r.db.WithContext(ctx).Model(&models.ModuleService{}).Select("id, service_name")
+		if len(contractIDs) > 0 {
+			svcQ = svcQ.Where("proto_service_name = ? OR service_name = ? OR contract_id IN ?", pbSvc, pbSvc, contractIDs)
+		} else {
+			svcQ = svcQ.Where("proto_service_name = ? OR service_name = ?", pbSvc, pbSvc)
+		}
+		_ = svcQ.Find(&matchedSvcs).Error
+
+		item := MRLiveImpactItem{ServiceName: pbSvc}
+		if len(matchedSvcs) > 0 {
+			svcIDs := make([]uint64, 0, len(matchedSvcs))
+			svcNames := make([]string, 0, len(matchedSvcs)+1)
+			svcNames = append(svcNames, pbSvc)
+			for _, ms := range matchedSvcs {
+				svcIDs = append(svcIDs, ms.ID)
+				if ms.ServiceName != "" {
+					svcNames = append(svcNames, ms.ServiceName)
+				}
+			}
+
+			var plAgg struct {
+				EnvCount  int `gorm:"column:env_count"`
+				ProcCount int `gorm:"column:proc_count"`
+			}
+			_ = r.db.WithContext(ctx).
+				Table("contract_service_placements sp").
+				Select("COUNT(DISTINCT sp.agent_id) AS env_count, COUNT(DISTINCT sp.process_id) AS proc_count").
+				Joins("JOIN contract_agents a ON a.id = sp.agent_id").
+				Joins("JOIN contract_arch_processes ap ON ap.id = sp.arch_process_id").
+				Where("sp.module_service_id IN ? AND sp.status = ? AND a.scope = ? AND ap.lifecycle = ?",
+					svcIDs, models.PlacementStatusActive, models.ScopeShared, models.ArchProcLifecycleConfirmed).
+				Scan(&plAgg).Error
+
+			var subAgg struct {
+				SubCount int `gorm:"column:sub_count"`
+			}
+			_ = r.db.WithContext(ctx).
+				Table("contract_process_dependencies pd").
+				Select("COUNT(DISTINCT pd.consumer_process_id) AS sub_count").
+				Joins("JOIN contract_agents a ON a.id = pd.agent_id").
+				Joins("JOIN contract_arch_processes ap ON ap.id = pd.consumer_arch_process_id").
+				Where("(pd.service_id IN ? OR pd.service_name IN ?) AND pd.status <> ? AND a.scope = ? AND ap.lifecycle = ?",
+					svcIDs, svcNames, models.PlacementStatusRetired, models.ScopeShared, models.ArchProcLifecycleConfirmed).
+				Scan(&subAgg).Error
+
+			item.EnvCount = plAgg.EnvCount
+			item.PublisherProcessCount = plAgg.ProcCount
+			item.SubscriberProcessCount = subAgg.SubCount
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
 func buildMRBotCommentMarkdown(
 	run *models.MRCheckRun,
 	bundle *models.GitProtoBundle,
@@ -1292,6 +1386,7 @@ func buildMRBotCommentMarkdown(
 	lintErrors, lintWarnings, dupGroups int,
 	breaking []decoder.BreakingRuleViolation,
 	affected []decoder.AffectedDependent,
+	liveImpacts []MRLiveImpactItem,
 	report *models.CheckReport,
 ) string {
 	var b strings.Builder
@@ -1335,6 +1430,14 @@ func buildMRBotCommentMarkdown(
 		for _, m := range affected {
 			b.WriteString(fmt.Sprintf("- `%s` (%s) — 架构进程: `%s`, 负责人: **%s**\n",
 				m.ModuleCode, m.ModuleName, m.ArchProcessCode, m.OwnerName))
+		}
+		b.WriteString("\n")
+	}
+	if len(liveImpacts) > 0 {
+		b.WriteString("#### 🌐 现网影响面（权威 `SHARED` 环境）\n")
+		for _, imp := range liveImpacts {
+			b.WriteString(fmt.Sprintf("- `%s`：该服务当前在 %d 个环境由 %d 个物理进程发布、被 %d 个消费方进程订阅\n",
+				imp.ServiceName, imp.EnvCount, imp.PublisherProcessCount, imp.SubscriberProcessCount))
 		}
 		b.WriteString("\n")
 	}
