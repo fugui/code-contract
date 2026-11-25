@@ -885,7 +885,7 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
 
           {activeTab === 'services' ? (
             <>
-              {/* 服务列表多维过滤栏 */}
+              {/* 服务列表单行过滤栏 */}
               <div data-testid="csg-services-filter-bar" className="csg-filter-bar">
                 <div className="csg-filter-row">
                   <div className="csg-search-box">
@@ -897,7 +897,7 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
                         setServiceSearch(e.target.value);
                         setServicePage(1);
                       }}
-                      placeholder="搜索 CSG 服务名、Proto、宿主进程、PID 或地址..."
+                      placeholder="搜索服务名、Proto、进程、PID 或地址..."
                       data-testid="csg-service-search-input"
                       className="csg-search-input"
                     />
@@ -923,10 +923,10 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
                       setServicePage(1);
                     }}
                     data-testid="csg-service-proc-filter"
-                    className="csg-filter-select"
+                    className="csg-filter-select csg-filter-select--proc"
                     aria-label="按宿主进程过滤"
                   >
-                    <option value="ALL">全部宿主进程 ({services.length})</option>
+                    <option value="ALL">全部进程 ({services.length})</option>
                     {serviceProcOptions.map((opt) => (
                       <option key={opt.value} value={opt.value}>
                         {opt.label} ({opt.count})
@@ -941,7 +941,7 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
                       setServicePage(1);
                     }}
                     data-testid="csg-service-transport-filter"
-                    className="csg-filter-select"
+                    className="csg-filter-select csg-filter-select--transport"
                     aria-label="按传输协议过滤"
                   >
                     <option value="ALL">全部协议</option>
@@ -951,9 +951,7 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
                       </option>
                     ))}
                   </select>
-                </div>
 
-                <div className="csg-filter-row">
                   <div data-testid="csg-service-state-filter" className="csg-state-pills">
                     <button
                       type="button"
@@ -996,47 +994,24 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
                         setOnlySelectedServices((prev) => !prev);
                         setServicePage(1);
                       }}
+                      title="仅看已选待导入服务"
                       className={`csg-pill${onlySelectedServices ? ' csg-pill--active' : ''}`}
                     >
-                      仅看已选 ({selectedServices.size})
+                      已选 ({selectedServices.size})
                     </button>
                   </div>
 
-                  <div className="csg-batch-bar">
-                    {isAdmin && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={selectFilteredUndeclared}
-                          disabled={
-                            filteredUndeclaredNames.length === 0 ||
-                            filteredSelectedCount === filteredUndeclaredNames.length
-                          }
-                          className="csg-link-btn"
-                        >
-                          全选筛选结果 ({filteredUndeclaredNames.length})
-                        </button>
-                        <button
-                          type="button"
-                          onClick={deselectFilteredUndeclared}
-                          disabled={filteredSelectedCount === 0}
-                          className="csg-link-btn csg-link-btn--muted"
-                        >
-                          取消筛选选中
-                        </button>
-                      </>
-                    )}
-                    {hasActiveServiceFilter && (
-                      <button
-                        type="button"
-                        onClick={resetServiceFilters}
-                        className="csg-link-btn csg-link-btn--muted"
-                      >
-                        <RotateCcw size={12} />
-                        重置筛选
-                      </button>
-                    )}
-                  </div>
+                  {hasActiveServiceFilter && (
+                    <button
+                      type="button"
+                      onClick={resetServiceFilters}
+                      className="csg-filter-reset-btn"
+                      title="重置筛选"
+                      aria-label="重置筛选"
+                    >
+                      <RotateCcw size={13} />
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -1225,7 +1200,7 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
             </>
           ) : (
             <>
-              {/* 订阅边多维过滤栏 */}
+              {/* 订阅边单行过滤栏 */}
               <div data-testid="csg-subscriptions-filter-bar" className="csg-filter-bar">
                 <div className="csg-filter-row">
                   <div className="csg-search-box">
@@ -1237,7 +1212,7 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
                         setSubSearch(e.target.value);
                         setSubPage(1);
                       }}
-                      placeholder="搜索调用方进程、PID、IP 或目标 CSG 服务名..."
+                      placeholder="搜索调用方进程、PID、IP 或目标服务名..."
                       data-testid="csg-sub-search-input"
                       className="csg-search-input"
                     />
@@ -1263,7 +1238,7 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
                       setSubPage(1);
                     }}
                     data-testid="csg-sub-client-filter"
-                    className="csg-filter-select"
+                    className="csg-filter-select csg-filter-select--proc"
                     aria-label="按调用方进程过滤"
                   >
                     <option value="ALL">全部调用方 ({subscriptions.length})</option>
@@ -1273,9 +1248,7 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
                       </option>
                     ))}
                   </select>
-                </div>
 
-                <div className="csg-filter-row">
                   <div data-testid="csg-sub-state-filter" className="csg-state-pills">
                     <button
                       type="button"
@@ -1318,23 +1291,23 @@ export const CSGBlueprintImportContent: React.FC<CSGBlueprintImportContentProps>
                         setOnlySelectedSubServices((prev) => !prev);
                         setSubPage(1);
                       }}
+                      title="仅看关联已选服务的订阅边"
                       className={`csg-pill${onlySelectedSubServices ? ' csg-pill--active' : ''}`}
                     >
-                      关联已选服务
+                      关联已选
                     </button>
                   </div>
 
                   {hasActiveSubFilter && (
-                    <div className="csg-batch-bar">
-                      <button
-                        type="button"
-                        onClick={resetSubFilters}
-                        className="csg-link-btn csg-link-btn--muted"
-                      >
-                        <RotateCcw size={12} />
-                        重置筛选
-                      </button>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={resetSubFilters}
+                      className="csg-filter-reset-btn"
+                      title="重置筛选"
+                      aria-label="重置筛选"
+                    >
+                      <RotateCcw size={13} />
+                    </button>
                   )}
                 </div>
               </div>

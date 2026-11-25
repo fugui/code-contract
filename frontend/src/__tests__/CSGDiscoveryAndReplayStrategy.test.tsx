@@ -435,6 +435,10 @@ describe('M28 CSG Discovery, Blueprint Import & 3-Mode Simulation Console', () =
     expect(servicesHtml).toContain('csg-service-search-input');
     expect(servicesHtml).toContain('csg-service-proc-filter');
     expect(servicesHtml).toContain('csg-service-transport-filter');
+    expect(servicesHtml).toContain('csg-service-state-filter');
+    expect(servicesHtml).toContain('csg-select-all-filtered-checkbox');
+    expect(servicesHtml).not.toContain('全选筛选结果');
+    expect(servicesHtml).not.toContain('取消筛选选中');
     expect(servicesHtml).toContain('csg-services-pagination');
     expect(servicesHtml).toContain('csg-import-footer');
     // 第 1 页默认渲染 50 条，不把 265 条全量塞进 DOM
@@ -465,6 +469,7 @@ describe('M28 CSG Discovery, Blueprint Import & 3-Mode Simulation Console', () =
     expect(subsHtml).toContain('csg-subscriptions-filter-bar');
     expect(subsHtml).toContain('csg-sub-search-input');
     expect(subsHtml).toContain('csg-sub-client-filter');
+    expect(subsHtml).toContain('csg-sub-state-filter');
     expect(subsHtml).toContain('csg-subscriptions-pagination');
     expect(subsHtml).toContain('caller-proc-0 (20000)');
   });

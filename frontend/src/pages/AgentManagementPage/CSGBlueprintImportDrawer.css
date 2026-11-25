@@ -265,20 +265,20 @@
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .csg-filter-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .csg-search-box {
   position: relative;
-  flex: 1;
-  min-width: 220px;
+  flex: 1 1 170px;
+  min-width: 160px;
   display: flex;
   align-items: center;
 }
@@ -292,7 +292,7 @@
 
 .csg-search-input {
   width: 100%;
-  height: 32px;
+  height: 30px;
   padding: 0 28px 0 30px;
   border-radius: 6px;
   border: 1px solid var(--color-border-primary);
@@ -328,15 +328,23 @@
 }
 
 .csg-filter-select {
-  height: 32px;
+  height: 30px;
   padding: 0 8px;
   border-radius: 6px;
   border: 1px solid var(--color-border-primary);
   background: var(--color-bg-input);
   color: var(--color-text-primary);
   font-size: 12px;
-  max-width: 210px;
+  max-width: 180px;
   box-sizing: border-box;
+}
+
+.csg-filter-select--proc {
+  max-width: 148px;
+}
+
+.csg-filter-select--transport {
+  max-width: 108px;
 }
 
 .csg-filter-select:focus {
@@ -348,21 +356,21 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  flex: 1;
+  gap: 4px;
+  flex: 0 1 auto;
 }
 
 .csg-pill {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  height: 26px;
-  padding: 0 10px;
+  gap: 4px;
+  height: 28px;
+  padding: 0 8px;
   border-radius: 999px;
   border: 1px solid var(--color-border-primary);
   background: var(--color-bg-surface);
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
@@ -388,12 +396,25 @@
   flex-shrink: 0;
 }
 
-.csg-batch-bar {
-  display: flex;
-  flex-wrap: wrap;
+.csg-filter-reset-btn {
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  margin-left: auto;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  border: 1px solid var(--color-border-primary);
+  background: var(--color-bg-surface);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.csg-filter-reset-btn:hover {
+  background: var(--color-bg-hover);
+  border-color: var(--color-border-hover);
+  color: var(--color-text-primary);
 }
 
 .csg-link-btn {
