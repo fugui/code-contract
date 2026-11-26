@@ -69,28 +69,39 @@ type inflightReq struct {
 	createdAt   time.Time
 }
 
+const drtWriteBulkSymbol = "DRT_WriteBulk"
+
+func buildDRTUprobeOptions(fileOffset uint64, pid uint32) *link.UprobeOptions {
+	return &link.UprobeOptions{
+		Address: fileOffset,
+		PID:     int(pid),
+	}
+}
+
 // DRTUprobeDriver dophi_mesh 数据面 uprobe 旁路采集传输驱动 (ADR-22 & ADR-23)
 type DRTUprobeDriver struct {
-	mu              sync.Mutex
-	mgr             *ebpf.Manager
-	cfg             DRTUprobeConfig
-	closed          bool
-	activeSpecs     map[uint64]CaptureSpec
-	links           map[string]io.Closer
-	ringbufReader   *ringbuf.Reader
-	readerStop      chan struct{}
-	inflightReqs    map[uint64]*inflightReq
-	seenChannels    map[string]bool
-	errLogCount     int
-	truncLogCount   int
-	statRawEvents   atomic.Int64
-	statValidFrames atomic.Int64
-	statReqFrames   atomic.Int64
-	statRspPaired   atomic.Int64
-	statRspOrphan   atomic.Int64
-	statMngFrames   atomic.Int64
-	statTruncated   atomic.Int64
-	statDropped     atomic.Int64
+	mu               sync.Mutex
+	mgr              *ebpf.Manager
+	cfg              DRTUprobeConfig
+	closed           bool
+	activeSpecs      map[uint64]CaptureSpec
+	links            map[string]io.Closer
+	lastAttachErr    map[string]string
+	attachExecUprobe func(ex *link.Executable, symbol string, opts *link.UprobeOptions) (io.Closer, error)
+	ringbufReader    *ringbuf.Reader
+	readerStop       chan struct{}
+	inflightReqs     map[uint64]*inflightReq
+	seenChannels     map[string]bool
+	errLogCount      int
+	truncLogCount    int
+	statRawEvents    atomic.Int64
+	statValidFrames  atomic.Int64
+	statReqFrames    atomic.Int64
+	statRspPaired    atomic.Int64
+	statRspOrphan    atomic.Int64
+	statMngFrames    atomic.Int64
+	statTruncated    atomic.Int64
+	statDropped      atomic.Int64
 }
 
 // NewDRTUprobeDriver 实例化 builtin-drt-uprobe 传输驱动
@@ -105,12 +116,13 @@ func NewDRTUprobeDriver(mgr *ebpf.Manager, cfg DRTUprobeConfig) *DRTUprobeDriver
 		cfg.InflightTTL = 30 * time.Second
 	}
 	return &DRTUprobeDriver{
-		mgr:          mgr,
-		cfg:          cfg,
-		activeSpecs:  make(map[uint64]CaptureSpec),
-		links:        make(map[string]io.Closer),
-		inflightReqs: make(map[uint64]*inflightReq),
-		seenChannels: make(map[string]bool),
+		mgr:           mgr,
+		cfg:           cfg,
+		activeSpecs:   make(map[uint64]CaptureSpec),
+		links:         make(map[string]io.Closer),
+		lastAttachErr: make(map[string]string),
+		inflightReqs:  make(map[uint64]*inflightReq),
+		seenChannels:  make(map[string]bool),
 	}
 }
 
@@ -388,6 +400,17 @@ func (d *DRTUprobeDriver) evictOldestInflightLocked() {
 	}
 }
 
+func (d *DRTUprobeDriver) logAttachErrorLocked(linkKey, msg string) {
+	if d.lastAttachErr == nil {
+		d.lastAttachErr = make(map[string]string)
+	}
+	if d.lastAttachErr[linkKey] == msg && !d.cfg.Verbose {
+		return
+	}
+	d.lastAttachErr[linkKey] = msg
+	log.Print(msg)
+}
+
 func (d *DRTUprobeDriver) attachPIDLocked(sessionOrTaskID uint64, processID uint64, pid uint32) {
 	if pid == 0 {
 		return
@@ -402,47 +425,50 @@ func (d *DRTUprobeDriver) attachPIDLocked(sessionOrTaskID uint64, processID uint
 		if err != nil || lnk == nil {
 			return
 		}
+		delete(d.lastAttachErr, linkKey)
 		d.links[linkKey] = lnk
 		return
 	}
 
-	if d.mgr == nil {
-		return
-	}
-	prog := d.mgr.DRTUprobeProgram()
-	if prog == nil {
-		return
+	if d.attachExecUprobe == nil {
+		if d.mgr == nil || d.mgr.DRTUprobeProgram() == nil {
+			return
+		}
 	}
 
 	soPath, err := FindMappedLibraryPath(d.cfg.ProcRoot, pid, "libdopra")
 	if err != nil {
-		log.Printf("[DRTUprobe] 跳过挂载: PID=%d (ProcessID=%d) 未找到 libdopra 映射: %v", pid, processID, err)
+		d.logAttachErrorLocked(linkKey, fmt.Sprintf("[DRTUprobe] 跳过挂载: PID=%d (ProcessID=%d) 未找到 libdopra 映射: %v", pid, processID, err))
 		return
 	}
 
 	offsets, err := ResolveDRTSymbolOffsets(soPath)
 	if err != nil || offsets.WriteBulkOffset == 0 {
-		log.Printf("[DRTUprobe] 跳过挂载: PID=%d Lib=%s 解析 DRT_WriteBulk 失败: %v", pid, soPath, err)
+		d.logAttachErrorLocked(linkKey, fmt.Sprintf("[DRTUprobe] 跳过挂载: PID=%d Lib=%s 解析 %s 失败: %v", pid, soPath, drtWriteBulkSymbol, err))
 		return
 	}
 
 	ex, err := link.OpenExecutable(soPath)
 	if err != nil {
-		log.Printf("[DRTUprobe] OpenExecutable(%s) 失败: %v", soPath, err)
+		d.logAttachErrorLocked(linkKey, fmt.Sprintf("[DRTUprobe] OpenExecutable(%s) 失败: %v", soPath, err))
 		return
 	}
 
-	up, err := ex.Uprobe("DRT_WriteBulk", prog, &link.UprobeOptions{
-		Offset: offsets.WriteBulkOffset,
-		PID:    int(pid),
-	})
+	opts := buildDRTUprobeOptions(offsets.WriteBulkOffset, pid)
+	var up io.Closer
+	if d.attachExecUprobe != nil {
+		up, err = d.attachExecUprobe(ex, drtWriteBulkSymbol, opts)
+	} else {
+		up, err = ex.Uprobe(drtWriteBulkSymbol, d.mgr.DRTUprobeProgram(), opts)
+	}
 	if err != nil {
-		log.Printf("[DRTUprobe] Uprobe(pid=%d) 挂载失败: %v", pid, err)
+		d.logAttachErrorLocked(linkKey, fmt.Sprintf("[DRTUprobe] Uprobe(pid=%d, lib=%s, addr=0x%x) 挂载失败: %v", pid, soPath, opts.Address, err))
 		return
 	}
 
+	delete(d.lastAttachErr, linkKey)
 	d.links[linkKey] = up
-	log.Printf("[DRTUprobe] [✓ Uprobe 动态挂载成功] PID=%d, Lib=%s, Offset=0x%x, SessionID=%d", pid, soPath, offsets.WriteBulkOffset, sessionOrTaskID)
+	log.Printf("[DRTUprobe] [✓ Uprobe 动态挂载成功] PID=%d, Lib=%s, Addr=0x%x, SessionID=%d", pid, soPath, opts.Address, sessionOrTaskID)
 }
 
 // SyncProcessPIDs 在 CAPTURING 期间按最新存活 PID 列表动态同步 uprobe（摘除退出旧 PID，补挂新 PID）；待命期不执行挂载
@@ -474,6 +500,13 @@ func (d *DRTUprobeDriver) SyncProcessPIDs(sessionOrTaskID uint64, processID uint
 			}
 		}
 	}
+	for k := range d.lastAttachErr {
+		if len(k) >= len(prefix) && k[:len(prefix)] == prefix {
+			if _, keep := desired[k]; !keep {
+				delete(d.lastAttachErr, k)
+			}
+		}
+	}
 
 	for _, pid := range pids {
 		d.attachPIDLocked(sessionOrTaskID, processID, pid)
@@ -501,17 +534,20 @@ func (d *DRTUprobeDriver) StartCapture(ctx context.Context, spec CaptureSpec) er
 		return nil
 	}
 
-	if d.mgr == nil {
+	if d.mgr == nil && d.attachExecUprobe == nil {
 		return nil
 	}
 
-	// 确保内核 eBPF 探针已加载
-	if err := d.mgr.EnsureAttached(); err != nil {
-		log.Printf("[DRTUprobe] EnsureAttached 警告: %v", err)
+	var progReady bool
+	if d.mgr != nil {
+		// 确保内核 eBPF 探针已加载
+		if err := d.mgr.EnsureAttached(); err != nil {
+			log.Printf("[DRTUprobe] EnsureAttached 警告: %v", err)
+		}
+		progReady = d.mgr.DRTUprobeProgram() != nil
 	}
 
-	prog := d.mgr.DRTUprobeProgram()
-	if prog == nil {
+	if !progReady && d.attachExecUprobe == nil {
 		log.Printf("[DRTUprobe] 跳过挂载: 内核 CrosDrtWriteBulk eBPF 程序未就绪 (SessionID=%d)", spec.SessionOrTaskID)
 	} else {
 		for _, p := range spec.Processes {
@@ -527,7 +563,7 @@ func (d *DRTUprobeDriver) StartCapture(ctx context.Context, spec CaptureSpec) er
 	}
 
 	// 启动 RingBuf 消费协程
-	if d.ringbufReader == nil {
+	if d.mgr != nil && d.ringbufReader == nil {
 		rbMap := d.mgr.DRTRingbufMap()
 		if rbMap != nil {
 			rb, err := ringbuf.NewReader(rbMap)
@@ -604,6 +640,11 @@ func (d *DRTUprobeDriver) StopCapture(ctx context.Context, sessionOrTaskID uint6
 			delete(d.links, k)
 		}
 	}
+	for k := range d.lastAttachErr {
+		if len(k) >= len(prefix) && k[:len(prefix)] == prefix {
+			delete(d.lastAttachErr, k)
+		}
+	}
 
 	if len(d.activeSpecs) == 0 {
 		if d.ringbufReader != nil {
@@ -616,6 +657,7 @@ func (d *DRTUprobeDriver) StopCapture(ctx context.Context, sessionOrTaskID uint6
 		}
 		clear(d.inflightReqs)
 		clear(d.seenChannels)
+		clear(d.lastAttachErr)
 		d.errLogCount = 0
 		d.truncLogCount = 0
 	}
@@ -633,6 +675,11 @@ func (d *DRTUprobeDriver) RemoveTarget(sessionOrTaskID uint64, processID uint64)
 		if len(k) >= len(prefix) && k[:len(prefix)] == prefix {
 			_ = l.Close()
 			delete(d.links, k)
+		}
+	}
+	for k := range d.lastAttachErr {
+		if len(k) >= len(prefix) && k[:len(prefix)] == prefix {
+			delete(d.lastAttachErr, k)
 		}
 	}
 	return nil
@@ -662,6 +709,7 @@ func (d *DRTUprobeDriver) Close() error {
 	clear(d.activeSpecs)
 	clear(d.inflightReqs)
 	clear(d.seenChannels)
+	clear(d.lastAttachErr)
 	d.errLogCount = 0
 	d.truncLogCount = 0
 	return nil

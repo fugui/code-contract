@@ -81,21 +81,35 @@ func ResolveDRTSymbolOffsets(soPath string) (*DRTSymbolOffsets, error) {
 	}
 	defer f.Close()
 
-	// 优先读取 .dynsym 动态符号表（strip 后通常依然完整保留）
-	symbols, err := f.DynamicSymbols()
-	if err != nil || len(symbols) == 0 {
-		symbols, _ = f.Symbols()
-	}
-
-	if len(symbols) == 0 {
+	// 同时读取 .dynsym 与 .symtab：优先保留 STT_FUNC 有效符号，过滤 SHN_UNDEF / Value==0 外部引用
+	dynSyms, dynErr := f.DynamicSymbols()
+	staticSyms, staticErr := f.Symbols()
+	if (dynErr != nil || len(dynSyms) == 0) && (staticErr != nil || len(staticSyms) == 0) {
 		return nil, fmt.Errorf("%w: dynamic and static symbol tables are empty in %s", ErrSymbolNotFound, soPath)
 	}
 
-	symMap := make(map[string]elf.Symbol, len(symbols))
-	for _, s := range symbols {
-		if s.Name != "" {
-			symMap[s.Name] = s
+	symMap := make(map[string]elf.Symbol, len(dynSyms)+len(staticSyms))
+	addSymbols := func(list []elf.Symbol) {
+		for _, s := range list {
+			if s.Name == "" || s.Value == 0 || s.Section == elf.SHN_UNDEF {
+				continue
+			}
+			existing, exists := symMap[s.Name]
+			if !exists {
+				symMap[s.Name] = s
+				continue
+			}
+			if elf.ST_TYPE(s.Info) == elf.STT_FUNC && elf.ST_TYPE(existing.Info) != elf.STT_FUNC {
+				symMap[s.Name] = s
+			}
 		}
+	}
+	// 先合并 .symtab，再合并 .dynsym（确保动态导出 STT_FUNC 优先）
+	addSymbols(staticSyms)
+	addSymbols(dynSyms)
+
+	if len(symMap) == 0 {
+		return nil, fmt.Errorf("%w: no defined symbols in %s", ErrSymbolNotFound, soPath)
 	}
 
 	// 辅助函数：根据虚拟地址 Vaddr 换算 ELF 文件的物理偏移

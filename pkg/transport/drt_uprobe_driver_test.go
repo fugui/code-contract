@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -15,6 +18,8 @@ import (
 
 	"code-contract/pkg/agentproto"
 	"code-contract/pkg/crosrpc"
+
+	"github.com/cilium/ebpf/link"
 )
 
 func buildMockCrosPacket(proto uint8, sno uint64, msgType uint8, body []byte) []byte {
@@ -565,5 +570,179 @@ func TestDRTUprobeDriver_SyncProcessPIDs_DynamicReattachAndStandbyGuard(t *testi
 	}
 	if drv.ActiveLinksCount() != 0 {
 		t.Fatalf("expected 0 active links after StopCapture, got %d", drv.ActiveLinksCount())
+	}
+}
+
+func TestBuildDRTUprobeOptions_UsesAbsoluteAddressNotRelativeOffset(t *testing.T) {
+	opts := buildDRTUprobeOptions(0x219be0, 27250)
+	if opts == nil {
+		t.Fatalf("expected non-nil UprobeOptions")
+	}
+	if opts.Address != 0x219be0 {
+		t.Fatalf("expected Address=0x219be0, got 0x%x", opts.Address)
+	}
+	if opts.Offset != 0 {
+		t.Fatalf("expected Offset=0 (relative offset must not carry absolute file offset), got %d", opts.Offset)
+	}
+	if opts.PID != 27250 {
+		t.Fatalf("expected PID=27250, got %d", opts.PID)
+	}
+}
+
+func TestDRTUprobeDriver_AttachPID_RealELFFixtureUsesAddressNotOffset(t *testing.T) {
+	clang, err := exec.LookPath("clang")
+	if err != nil {
+		t.Skip("clang not available on host, skipping ELF fixture attach test")
+	}
+
+	tmpDir := t.TempDir()
+	cSource := filepath.Join(tmpDir, "drt_fixture.c")
+	soPath := filepath.Join(tmpDir, "libdopra.so")
+	cCode := `
+__attribute__((visibility("default"))) int DRT_WriteBulk(void* handle, int count, void* entries) {
+    return 42;
+}
+`
+	if err := os.WriteFile(cSource, []byte(cCode), 0644); err != nil {
+		t.Fatalf("write c source failed: %v", err)
+	}
+	if out, err := exec.Command(clang, "-shared", "-fPIC", "-O2", "-o", soPath, cSource).CombinedOutput(); err != nil {
+		t.Fatalf("clang build shared library failed: %v, out: %s", err, string(out))
+	}
+	if strip, sErr := exec.LookPath("llvm-strip"); sErr == nil {
+		_ = exec.Command(strip, "--strip-all", soPath).Run()
+	}
+
+	expectedOffsets, err := ResolveDRTSymbolOffsets(soPath)
+	if err != nil || expectedOffsets.WriteBulkOffset == 0 {
+		t.Fatalf("ResolveDRTSymbolOffsets failed: %v (offsets=%+v)", err, expectedOffsets)
+	}
+
+	pid := uint32(27250)
+	procRoot := filepath.Join(tmpDir, "proc")
+	mapsDir := filepath.Join(procRoot, fmt.Sprintf("%d", pid))
+	if err := os.MkdirAll(mapsDir, 0755); err != nil {
+		t.Fatalf("mkdir maps dir failed: %v", err)
+	}
+	mapsContent := fmt.Sprintf("7f3b89350000-7f3b89400000 r-xp 00000000 08:01 3001 %s\n", soPath)
+	if err := os.WriteFile(filepath.Join(mapsDir, "maps"), []byte(mapsContent), 0644); err != nil {
+		t.Fatalf("write maps failed: %v", err)
+	}
+
+	var calls int
+	var gotSymbol string
+	var gotOpts link.UprobeOptions
+	createdLink := &mockClosableLink{}
+
+	drv := NewDRTUprobeDriver(nil, DRTUprobeConfig{
+		ProcRoot: procRoot,
+	})
+	drv.attachExecUprobe = func(ex *link.Executable, symbol string, opts *link.UprobeOptions) (io.Closer, error) {
+		calls++
+		gotSymbol = symbol
+		if opts != nil {
+			gotOpts = *opts
+		}
+		return createdLink, nil
+	}
+
+	ctx := context.Background()
+	if err := drv.StartCapture(ctx, CaptureSpec{
+		SessionOrTaskID: 3001,
+		RefKind:         agentproto.RefKindRecordingSession,
+		Processes: []TargetProcess{
+			{ProcessID: 10, PID: pid},
+		},
+	}); err != nil {
+		t.Fatalf("StartCapture failed: %v", err)
+	}
+
+	if calls != 1 {
+		t.Fatalf("expected attachExecUprobe to be called once, got %d", calls)
+	}
+	if gotSymbol != drtWriteBulkSymbol {
+		t.Fatalf("expected symbol %q, got %q", drtWriteBulkSymbol, gotSymbol)
+	}
+	if gotOpts.Address != expectedOffsets.WriteBulkOffset || gotOpts.Address == 0 {
+		t.Fatalf("expected Address=0x%x, got 0x%x", expectedOffsets.WriteBulkOffset, gotOpts.Address)
+	}
+	if gotOpts.Offset != 0 {
+		t.Fatalf("expected Offset=0, got %d", gotOpts.Offset)
+	}
+	if gotOpts.PID != int(pid) {
+		t.Fatalf("expected PID=%d, got %d", pid, gotOpts.PID)
+	}
+	if drv.ActiveLinksCount() != 1 {
+		t.Fatalf("expected ActiveLinksCount=1, got %d", drv.ActiveLinksCount())
+	}
+
+	if err := drv.StopCapture(ctx, 3001); err != nil {
+		t.Fatalf("StopCapture failed: %v", err)
+	}
+	if drv.ActiveLinksCount() != 0 {
+		t.Fatalf("expected ActiveLinksCount=0 after StopCapture, got %d", drv.ActiveLinksCount())
+	}
+	if createdLink.closed.Load() != 1 {
+		t.Fatalf("expected created link to be closed once, got %d", createdLink.closed.Load())
+	}
+}
+
+func TestDRTUprobeDriver_AttachFailureLogDedupAndCleanup(t *testing.T) {
+	var logBuf bytes.Buffer
+	origOut := log.Writer()
+	log.SetOutput(&logBuf)
+	defer log.SetOutput(origOut)
+
+	tmpDir := t.TempDir()
+	pid := uint32(4001)
+	procRoot := filepath.Join(tmpDir, "proc")
+	mapsDir := filepath.Join(procRoot, fmt.Sprintf("%d", pid))
+	if err := os.MkdirAll(mapsDir, 0755); err != nil {
+		t.Fatalf("mkdir maps dir failed: %v", err)
+	}
+	// Intentionally omit libdopra from maps to trigger FindMappedLibraryPath failure
+	if err := os.WriteFile(filepath.Join(mapsDir, "maps"), []byte("55a6d3620000-55a6d3650000 r-xp 00000000 08:01 1 /bin/bash\n"), 0644); err != nil {
+		t.Fatalf("write maps failed: %v", err)
+	}
+
+	drv := NewDRTUprobeDriver(nil, DRTUprobeConfig{
+		ProcRoot: procRoot,
+	})
+	drv.attachExecUprobe = func(ex *link.Executable, symbol string, opts *link.UprobeOptions) (io.Closer, error) {
+		return &mockClosableLink{}, nil
+	}
+
+	ctx := context.Background()
+	if err := drv.StartCapture(ctx, CaptureSpec{
+		SessionOrTaskID: 5001,
+		Processes:       []TargetProcess{{ProcessID: 20, PID: pid}},
+	}); err != nil {
+		t.Fatalf("StartCapture failed: %v", err)
+	}
+
+	// Repeated SyncProcessPIDs with the same failure must deduplicate logs
+	_ = drv.SyncProcessPIDs(5001, 20, []uint32{pid})
+	_ = drv.SyncProcessPIDs(5001, 20, []uint32{pid})
+
+	skipNeedle := "未找到 libdopra 映射"
+	if got := strings.Count(logBuf.String(), skipNeedle); got != 1 {
+		t.Fatalf("expected 1 deduplicated skip log, got %d:\n%s", got, logBuf.String())
+	}
+
+	// PID exits -> cache cleared -> reappearing PID logs once again
+	_ = drv.SyncProcessPIDs(5001, 20, nil)
+	_ = drv.SyncProcessPIDs(5001, 20, []uint32{pid})
+	if got := strings.Count(logBuf.String(), skipNeedle); got != 2 {
+		t.Fatalf("expected 2 skip logs after PID exit cleared cache, got %d:\n%s", got, logBuf.String())
+	}
+
+	if err := drv.StopCapture(ctx, 5001); err != nil {
+		t.Fatalf("StopCapture failed: %v", err)
+	}
+	drv.mu.Lock()
+	errCacheLen := len(drv.lastAttachErr)
+	drv.mu.Unlock()
+	if errCacheLen != 0 {
+		t.Fatalf("expected lastAttachErr cleared after StopCapture, got %d", errCacheLen)
 	}
 }
