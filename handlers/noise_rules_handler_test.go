@@ -101,13 +101,13 @@ func TestNoiseRulesEndpoints_AndTrafficFiltering(t *testing.T) {
 		{
 			SessionID: sess.ID, SeqNo: 3, AgentID: 1, ProcessID: 1, ConnKey: "c2",
 			Direction: "EGRESS", ExchangeType: "ONEWAY", SrcAddr: "1.1.1.2:4002", DstAddr: "1.1.1.4:9001",
-			ReqCapturedAtNs: tBase + 5000, LatencyUs: &lat, ServiceName: "infra.LogService", Operation: "Write",
+			ReqCapturedAtNs: tBase + 20_000_000, LatencyUs: &lat, ServiceName: "infra.LogService", Operation: "Write",
 			TraceID: "tr2", SpanID: "sp3", FatherSpanID: "", StatusCode: models.U64Numeric(0), CreatedAt: time.Now(),
 		},
 		{
 			SessionID: sess.ID, SeqNo: 4, AgentID: 1, ProcessID: 1, ConnKey: "c3",
 			Direction: "EGRESS", ExchangeType: "UNARY", SrcAddr: "1.1.1.2:4003", DstAddr: "1.1.1.4:9001",
-			ReqCapturedAtNs: tBase + 8000, LatencyUs: &lat, ServiceName: "infra.LogService", Operation: "FlushErr",
+			ReqCapturedAtNs: tBase + 40_000_000, LatencyUs: &lat, ServiceName: "infra.LogService", Operation: "FlushErr",
 			TraceID: "tr3", SpanID: "sp4", FatherSpanID: "", StatusCode: models.U64Numeric(500), CreatedAt: time.Now(),
 		},
 	}
