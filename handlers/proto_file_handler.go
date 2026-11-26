@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -41,26 +42,31 @@ func buildGitProtoFileDTO(
 	}
 
 	return ProtoFileDTO{
-		ID:               pf.ID,
-		SchemaID:         schemaID,
-		GitRepoID:        &repoID,
-		GitRepoName:      repoNames[repoID],
-		BundleID:         &bundleID,
-		BundleName:       bundleNames[bundleID],
-		TargetSchemaName: pf.TargetSchemaName,
-		Category:         pf.Category,
-		FilePath:         pf.FilePath,
-		RepoFilePath:     pf.RepoFilePath,
-		PackageName:      pf.PackageName,
-		LatestVersion:    pf.LatestVersionNum,
-		LatestCommitSHA:  pf.LatestCommitSHA,
-		ContentSHA256:    pf.ContentSHA256,
-		IsActiveSchema:   isActiveSchema,
-		HasSourceInfo:    true,
-		IsDeleted:        pf.IsDeleted,
-		SourceOrigin:     origin,
-		LineCount:        pf.LineCount,
-		UpdatedAt:        pf.UpdatedAt,
+		ID:                pf.ID,
+		SchemaID:          schemaID,
+		GitRepoID:         &repoID,
+		GitRepoName:       repoNames[repoID],
+		BundleID:          &bundleID,
+		BundleName:        bundleNames[bundleID],
+		TargetSchemaName:  pf.TargetSchemaName,
+		Category:          pf.Category,
+		FilePath:          pf.FilePath,
+		RepoFilePath:      pf.RepoFilePath,
+		PackageName:       pf.PackageName,
+		LatestVersion:     pf.LatestVersionNum,
+		LatestCommitSHA:   pf.LatestCommitSHA,
+		ContentSHA256:     pf.ContentSHA256,
+		IsActiveSchema:    isActiveSchema,
+		HasSourceInfo:     true,
+		IsDeleted:         pf.IsDeleted,
+		PipelineStatus:    pf.PipelineStatus,
+		StatusReason:      pf.StatusReason,
+		NormalizerVersion: pf.NormalizerVersion,
+		IsExternalCopy:    pf.IsExternalCopy,
+		RawBlobSHA:        pf.RawBlobSHA,
+		SourceOrigin:      origin,
+		LineCount:         pf.LineCount,
+		UpdatedAt:         pf.UpdatedAt,
 	}
 }
 
@@ -238,6 +244,12 @@ func ListProtoFiles(c *gin.Context) {
 	}
 	if !includeDeleted {
 		q = q.Where("is_deleted = false")
+	}
+	if pStatus := strings.ToUpper(strings.TrimSpace(c.Query("pipeline_status"))); pStatus != "" {
+		q = q.Where("pipeline_status = ?", pStatus)
+	}
+	if incExt := strings.TrimSpace(c.Query("include_external_copy")); incExt == "false" {
+		q = q.Where("is_external_copy = false")
 	}
 	if search != "" {
 		like := "%" + search + "%"
@@ -464,11 +476,17 @@ func GetProtoFileContent(c *gin.Context) {
 
 	violations := loadProtoFileViolationOverlay(models.DB, pf, targetSchemaID)
 	anchors := loadProtoFileSymbolAnchors(models.DB, pf, targetSchemaID)
+	var lineMap map[string]int
+	if len(pf.LineMapJSON) > 0 && string(pf.LineMapJSON) != "null" {
+		_ = json.Unmarshal(pf.LineMapJSON, &lineMap)
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"file":           fileDTO,
 		"version":        buildGitProtoFileVersionDTO(ver, activeSchemaID),
 		"content":        ver.ContentText,
+		"raw_content":    ver.RawContentText,
+		"line_map":       lineMap,
 		"violations":     violations,
 		"symbol_anchors": anchors,
 	})

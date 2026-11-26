@@ -45,6 +45,8 @@ func RegisterAPIRoutes(r *gin.Engine) {
 		// M26: GitLab / GitHub MR Webhook 回调入口（常量时间 Secret 验签）
 		openAPI.POST("/webhooks/git-mr/:repoId", HandleGitMRWebhook)
 		openAPI.POST("/webhooks/git-mr", HandleGitMRWebhook)
+		// ADR-26: Git Push 增量同步 Webhook（常量时间验签 + SyncScheduler 调度 + commonAudit.Skip）
+		openAPI.POST("/webhooks/git-sync/:repoId", HandleGitSyncWebhook)
 	}
 
 	// 2. 受保护业务路由 (Protected - 需携带合法平台 JWT)
@@ -167,21 +169,37 @@ func RegisterAPIRoutes(r *gin.Engine) {
 		protected.GET("/proto-docs/services/:serviceName", GetProtoServiceDocDetail)
 		protected.GET("/proto-docs/export", ExportProtoDocs)
 		protected.GET("/proto-files", ListProtoFiles)
+		protected.GET("/proto-files/tree", GetProtoFilesTreeHandler)
 		protected.GET("/proto-files/:id/content", GetProtoFileContent)
 		protected.GET("/proto-files/:id/versions", ListProtoFileVersions)
 		protected.GET("/proto-files/:id/diff", GetProtoFileDiff)
 		protected.GET("/proto-services", ListProtoServices)
+
+		// ADR-26: 跨仓导入权威归属与符号冲突仲裁
+		protected.GET("/proto-import-owners", ListProtoImportOwnersHandler)
+		protected.PUT("/proto-import-owners", requireAdmin, UpsertProtoImportOwnerHandler)
+		protected.POST("/proto-import-owners", requireAdmin, UpsertProtoImportOwnerHandler)
+		protected.DELETE("/proto-import-owners/:id", requireAdmin, DeleteProtoImportOwnerHandler)
+		protected.GET("/proto-conflicts", ListProtoConflictsHandler)
+		protected.POST("/proto-conflicts/resolve", requireAdmin, ResolveProtoConflictHandler)
 
 		// 5.0 统一契约服务目录、三级 .pb 撮合与五态健康雷达 (ADR-24, M31)
 		protected.GET("/catalog/services", ListCatalogServices)
 		protected.POST("/catalog/correlate", CorrelateCatalogServicesHandler)
 		protected.POST("/catalog/services/:id/confirm-proto", ConfirmCatalogServiceProtoHandler)
 
-		// 5.0 Git 契约仓、Monorepo Bundles 与一致性对账域 (F-21, F-28, F-29, M25)
+		// 5.0 Git 契约仓、Monorepo Bundles、平台共享导入与一致性对账域 (F-21, F-28, F-29, M25, ADR-26)
+		protected.GET("/git-repos/platform-discover", DiscoverPlatformReposHandler)
+		protected.POST("/git-repos/platform-import", requireAdmin, ImportPlatformReposHandler)
+		protected.POST("/git-repos/batch-sync", requireAdmin, BatchSyncGitReposHandler)
+		protected.GET("/git-repos/baseline-report", GetGitReposBaselineReportHandler)
+		protected.GET("/git-repos/arch-suggestions", GetGitReposArchSuggestionsHandler)
 		protected.GET("/git-repos", ListGitRepos)
 		protected.POST("/git-repos", requireAdmin, CreateGitRepo)
 		protected.PUT("/git-repos/:id", requireAdmin, UpdateGitRepo)
 		protected.DELETE("/git-repos/:id", requireAdmin, DeleteGitRepo)
+		protected.POST("/git-repos/:id/link-platform", requireAdmin, LinkPlatformRepoHandler)
+		protected.POST("/git-repos/:id/re-normalize", requireAdmin, ReNormalizeGitRepoHandler)
 		protected.POST("/git-repos/:id/bundles", requireAdmin, CreateGitRepoBundle)
 		protected.PUT("/git-repos/:id/bundles/:bundleId", requireAdmin, UpdateGitRepoBundle)
 		protected.DELETE("/git-repos/:id/bundles/:bundleId", requireAdmin, DeleteGitRepoBundle)

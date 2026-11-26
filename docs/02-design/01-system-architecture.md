@@ -689,6 +689,28 @@ sequenceDiagram
     Srv->>DB: 回填 ModuleService.module_id + 入队 REATTRIBUTE 归因回补任务
 ```
 
+### 5.8 场景八：共享宿主机 Git 缓存、无工作树直读与「采集 ➔ 清理整顿 ➔ 解析 ➔ 分仓编译」四段式流水线 (`ADR-26` / M33~M36)
+
+为应对平台数十至上百个业务代码仓的 Polyrepo 分布、`pg` 目录约定与存量不规范 `.proto`，控制面升级为**无工作树对象直读 + 四段式流水线**：
+
+```mermaid
+flowchart LR
+    Bench["code-bench 公共 repositories 表"] -->|"发现/批量导入"| Repo["contract_git_repos (PLATFORM_SHARED)"]
+    Codes["<codes_dir>/ 宿主机共享 Git 缓存\n(.locks/<sha1>.lock 两层锁: RWMutex + flock)"] -->|"LOCK_EX fetch 至 refs/contract/heads/*\n(gc.auto=0, 防 shallow 降级)\nLOCK_SH ls-tree -z & cat-file --batch"| StageA["Stage A: pg 白名单采集"]
+    StageA -->|"原子软链切换"| Raw["<protos_dir>/raw/<subsystem>/<repo>"]
+    StageA --> StageB["Stage B: Normalizer 清理整顿\n+ protocompile/parser 语法门禁"]
+    StageB -->|"PARSE_FAILED / LFS_POINTER"| Quarantined["QUARANTINED (隔离不入 Tier-2)"]
+    StageB -->|"NORMALIZED"| StageC["Stage C: 逻辑路径 / 导入归属 / 符号冲突预检"]
+    StageC -->|"is_external_copy 标记 & DB 提交"| DB["DB: contract_proto_files + import_owners"]
+    DB -->|"原子软链切换"| Clean["<protos_dir>/clean/<subsystem>/<repo>"]
+    DB --> StageD["Stage D: 按 Bundle 分仓编译 + 文件级 DAG 影响面"]
+```
+
+核心架构契约：
+1. **跨进程并发安全**：`code-common/backend/gitsync` 提供两层锁（进程内 `sync.RWMutex` + 跨进程 `<codes_dir>/.locks/<sha1>.lock` 独立 FD `flock`），`code-shield` 先行接入；`code-contract` 受 `storage.shared_write_enabled`（默认 `false`）开关保护，未开启时 `PLATFORM_SHARED` 仓只读 `code-shield` 维护的 `refs/remotes/origin/<branch>`。
+2. **零工作树污染与防浅克隆降级**：`code-contract` 永不执行 `checkout`/`reset`/`clean` 且关闭 `gc.auto`；所有非 shallow 仓库一律忽略 `--depth` 参数（含 `FetchCommitMetadata`）。
+3. **物理防腐不变**：`gitsync`、目录树物化与 `Normalizer` 仅限控制面 `cmd/server` 调用，`cmd/agent` 与九包防腐边界零变化。
+
 ---
 
 ## 6. 系统级安全架构与验证计划基线 (Security Guardrails & Verification Plan)

@@ -32,6 +32,7 @@ func BusinessTableNames() []string {
 		VocabularyTerm{}.TableName(),
 		CheckRule{}.TableName(),
 		ProtoDocSymbol{}.TableName(),
+		ProtoImportOwner{}.TableName(),
 		ProtoFileVersion{}.TableName(),
 		ProtoFile{}.TableName(),
 		GitProtoBundle{}.TableName(),
@@ -77,6 +78,7 @@ func SetupWithDB(db *gorm.DB) error {
 	if err := DB.AutoMigrate(
 		&Department{},
 		&User{},
+		&Repository{},
 		&SysAuditLog{},
 		&ModuleSetting{},
 		&Subsystem{},
@@ -93,6 +95,7 @@ func SetupWithDB(db *gorm.DB) error {
 		&GitProtoBundle{},
 		&ProtoFile{},
 		&ProtoFileVersion{},
+		&ProtoImportOwner{},
 		&ProtoSchema{},
 		&ProtoOperation{},
 		&RecordingSession{},
@@ -529,6 +532,9 @@ END $$;
 	}
 	if err := ensureM30bSchemaAndConstraints(DB); err != nil {
 		return fmt.Errorf("初始化 M30b 物理/逻辑双态约束失败: %w", err)
+	}
+	if err := ensureADR26SchemaAndBackfill(DB); err != nil {
+		return fmt.Errorf("初始化 ADR-26 跨仓流水线约束与存量回填失败: %w", err)
 	}
 	if err := pm.EnsureArchProcessPartitionIndexes(DB); err != nil {
 		return fmt.Errorf("初始化 M30b 流量分区物理归因索引失败: %w", err)

@@ -1593,4 +1593,33 @@ func (MigrationBackup) TableName() string { return config.TablePrefix + "mig_bac
 2. **过期分离与清理**：每日清理 30 天前的旧分区表，执行前检查是否属于仍处于进行中或被置为“加锁保留”的录制批次；
 3. **主键与外键解耦**：PostgreSQL 分区表外键约束较为严格且跨表查询成本高，因此分区表 `contract_traffic_records` 采用逻辑关联 `session_id`、`process_id`、`schema_id` 与 `dst_contract_id`，应用层在删除批次或契约前做级联清理与引用检查。
 
+---
+
+## 7. ADR-26 跨仓共享缓存与四段式流水线数据模型演进 (M34~M36)
+
+在现有 36 张核心表 + `contract_settings` 基础上，扩展以下字段与新增表 #37：
+
+1. **`contract_git_repos` 扩展字段**：
+   - `platform_repo_id` (`bigint`, 可空唯一部分索引 `uk_contract_git_repo_platform WHERE platform_repo_id IS NOT NULL`)
+   - `source_mode` (`varchar(32)`, 默认 `'EXTERNAL_STANDALONE'`，`CHECK IN ('PLATFORM_SHARED','EXTERNAL_STANDALONE')`)
+   - `sync_strategy` (`varchar(32)`, 默认 `'FETCH_AND_READ'`，`CHECK IN ('FETCH_AND_READ','LOCAL_CACHE_ONLY')`)
+   - `subsystem_slug` (`varchar(128)`, 目录名缓存)
+   - `resolved_branch` (`varchar(128)`)
+   - `collect_globs_json` / `exclude_globs_json` (`jsonb`, 可空，非空即覆盖全局默认 `pg` 白名单)
+   - `last_fetched_at` (`timestamptz`)、`ref_commit_time` (`timestamptz`)、`last_collected_commit` (`varchar(64)`)
+   - 存量迁移：既有记录保持 `source_mode = 'EXTERNAL_STANDALONE'`。
+
+2. **`contract_proto_files` 与 `contract_proto_file_versions` 扩展字段**：
+   - `contract_proto_files` 新增：`raw_blob_sha` (`varchar(64)`)、`normalizer_version` (`varchar(64)`)、`pipeline_status` (`varchar(24)`, 默认 `'NORMALIZED'`，`CHECK IN ('COLLECTED','NORMALIZED','QUARANTINED')`)、`status_reason` (`text`)、`line_map_json` (`jsonb`)、`is_external_copy` (`boolean`, 默认 `false`)、`imports_json` (`jsonb`)、`symbols_json` (`jsonb`)。
+   - `contract_proto_file_versions` 新增：`raw_content_text` (`text`, 保留清理前原始源码以支持双栏对比)。
+   - 存量回填：`raw_blob_sha` 回填为既有 `content_sha256`（当为空时）、`normalizer_version` 回填 `'passthrough-0'`、`pipeline_status` 回填 `'NORMALIZED'`。
+   - Tier-2 `DBProtoSourceProvider` 唯一查询条件：`pipeline_status = 'NORMALIZED' AND is_external_copy = false AND is_deleted = false`。
+
+3. **`contract_mr_check_runs` 扩展字段**：
+   - 新增 `normalize_failed` (`boolean`, 默认 `false`)，与 `compile_passed` 区分呈现 `NORMALIZE_FAILED`，同样禁止 `Override` 放行。
+
+4. **新增表 #37：`contract_proto_import_owners`（跨仓逻辑导入归属裁决表）**：
+   - 字段：`id` (`bigserial PK`)、`logical_path` (`varchar(512) NOT NULL UNIQUE`)、`owner_git_repo_id` (`bigint NOT NULL`)、`owner_bundle_id` (`bigint NOT NULL`)、`source` (`varchar(24) NOT NULL CHECK IN ('MANUAL','BASE_LIB','AUTO')`)、`updated_by` (`varchar(128)`)、`created_at`、`updated_at`。
+   - 写操作全面接入 `code-common/backend/audit` 记录字段级 Diff 审计。
+
 

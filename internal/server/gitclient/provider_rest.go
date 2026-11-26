@@ -27,7 +27,7 @@ const (
 	maxRESTResponseBytes = int64(decoder.MaxDescriptorFileSize) + 1024*1024
 )
 
-var ErrRESTFallbackAllowed = errors.New("REST 接口不支持该仓库地址，可回退至 memfs 协议拉取")
+var ErrRESTFallbackAllowed = errors.New("REST 接口不支持该仓库地址，可回退至本地 Git 协议拉取")
 
 // RemoteProtoFile 远端拉取到的单个只读 .proto 文件快照
 type RemoteProtoFile struct {

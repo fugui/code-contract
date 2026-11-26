@@ -440,3 +440,25 @@
 | `Server -> Agent` | `POST` | `/agent/v1/replays/:taskId/cancel` | Path: `taskId` | `200`: `{"cancelled":true}`（立即断开注入连接与被接管 Mock 连接、执行五出口清理 `Unpub` 桩服务并关闭 `MockCSGServer`、释放本地 `REPLAY` 租约并恢复原 `ARMED` 待命映射） |
 | `Server -> Agent` | `POST` | `/agent/v1/purge` | 无（主控启动恢复、管理员强制解锁或紧急全卸载调用；注：5m 心跳失联走 `Graceful Drain` 排空，而 `/purge` 与 `SIGINT/SIGTERM` 走立即硬关闭） | `200`: `{"purged":true}`（幂等硬关闭全部代理/Mock 连接与端口、全量 `Unpub` 并关闭 `MockCSGServer`、调用 `transport.Registry.CloseAll()` 与 `link.Close()` 卸载全部 Socket eBPF 与 uprobe 探针、清空 Maps 与 `armedSpecs`、重置本地租约） |
 | `Agent -> Server` | `WS (Binary)` | `/agent/v1/stream` | WebSocket 二进制帧：56B 大端 `EnvelopeHeader` (`Magic=0x4354 "CT"`, `ProtoVer=1`, `EventType=0x01..0x08`, **偏移 `26` `TransportProto=0\|1(TCP)\|4(MESH)`**, 偏移 `27` `Reserved=0`；`0x08` 为 `EVENT_CSG_OBSERVATION` JSON 观测载荷，流量帧保证 `SessionOrTaskID > 0` 且 `Direction` 恒定为 `1=INGRESS` 或 `2=EGRESS`) + 变长载荷 | `101 Switching Protocols`（单帧读取上限 `MaxFrameBytes + 56 + 1024`） |
+
+---
+
+## 14. 平台代码仓共享与四段式 Proto 流水线 API (`ADR-26` / `M33 ~ M36`)
+
+| 方法 | 路径 | 权限 | 请求参数 / 载荷 | 响应与错误码 |
+| :--- | :--- | :---: | :--- | :--- |
+| `GET` | `/api/git-repos/platform-discover` | `Auth` | Query: `department_id`, `service_group`, `search`, `probe_protos` (`bool`), `page`, `page_size` | `200`: 平台 `repositories` 列表 + 本地缓存状态、探测到的全小写 `pg` 目录列表、候选 Bundle 预览、白名单内外文件数与 Stage B 语法预检摘要 |
+| `POST` | `/api/git-repos/platform-import` | `Admin` | Body: `{ items: [{ platform_repo_id, sync_strategy?, collect_globs?, exclude_globs?, bundles: [{ bundle_name, target_schema_name, category, subdir_path, include_dirs? }] }] }` | `201`: 批量创建 `PLATFORM_SHARED` `GitRepo` 及自定义合并/拆分的 Bundle（`auto_activate` 默认 `false`）+ `P2` 审计；`409` 目标 Schema 冲突 |
+| `POST` | `/api/git-repos/:id/link-platform` | `Admin` | Body: `{ platform_repo_id?, sync_strategy? }`（空则按 `NormalizeGitURL` 自动匹配） | `200`: 转为 `PLATFORM_SHARED` 并清除 `credentials_enc`/`credential_hint` + `P1` 审计；`404`/`409` |
+| `POST` | `/api/git-repos/batch-sync` | `Admin` | Body: `{ repo_ids?: number[], branch?: string, force_recompile?: boolean }` | `202`: 经 `SyncScheduler` 并发限速派发批量四段式流水线同步 |
+| `POST` | `/api/git-repos/:id/re-normalize` | `Admin` | Body: `{ bundle_id?: number, force?: boolean }` | `200`: 直接基于 `raw/` 树或本地 Git 对象重跑 Stage B~D（零网络 `git fetch`）并返回流水线报告 |
+| `GET` | `/api/git-repos/baseline-report` | `Auth` | 无 | `200`: 全平台基线报告（`total_repos`, `whitelist_files`, `normalized_files`, `quarantined_files`, `syntax_pass_rate`, `compile_pass_rate`, `error_distribution`, `repos[]`） |
+| `GET` | `/api/git-repos/arch-suggestions` | `Auth` | 无 | `200`: 结合 `repositories.service_group` 与 `owner_id` 推荐架构 `Subsystem` / `Module` 归属列表 |
+| `GET` | `/api/proto-files/tree` | `Auth` | Query: `view` (`subsystem` \| `package`), `search`, `pipeline_status`, `include_deleted` | `200`: 双视图树响应（含子系统 slug、新鲜度 `is_stale`、`sync_strategy`、`pipeline_status`、`is_external_copy`） |
+| `GET` | `/api/proto-files/:id/content` | `Auth` | Query: `version` | `200`: 扩展返回 `raw_content`、`line_map`、`pipeline_status`、`status_reason`、`normalizer_version`、`is_external_copy` |
+| `GET` | `/api/proto-import-owners` | `Auth` | Query: `search`, `source`, `page`, `page_size` | `200`: 分页返回逻辑导入归属清单 |
+| `PUT` | `/api/proto-import-owners` | `Admin` | Body: `{ logical_path, owner_git_repo_id, owner_bundle_id, source? }` | `200`: Upsert 权威提供方（写入 `MANUAL` 并标记非权威同哈希副本 `is_external_copy=true`）+ `P1` 审计 |
+| `DELETE` | `/api/proto-import-owners/:id` | `Admin` | Path: `id` | `200`: 删除归属记录 + `P1` 审计 |
+| `GET` | `/api/proto-conflicts` | `Auth` | 无 | `200`: 返回 `import_ambiguities`（同逻辑路径多提供方）与 `symbol_conflicts`（全限定符号内容分歧） |
+| `POST` | `/api/proto-conflicts/resolve` | `Admin` | Body: `{ kind: "IMPORT" \| "SYMBOL", logical_path?, symbol_full_name?, owner_git_repo_id, owner_bundle_id }` | `200`: 落定 `contract_proto_import_owners (MANUAL)` 并更新非权威副本标记 + `P1` 审计 |
+| `POST` | `/api/webhooks/git-sync/:repoId` | `Secret` | Header: `X-Gitlab-Token` / `X-Hub-Signature-256` / `X-Gitea-Signature`; Body: `{ branch?, ref? }` | `202`: 常量时间验签通过后经 `SyncScheduler` 触发增量同步（显式 `commonAudit.Skip`） |

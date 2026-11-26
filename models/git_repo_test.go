@@ -25,12 +25,13 @@ func TestGitRepoBundleProtoFileAndVersionMigration_ConstraintsAndEncryption(t *t
 		t.Fatalf("SetupWithDB 失败: %v", err)
 	}
 
-	// 1. 校验 4 张新实体表存在及 contract_ 前缀隔离
+	// 1. 校验 5 张 Git/Proto 实体表存在及 contract_ 前缀隔离
 	for _, m := range []tabler{
 		GitRepo{},
 		GitProtoBundle{},
 		ProtoFile{},
 		ProtoFileVersion{},
+		ProtoImportOwner{},
 	} {
 		tbl := m.TableName()
 		if !strings.HasPrefix(tbl, config.TablePrefix) {
@@ -252,5 +253,55 @@ func TestGitRepoBundleProtoFileAndVersionMigration_ConstraintsAndEncryption(t *t
 	}
 	if refreshed.SourceBundleID != nil {
 		t.Fatalf("删除 GitProtoBundle 后 SourceBundleID 应通过 ON DELETE SET NULL 置空，实际=%v", *refreshed.SourceBundleID)
+	}
+
+	// 7. 校验 ADR-26 platform_repo_id 部分唯一索引、ProtoImportOwner 唯一索引及存量回填
+	var platID1 uint64 = 1001
+	platRepo1 := GitRepo{
+		Name:           "platform-order-svc",
+		PlatformRepoID: &platID1,
+		SourceMode:     GitSourceModePlatformShared,
+		SyncStrategy:   GitSyncStrategyLocalCacheOnly,
+		Provider:       GitProviderGitLab,
+		RepoURL:        "http://127.0.0.1:8080/trade/order-svc.git",
+		DefaultBranch:  "main",
+		AuthType:       GitAuthNone,
+		SyncMode:       GitSyncPoll,
+	}
+	if err := db.Create(&platRepo1).Error; err != nil {
+		t.Fatalf("创建 PLATFORM_SHARED 仓库失败: %v", err)
+	}
+	platRepoDup := GitRepo{
+		Name:           "platform-order-svc-dup",
+		PlatformRepoID: &platID1,
+		SourceMode:     GitSourceModePlatformShared,
+		SyncStrategy:   GitSyncStrategyFetchAndRead,
+		Provider:       GitProviderGitLab,
+		RepoURL:        "http://127.0.0.1:8080/trade/order-svc.git",
+		DefaultBranch:  "main",
+		AuthType:       GitAuthNone,
+		SyncMode:       GitSyncPoll,
+	}
+	if err := db.Create(&platRepoDup).Error; err == nil {
+		t.Fatalf("重复 platform_repo_id 应被 uk_contract_git_repo_platform 拦截")
+	}
+
+	owner := ProtoImportOwner{
+		LogicalPath:    "common/v1/header.proto",
+		OwnerGitRepoID: platRepo1.ID,
+		OwnerBundleID:  1,
+		Source:         ImportOwnerSourceBaseLib,
+		UpdatedBy:      "admin",
+	}
+	if err := db.Create(&owner).Error; err != nil {
+		t.Fatalf("创建 ProtoImportOwner 失败: %v", err)
+	}
+	if err := db.Create(&ProtoImportOwner{
+		LogicalPath:    "common/v1/header.proto",
+		OwnerGitRepoID: platRepo1.ID,
+		OwnerBundleID:  2,
+		Source:         ImportOwnerSourceManual,
+	}).Error; err == nil {
+		t.Fatalf("重复 logical_path 应被 uk_contract_import_owner_path 拦截")
 	}
 }

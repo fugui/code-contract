@@ -22,26 +22,31 @@ import (
 
 // ProtoFileDTO 只读 Proto 文件清单 DTO（严格无 locked/locked_by 悲观锁字段；兼容真实 Git 库与 M23 虚拟适配）
 type ProtoFileDTO struct {
-	ID               uint64    `json:"id"`
-	SchemaID         uint64    `json:"schema_id"`
-	GitRepoID        *uint64   `json:"git_repo_id,omitempty"`
-	GitRepoName      string    `json:"git_repo_name,omitempty"`
-	BundleID         *uint64   `json:"bundle_id,omitempty"`
-	BundleName       string    `json:"bundle_name,omitempty"`
-	TargetSchemaName string    `json:"target_schema_name"`
-	Category         string    `json:"category"`
-	FilePath         string    `json:"file_path"`
-	RepoFilePath     string    `json:"repo_file_path,omitempty"`
-	PackageName      string    `json:"package_name"`
-	LatestVersion    int       `json:"latest_version"`
-	LatestCommitSHA  string    `json:"latest_commit_sha,omitempty"`
-	ContentSHA256    string    `json:"content_sha256,omitempty"`
-	IsActiveSchema   bool      `json:"is_active_schema"`
-	HasSourceInfo    bool      `json:"has_source_info"`
-	IsDeleted        bool      `json:"is_deleted"`
-	SourceOrigin     string    `json:"source_origin"`
-	LineCount        int       `json:"line_count"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	ID                uint64    `json:"id"`
+	SchemaID          uint64    `json:"schema_id"`
+	GitRepoID         *uint64   `json:"git_repo_id,omitempty"`
+	GitRepoName       string    `json:"git_repo_name,omitempty"`
+	BundleID          *uint64   `json:"bundle_id,omitempty"`
+	BundleName        string    `json:"bundle_name,omitempty"`
+	TargetSchemaName  string    `json:"target_schema_name"`
+	Category          string    `json:"category"`
+	FilePath          string    `json:"file_path"`
+	RepoFilePath      string    `json:"repo_file_path,omitempty"`
+	PackageName       string    `json:"package_name"`
+	LatestVersion     int       `json:"latest_version"`
+	LatestCommitSHA   string    `json:"latest_commit_sha,omitempty"`
+	ContentSHA256     string    `json:"content_sha256,omitempty"`
+	IsActiveSchema    bool      `json:"is_active_schema"`
+	HasSourceInfo     bool      `json:"has_source_info"`
+	IsDeleted         bool      `json:"is_deleted"`
+	PipelineStatus    string    `json:"pipeline_status,omitempty"`
+	StatusReason      string    `json:"status_reason,omitempty"`
+	NormalizerVersion string    `json:"normalizer_version,omitempty"`
+	IsExternalCopy    bool      `json:"is_external_copy,omitempty"`
+	RawBlobSHA        string    `json:"raw_blob_sha,omitempty"`
+	SourceOrigin      string    `json:"source_origin"`
+	LineCount         int       `json:"line_count"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 // ProtoFileVersionDTO 只读文件单版本内容元数据 DTO

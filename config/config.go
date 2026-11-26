@@ -3,7 +3,9 @@ package config
 import (
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"code-common/backend/configutil"
 	commonModels "code-common/backend/models"
@@ -34,12 +36,65 @@ type AgentHubSection struct {
 	HeartbeatIntervalSec int  `yaml:"heartbeat_interval_sec"` // 心跳与双向租约对账周期（默认 10s）
 }
 
+// StorageSection 定义宿主机共享 Git 缓存与只读聚合 Proto 目录树存储配置 (ADR-26)
+type StorageSection struct {
+	Root               string `yaml:"root"`                 // 默认 ./data
+	CodesDir           string `yaml:"codes_dir"`            // 为空取 <root>/codes；同机部署可与 code-shield 共享
+	ProtosDir          string `yaml:"protos_dir"`           // 为空取 <root>/protos
+	SharedWriteEnabled bool   `yaml:"shared_write_enabled"` // code-shield 完成两层锁升级前保持 false
+}
+
+// GetCodesDir 返回共享 Git 缓存根目录（默认 <root>/codes）。
+func (s StorageSection) GetCodesDir() string {
+	if trimmed := strings.TrimSpace(s.CodesDir); trimmed != "" {
+		return filepath.Clean(trimmed)
+	}
+	root := strings.TrimSpace(s.Root)
+	if root == "" {
+		root = "./data"
+	}
+	return filepath.Join(filepath.Clean(root), "codes")
+}
+
+// GetProtosDir 返回只读聚合 Proto 目录树根目录（默认 <root>/protos）。
+func (s StorageSection) GetProtosDir() string {
+	if trimmed := strings.TrimSpace(s.ProtosDir); trimmed != "" {
+		return filepath.Clean(trimmed)
+	}
+	root := strings.TrimSpace(s.Root)
+	if root == "" {
+		root = "./data"
+	}
+	return filepath.Join(filepath.Clean(root), "protos")
+}
+
+// ProtoCollectSection 定义跨仓 pg 目录白名单采集、清理与定时调度配置 (ADR-26)
+type ProtoCollectSection struct {
+	CollectGlobs    []string `yaml:"collect_globs"`
+	ExcludeGlobs    []string `yaml:"exclude_globs"`
+	MaxFileBytes    int64    `yaml:"max_file_bytes"`
+	MaxFilesPerRepo int      `yaml:"max_files_per_repo"`
+	SyncCron        string   `yaml:"sync_cron"`
+	SyncConcurrency int      `yaml:"sync_concurrency"`
+	StaleThreshold  string   `yaml:"stale_threshold"`
+}
+
+// StaleThresholdDuration 解析缓存陈旧阈值（默认 24h）。
+func (p ProtoCollectSection) StaleThresholdDuration() time.Duration {
+	if d, err := time.ParseDuration(strings.TrimSpace(p.StaleThreshold)); err == nil && d > 0 {
+		return d
+	}
+	return 24 * time.Hour
+}
+
 // Config 定义模块全局配置结构
 type Config struct {
-	Server   configutil.ServerConfig     `yaml:"server"`
-	Database commonModels.DatabaseConfig `yaml:"database"`
-	Auth     AuthSection                 `yaml:"auth"`
-	AgentHub AgentHubSection             `yaml:"agent_hub"`
+	Server       configutil.ServerConfig     `yaml:"server"`
+	Database     commonModels.DatabaseConfig `yaml:"database"`
+	Auth         AuthSection                 `yaml:"auth"`
+	AgentHub     AgentHubSection             `yaml:"agent_hub"`
+	Storage      StorageSection              `yaml:"storage"`
+	ProtoCollect ProtoCollectSection         `yaml:"proto_collect"`
 }
 
 // AppConfig 全局运行时配置单例
@@ -98,6 +153,57 @@ func applyDefaults() {
 		}
 		if AppConfig.Auth.OAuth2.RedirectURL == "" {
 			AppConfig.Auth.OAuth2.RedirectURL = strings.TrimRight(AppConfig.Server.ExternalURL, "/") + "/api/oauth2/callback"
+		}
+	}
+
+	ApplyStorageAndCollectDefaults(&AppConfig.Storage, &AppConfig.ProtoCollect)
+}
+
+// DefaultCollectGlobs 返回 ADR-26 规定的默认 pg 白名单采集规则（严格全小写 pg）。
+func DefaultCollectGlobs() []string {
+	return []string{"pg/**/*.proto", "*/pg/**/*.proto"}
+}
+
+// DefaultExcludeGlobs 返回 ADR-26 规定的默认二级排除规则。
+func DefaultExcludeGlobs() []string {
+	return []string{
+		"**/test/**",
+		"**/testdata/**",
+		"**/mock/**",
+		"**/examples/**",
+		"**/third_party/**",
+		"**/vendor/**",
+	}
+}
+
+// ApplyStorageAndCollectDefaults 为 Storage 与 ProtoCollect 填充安全默认值。
+func ApplyStorageAndCollectDefaults(st *StorageSection, pc *ProtoCollectSection) {
+	if st != nil {
+		if strings.TrimSpace(st.Root) == "" {
+			st.Root = "./data"
+		}
+	}
+	if pc != nil {
+		if len(pc.CollectGlobs) == 0 {
+			pc.CollectGlobs = DefaultCollectGlobs()
+		}
+		if len(pc.ExcludeGlobs) == 0 {
+			pc.ExcludeGlobs = DefaultExcludeGlobs()
+		}
+		if pc.MaxFileBytes <= 0 {
+			pc.MaxFileBytes = 2 * 1024 * 1024 // 2 MiB
+		}
+		if pc.MaxFilesPerRepo <= 0 {
+			pc.MaxFilesPerRepo = 5000
+		}
+		if strings.TrimSpace(pc.SyncCron) == "" {
+			pc.SyncCron = "*/30 * * * *"
+		}
+		if pc.SyncConcurrency <= 0 {
+			pc.SyncConcurrency = 4
+		}
+		if strings.TrimSpace(pc.StaleThreshold) == "" {
+			pc.StaleThreshold = "24h"
 		}
 	}
 }

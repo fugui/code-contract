@@ -455,6 +455,11 @@ export interface ProtoFileDTO {
   is_active_schema: boolean;
   has_source_info: boolean;
   is_deleted?: boolean;
+  pipeline_status?: 'COLLECTED' | 'NORMALIZED' | 'QUARANTINED' | string;
+  status_reason?: string;
+  normalizer_version?: string;
+  is_external_copy?: boolean;
+  raw_blob_sha?: string;
   source_origin: string;
   line_count: number;
   updated_at: string;
@@ -501,6 +506,8 @@ export interface ProtoFileContentResponse {
   file: ProtoFileDTO;
   version: ProtoFileVersionDTO;
   content: string;
+  raw_content?: string;
+  line_map?: Record<string, number> | null;
   violations: ProtoSourceViolationDTO[];
   symbol_anchors: ProtoSymbolAnchorDTO[];
 }
@@ -727,6 +734,18 @@ export interface GitProtoBundleDTO {
 
 export interface GitRepoDTO {
   id: number;
+  platform_repo_id?: number | null;
+  source_mode?: 'PLATFORM_SHARED' | 'EXTERNAL_STANDALONE' | string;
+  sync_strategy?: 'FETCH_AND_READ' | 'LOCAL_CACHE_ONLY' | string;
+  subsystem_slug?: string;
+  resolved_branch?: string;
+  last_fetched_at?: string | null;
+  ref_commit_time?: string | null;
+  last_collected_commit?: string;
+  is_stale?: boolean;
+  normalized_count?: number;
+  quarantined_count?: number;
+  external_copy_count?: number;
   name: string;
   provider: GitProviderType | string;
   repo_url: string;
@@ -890,6 +909,7 @@ export interface MRCheckRunDTO {
   author_username: string;
   author_email: string;
   status: MRCheckStatus | string;
+  normalize_failed?: boolean;
   compile_passed: boolean;
   lint_error_count: number;
   lint_warning_count: number;
@@ -965,4 +985,201 @@ export interface NotificationListResponse {
 
 export interface UnreadCountResponse {
   unread_count: number;
+}
+
+// =====================================================================
+// ADR-26: 平台代码仓共享与四段式 Proto 流水线前端契约类型
+// =====================================================================
+
+export type GitSourceMode = 'PLATFORM_SHARED' | 'EXTERNAL_STANDALONE';
+export type GitSyncStrategy = 'FETCH_AND_READ' | 'LOCAL_CACHE_ONLY';
+
+export interface CandidateBundlePreviewDTO {
+  bundle_name: string;
+  target_schema_name: string;
+  category: ProtoCategory | string;
+  subdir_path: string;
+}
+
+export interface PlatformRepoPreviewDTO {
+  platform_repo_id: number;
+  name: string;
+  url: string;
+  http_url: string;
+  branch: string;
+  department_id: number;
+  department_name: string;
+  service_group: string;
+  subsystem_slug: string;
+  owner_id: number;
+  already_imported: boolean;
+  git_repo_id?: number | null;
+  local_cache_present: boolean;
+  resolved_branch?: string;
+  pg_dirs: string[];
+  whitelist_proto_count: number;
+  outside_whitelist_count: number;
+  candidate_bundles: CandidateBundlePreviewDTO[];
+  probe_error?: string;
+}
+
+export interface PlatformDiscoverResponse {
+  items: PlatformRepoPreviewDTO[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface PlatformRepoImportBundleSpec {
+  bundle_name: string;
+  target_schema_name: string;
+  category: string;
+  subdir_path: string;
+  include_dirs?: string[];
+}
+
+export interface PlatformRepoImportItemInput {
+  platform_repo_id: number;
+  sync_strategy?: GitSyncStrategy | string;
+  collect_globs?: string[];
+  exclude_globs?: string[];
+  bundles?: PlatformRepoImportBundleSpec[];
+}
+
+export interface PlatformImportResponse {
+  imported_count: number;
+  items: GitRepoDTO[];
+}
+
+export interface BaselineReportRepoItemDTO {
+  git_repo_id: number;
+  repo_name: string;
+  source_mode: string;
+  sync_strategy: string;
+  last_sync_status: string;
+  whitelist_files: number;
+  normalized_files: number;
+  quarantined_files: number;
+  external_copy_files: number;
+  compiled_bundles: number;
+  total_bundles: number;
+  compile_errors: string[];
+}
+
+export interface BaselineReportDTO {
+  generated_at: string;
+  total_repos: number;
+  whitelist_files: number;
+  normalized_files: number;
+  quarantined_files: number;
+  syntax_pass_rate: number;
+  compile_pass_rate: number;
+  error_distribution: Record<string, number>;
+  repos: BaselineReportRepoItemDTO[];
+}
+
+export interface ArchAssignmentSuggestionDTO {
+  git_repo_id: number;
+  repo_name: string;
+  platform_repo_id: number;
+  service_group: string;
+  recommended_subsystem_id?: number | null;
+  recommended_subsystem?: string;
+  recommended_module_id?: number | null;
+  recommended_module?: string;
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW' | string;
+  reason: string;
+}
+
+export interface ProtoTreeRepoGroupDTO {
+  subsystem_slug: string;
+  git_repo_id: number;
+  git_repo_name: string;
+  source_mode: string;
+  sync_strategy: string;
+  is_stale: boolean;
+  last_sync_at?: string | null;
+  files: ProtoFileDTO[];
+}
+
+export interface ProtoTreePackageGroupDTO {
+  package_name: string;
+  files: ProtoFileDTO[];
+}
+
+export type ProtoFilesTreeResponse =
+  | {
+      view: 'subsystem';
+      total: number;
+      groups: ProtoTreeRepoGroupDTO[];
+    }
+  | {
+      view: 'package';
+      total: number;
+      groups: ProtoTreePackageGroupDTO[];
+    };
+
+export interface ProtoImportOwnerDTO {
+  id: number;
+  logical_path: string;
+  owner_git_repo_id: number;
+  owner_bundle_id: number;
+  source: 'MANUAL' | 'BASE_LIB' | 'AUTO' | string;
+  updated_by: string;
+  updated_at: string;
+}
+
+export interface ProtoImportOwnerListResponse {
+  items: ProtoImportOwnerDTO[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface ImportCandidateDTO {
+  git_repo_id: number;
+  repo_name: string;
+  bundle_id: number;
+  bundle_name: string;
+  category: string;
+  logical_path: string;
+  repo_file_path: string;
+}
+
+export interface ImportAmbiguityItemDTO {
+  logical_path: string;
+  candidates: ImportCandidateDTO[];
+}
+
+export interface SymbolConflictCandidateDTO {
+  proto_file_id: number;
+  git_repo_id: number;
+  repo_name: string;
+  bundle_id: number;
+  bundle_name: string;
+  category: string;
+  logical_path: string;
+  repo_file_path: string;
+  content_sha256: string;
+  is_external_copy: boolean;
+}
+
+export interface SymbolConflictItemDTO {
+  symbol_kind: string;
+  symbol_full_name: string;
+  content_matches: boolean;
+  candidates: SymbolConflictCandidateDTO[];
+}
+
+export interface ProtoConflictsReportDTO {
+  import_ambiguities: ImportAmbiguityItemDTO[];
+  symbol_conflicts: SymbolConflictItemDTO[];
+}
+
+export interface ResolveProtoConflictInput {
+  kind: 'IMPORT' | 'SYMBOL';
+  logical_path?: string;
+  symbol_full_name?: string;
+  owner_git_repo_id: number;
+  owner_bundle_id: number;
 }

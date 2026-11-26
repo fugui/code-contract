@@ -1,6 +1,7 @@
 package gitclient
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sort"
@@ -12,6 +13,146 @@ import (
 
 	"gorm.io/gorm"
 )
+
+// ErrMRNormalizeFailed 表示 MR 虚拟树在 Normalizer 清洗或语法隔离门禁阶段失败（绝不允许 Override）。
+var ErrMRNormalizeFailed = errors.New("MR 虚拟树 Normalizer 清洗或 Protobuf 语法门禁失败")
+
+// MRNormalizeReport 描述 MR 虚拟树在 Normalizer 阶段的清洗结果与失败诊断。
+type MRNormalizeReport struct {
+	NormalizedTree map[string]string
+	FilteredFiles  []string
+	Diagnostics    []NormalizeDiagnostic
+	Version        string
+}
+
+// NormalizeAndValidateMRTree 对 MR 虚拟树应用与全量入库同源的 pg 白名单过滤、Stage B Normalizer 与语法门禁校验。
+// - 当 repo.SourceMode == PLATFORM_SHARED（或 changedFiles 落在非白名单路径）时，剔除不符合严格小写 pg/ 目录的文件；
+// - 对所有受变更且位于白名单内的文件（以及基线变更集合）执行 Normalizer + ParseProtoSyntaxOnly 语法校验；
+// - 任意语法解析失败或 Normalizer 致命诊断均返回 ErrMRNormalizeFailed（上层标记 normalize_failed=true，禁止 Override）。
+func NormalizeAndValidateMRTree(
+	ctx context.Context,
+	repo *models.GitRepo,
+	bundle *models.GitProtoBundle,
+	virtualTree map[string]string,
+	changedFiles []string,
+	norm Normalizer,
+	auxConfig []byte,
+) (*MRNormalizeReport, error) {
+	if norm == nil {
+		norm = NewPassthroughNormalizer()
+	}
+	report := &MRNormalizeReport{
+		NormalizedTree: make(map[string]string, len(virtualTree)),
+		Version:        norm.Version(),
+	}
+
+	applyPgWhitelist := repo != nil && repo.SourceMode == models.GitSourceModePlatformShared
+	subdir := "."
+	if bundle != nil {
+		if cleanSub, err := SanitizeSubdirPath(bundle.SubdirPath); err == nil && cleanSub != "" {
+			subdir = cleanSub
+		}
+	}
+	collectGlobs := []string(nil)
+	excludeGlobs := []string(nil)
+	if repo != nil {
+		collectGlobs = repo.CollectGlobs()
+		excludeGlobs = repo.ExcludeGlobs()
+	}
+	if len(collectGlobs) == 0 {
+		collectGlobs = []string{"pg/**/*.proto", "**/pg/**/*.proto"}
+	}
+
+	rawBytes := make(map[string][]byte, len(virtualTree))
+	keyOrder := make([]string, 0, len(virtualTree))
+	for p := range virtualTree {
+		keyOrder = append(keyOrder, p)
+	}
+	sort.Strings(keyOrder)
+
+	for _, relPath := range keyOrder {
+		content := virtualTree[relPath]
+		repoRelPath := relPath
+		if subdir != "." {
+			repoRelPath = strings.TrimPrefix(subdir+"/"+strings.TrimPrefix(relPath, "/"), "./")
+		}
+		if applyPgWhitelist {
+			inPg := (matchCollectGlobsStrict(collectGlobs, repoRelPath) || matchCollectGlobsStrict(collectGlobs, relPath)) &&
+				!matchAnyDoublestar(excludeGlobs, repoRelPath)
+			if !inPg {
+				report.FilteredFiles = append(report.FilteredFiles, relPath)
+				continue
+			}
+		}
+		rawBytes[relPath] = []byte(content)
+	}
+
+	if len(rawBytes) == 0 {
+		return report, nil
+	}
+
+	var repoVal models.GitRepo
+	if repo != nil {
+		repoVal = *repo
+	}
+	normOut, err := norm.Normalize(ctx, NormalizeInput{
+		Repo:          repoVal,
+		Files:         rawBytes,
+		AuxConfigJSON: auxConfig,
+	})
+	if err != nil {
+		return report, fmt.Errorf("%w: %v", ErrMRNormalizeFailed, err)
+	}
+	if strings.TrimSpace(normOut.NormalizerVersion) != "" {
+		report.Version = normOut.NormalizerVersion
+	}
+
+	var diagErrors []string
+	changedSet := make(map[string]struct{}, len(changedFiles))
+	for _, f := range changedFiles {
+		changedSet[f] = struct{}{}
+	}
+
+	// 将标准化结果回填至 NormalizedTree，并对变更文件强制执行语法隔离门禁
+	for _, relPath := range keyOrder {
+		if _, filtered := rawBytes[relPath]; !filtered {
+			continue
+		}
+		cleanedBytes := rawBytes[relPath]
+		if nf, ok := normOut.Files[relPath]; ok {
+			if len(nf.Diagnostics) > 0 {
+				report.Diagnostics = append(report.Diagnostics, nf.Diagnostics...)
+				for _, d := range nf.Diagnostics {
+					if strings.EqualFold(d.Severity, "ERROR") || d.RuleID == "PARSE_SYNTAX_ERROR" {
+						diagErrors = append(diagErrors, fmt.Sprintf("%s [%s]: %s", d.RepoFilePath, d.RuleID, d.Message))
+					}
+				}
+			}
+			if len(nf.CleanContent) > 0 {
+				cleanedBytes = nf.CleanContent
+			}
+		}
+		// 检查受变更文件与新增/修改文件的语法门禁
+		if _, isChanged := changedSet[relPath]; isChanged || len(changedSet) == 0 {
+			gateRes := ParseProtoSyntaxOnly(relPath, cleanedBytes)
+			if !gateRes.Passed {
+				report.Diagnostics = append(report.Diagnostics, gateRes.Diagnostics...)
+				errMsg := gateRes.ErrorSummary
+				if strings.TrimSpace(errMsg) == "" {
+					errMsg = "Proto 语法门禁解析失败"
+				}
+				diagErrors = append(diagErrors, fmt.Sprintf("%s: %s", relPath, errMsg))
+			}
+		}
+		report.NormalizedTree[relPath] = string(cleanedBytes)
+	}
+
+	if len(diagErrors) > 0 {
+		sort.Strings(diagErrors)
+		return report, fmt.Errorf("%w: %s", ErrMRNormalizeFailed, strings.Join(diagErrors, "; "))
+	}
+	return report, nil
+}
 
 const (
 	MRChangeAdded    = "ADDED"

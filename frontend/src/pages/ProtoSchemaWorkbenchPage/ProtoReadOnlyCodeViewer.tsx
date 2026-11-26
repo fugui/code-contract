@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Lock, AlertTriangle, Code2, Hash } from 'lucide-react';
 import type { ProtoSourceViolationDTO, ProtoSymbolAnchorDTO } from '../../types';
 import './ProtoDocsAndCodeViewer.css';
@@ -152,6 +152,12 @@ export function tokenizeProtoLine(line: string): ProtoLexToken[] {
 export interface ProtoReadOnlyCodeViewerProps {
   filePath: string;
   content: string;
+  rawContent?: string;
+  lineMap?: Record<string, number> | null;
+  pipelineStatus?: string;
+  statusReason?: string;
+  normalizerVersion?: string;
+  isExternalCopy?: boolean;
   highlightLine?: number;
   violations?: ProtoSourceViolationDTO[];
   symbolAnchors?: ProtoSymbolAnchorDTO[];
@@ -164,6 +170,12 @@ export interface ProtoReadOnlyCodeViewerProps {
 export const ProtoReadOnlyCodeViewer: React.FC<ProtoReadOnlyCodeViewerProps> = ({
   filePath,
   content,
+  rawContent,
+  lineMap,
+  pipelineStatus,
+  statusReason,
+  normalizerVersion,
+  isExternalCopy = false,
   highlightLine,
   violations = [],
   symbolAnchors = [],
@@ -172,14 +184,26 @@ export const ProtoReadOnlyCodeViewer: React.FC<ProtoReadOnlyCodeViewerProps> = (
   sourceOrigin,
   onSelectLine,
 }) => {
+  const [sourceStageMode, setSourceStageMode] = useState<'clean' | 'raw' | 'split'>('clean');
+  const [rawJumpLine, setRawJumpLine] = useState<number | null>(null);
+  const hasRawVariant = Boolean(rawContent && rawContent.length > 0);
+  const displayedContent =
+    sourceStageMode === 'raw' && rawContent ? rawContent : content;
+  const activeHighlightLine =
+    sourceStageMode === 'raw' && rawJumpLine ? rawJumpLine : highlightLine;
+
+  useEffect(() => {
+    setRawJumpLine(null);
+  }, [filePath]);
+
   const lines = useMemo(() => {
-    const normalized = content.replace(/\r\n/g, '\n');
+    const normalized = displayedContent.replace(/\r\n/g, '\n');
     const split = normalized.split('\n');
     if (split.length > 1 && split[split.length - 1] === '') {
       split.pop();
     }
     return split;
-  }, [content]);
+  }, [displayedContent]);
 
   const violationsByLine = useMemo(() => {
     const map = new Map<number, ProtoSourceViolationDTO[]>();
@@ -192,14 +216,14 @@ export const ProtoReadOnlyCodeViewer: React.FC<ProtoReadOnlyCodeViewerProps> = (
   }, [violations]);
 
   useEffect(() => {
-    if (!highlightLine || highlightLine <= 0 || typeof document === 'undefined') {
+    if (!activeHighlightLine || activeHighlightLine <= 0 || typeof document === 'undefined') {
       return;
     }
-    const target = document.getElementById(`L${highlightLine}`);
+    const target = document.getElementById(`L${activeHighlightLine}`);
     if (target && typeof target.scrollIntoView === 'function') {
       target.scrollIntoView({ block: 'center', behavior: 'smooth' });
     }
-  }, [highlightLine, filePath]);
+  }, [activeHighlightLine, filePath, sourceStageMode]);
 
   const handleJumpAnchor = (line: number) => {
     if (onSelectLine) {
@@ -213,6 +237,14 @@ export const ProtoReadOnlyCodeViewer: React.FC<ProtoReadOnlyCodeViewerProps> = (
     }
   };
 
+  const handleJumpRawLine = (origLine: number) => {
+    setRawJumpLine(origLine);
+    setSourceStageMode('raw');
+    if (onSelectLine) {
+      onSelectLine(origLine);
+    }
+  };
+
   return (
     <div className="pdoc-code-viewer" data-testid="proto-readonly-code-viewer">
       <div className="pdoc-code-viewer__toolbar">
@@ -220,11 +252,52 @@ export const ProtoReadOnlyCodeViewer: React.FC<ProtoReadOnlyCodeViewerProps> = (
           <Code2 size={15} />
           <span className="pdoc-code-viewer__filepath">{filePath}</span>
           {versionLabel && <span className="pdoc-pill">{versionLabel}</span>}
-          {highlightLine && highlightLine > 0 && (
-            <span className="code-badge code-badge-warning">锚点 #L{highlightLine}</span>
+          {pipelineStatus && (
+            <span
+              className={`code-badge ${
+                pipelineStatus === 'QUARANTINED'
+                  ? 'code-badge-danger'
+                  : pipelineStatus === 'NORMALIZED'
+                    ? 'code-badge-success'
+                    : 'code-badge-info'
+              }`}
+              title={statusReason || pipelineStatus}
+            >
+              {pipelineStatus}
+            </span>
+          )}
+          {normalizerVersion && <span className="pdoc-pill">{normalizerVersion}</span>}
+          {isExternalCopy && <span className="code-badge code-badge-warning">外部副本</span>}
+          {activeHighlightLine && activeHighlightLine > 0 && (
+            <span className="code-badge code-badge-warning">锚点 #L{activeHighlightLine}</span>
           )}
         </div>
         <div className="pdoc-meta-row">
+          {hasRawVariant && (
+            <div className="code-tab-pills" role="group" aria-label="源码视图切换">
+              <button
+                type="button"
+                className={`code-pill-btn ${sourceStageMode === 'clean' ? 'code-pill-btn-active' : ''}`}
+                onClick={() => setSourceStageMode('clean')}
+              >
+                Clean
+              </button>
+              <button
+                type="button"
+                className={`code-pill-btn ${sourceStageMode === 'raw' ? 'code-pill-btn-active' : ''}`}
+                onClick={() => setSourceStageMode('raw')}
+              >
+                Raw
+              </button>
+              <button
+                type="button"
+                className={`code-pill-btn ${sourceStageMode === 'split' ? 'code-pill-btn-active' : ''}`}
+                onClick={() => setSourceStageMode('split')}
+              >
+                并排对比
+              </button>
+            </div>
+          )}
           {sourceOrigin === 'DESCRIPTOR_RECONSTRUCTED' && (
             <span className="pdoc-pill">M23 描述集重构只读视图</span>
           )}
@@ -233,6 +306,13 @@ export const ProtoReadOnlyCodeViewer: React.FC<ProtoReadOnlyCodeViewerProps> = (
           </span>
         </div>
       </div>
+
+      {pipelineStatus === 'QUARANTINED' && statusReason && (
+        <div className="pdoc-banner pdoc-banner--warning">
+          <AlertTriangle size={15} />
+          <span>隔离原因：{statusReason}</span>
+        </div>
+      )}
 
       {!hasSourceInfo && (
         <div className="pdoc-banner pdoc-banner--warning">
@@ -265,68 +345,93 @@ export const ProtoReadOnlyCodeViewer: React.FC<ProtoReadOnlyCodeViewerProps> = (
         </div>
       )}
 
-      <div className="pdoc-code-scroll">
-        <table className="pdoc-code-table" role="presentation">
-          <tbody>
-            {lines.map((lineText, idx) => {
-              const lineNum = idx + 1;
-              const isHighlighted = highlightLine === lineNum;
-              const lineViolations = violationsByLine.get(lineNum) ?? [];
-              const hasError = lineViolations.some((v) => v.severity === 'ERROR');
-              const hasWarning = !hasError && lineViolations.some((v) => v.severity === 'WARNING');
-              const wavyClass = hasError
-                ? 'pdoc-code-line__wavy--error'
-                : hasWarning
-                  ? 'pdoc-code-line__wavy--warning'
-                  : '';
+      {sourceStageMode === 'split' && hasRawVariant ? (
+        <div className="pgit-dual-code-grid" data-testid="proto-split-compare">
+          <div className="pgit-dual-code-pane">
+            <div className="pgit-dual-code-pane__title">Raw 原始快照</div>
+            <pre className="pgit-dual-code-pre">{rawContent}</pre>
+          </div>
+          <div className="pgit-dual-code-pane">
+            <div className="pgit-dual-code-pane__title">Clean 规范化源码 ({normalizerVersion || 'clean'})</div>
+            <pre className="pgit-dual-code-pre">{content}</pre>
+          </div>
+        </div>
+      ) : (
+        <div className="pdoc-code-scroll">
+          <table className="pdoc-code-table" role="presentation">
+            <tbody>
+              {lines.map((lineText, idx) => {
+                const lineNum = idx + 1;
+                const isHighlighted = activeHighlightLine === lineNum;
+                const mappedOrigLine =
+                  sourceStageMode === 'clean' && lineMap ? lineMap[String(lineNum)] : undefined;
+                const lineViolations = violationsByLine.get(lineNum) ?? [];
+                const hasError = lineViolations.some((v) => v.severity === 'ERROR');
+                const hasWarning = !hasError && lineViolations.some((v) => v.severity === 'WARNING');
+                const wavyClass = hasError
+                  ? 'pdoc-code-line__wavy--error'
+                  : hasWarning
+                    ? 'pdoc-code-line__wavy--warning'
+                    : '';
 
-              const rowClass = isHighlighted
-                ? 'pdoc-code-line pdoc-code-line--highlighted'
-                : 'pdoc-code-line';
-              const tokens = tokenizeProtoLine(lineText);
+                const rowClass = isHighlighted
+                  ? 'pdoc-code-line pdoc-code-line--highlighted'
+                  : 'pdoc-code-line';
+                const tokens = tokenizeProtoLine(lineText);
 
-              return (
-                <React.Fragment key={lineNum}>
-                  <tr id={`L${lineNum}`} data-line={lineNum} className={rowClass}>
-                    <td className="pdoc-code-line__gutter">
-                      <a
-                        href={`#L${lineNum}`}
-                        className="pdoc-code-line__anchor"
-                        onClick={(e) => {
-                          if (onSelectLine) {
-                            e.preventDefault();
-                            onSelectLine(lineNum);
-                          }
-                        }}
-                      >
-                        {lineNum}
-                      </a>
-                    </td>
-                    <td className={`pdoc-code-line__code ${wavyClass}`}>
-                      {tokens.map((tok, tkIdx) => (
-                        <span key={tkIdx} className={tok.kind === 'plain' ? undefined : `pdoc-tok--${tok.kind}`}>
-                          {tok.text}
-                        </span>
-                      ))}
-                    </td>
-                  </tr>
-                  {lineViolations.map((viol, vIdx) => (
-                    <tr key={`v-${lineNum}-${vIdx}`} className="pdoc-code-diag-row">
-                      <td className="pdoc-code-line__gutter" />
-                      <td className="pdoc-code-diag-row__cell">
-                        <span className={`code-badge ${viol.severity === 'ERROR' ? 'code-badge-danger' : 'code-badge-warning'}`}>
-                          {viol.rule_code}
-                        </span>{' '}
-                        {viol.message}
+                return (
+                  <React.Fragment key={lineNum}>
+                    <tr id={`L${lineNum}`} data-line={lineNum} className={rowClass}>
+                      <td className="pdoc-code-line__gutter">
+                        <a
+                          href={`#L${lineNum}`}
+                          className="pdoc-code-line__anchor"
+                          onClick={(e) => {
+                            if (onSelectLine) {
+                              e.preventDefault();
+                              onSelectLine(lineNum);
+                            }
+                          }}
+                        >
+                          {lineNum}
+                        </a>
+                        {mappedOrigLine !== undefined && hasRawVariant && (
+                          <button
+                            type="button"
+                            className="pgit-line-map-tag"
+                            title={`跳转到 Raw 原始第 ${mappedOrigLine} 行`}
+                            onClick={() => handleJumpRawLine(mappedOrigLine)}
+                          >
+                            {`原L${mappedOrigLine}`}
+                          </button>
+                        )}
+                      </td>
+                      <td className={`pdoc-code-line__code ${wavyClass}`}>
+                        {tokens.map((tok, tkIdx) => (
+                          <span key={tkIdx} className={tok.kind === 'plain' ? undefined : `pdoc-tok--${tok.kind}`}>
+                            {tok.text}
+                          </span>
+                        ))}
                       </td>
                     </tr>
-                  ))}
-                </React.Fragment>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+                    {lineViolations.map((viol, vIdx) => (
+                      <tr key={`v-${lineNum}-${vIdx}`} className="pdoc-code-diag-row">
+                        <td className="pdoc-code-line__gutter" />
+                        <td className="pdoc-code-diag-row__cell">
+                          <span className={`code-badge ${viol.severity === 'ERROR' ? 'code-badge-danger' : 'code-badge-warning'}`}>
+                            {viol.rule_code}
+                          </span>{' '}
+                          {viol.message}
+                        </td>
+                      </tr>
+                    ))}
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 };

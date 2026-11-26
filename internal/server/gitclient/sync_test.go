@@ -1,13 +1,10 @@
 package gitclient
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -22,26 +19,9 @@ import (
 	"code-contract/internal/server/decoder"
 	"code-contract/models"
 
-	"github.com/go-git/go-billy/v5/memfs"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing/format/pktline"
-	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/plumbing/protocol/packp"
-	"github.com/go-git/go-git/v5/plumbing/storer"
-	"github.com/go-git/go-git/v5/plumbing/transport"
-	gitserver "github.com/go-git/go-git/v5/plumbing/transport/server"
-	"github.com/go-git/go-git/v5/storage/memory"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
-
-type singleRepoLoader struct {
-	st storer.Storer
-}
-
-func (l singleRepoLoader) Load(_ *transport.Endpoint) (storer.Storer, error) {
-	return l.st, nil
-}
 
 type mockCommitSnapshot struct {
 	SHA     string
@@ -466,127 +446,55 @@ message PaymentInfo { int64 amount_fen = 1; }
 	}
 }
 
-func TestSyncViaMemFS_SmartHTTP_AndPathTraversalGuard(t *testing.T) {
+func TestSyncViaGitCache_GenericBareRepo_SSRFAndPathTraversalGuard(t *testing.T) {
 	db, reg := setupGitClientTestDB(t)
+	oldRoot := config.AppConfig.Storage.Root
+	oldCodes := config.AppConfig.Storage.CodesDir
+	config.AppConfig.Storage.CodesDir = t.TempDir()
+	defer func() {
+		config.AppConfig.Storage.Root = oldRoot
+		config.AppConfig.Storage.CodesDir = oldCodes
+	}()
 
-	// 构建纯内存 Git 仓库（零磁盘、零 os/exec git）
-	storer := memory.NewStorage()
-	fs := memfs.New()
-	gitRepo, err := git.Init(storer, fs)
-	if err != nil {
-		t.Fatalf("git.Init memfs 失败: %v", err)
-	}
-	wt, err := gitRepo.Worktree()
-	if err != nil {
-		t.Fatalf("Worktree 失败: %v", err)
-	}
-	_ = fs.MkdirAll("billing/v1", 0755)
-	f, err := fs.Create("billing/v1/billing.proto")
-	if err != nil {
-		t.Fatalf("memfs Create 失败: %v", err)
-	}
-	_, _ = f.Write([]byte(`syntax = "proto3";
+	bareDir := createBareGitRepoWithCommits(t, "master", []map[string]string{
+		{
+			"billing/v1/billing.proto": `syntax = "proto3";
 package billing.v1;
 message ChargeReq { int64 amount = 1; }
 message ChargeRsp { string tx_id = 1; }
 service BillingService { rpc Charge(ChargeReq) returns (ChargeRsp); }
-`))
-	_ = f.Close()
-	if _, err := wt.Add("billing/v1/billing.proto"); err != nil {
-		t.Fatalf("wt.Add 失败: %v", err)
-	}
-	commitHash, err := wt.Commit("init billing proto", &git.CommitOptions{
-		Author: &object.Signature{
-			Name:  "memfs-bot",
-			Email: "bot@example.com",
-			When:  time.Now().UTC(),
+`,
 		},
 	})
-	if err != nil {
-		t.Fatalf("wt.Commit 失败: %v", err)
-	}
 
-	// 构建纯 Go Smart-HTTP Git Server 供 go-git + memfs 拉取
-	srvHandler := gitserver.NewServer(singleRepoLoader{st: storer})
-	smartSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ep, err := transport.NewEndpoint("/billing.git")
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		sess, err := srvHandler.NewUploadPackSession(ep, nil)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
-			return
-		}
-		defer sess.Close()
-
-		if strings.HasSuffix(r.URL.Path, "/info/refs") && r.URL.Query().Get("service") == "git-upload-pack" {
-			adv, err := sess.AdvertisedReferencesContext(r.Context())
-			if err != nil {
-				t.Logf("smart-http adv error: %v", err)
-				http.Error(w, "adv: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-			w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
-			var buf bytes.Buffer
-			enc := pktline.NewEncoder(&buf)
-			_ = enc.EncodeString("# service=git-upload-pack\n")
-			_ = enc.Flush()
-			if err := adv.Encode(&buf); err != nil {
-				t.Logf("smart-http adv.Encode error: %v", err)
-				http.Error(w, "adv.Encode: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-			_, _ = w.Write(buf.Bytes())
-			return
-		}
-		if strings.HasSuffix(r.URL.Path, "/git-upload-pack") {
-			if _, err := sess.AdvertisedReferencesContext(r.Context()); err != nil {
-				t.Logf("smart-http stateless-adv error: %v", err)
-				http.Error(w, "stateless-adv: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-			reqBody, err := io.ReadAll(r.Body)
-			if err != nil {
-				t.Logf("smart-http readBody error: %v", err)
-				http.Error(w, "readBody: "+err.Error(), http.StatusBadRequest)
-				return
-			}
-			upReq := packp.NewUploadPackRequest()
-			if err := upReq.Decode(bytes.NewReader(reqBody)); err != nil {
-				t.Logf("smart-http decode error: %v (body=%q)", err, string(reqBody))
-				http.Error(w, "decode: "+err.Error(), http.StatusBadRequest)
-				return
-			}
-			upResp, err := sess.UploadPack(r.Context(), upReq)
-			if err != nil {
-				t.Logf("smart-http uploadPack error: %v", err)
-				http.Error(w, "uploadPack: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-			defer upResp.Close()
-			w.Header().Set("Content-Type", "application/x-git-upload-pack-result")
-			var out bytes.Buffer
-			if err := upResp.Encode(&out); err != nil && !errors.Is(err, io.EOF) {
-				t.Logf("smart-http encode error: %v", err)
-				http.Error(w, "encode: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-			_, _ = w.Write(out.Bytes())
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer smartSrv.Close()
-
-	repo := models.GitRepo{
-		Name:          "generic-billing-git",
+	// 1. 验证 HTTP/HTTPS 地址在未配置 outbound_trusted_cidrs 时仍被 SSRF SafeDialer 拦截
+	ssrfRepo := models.GitRepo{
+		Name:          "generic-ssrf-blocked",
 		Provider:      models.GitProviderGeneric,
-		RepoURL:       smartSrv.URL + "/billing.git",
+		RepoURL:       "http://127.0.0.1:19999/billing.git",
 		DefaultBranch: "master",
 		AuthType:      models.GitAuthNone,
 		SyncMode:      models.GitSyncManual,
+		AutoCompile:   true,
+	}
+	if err := db.Create(&ssrfRepo).Error; err != nil {
+		t.Fatalf("创建 SSRF 测试 GitRepo 失败: %v", err)
+	}
+	svc := NewSyncService(db, reg, nil)
+	if _, err := svc.SyncRepo(context.Background(), ssrfRepo.ID, SyncOptions{OperatorID: 1}); err == nil {
+		t.Fatalf("未放行 127.0.0.1/32 时，Git 协议同步必须触发 SSRF 防护拒绝")
+	}
+
+	// 2. 验证真实本地 bare 仓库通过 gitsync 无工作树缓存同步并编译入库 + ListBranches
+	repo := models.GitRepo{
+		Name:          "generic-billing-git",
+		Provider:      models.GitProviderGeneric,
+		RepoURL:       bareDir,
+		DefaultBranch: "master",
+		AuthType:      models.GitAuthNone,
+		SyncMode:      models.GitSyncManual,
+		SourceMode:    models.GitSourceModeExternalStandalone,
+		SyncStrategy:  models.GitSyncStrategyFetchAndRead,
 		AutoCompile:   true,
 	}
 	if err := db.Create(&repo).Error; err != nil {
@@ -595,7 +503,7 @@ service BillingService { rpc Charge(ChargeReq) returns (ChargeRsp); }
 	bundle := models.GitProtoBundle{
 		GitRepoID:        repo.ID,
 		BundleName:       "billing-root",
-		TargetSchemaName: "memfs-billing-svc",
+		TargetSchemaName: "gitcache-billing-svc",
 		Category:         models.ProtoCategoryBusiness,
 		SubdirPath:       ".",
 		AutoCompile:      true,
@@ -606,28 +514,17 @@ service BillingService { rpc Charge(ChargeReq) returns (ChargeRsp); }
 		t.Fatalf("创建 Bundle 失败: %v", err)
 	}
 
-	svc := NewSyncService(db, reg, nil)
-
-	// 先验证 memfs go-git 客户端在未放行 127.0.0.1 时也被 SafeDialer 拒绝
-	if _, err := svc.SyncRepo(context.Background(), repo.ID, SyncOptions{OperatorID: 1}); err == nil {
-		t.Fatalf("未放行 127.0.0.1/32 时，memfs go-git 也必须触发 SSRF 防护拒绝")
-	}
-
-	if err := db.Where("setting_key = ?", "outbound_trusted_cidrs").
-		Assign(models.ModuleSetting{
-			SettingKey: "outbound_trusted_cidrs",
-			SettingVal: "127.0.0.1/32",
-		}).
-		FirstOrCreate(&models.ModuleSetting{}).Error; err != nil {
-		t.Fatalf("更新 outbound_trusted_cidrs 失败: %v", err)
+	branches, err := svc.ListBranches(context.Background(), repo.ID)
+	if err != nil || len(branches) != 1 || branches[0] != "master" {
+		t.Fatalf("预期枚举分支 [master]，实际 branches=%v err=%v", branches, err)
 	}
 
 	res, err := svc.SyncRepo(context.Background(), repo.ID, SyncOptions{OperatorID: 1})
 	if err != nil {
-		t.Fatalf("memfs SyncRepo 失败: %v", err)
+		t.Fatalf("Git 本地缓存 SyncRepo 失败: %v", err)
 	}
-	if res.CommitSHA != commitHash.String() || len(res.BundleResults) != 1 || res.BundleResults[0].AddedFiles != 1 {
-		t.Fatalf("memfs SyncRepo 结果不符合预期: %+v", res)
+	if res.CommitSHA == "" || len(res.BundleResults) != 1 || res.BundleResults[0].AddedFiles != 1 {
+		t.Fatalf("SyncRepo 结果不符合预期: %+v", res)
 	}
 
 	// 验证 POSIX 路径穿越清洗防护

@@ -45,3 +45,28 @@ auth:
       - "openid"
       - "profile"
       - "email"
+
+# ── 共享 Git 缓存与只读聚合 Proto 目录树配置 (ADR-26) ──
+storage:
+  root: "./data"
+  codes_dir: ""               # 为空则取 <root>/codes；同机部署可指向 code-shield 的 codes 目录以复用缓存
+  protos_dir: ""              # 为空则取 <root>/protos
+  shared_write_enabled: false # code-shield 完成两层锁升级并上线前保持 false
+
+# ── Proto 跨仓采集、清理与调度配置 (ADR-26) ──
+proto_collect:
+  collect_globs:
+    - "pg/**/*.proto"
+    - "*/pg/**/*.proto"
+  exclude_globs:
+    - "**/test/**"
+    - "**/testdata/**"
+    - "**/mock/**"
+    - "**/examples/**"
+    - "**/third_party/**"
+    - "**/vendor/**"
+  max_file_bytes: 2097152     # 2 MiB
+  max_files_per_repo: 5000
+  sync_cron: "*/30 * * * *"
+  sync_concurrency: 4
+  stale_threshold: "24h"

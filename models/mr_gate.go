@@ -38,6 +38,7 @@ type MRCheckRun struct {
 	AuthorUsername        string          `gorm:"size:64;not null;default:''" json:"author_username"`
 	AuthorEmail           string          `gorm:"size:128;not null;default:''" json:"author_email"`
 	Status                string          `gorm:"size:24;not null;default:'PENDING';index:idx_contract_mr_status" json:"status"` // PENDING | RUNNING | PASSED | WARN | FAILED | OVERRIDDEN
+	NormalizeFailed       bool            `gorm:"column:normalize_failed;not null;default:false" json:"normalize_failed"`
 	CompilePassed         bool            `gorm:"not null;default:false" json:"compile_passed"`
 	LintErrorCount        int             `gorm:"not null;default:0" json:"lint_error_count"`
 	LintWarningCount      int             `gorm:"not null;default:0" json:"lint_warning_count"`

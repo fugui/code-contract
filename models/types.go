@@ -12,6 +12,7 @@ import (
 // 复用 code-common 公共基础模型
 type User = commonModels.User
 type Department = commonModels.Department
+type Repository = commonModels.Repository
 type SysAuditLog = commonModels.SysAuditLog
 
 // 公共领域常量

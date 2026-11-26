@@ -29,9 +29,50 @@ var (
 	ErrPathTraversalDenied = errors.New("非法的虚拟文件路径，拒绝路径穿越或绝对路径")
 	// ErrMissingImports 缺失外部导入的 .proto 依赖文件
 	ErrMissingImports = errors.New("缺失外部依赖 .proto 文件")
+	// ErrImportAmbiguous 存在多个候选提供方且无权威指认，严禁静默择一
+	ErrImportAmbiguous = errors.New("导入路径存在多个候选提供方且无权威指认")
 	// ErrCompileSyntax Proto 源码存在语法或语义链接错误
 	ErrCompileSyntax = errors.New("Proto 源码存在语法或链接错误")
 )
+
+// ImportCandidateDTO 描述跨仓导入歧义时的候选提供方。
+type ImportCandidateDTO struct {
+	GitRepoID    uint64 `json:"git_repo_id"`
+	RepoName     string `json:"repo_name"`
+	BundleID     uint64 `json:"bundle_id"`
+	BundleName   string `json:"bundle_name"`
+	Category     string `json:"category"`
+	RepoFilePath string `json:"repo_file_path"`
+	LogicalPath  string `json:"logical_path"`
+}
+
+// ImportAmbiguousError 表示同一逻辑导入路径存在多个候选提供方。
+type ImportAmbiguousError struct {
+	LogicalPath string
+	Candidates  []ImportCandidateDTO
+}
+
+func (e *ImportAmbiguousError) Error() string {
+	names := make([]string, 0, len(e.Candidates))
+	for _, c := range e.Candidates {
+		names = append(names, fmt.Sprintf("%s/%s", c.RepoName, c.BundleName))
+	}
+	return fmt.Sprintf("%s (%s): 候选提供方 [%s]", ErrImportAmbiguous.Error(), e.LogicalPath, strings.Join(names, ", "))
+}
+
+func (e *ImportAmbiguousError) Unwrap() error {
+	return ErrImportAmbiguous
+}
+
+// MissingImportSuggestionDTO 为 MISSING_IMPORTS 提供近似候选及隔离状态提示 (ADR-26 §2.4.4)。
+type MissingImportSuggestionDTO struct {
+	MissingPath   string `json:"missing_path"`
+	CandidatePath string `json:"candidate_path"`
+	RepoName      string `json:"repo_name"`
+	PGDir         string `json:"pg_dir"`
+	Status        string `json:"status"` // NORMALIZED | QUARANTINED | COLLECTED
+	StatusReason  string `json:"status_reason,omitempty"`
+}
 
 // CompileDiagnosticDTO 结构化编译错误定位诊断信息 (file/line/column/message)
 type CompileDiagnosticDTO struct {
@@ -43,12 +84,14 @@ type CompileDiagnosticDTO struct {
 
 // CompileError 结构化纯 Go Proto 编译错误
 type CompileError struct {
-	Code           string                 `json:"code"`
-	HTTPStatus     int                    `json:"-"`
-	Message        string                 `json:"error"`
-	Diagnostics    []CompileDiagnosticDTO `json:"diagnostics,omitempty"`
-	MissingImports []string               `json:"missing_imports,omitempty"`
-	Err            error                  `json:"-"`
+	Code                     string                       `json:"code"`
+	HTTPStatus               int                          `json:"-"`
+	Message                  string                       `json:"error"`
+	Diagnostics              []CompileDiagnosticDTO       `json:"diagnostics,omitempty"`
+	MissingImports           []string                     `json:"missing_imports,omitempty"`
+	MissingImportSuggestions []MissingImportSuggestionDTO `json:"missing_import_suggestions,omitempty"`
+	AmbiguousCandidates      []ImportCandidateDTO         `json:"ambiguous_candidates,omitempty"`
+	Err                      error                        `json:"-"`
 }
 
 func (e *CompileError) Error() string {
@@ -141,7 +184,14 @@ func (p *InMemoryProtoSourceProvider) ResolveProtoSource(_ context.Context, clea
 	return nil, nil
 }
 
-// DBProtoSourceProvider M25 Tier 2 数据库 .proto 源码跨包解析器（查询 contract_proto_files JOIN versions，忽略软删，BASE_LIB 优先）
+// MissingImportHintProvider 可选扩展接口：为缺失 import 检索全池近似候选及 QUARANTINED 提示。
+type MissingImportHintProvider interface {
+	SuggestMissingImportCandidates(ctx context.Context, missingPath string) ([]MissingImportSuggestionDTO, error)
+}
+
+// DBProtoSourceProvider M25/ADR-26 Tier 2 数据库 .proto 源码跨包解析器：
+// 仅检索 pipeline_status='NORMALIZED' AND is_external_copy=false AND is_deleted=false；
+// 按 contract_proto_import_owners -> BASE_LIB -> 全池唯一顺序解析，歧义时不静默择一。
 type DBProtoSourceProvider struct {
 	db *gorm.DB
 }
@@ -151,7 +201,7 @@ func NewDBProtoSourceProvider(db *gorm.DB) *DBProtoSourceProvider {
 	return &DBProtoSourceProvider{db: db}
 }
 
-// ResolveProtoSource 按规范相对路径检索未被软删的最新只读 .proto 快照（优先 BASE_LIB）
+// ResolveProtoSource 按规范相对路径检索已清理且非外部副本的最新只读 .proto 快照。
 func (p *DBProtoSourceProvider) ResolveProtoSource(ctx context.Context, cleanPath string) (*ProtoSourceEntry, error) {
 	if p == nil || p.db == nil {
 		return nil, nil
@@ -160,29 +210,153 @@ func (p *DBProtoSourceProvider) ResolveProtoSource(ctx context.Context, cleanPat
 	if err != nil {
 		return nil, err
 	}
+
 	type dbProtoSourceRow struct {
-		Category    string
-		ContentText string
+		GitRepoID    uint64
+		RepoName     string
+		BundleID     uint64
+		BundleName   string
+		Category     string
+		FilePath     string
+		RepoFilePath string
+		ContentText  string
 	}
-	var row dbProtoSourceRow
-	tx := p.db.WithContext(ctx).
-		Table("contract_proto_files AS f").
-		Select("f.category AS category, v.content_text AS content_text").
-		Joins("JOIN contract_proto_file_versions AS v ON v.id = f.latest_version_id").
-		Where("f.is_deleted = false AND f.file_path = ?", cleaned).
-		Order("CASE WHEN f.category = 'BASE_LIB' THEN 0 ELSE 1 END, f.updated_at DESC, f.id DESC").
+
+	// 1. 优先查询权威归属登记表 contract_proto_import_owners (MANUAL / BASE_LIB / AUTO)
+	var owner models.ProtoImportOwner
+	if err := p.db.WithContext(ctx).
+		Where("logical_path = ?", cleaned).
 		Limit(1).
-		Find(&row)
-	if tx.Error != nil {
-		return nil, tx.Error
+		Find(&owner).Error; err == nil && owner.ID > 0 {
+		var ownedRow dbProtoSourceRow
+		tx := p.db.WithContext(ctx).
+			Table("contract_proto_files AS f").
+			Select("f.category AS category, v.content_text AS content_text").
+			Joins("JOIN contract_proto_file_versions AS v ON v.id = f.latest_version_id").
+			Where("f.is_deleted = false AND f.pipeline_status = ? AND f.is_external_copy = false AND f.bundle_id = ? AND f.file_path = ?",
+				models.ProtoPipelineNormalized, owner.OwnerBundleID, cleaned).
+			Order("f.id DESC").
+			Limit(1).
+			Find(&ownedRow)
+		if tx.Error == nil && tx.RowsAffected > 0 {
+			return &ProtoSourceEntry{
+				Category: ownedRow.Category,
+				Content:  []byte(ownedRow.ContentText),
+			}, nil
+		}
 	}
-	if tx.RowsAffected == 0 {
+
+	// 2. 查询全池 NORMALIZED 且非外部副本的候选行
+	var rows []dbProtoSourceRow
+	if err := p.db.WithContext(ctx).
+		Table("contract_proto_files AS f").
+		Select("f.git_repo_id AS git_repo_id, COALESCE(r.name, '') AS repo_name, f.bundle_id AS bundle_id, COALESCE(b.bundle_name, '') AS bundle_name, f.category AS category, f.file_path AS file_path, f.repo_file_path AS repo_file_path, v.content_text AS content_text").
+		Joins("JOIN contract_proto_file_versions AS v ON v.id = f.latest_version_id").
+		Joins("LEFT JOIN contract_git_repos AS r ON r.id = f.git_repo_id").
+		Joins("LEFT JOIN contract_git_proto_bundles AS b ON b.id = f.bundle_id").
+		Where("f.is_deleted = false AND f.pipeline_status = ? AND f.is_external_copy = false AND f.file_path = ?",
+			models.ProtoPipelineNormalized, cleaned).
+		Order("f.id ASC").
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
 		return nil, nil
 	}
-	return &ProtoSourceEntry{
-		Category: row.Category,
-		Content:  []byte(row.ContentText),
-	}, nil
+	if len(rows) == 1 {
+		return &ProtoSourceEntry{
+			Category: rows[0].Category,
+			Content:  []byte(rows[0].ContentText),
+		}, nil
+	}
+
+	// 存在多个提供方：若恰好有唯一 BASE_LIB 提供方则优先；否则严格返回歧义错误，绝不静默择一
+	var baseRows []dbProtoSourceRow
+	for _, r := range rows {
+		if r.Category == models.ProtoCategoryBaseLib {
+			baseRows = append(baseRows, r)
+		}
+	}
+	if len(baseRows) == 1 {
+		return &ProtoSourceEntry{
+			Category: baseRows[0].Category,
+			Content:  []byte(baseRows[0].ContentText),
+		}, nil
+	}
+
+	cands := make([]ImportCandidateDTO, 0, len(rows))
+	for _, r := range rows {
+		cands = append(cands, ImportCandidateDTO{
+			GitRepoID:    r.GitRepoID,
+			RepoName:     r.RepoName,
+			BundleID:     r.BundleID,
+			BundleName:   r.BundleName,
+			Category:     r.Category,
+			RepoFilePath: r.RepoFilePath,
+			LogicalPath:  r.FilePath,
+		})
+	}
+	return nil, &ImportAmbiguousError{
+		LogicalPath: cleaned,
+		Candidates:  cands,
+	}
+}
+
+// SuggestMissingImportCandidates 按路径后缀检索全池近似候选，并标注是否处于 QUARANTINED 隔离态。
+func (p *DBProtoSourceProvider) SuggestMissingImportCandidates(ctx context.Context, missingPath string) ([]MissingImportSuggestionDTO, error) {
+	if p == nil || p.db == nil {
+		return nil, nil
+	}
+	cleaned := strings.Trim(strings.TrimSpace(missingPath), "/")
+	if cleaned == "" {
+		return nil, nil
+	}
+	baseName := path.Base(cleaned)
+	likeSuffix := "%" + cleaned
+	likeBase := "%/" + baseName
+
+	type row struct {
+		RepoName       string
+		FilePath       string
+		RepoFilePath   string
+		PipelineStatus string
+		StatusReason   string
+	}
+	var rows []row
+	if err := p.db.WithContext(ctx).
+		Table("contract_proto_files AS f").
+		Select("COALESCE(r.name, '') AS repo_name, f.file_path AS file_path, f.repo_file_path AS repo_file_path, f.pipeline_status AS pipeline_status, f.status_reason AS status_reason").
+		Joins("LEFT JOIN contract_git_repos AS r ON r.id = f.git_repo_id").
+		Where("f.is_deleted = false AND (f.file_path LIKE ? OR f.repo_file_path LIKE ? OR f.file_path = ? OR f.repo_file_path LIKE ?)",
+			likeSuffix, likeSuffix, baseName, likeBase).
+		Limit(10).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	out := make([]MissingImportSuggestionDTO, 0, len(rows))
+	for _, r := range rows {
+		pgDir := "."
+		segs := strings.Split(strings.Trim(r.RepoFilePath, "/"), "/")
+		if len(segs) >= 2 && segs[0] == "pg" {
+			pgDir = "pg"
+		} else if len(segs) >= 3 && segs[1] == "pg" {
+			pgDir = segs[0] + "/pg"
+		}
+		candPath := r.FilePath
+		if candPath == "" {
+			candPath = r.RepoFilePath
+		}
+		out = append(out, MissingImportSuggestionDTO{
+			MissingPath:   cleaned,
+			CandidatePath: candPath,
+			RepoName:      r.RepoName,
+			PGDir:         pgDir,
+			Status:        r.PipelineStatus,
+			StatusReason:  r.StatusReason,
+		})
+	}
+	return out, nil
 }
 
 // CompileProtoBundleInput 纯 Go protocompile 在线编译入参
@@ -302,6 +476,7 @@ type virtualProtoResolver struct {
 	mu               sync.Mutex
 	resolvedExternal map[string]struct{}
 	missingImports   map[string]struct{}
+	ambiguousErr     *ImportAmbiguousError
 	traversalErr     error
 }
 
@@ -333,10 +508,18 @@ func (r *virtualProtoResolver) FindFileByPath(importPath string) (protocompile.S
 		}
 	}
 
-	// Tier 2: ProtoSourceProvider (M22 缓存 / M25 contract_proto_files, BASE_LIB 优先)
+	// Tier 2: ProtoSourceProvider (M22 缓存 / M25+ADR-26 contract_proto_files)
 	if r.provider != nil {
 		entry, provErr := r.provider.ResolveProtoSource(r.ctx, cleaned)
 		if provErr != nil && !errors.Is(provErr, protoregistry.NotFound) {
+			var ambErr *ImportAmbiguousError
+			if errors.As(provErr, &ambErr) {
+				r.mu.Lock()
+				if r.ambiguousErr == nil {
+					r.ambiguousErr = ambErr
+				}
+				r.mu.Unlock()
+			}
 			return protocompile.SearchResult{}, provErr
 		}
 		if entry != nil {
@@ -549,6 +732,7 @@ func CompileProtoBundle(ctx context.Context, registryFiles *protoregistry.Files,
 	if compileErr != nil {
 		resolver.mu.Lock()
 		tErr := resolver.traversalErr
+		ambErr := resolver.ambiguousErr
 		missing := make([]string, 0, len(resolver.missingImports))
 		for m := range resolver.missingImports {
 			missing = append(missing, m)
@@ -565,14 +749,45 @@ func CompileProtoBundle(ctx context.Context, registryFiles *protoregistry.Files,
 				Err:         tErr,
 			}
 		}
-		if len(missing) > 0 {
+		if ambErr != nil {
 			return nil, &CompileError{
-				Code:           "MISSING_IMPORTS",
-				HTTPStatus:     400,
-				Message:        fmt.Sprintf("缺失外部依赖导入: %s", strings.Join(missing, ", ")),
-				Diagnostics:    diagnostics,
-				MissingImports: missing,
-				Err:            fmt.Errorf("%w: %s", ErrMissingImports, strings.Join(missing, ", ")),
+				Code:                "IMPORT_AMBIGUOUS",
+				HTTPStatus:          409,
+				Message:             ambErr.Error(),
+				Diagnostics:         diagnostics,
+				AmbiguousCandidates: ambErr.Candidates,
+				Err:                 ambErr,
+			}
+		}
+		if len(missing) > 0 {
+			var suggestions []MissingImportSuggestionDTO
+			if hintProv, ok := in.SourceProvider.(MissingImportHintProvider); ok {
+				for _, m := range missing {
+					if cands, sErr := hintProv.SuggestMissingImportCandidates(ctx, m); sErr == nil {
+						suggestions = append(suggestions, cands...)
+					}
+				}
+			}
+			msg := fmt.Sprintf("缺失外部依赖导入: %s", strings.Join(missing, ", "))
+			if len(suggestions) > 0 {
+				var hints []string
+				for _, sg := range suggestions {
+					stateHint := sg.Status
+					if sg.Status == models.ProtoPipelineQuarantined {
+						stateHint = "QUARANTINED(" + sg.StatusReason + ")"
+					}
+					hints = append(hints, fmt.Sprintf("%s -> %s/%s [%s]", sg.CandidatePath, sg.RepoName, sg.PGDir, stateHint))
+				}
+				msg = msg + "；近似候选: " + strings.Join(hints, "; ")
+			}
+			return nil, &CompileError{
+				Code:                     "MISSING_IMPORTS",
+				HTTPStatus:               400,
+				Message:                  msg,
+				Diagnostics:              diagnostics,
+				MissingImports:           missing,
+				MissingImportSuggestions: suggestions,
+				Err:                      fmt.Errorf("%w: %s", ErrMissingImports, strings.Join(missing, ", ")),
 			}
 		}
 		msg := compileErr.Error()

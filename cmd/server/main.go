@@ -14,6 +14,7 @@ import (
 	"code-contract/handlers"
 	"code-contract/internal/server/decoder"
 	"code-contract/internal/server/discovery"
+	"code-contract/internal/server/gitclient"
 	"code-contract/internal/server/hub"
 	"code-contract/models"
 	"code-contract/pkg/version"
@@ -106,6 +107,14 @@ func main() {
 	discovery.NewPhysicalReconciler(models.DB, handlers.GetDiscoveryService()).Start(rootCtx)
 	attrWorker := handlers.InitGlobalAttributionJobWorker(models.DB, decoderReg, handlers.GetGlobalSSEBroker())
 	attrWorker.Start(rootCtx)
+	syncSched := gitclient.NewSyncScheduler(
+		models.DB,
+		decoderReg,
+		handlers.MakeSSEEventBroadcaster(handlers.GetGlobalSSEBroker()),
+		&config.AppConfig,
+	)
+	handlers.InitGlobalSyncScheduler(syncSched)
+	syncSched.Start(rootCtx)
 
 	// 7. 基于 code-common/backend/server 启动服务（自动处理 /<ModuleKey> 网关前缀剥离与前端静态产物内嵌托管）
 	// TODO(security): 若独立直接暴露于公网环境，请在网关层配置严格 CORS 白名单与全局 API 速率限制

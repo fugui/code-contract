@@ -14,6 +14,7 @@ import (
 	"time"
 
 	commonModels "code-common/backend/models"
+	"code-contract/config"
 	"code-contract/internal/server/decoder"
 	"code-contract/internal/server/gitclient"
 	"code-contract/internal/server/security"
@@ -53,30 +54,42 @@ type GitProtoBundleDTO struct {
 
 // GitRepoResponseDTO 严格脱敏后的 GitRepo 接口输出模型（绝不返回任何明文或加密凭据）
 type GitRepoResponseDTO struct {
-	ID               uint64              `json:"id"`
-	Name             string              `json:"name"`
-	Provider         string              `json:"provider"`
-	RepoURL          string              `json:"repo_url"`
-	APIBaseURL       string              `json:"api_base_url"`
-	DefaultBranch    string              `json:"default_branch"`
-	AuthType         string              `json:"auth_type"`
-	HasCredentials   bool                `json:"has_credentials"`
-	CredentialHint   string              `json:"credential_hint"`
-	HasWebhookSecret bool                `json:"has_webhook_secret"`
-	SyncMode         string              `json:"sync_mode"`
-	PollIntervalSec  int                 `json:"poll_interval_sec"`
-	AutoCompile      bool                `json:"auto_compile"`
-	AutoActivate     bool                `json:"auto_activate"`
-	LintOnSync       bool                `json:"lint_on_sync"`
-	LastSyncAt       *time.Time          `json:"last_sync_at,omitempty"`
-	LastSyncCommit   string              `json:"last_sync_commit"`
-	LastSyncStatus   string              `json:"last_sync_status"`
-	LastSyncError    string              `json:"last_sync_error"`
-	Description      string              `json:"description"`
-	CreatedBy        uint                `json:"created_by"`
-	CreatedAt        time.Time           `json:"created_at"`
-	UpdatedAt        time.Time           `json:"updated_at"`
-	Bundles          []GitProtoBundleDTO `json:"bundles"`
+	ID                  uint64              `json:"id"`
+	PlatformRepoID      *uint64             `json:"platform_repo_id,omitempty"`
+	SourceMode          string              `json:"source_mode"`
+	SyncStrategy        string              `json:"sync_strategy"`
+	SubsystemSlug       string              `json:"subsystem_slug"`
+	ResolvedBranch      string              `json:"resolved_branch"`
+	LastFetchedAt       *time.Time          `json:"last_fetched_at,omitempty"`
+	RefCommitTime       *time.Time          `json:"ref_commit_time,omitempty"`
+	LastCollectedCommit string              `json:"last_collected_commit"`
+	IsStale             bool                `json:"is_stale"`
+	NormalizedCount     int                 `json:"normalized_count"`
+	QuarantinedCount    int                 `json:"quarantined_count"`
+	ExternalCopyCount   int                 `json:"external_copy_count"`
+	Name                string              `json:"name"`
+	Provider            string              `json:"provider"`
+	RepoURL             string              `json:"repo_url"`
+	APIBaseURL          string              `json:"api_base_url"`
+	DefaultBranch       string              `json:"default_branch"`
+	AuthType            string              `json:"auth_type"`
+	HasCredentials      bool                `json:"has_credentials"`
+	CredentialHint      string              `json:"credential_hint"`
+	HasWebhookSecret    bool                `json:"has_webhook_secret"`
+	SyncMode            string              `json:"sync_mode"`
+	PollIntervalSec     int                 `json:"poll_interval_sec"`
+	AutoCompile         bool                `json:"auto_compile"`
+	AutoActivate        bool                `json:"auto_activate"`
+	LintOnSync          bool                `json:"lint_on_sync"`
+	LastSyncAt          *time.Time          `json:"last_sync_at,omitempty"`
+	LastSyncCommit      string              `json:"last_sync_commit"`
+	LastSyncStatus      string              `json:"last_sync_status"`
+	LastSyncError       string              `json:"last_sync_error"`
+	Description         string              `json:"description"`
+	CreatedBy           uint                `json:"created_by"`
+	CreatedAt           time.Time           `json:"created_at"`
+	UpdatedAt           time.Time           `json:"updated_at"`
+	Bundles             []GitProtoBundleDTO `json:"bundles"`
 }
 
 type bundleUpsertPayload struct {
@@ -177,37 +190,68 @@ func toGitProtoBundleDTO(b models.GitProtoBundle) GitProtoBundleDTO {
 	}
 }
 
+func computeRepoIsStale(repo models.GitRepo) bool {
+	threshold := 6 * time.Hour
+	if parsed, err := time.ParseDuration(strings.TrimSpace(config.AppConfig.ProtoCollect.StaleThreshold)); err == nil && parsed > 0 {
+		threshold = parsed
+	}
+	if repo.LastSyncAt != nil && !repo.LastSyncAt.IsZero() {
+		return time.Since(*repo.LastSyncAt) > threshold
+	}
+	if repo.LastFetchedAt != nil && !repo.LastFetchedAt.IsZero() {
+		return time.Since(*repo.LastFetchedAt) > threshold
+	}
+	return false
+}
+
 func toGitRepoResponseDTO(repo models.GitRepo, bundles []models.GitProtoBundle) GitRepoResponseDTO {
 	redacted := repo.ToRedactedDTO()
 	bundleDTOs := make([]GitProtoBundleDTO, 0, len(bundles))
 	for _, b := range bundles {
 		bundleDTOs = append(bundleDTOs, toGitProtoBundleDTO(b))
 	}
+	sourceMode := repo.SourceMode
+	if sourceMode == "" {
+		sourceMode = models.GitSourceModeExternalStandalone
+	}
+	syncStrategy := repo.SyncStrategy
+	if syncStrategy == "" {
+		syncStrategy = models.GitSyncStrategyFetchAndRead
+	}
 	return GitRepoResponseDTO{
-		ID:               redacted.ID,
-		Name:             redacted.Name,
-		Provider:         redacted.Provider,
-		RepoURL:          redacted.RepoURL,
-		APIBaseURL:       redacted.APIBaseURL,
-		DefaultBranch:    redacted.DefaultBranch,
-		AuthType:         redacted.AuthType,
-		HasCredentials:   redacted.HasCredentials,
-		CredentialHint:   redacted.CredentialHint,
-		HasWebhookSecret: redacted.HasWebhookSecret,
-		SyncMode:         redacted.SyncMode,
-		PollIntervalSec:  redacted.PollIntervalSec,
-		AutoCompile:      redacted.AutoCompile,
-		AutoActivate:     redacted.AutoActivate,
-		LintOnSync:       redacted.LintOnSync,
-		LastSyncAt:       redacted.LastSyncAt,
-		LastSyncCommit:   redacted.LastSyncCommit,
-		LastSyncStatus:   redacted.LastSyncStatus,
-		LastSyncError:    redacted.LastSyncError,
-		Description:      redacted.Description,
-		CreatedBy:        redacted.CreatedBy,
-		CreatedAt:        redacted.CreatedAt,
-		UpdatedAt:        redacted.UpdatedAt,
-		Bundles:          bundleDTOs,
+		ID:                  redacted.ID,
+		PlatformRepoID:      repo.PlatformRepoID,
+		SourceMode:          sourceMode,
+		SyncStrategy:        syncStrategy,
+		SubsystemSlug:       repo.SubsystemSlug,
+		ResolvedBranch:      repo.ResolvedBranch,
+		LastFetchedAt:       repo.LastFetchedAt,
+		RefCommitTime:       repo.RefCommitTime,
+		LastCollectedCommit: repo.LastCollectedCommit,
+		IsStale:             computeRepoIsStale(repo),
+		Name:                redacted.Name,
+		Provider:            redacted.Provider,
+		RepoURL:             redacted.RepoURL,
+		APIBaseURL:          redacted.APIBaseURL,
+		DefaultBranch:       redacted.DefaultBranch,
+		AuthType:            redacted.AuthType,
+		HasCredentials:      redacted.HasCredentials,
+		CredentialHint:      redacted.CredentialHint,
+		HasWebhookSecret:    redacted.HasWebhookSecret,
+		SyncMode:            redacted.SyncMode,
+		PollIntervalSec:     redacted.PollIntervalSec,
+		AutoCompile:         redacted.AutoCompile,
+		AutoActivate:        redacted.AutoActivate,
+		LintOnSync:          redacted.LintOnSync,
+		LastSyncAt:          redacted.LastSyncAt,
+		LastSyncCommit:      redacted.LastSyncCommit,
+		LastSyncStatus:      redacted.LastSyncStatus,
+		LastSyncError:       redacted.LastSyncError,
+		Description:         redacted.Description,
+		CreatedBy:           redacted.CreatedBy,
+		CreatedAt:           redacted.CreatedAt,
+		UpdatedAt:           redacted.UpdatedAt,
+		Bundles:             bundleDTOs,
 	}
 }
 
@@ -516,6 +560,12 @@ func ListGitRepos(c *gin.Context) {
 	}
 
 	bundlesByRepo := make(map[uint64][]models.GitProtoBundle, len(repos))
+	type repoFileStat struct {
+		NormalizedCount   int
+		QuarantinedCount  int
+		ExternalCopyCount int
+	}
+	statsByRepo := make(map[uint64]*repoFileStat, len(repos))
 	if len(repos) > 0 {
 		repoIDs := make([]uint64, 0, len(repos))
 		for _, r := range repos {
@@ -529,11 +579,43 @@ func ListGitRepos(c *gin.Context) {
 		for _, b := range allBundles {
 			bundlesByRepo[b.GitRepoID] = append(bundlesByRepo[b.GitRepoID], b)
 		}
+		var fileRows []struct {
+			GitRepoID      uint64
+			PipelineStatus string
+			IsExternalCopy bool
+		}
+		if err := models.DB.Table("contract_proto_files").
+			Select("git_repo_id, pipeline_status, is_external_copy").
+			Where("git_repo_id IN ? AND is_deleted = false", repoIDs).
+			Scan(&fileRows).Error; err == nil {
+			for _, fr := range fileRows {
+				st := statsByRepo[fr.GitRepoID]
+				if st == nil {
+					st = &repoFileStat{}
+					statsByRepo[fr.GitRepoID] = st
+				}
+				switch fr.PipelineStatus {
+				case models.ProtoPipelineNormalized:
+					st.NormalizedCount++
+				case models.ProtoPipelineQuarantined:
+					st.QuarantinedCount++
+				}
+				if fr.IsExternalCopy {
+					st.ExternalCopyCount++
+				}
+			}
+		}
 	}
 
 	items := make([]GitRepoResponseDTO, 0, len(repos))
 	for _, repo := range repos {
-		items = append(items, toGitRepoResponseDTO(repo, bundlesByRepo[repo.ID]))
+		dto := toGitRepoResponseDTO(repo, bundlesByRepo[repo.ID])
+		if st := statsByRepo[repo.ID]; st != nil {
+			dto.NormalizedCount = st.NormalizedCount
+			dto.QuarantinedCount = st.QuarantinedCount
+			dto.ExternalCopyCount = st.ExternalCopyCount
+		}
+		items = append(items, dto)
 	}
 
 	totalPages := int((total + int64(pageSize) - 1) / int64(pageSize))
@@ -1320,6 +1402,27 @@ func TriggerGitRepoSync(c *gin.Context) {
 				payload.DeletedFiles = bres.DeletedFiles
 				payload.CompiledSchemaID = bres.CompiledSchemaID
 				payload.LintReportID = bres.LintReportID
+			}
+		} else if repoSnapshot.SourceMode == models.GitSourceModePlatformShared {
+			sched := EnsureSyncScheduler(db, decReg, broker)
+			pres, pErr := sched.TriggerRepoSync(bgCtx, repoSnapshot.ID, gitclient.PipelineOptions{
+				Branch:             branch,
+				OperatorID:         uid,
+				ForceRecompile:     req.ForceRecompile,
+				TriggerBlastRadius: true,
+			})
+			syncErr = pErr
+			if pres != nil {
+				payload.CommitSHA = pres.CommitSHA
+				for _, br := range pres.BundleResults {
+					payload.AddedFiles += br.AddedFiles
+					payload.ModifiedFiles += br.ModifiedFiles
+					payload.DeletedFiles += br.DeletedFiles
+					if br.CompiledSchemaID != nil && payload.CompiledSchemaID == nil {
+						scID := *br.CompiledSchemaID
+						payload.CompiledSchemaID = &scID
+					}
+				}
 			}
 		} else {
 			var res *gitclient.SyncRepoResult

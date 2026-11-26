@@ -423,14 +423,14 @@ WHERE p.relname = 'contract_traffic_records' AND c.relname = ?;
 func TestCleanRebuild15Tables_MultiSharedEnvAndPortPartialUnique(t *testing.T) {
 	db := testdb.SetupIsolatedDB(t, config.ServiceName)
 
-	// 1. 执行 SetupWithDB，验证 15 张核心业务表与 BusinessTableNames() 清单完整创建
+	// 1. 执行 SetupWithDB，验证 37 张核心业务表与 BusinessTableNames() 清单完整创建
 	if err := SetupWithDB(db); err != nil {
 		t.Fatalf("SetupWithDB 失败: %v", err)
 	}
 
 	bizTables := BusinessTableNames()
-	if len(bizTables) != 36 {
-		t.Fatalf("BusinessTableNames() 期望返回 36 张业务表，实际为 %d", len(bizTables))
+	if len(bizTables) != 37 {
+		t.Fatalf("BusinessTableNames() 期望返回 37 张业务表，实际为 %d", len(bizTables))
 	}
 	for _, tbl := range bizTables {
 		if tbl == (ModuleSetting{}).TableName() {

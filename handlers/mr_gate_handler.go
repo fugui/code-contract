@@ -53,6 +53,7 @@ type MRCheckRunDTO struct {
 	AuthorUsername       string                          `json:"author_username"`
 	AuthorEmail          string                          `json:"author_email"`
 	Status               string                          `json:"status"`
+	NormalizeFailed      bool                            `json:"normalize_failed"`
 	CompilePassed        bool                            `json:"compile_passed"`
 	LintErrorCount       int                             `json:"lint_error_count"`
 	LintWarningCount     int                             `json:"lint_warning_count"`
@@ -865,6 +866,7 @@ func toMRCheckRunDTO(db *gorm.DB, run models.MRCheckRun, repo *models.GitRepo, b
 		AuthorUsername:       run.AuthorUsername,
 		AuthorEmail:          run.AuthorEmail,
 		Status:               run.Status,
+		NormalizeFailed:      run.NormalizeFailed,
 		CompilePassed:        run.CompilePassed,
 		LintErrorCount:       run.LintErrorCount,
 		LintWarningCount:     run.LintWarningCount,

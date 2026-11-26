@@ -301,6 +301,15 @@ func (r *MRGateRunner) ExecuteCheckRun(ctx context.Context, runID uint64, patchF
 		}
 	}
 
+	// Step 1.5 (ADR-26): 应用同源 pg/ 白名单与 Normalizer 清洗 + 语法门禁（失败标记 normalize_failed=true，严禁 Override）
+	normReport, normErr := NormalizeAndValidateMRTree(ctx, &repo, &bundle, virtualTree, changedFiles, NewPassthroughNormalizer(), nil)
+	if normErr != nil {
+		return r.failRunWithNormalizeError(ctx, &run, &repo, &bundle, startedAt, changedFiles, "NORMALIZE_FAILED: "+normErr.Error())
+	}
+	if normReport != nil && normReport.NormalizedTree != nil {
+		virtualTree = normReport.NormalizedTree
+	}
+
 	// Step 2: 纯 Go protocompile 语法与跨包导入链接编译
 	var compiled *decoder.CompileProtoOutput
 	compilePassed := true
@@ -502,8 +511,8 @@ func (r *MRGateRunner) ApplyAdminOverride(
 	}
 	beforeSnapshot := run
 
-	// 核心红线：语法错误或编译链接失败 (compile_passed == false) 绝不允许豁免！
-	if !run.CompilePassed {
+	// 核心红线：Normalizer 语法清洗失败 (normalize_failed == true) 或编译链接失败 (compile_passed == false) 绝不允许豁免！
+	if run.NormalizeFailed || !run.CompilePassed {
 		return nil, beforeSnapshot, ErrMROverrideForbiddenCompileFailed
 	}
 	if run.Status != models.MRCheckStatusFailed {
@@ -611,6 +620,31 @@ func (r *MRGateRunner) failRunWithCompileError(
 	changedFiles []string,
 	errMsg string,
 ) (*models.MRCheckRun, error) {
+	return r.failRunWithErrorDetails(ctx, run, repo, bundle, startedAt, changedFiles, errMsg, false)
+}
+
+func (r *MRGateRunner) failRunWithNormalizeError(
+	ctx context.Context,
+	run *models.MRCheckRun,
+	repo *models.GitRepo,
+	bundle *models.GitProtoBundle,
+	startedAt time.Time,
+	changedFiles []string,
+	errMsg string,
+) (*models.MRCheckRun, error) {
+	return r.failRunWithErrorDetails(ctx, run, repo, bundle, startedAt, changedFiles, errMsg, true)
+}
+
+func (r *MRGateRunner) failRunWithErrorDetails(
+	ctx context.Context,
+	run *models.MRCheckRun,
+	repo *models.GitRepo,
+	bundle *models.GitProtoBundle,
+	startedAt time.Time,
+	changedFiles []string,
+	errMsg string,
+	normalizeFailed bool,
+) (*models.MRCheckRun, error) {
 	completedAt := time.Now().UTC()
 	durationMs := int(completedAt.Sub(startedAt).Milliseconds())
 	changedBytes, _ := json.Marshal(nonNilStrings(changedFiles))
@@ -624,6 +658,7 @@ func (r *MRGateRunner) failRunWithCompileError(
 
 	updates := map[string]any{
 		"status":              models.MRCheckStatusFailed,
+		"normalize_failed":    normalizeFailed,
 		"compile_passed":      false,
 		"compile_error_text":  errMsg,
 		"changed_proto_files": datatypes.JSON(changedBytes),

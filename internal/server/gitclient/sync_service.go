@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"code-common/backend/gitsync"
+	"code-contract/config"
 	"code-contract/internal/server/decoder"
 	"code-contract/internal/server/linter"
 	"code-contract/internal/server/protodoc"
@@ -56,7 +58,7 @@ type SyncOptions struct {
 	TriggerSource string // GIT_SYNC | MANUAL | WEBHOOK
 	OperatorID    uint
 	ForceCompile  bool
-	PreferredMode string // "" | "rest" | "memfs"
+	PreferredMode string // "" | "rest" | "git"
 	Broadcaster   EventBroadcaster
 }
 
@@ -182,18 +184,18 @@ func (s *SyncService) fetchRemoteSnapshot(
 	}
 
 	mode := strings.ToLower(strings.TrimSpace(preferredMode))
-	useMemFS := mode == "memfs" ||
+	useGitCache := mode == "git" ||
 		repo.Provider == models.GitProviderGeneric ||
 		repo.AuthType == models.GitAuthSSHKey
 
-	if useMemFS {
-		return fetchViaMemFS(ctx, dialer, repo, creds, branch, subdir)
+	if useGitCache {
+		return fetchSnapshotViaLocalCache(ctx, dialer, repo, branch, subdir)
 	}
 
 	snap, restErr := fetchViaRESTAPI(ctx, dialer, repo, creds, branch, subdir)
 	if restErr != nil {
 		if errors.Is(restErr, ErrRESTFallbackAllowed) && mode == "" && strings.HasPrefix(strings.ToLower(repo.RepoURL), "http") {
-			return fetchViaMemFS(ctx, dialer, repo, creds, branch, subdir)
+			return fetchSnapshotViaLocalCache(ctx, dialer, repo, branch, subdir)
 		}
 		return nil, restErr
 	}
@@ -222,13 +224,188 @@ func (s *SyncService) ListBranches(ctx context.Context, repoID uint64) ([]string
 	}
 
 	if repo.Provider == models.GitProviderGeneric || repo.AuthType == models.GitAuthSSHKey {
-		return listBranchesViaMemFS(ctx, dialer, &repo, creds)
+		return listBranchesViaGitCLI(ctx, dialer, &repo)
 	}
 	branches, restErr := listBranchesViaREST(ctx, dialer, &repo, creds)
 	if restErr != nil && errors.Is(restErr, ErrRESTFallbackAllowed) && strings.HasPrefix(strings.ToLower(repo.RepoURL), "http") {
-		return listBranchesViaMemFS(ctx, dialer, &repo, creds)
+		return listBranchesViaGitCLI(ctx, dialer, &repo)
 	}
 	return branches, restErr
+}
+
+func validateRepoURLSSRF(ctx context.Context, dialer *security.SafeDialer, rawURL string) error {
+	if dialer == nil {
+		return nil
+	}
+	lower := strings.ToLower(strings.TrimSpace(rawURL))
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "ssh://") {
+		if err := dialer.ValidateURL(ctx, rawURL); err != nil {
+			return fmt.Errorf("SSRF 防护拦截 Git 出站请求: %w", err)
+		}
+	}
+	return nil
+}
+
+func fetchSnapshotViaLocalCache(
+	ctx context.Context,
+	dialer *security.SafeDialer,
+	repo *models.GitRepo,
+	branch string,
+	subdir string,
+) (*RemoteCommitSnapshot, error) {
+	if repo == nil {
+		return nil, errors.New("GitRepo 不能为空")
+	}
+	if err := validateRepoURLSSRF(ctx, dialer, repo.RepoURL); err != nil {
+		return nil, err
+	}
+	codesDir := config.AppConfig.Storage.GetCodesDir()
+	sharedWrite := config.AppConfig.Storage.SharedWriteEnabled
+	localPath, strategy, err := ResolveEffectiveRepoLocalPath(repo, codesDir, sharedWrite)
+	if err != nil {
+		return nil, err
+	}
+
+	targetBranch := gitsync.ResolveBranchDefault(branch)
+	var fullRef string
+	if strategy == models.GitSyncStrategyLocalCacheOnly {
+		_, fullRef, err = gitsync.ResolveLocalRef(ctx, localPath, "refs/remotes/origin", targetBranch)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		extraEnv, cleanupEnv, envErr := buildExternalGitAuthEnv(repo)
+		if envErr != nil {
+			return nil, envErr
+		}
+		defer cleanupEnv()
+		_, fullRef, err = gitsync.FetchBranchToRef(ctx, codesDir, localPath, repo.RepoURL, targetBranch, "refs/contract/heads", extraEnv...)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	lk, err := gitsync.AcquireRepoLock(ctx, codesDir, localPath, gitsync.LockShared)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = lk.Release() }()
+
+	meta, err := gitsync.ReadCommitMeta(ctx, localPath, fullRef)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := gitsync.ListTreeEntries(ctx, localPath, fullRef, true, false)
+	if err != nil {
+		return nil, err
+	}
+
+	cleanSubdir, err := SanitizeSubdirPath(subdir)
+	if err != nil {
+		return nil, err
+	}
+	maxSingleBytes := config.AppConfig.ProtoCollect.MaxFileBytes
+	if maxSingleBytes <= 0 {
+		maxSingleBytes = 2 * 1024 * 1024
+	}
+
+	var shas []string
+	type blobMeta struct {
+		path string
+		sha  string
+	}
+	var targets []blobMeta
+	for _, ent := range entries {
+		if ent.Type != "blob" || (ent.Mode != "100644" && ent.Mode != "100755") {
+			continue
+		}
+		if !strings.HasSuffix(strings.ToLower(ent.Path), ".proto") {
+			continue
+		}
+		rel, sErr := decoder.SanitizeProtoRelPath(ent.Path, true)
+		if sErr != nil {
+			return nil, sErr
+		}
+		if cleanSubdir != "." && rel != cleanSubdir && !strings.HasPrefix(rel, cleanSubdir+"/") {
+			continue
+		}
+		targets = append(targets, blobMeta{path: rel, sha: ent.SHA})
+		shas = append(shas, ent.SHA)
+	}
+
+	blobs, _, err := gitsync.ReadBlobsBatch(ctx, localPath, shas, maxSingleBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	snap := &RemoteCommitSnapshot{
+		CommitSHA:     meta.CommitSHA,
+		CommitMessage: meta.CommitMessage,
+		AuthorName:    meta.AuthorName,
+		AuthorEmail:   meta.AuthorEmail,
+		CommittedAt:   meta.CommittedAt,
+		Files:         make([]RemoteProtoFile, 0, len(targets)),
+	}
+	var totalBytes int64
+	for _, tgt := range targets {
+		raw := blobs[tgt.sha]
+		if raw == nil {
+			continue
+		}
+		totalBytes += int64(len(raw))
+		if totalBytes > int64(decoder.MaxDescriptorFileSize) {
+			return nil, fmt.Errorf("仓库 .proto 源码总体积超过 16MB (%d Bytes) 安全上限", decoder.MaxDescriptorFileSize)
+		}
+		sum := sha256.Sum256(raw)
+		snap.Files = append(snap.Files, RemoteProtoFile{
+			RepoFilePath: tgt.path,
+			FilePath:     tgt.path,
+			Content:      raw,
+			SHA256:       hex.EncodeToString(sum[:]),
+			Size:         len(raw),
+		})
+	}
+	sort.Slice(snap.Files, func(i, j int) bool {
+		return snap.Files[i].RepoFilePath < snap.Files[j].RepoFilePath
+	})
+	return snap, nil
+}
+
+func listBranchesViaGitCLI(ctx context.Context, dialer *security.SafeDialer, repo *models.GitRepo) ([]string, error) {
+	if repo == nil {
+		return nil, errors.New("GitRepo 不能为空")
+	}
+	if err := validateRepoURLSSRF(ctx, dialer, repo.RepoURL); err != nil {
+		return nil, err
+	}
+	extraEnv, cleanupEnv, err := buildExternalGitAuthEnv(repo)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanupEnv()
+
+	out, _, runErr := gitsync.ExecCommandWithProcessGroupEnv(ctx, "", extraEnv, "git", "ls-remote", "--heads", repo.RepoURL)
+	if runErr != nil {
+		return nil, fmt.Errorf("枚举远端分支失败: %s: %w", gitsync.SanitizeGitOutput(string(out)), runErr)
+	}
+	var branches []string
+	seen := make(map[string]struct{})
+	for _, line := range strings.Split(strings.ReplaceAll(string(out), "\r\n", "\n"), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		ref := strings.TrimSpace(fields[1])
+		if strings.HasPrefix(ref, "refs/heads/") {
+			name := strings.TrimPrefix(ref, "refs/heads/")
+			if _, ok := seen[name]; !ok {
+				seen[name] = struct{}{}
+				branches = append(branches, name)
+			}
+		}
+	}
+	sort.Strings(branches)
+	return branches, nil
 }
 
 // SyncRepo 同步指定 GitRepo 下的全部 Monorepo Bundle（严格按 BASE_LIB -> BUSINESS -> GATEWAY 顺序编译）

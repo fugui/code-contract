@@ -1675,3 +1675,20 @@ export interface DiscoveryProcessGroupDTO {
 | `contract_record` | `start_session` / `stop_session` / `publish_session` / `delete_session` | `P1` | 操作事件审计：记录操作人、`session_no`、`scope`（`SHARED`/`PRIVATE`）、加锁的 `agent_id` 与 `process_id` 列表、停止原因 |
 | `contract_replay` | `execute_replay` / `cancel_replay` | `P2` | 操作事件审计：记录操作人、`task_no`、来源 `(session_id, source_process_id)`、目标 `(agent_id, target_process_id)`、`csg_strategy` 与 `extra_ignore_paths` |
 | `contract_system` | `retention_cleanup` | `P2` | 后台定时任务直接调用 `commonAudit.Push` 记录清理过期批次数量与释放流量行数 |
+
+---
+
+### 4.15 平台代码仓发现导入、双视图源码树与冲突仲裁工作台 (`ADR-26` / M34~M36)
+
+1. **`/proto-sources` 主入口升级与双视图**：
+   - **批量发现与一键导入向导 (`PlatformRepoImportDrawer`)**：按 `code-bench` 部门与 `service_group` 子系统过滤平台 `repositories`，实时展示探测到的全小写 `pg` 目录（根目录 `pg/` 及一级子目录 `<dir>/pg/`）、白名单文件数、白名单外 `.proto` 数量及 Stage B 语法预检结果；默认每个 `pg` 目录生成 1 个候选 Bundle，支持合并/拆分后一键批量导入（默认 `auto_activate = false`）。
+   - **双视图切换**：支持在 **「按子系统 / 代码仓树」**（定位归属、展示 `COLLECTED`/`NORMALIZED`/`QUARANTINED` 状态、`外部副本`标记、同步新鲜度与「缓存陈旧」/`LOCAL_CACHE_ONLY` 提示）与 **「按 Proto Package 逻辑树」**（跨仓检索 Package/Service/File）间一键切换。
+   - **raw / clean 对比与 `line_map` 跳转**：`ProtoReadOnlyCodeViewer` 支持切换「清理后源码 / 原始源码 (raw) / 原始 vs 清理后对比」，当 `line_map` 非空时在行号槽旁标注原始行号并支持点击回溯到原始行。
+2. **存量关联、重跑清理与基线报告**：
+   - 管理员可将既有 `EXTERNAL_STANDALONE` 仓库按归一化 URL 匹配并一键关联为 `PLATFORM_SHARED`（自动清除冗余加密凭据）；支持触发单仓「仅重跑清理（基于 raw/Git 对象，无需 `git fetch`）」与查看全平台基线报告（语法通过率、试编译通过率、错误分布）。
+3. **跨仓冲突仲裁台 (`ProtoConflictArbitrationDrawer`)**：
+   - 展示 `IMPORT_AMBIGUOUS` 逻辑路径多方提供候选与全限定符号内容分歧列表，支持管理员指认唯一权威仓库/Bundle（写入 `contract_proto_import_owners` 并记录 `commonAudit` 字段级 Diff 审计，自动将同哈希非权威副本标为 `is_external_copy = true`）。
+
+| 审计子模块 (`module`) | 动作标识 (`action`) | 风险等级 | `before` / `after` 快照策略 |
+| :--- | :--- | :---: | :--- |
+| `contract_git` | `import_platform_repos` / `link_platform_repo` / `re_normalize` / `upsert_import_owner` / `delete_import_owner` / `resolve_proto_conflict` | `P1` (冲突裁决/归属指认/关联清理凭据) / `P2` | 记录操作仓/路径/权威提供方 ID 与来源；严禁写入任何解密凭证 |

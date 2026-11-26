@@ -1931,3 +1931,79 @@
   display: flex;
   justify-content: flex-end;
 }
+
+/* ============================================================================
+ * ADR-26: 双视图树分面、Raw/Clean 源码对比与平台仓共享导入样式
+ * ============================================================================ */
+
+.pgit-tree-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.pgit-tree-group__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--color-bg-muted);
+  border: 1px solid var(--color-border-subtle);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.pgit-line-map-tag {
+  margin-left: 6px;
+  border: 1px solid var(--color-border-primary);
+  background: var(--color-bg-muted);
+  color: var(--color-primary);
+  border-radius: 4px;
+  padding: 0 5px;
+  font-size: 10px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.pgit-line-map-tag:hover {
+  border-color: var(--color-primary);
+}
+
+.pgit-dual-code-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px;
+  background: var(--color-bg-subtle);
+}
+
+.pgit-dual-code-pane {
+  border: 1px solid var(--color-border-primary);
+  border-radius: 8px;
+  background: var(--color-bg-surface);
+  overflow-x: auto;
+  max-height: 540px;
+}
+
+.pgit-dual-code-pane__title {
+  padding: 6px 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-muted);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.pgit-dual-code-pre {
+  margin: 0;
+  padding: 10px 12px;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--color-text-primary);
+  white-space: pre;
+}

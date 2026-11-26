@@ -3,16 +3,20 @@ import { useLocation, useSearchParams } from 'react-router-dom';
 import {
   CheckCircle2,
   Code2,
+  Download,
   FileDiff,
   FolderGit2,
   GitBranch,
   GitCommitHorizontal,
   Layers,
+  Link2,
   Plus,
   RefreshCw,
+  Scale,
   Search,
   Settings2,
   ShieldCheck,
+  Sparkles,
 } from 'lucide-react';
 import { Pagination, usePaginationState } from '@code/common';
 import * as schemaApi from '../../api/schema';
@@ -26,12 +30,15 @@ import type {
   ProtoFileContentResponse,
   ProtoFileDTO,
   ProtoFileDiffResponse,
+  ProtoFilesTreeResponse,
   ProtoFileVersionSummaryDTO,
 } from '../../types';
 import { ProtoCommitDiffView } from './ProtoCommitDiffView';
 import { ProtoReadOnlyCodeViewer } from './ProtoReadOnlyCodeViewer';
 import { GitConsistencyDrawer } from './GitConsistencyDrawer';
 import { GitRepoConfigDrawer } from './GitRepoConfigDrawer';
+import { PlatformRepoImportDrawer } from './PlatformRepoImportDrawer';
+import { ProtoConflictArbitrationDrawer } from './ProtoConflictArbitrationDrawer';
 import './ProtoDocsAndCodeViewer.css';
 
 export interface GitSourcesWorkbenchPaneProps {
@@ -154,11 +161,16 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
   const [diffData, setDiffData] = useState<ProtoFileDiffResponse | null>(initialDiff);
   const [diffLoading, setDiffLoading] = useState<boolean>(false);
 
-  // 4. 抽屉与同步运行状态
+  // 4. 抽屉与同步运行状态 & ADR-26 双视图树状态
   const [manageDrawerOpen, setManageDrawerOpen] = useState<boolean>(initialManageOpen);
   const [manageCreatingNew, setManageCreatingNew] = useState<boolean>(false);
   const [consistencyDrawerOpen, setConsistencyDrawerOpen] = useState<boolean>(initialConsistencyOpen);
+  const [platformImportOpen, setPlatformImportOpen] = useState<boolean>(false);
+  const [conflictDrawerOpen, setConflictDrawerOpen] = useState<boolean>(false);
   const [syncDispatching, setSyncDispatching] = useState<boolean>(false);
+  const [treeViewMode, setTreeViewMode] = useState<'flat' | 'subsystem' | 'package'>('flat');
+  const [treeData, setTreeData] = useState<ProtoFilesTreeResponse | null>(null);
+  const [treeLoading, setTreeLoading] = useState<boolean>(false);
 
   // 防止 SSR / 单测注入的初始数据在首次挂载时被无意义空请求覆盖
   const skipInitialReposFetchRef = useRef<boolean>(initialGitRepos !== undefined);
@@ -419,6 +431,28 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
     }
   };
 
+  const loadTreeView = useCallback(async (mode: 'subsystem' | 'package') => {
+    setTreeLoading(true);
+    try {
+      const resp = await schemaApi.getProtoFilesTree({
+        view: mode,
+        git_repo_id: selectedRepoId ?? undefined,
+        include_deleted: includeDeleted,
+        search: searchText.trim() || undefined,
+      });
+      setTreeData(resp);
+    } catch (err) {
+      toast.error((err as Error).message || '加载双视图树失败');
+    } finally {
+      setTreeLoading(false);
+    }
+  }, [selectedRepoId, includeDeleted, searchText, toast]);
+
+  useEffect(() => {
+    if (treeViewMode === 'flat') return;
+    void loadTreeView(treeViewMode);
+  }, [treeViewMode, loadTreeView]);
+
   const handleTriggerSync = async (branchOverride?: string, bundleOverride?: number | null) => {
     if (!selectedRepo || !isAdmin) return;
     setSyncDispatching(true);
@@ -433,6 +467,39 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
       );
     } catch (err) {
       toast.error((err as Error).message || '触发同步失败');
+    } finally {
+      setSyncDispatching(false);
+    }
+  };
+
+  const handleReNormalize = async () => {
+    if (!selectedRepo || !isAdmin) return;
+    setSyncDispatching(true);
+    try {
+      const res = await schemaApi.reNormalizeGitRepo(selectedRepo.id, true);
+      toast.success(
+        `已完成 [${res.repo_name}] 免网络重清洗：${res.normalized_count} 个通过，${res.quarantined_count} 个隔离`
+      );
+      await loadFiles();
+      if (treeViewMode !== 'flat') {
+        await loadTreeView(treeViewMode);
+      }
+    } catch (err) {
+      toast.error((err as Error).message || '重跑 Stage B~D 失败');
+    } finally {
+      setSyncDispatching(false);
+    }
+  };
+
+  const handleLinkPlatform = async () => {
+    if (!selectedRepo || !isAdmin) return;
+    setSyncDispatching(true);
+    try {
+      const updated = await schemaApi.linkGitRepoPlatform(selectedRepo.id);
+      setGitRepos((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+      toast.success(`已将 [${updated.name}] 关联升级为 PLATFORM_SHARED 并清理历史独立凭据`);
+    } catch (err) {
+      toast.error((err as Error).message || '关联平台代码仓失败');
     } finally {
       setSyncDispatching(false);
     }
@@ -471,8 +538,17 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
             {selectedRepo && (
               <div className="pdoc-meta-row">
                 <span className="pdoc-pill">
-                  <GitBranch size={12} /> {selectedRepo.default_branch}
+                  <GitBranch size={12} /> {selectedRepo.resolved_branch || selectedRepo.default_branch}
                 </span>
+                {selectedRepo.source_mode === 'PLATFORM_SHARED' && (
+                  <span className="code-badge code-badge-info">PLATFORM_SHARED</span>
+                )}
+                {selectedRepo.sync_strategy === 'LOCAL_CACHE_ONLY' && (
+                  <span className="code-badge code-badge-warning">LOCAL_CACHE_ONLY</span>
+                )}
+                {selectedRepo.is_stale && (
+                  <span className="code-badge code-badge-danger">陈旧待同步</span>
+                )}
                 {renderRepoSyncBadge(selectedRepo.last_sync_status)}
                 {selectedRepo.last_sync_commit && (
                   <code className="pgit-commit-pill" title={selectedRepo.last_sync_commit}>
@@ -489,6 +565,24 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
           </div>
 
           <div className="pdoc-meta-row">
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setConflictDrawerOpen(true)}
+            >
+              <Scale size={14} /> 冲突仲裁
+            </button>
+
+            {isAdmin && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setPlatformImportOpen(true)}
+              >
+                <Download size={14} /> 平台仓导入
+              </button>
+            )}
+
             {selectedRepo && (
               <button
                 type="button"
@@ -496,6 +590,28 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
                 onClick={() => setConsistencyDrawerOpen(true)}
               >
                 <ShieldCheck size={14} /> 远端 SHA256 对账
+              </button>
+            )}
+
+            {isAdmin && selectedRepo && selectedRepo.source_mode !== 'PLATFORM_SHARED' && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={syncDispatching}
+                onClick={() => void handleLinkPlatform()}
+              >
+                <Link2 size={14} /> 关联平台仓
+              </button>
+            )}
+
+            {isAdmin && selectedRepo && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={syncDispatching}
+                onClick={() => void handleReNormalize()}
+              >
+                <Sparkles size={14} /> 重跑清洗
               </button>
             )}
 
@@ -603,10 +719,113 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
               />
               包含仓库已删除归档文件
             </label>
+            <div className="code-tab-pills" role="group" aria-label="文件树视图模式">
+              <button
+                type="button"
+                className={`code-pill-btn ${treeViewMode === 'flat' ? 'code-pill-btn-active' : ''}`}
+                onClick={() => setTreeViewMode('flat')}
+              >
+                列表
+              </button>
+              <button
+                type="button"
+                className={`code-pill-btn ${treeViewMode === 'subsystem' ? 'code-pill-btn-active' : ''}`}
+                onClick={() => setTreeViewMode('subsystem')}
+              >
+                按子系统/仓库
+              </button>
+              <button
+                type="button"
+                className={`code-pill-btn ${treeViewMode === 'package' ? 'code-pill-btn-active' : ''}`}
+                onClick={() => setTreeViewMode('package')}
+              >
+                按 Proto 包路径
+              </button>
+            </div>
           </div>
 
           <div className="pdoc-tree-scroll">
-            {filesLoading ? (
+            {treeViewMode !== 'flat' ? (
+              treeLoading ? (
+                <div className="pdoc-empty">正在加载双视图目录树...</div>
+              ) : !treeData || treeData.groups.length === 0 ? (
+                <div className="pdoc-empty">当前双视图下暂无匹配的 .proto 文件。</div>
+              ) : treeData.view === 'subsystem' ? (
+                treeData.groups.map((grp) => (
+                  <div key={`${grp.subsystem_slug}:${grp.git_repo_id}`} className="pgit-tree-group">
+                    <div className="pgit-tree-group__header">
+                      <span>
+                        {grp.subsystem_slug} / {grp.git_repo_name}
+                      </span>
+                      <span className="pdoc-pill">{grp.files.length}</span>
+                    </div>
+                    {grp.files.map((file) => {
+                      const active = file.id === selectedFileId;
+                      return (
+                        <button
+                          key={file.id}
+                          type="button"
+                          className={`pdoc-tree-node ${active ? 'pdoc-tree-node--active' : ''}`}
+                          onClick={() => handleSelectFile(file)}
+                        >
+                          <div className="pdoc-tree-node__main">
+                            <Code2 size={14} />
+                            <span className="pgit-file-path" title={file.repo_file_path || file.file_path}>
+                              {file.repo_file_path || file.file_path}
+                            </span>
+                          </div>
+                          <div className="pgit-file-meta">
+                            {file.pipeline_status === 'QUARANTINED' && (
+                              <span className="code-badge code-badge-danger">隔离</span>
+                            )}
+                            {file.is_external_copy && (
+                              <span className="code-badge code-badge-warning">外部副本</span>
+                            )}
+                            <span className="pdoc-tree-node__badge">v{file.latest_version}</span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ))
+              ) : (
+                treeData.groups.map((grp) => (
+                  <div key={grp.package_name} className="pgit-tree-group">
+                    <div className="pgit-tree-group__header">
+                      <span>{grp.package_name}</span>
+                      <span className="pdoc-pill">{grp.files.length}</span>
+                    </div>
+                    {grp.files.map((file) => {
+                      const active = file.id === selectedFileId;
+                      return (
+                        <button
+                          key={file.id}
+                          type="button"
+                          className={`pdoc-tree-node ${active ? 'pdoc-tree-node--active' : ''}`}
+                          onClick={() => handleSelectFile(file)}
+                        >
+                          <div className="pdoc-tree-node__main">
+                            <Code2 size={14} />
+                            <span className="pgit-file-path" title={file.repo_file_path || file.file_path}>
+                              {file.file_path}
+                            </span>
+                          </div>
+                          <div className="pgit-file-meta">
+                            {file.pipeline_status === 'QUARANTINED' && (
+                              <span className="code-badge code-badge-danger">隔离</span>
+                            )}
+                            {file.is_external_copy && (
+                              <span className="code-badge code-badge-warning">外部副本</span>
+                            )}
+                            <span className="pdoc-tree-node__badge">v{file.latest_version}</span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ))
+              )
+            ) : filesLoading ? (
               <div className="pdoc-empty">正在加载契约源码列表...</div>
             ) : files.length === 0 ? (
               <div className="pdoc-empty">
@@ -629,6 +848,12 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
                       </span>
                     </div>
                     <div className="pgit-file-meta">
+                      {file.pipeline_status === 'QUARANTINED' && (
+                        <span className="code-badge code-badge-danger">QUARANTINED</span>
+                      )}
+                      {file.is_external_copy && (
+                        <span className="code-badge code-badge-warning">外部副本</span>
+                      )}
                       {file.bundle_name && <span className="pdoc-pill">{file.bundle_name}</span>}
                       {file.is_deleted && (
                         <span className="code-badge code-badge-danger">已删除</span>
@@ -761,6 +986,12 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
                 <ProtoReadOnlyCodeViewer
                   filePath={contentData.file.file_path}
                   content={contentData.content}
+                  rawContent={contentData.raw_content}
+                  lineMap={contentData.line_map}
+                  pipelineStatus={contentData.file.pipeline_status}
+                  statusReason={contentData.file.status_reason}
+                  normalizerVersion={contentData.file.normalizer_version}
+                  isExternalCopy={contentData.file.is_external_copy}
                   highlightLine={highlightLine}
                   violations={normalizedViolations}
                   symbolAnchors={contentData.symbol_anchors}
@@ -882,6 +1113,32 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
         initialReport={initialConsistencyReport}
         onClose={() => setConsistencyDrawerOpen(false)}
         onTriggerSync={handleTriggerSync}
+      />
+
+      {/* ADR-26: 平台代码仓批量发现与共享导入抽屉 */}
+      <PlatformRepoImportDrawer
+        open={platformImportOpen}
+        isAdmin={isAdmin}
+        onClose={() => setPlatformImportOpen(false)}
+        onImported={(created) => {
+          if (created.length > 0) {
+            setGitRepos((prev) => [...created, ...prev]);
+            setSelectedRepoId(created[0].id);
+          }
+        }}
+      />
+
+      {/* ADR-26: 跨仓导入路径歧义与符号冲突仲裁抽屉 */}
+      <ProtoConflictArbitrationDrawer
+        open={conflictDrawerOpen}
+        isAdmin={isAdmin}
+        onClose={() => setConflictDrawerOpen(false)}
+        onResolved={() => {
+          void loadFiles();
+          if (treeViewMode !== 'flat') {
+            void loadTreeView(treeViewMode);
+          }
+        }}
       />
     </div>
   );

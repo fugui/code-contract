@@ -38,6 +38,16 @@ import type {
   MRCheckRunDTO,
   MRCheckRunDetailDTO,
   MRCheckRunListResponse,
+  PlatformDiscoverResponse,
+  PlatformRepoImportItemInput,
+  PlatformImportResponse,
+  BaselineReportDTO,
+  ArchAssignmentSuggestionDTO,
+  ProtoFilesTreeResponse,
+  ProtoImportOwnerDTO,
+  ProtoImportOwnerListResponse,
+  ProtoConflictsReportDTO,
+  ResolveProtoConflictInput,
 } from '../types';
 
 export async function listProtoSchemas(params?: {
@@ -670,5 +680,138 @@ export async function overrideMRCheckRun(id: number | string, overrideReason: st
 export async function rerunMRCheckRun(id: number | string) {
   return apiRequest<MRCheckRunDTO>(`/mr-check-runs/${id}/rerun`, {
     method: 'POST',
+  });
+}
+
+// =====================================================================
+// ADR-26: 平台代码仓共享与四段式 Proto 流水线 API
+// =====================================================================
+
+export async function discoverPlatformRepos(params?: {
+  department_id?: number;
+  service_group?: string;
+  search?: string;
+  probe_protos?: boolean;
+  page?: number;
+  page_size?: number;
+}) {
+  const qs = new URLSearchParams();
+  if (params?.department_id) qs.set('department_id', String(params.department_id));
+  if (params?.service_group) qs.set('service_group', params.service_group);
+  if (params?.search) qs.set('search', params.search);
+  if (params?.probe_protos !== undefined) qs.set('probe_protos', String(params.probe_protos));
+  if (params?.page) qs.set('page', String(params.page));
+  if (params?.page_size) qs.set('page_size', String(params.page_size));
+  const query = qs.toString();
+  return apiRequest<PlatformDiscoverResponse>(`/git-repos/platform-discover${query ? `?${query}` : ''}`);
+}
+
+export async function importPlatformRepos(items: PlatformRepoImportItemInput[]) {
+  return apiRequest<PlatformImportResponse>('/git-repos/platform-import', {
+    method: 'POST',
+    body: JSON.stringify({ items }),
+  });
+}
+
+export async function linkGitRepoPlatform(
+  repoId: number | string,
+  payload?: { platform_repo_id?: number; sync_strategy?: string }
+) {
+  return apiRequest<GitRepoDTO>(`/git-repos/${repoId}/link-platform`, {
+    method: 'POST',
+    body: JSON.stringify(payload ?? {}),
+  });
+}
+
+export async function batchSyncGitRepos(payload?: {
+  repo_ids?: number[];
+  branch?: string;
+  force_recompile?: boolean;
+}) {
+  return apiRequest<{ status: string; repo_ids: number[] }>('/git-repos/batch-sync', {
+    method: 'POST',
+    body: JSON.stringify(payload ?? {}),
+  });
+}
+
+export async function reNormalizeGitRepo(repoId: number | string, force = true) {
+  return apiRequest<{ repo_id: number; repo_name: string; normalized_count: number; quarantined_count: number }>(
+    `/git-repos/${repoId}/re-normalize`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ force }),
+    }
+  );
+}
+
+export async function getGitReposBaselineReport() {
+  return apiRequest<BaselineReportDTO>('/git-repos/baseline-report');
+}
+
+export async function getGitReposArchSuggestions() {
+  return apiRequest<{ items: ArchAssignmentSuggestionDTO[]; total: number }>('/git-repos/arch-suggestions');
+}
+
+export async function getProtoFilesTree(params?: {
+  view?: 'subsystem' | 'package';
+  git_repo_id?: number;
+  pipeline_status?: string;
+  include_external_copy?: boolean;
+  include_deleted?: boolean;
+  search?: string;
+}) {
+  const qs = new URLSearchParams();
+  if (params?.view) qs.set('view', params.view);
+  if (params?.git_repo_id) qs.set('git_repo_id', String(params.git_repo_id));
+  if (params?.pipeline_status) qs.set('pipeline_status', params.pipeline_status);
+  if (params?.include_external_copy !== undefined) {
+    qs.set('include_external_copy', String(params.include_external_copy));
+  }
+  if (params?.include_deleted !== undefined) qs.set('include_deleted', String(params.include_deleted));
+  if (params?.search) qs.set('search', params.search);
+  const query = qs.toString();
+  return apiRequest<ProtoFilesTreeResponse>(`/proto-files/tree${query ? `?${query}` : ''}`);
+}
+
+export async function listProtoImportOwners(params?: {
+  source?: string;
+  search?: string;
+  page?: number;
+  page_size?: number;
+}) {
+  const qs = new URLSearchParams();
+  if (params?.source) qs.set('source', params.source);
+  if (params?.search) qs.set('search', params.search);
+  if (params?.page) qs.set('page', String(params.page));
+  if (params?.page_size) qs.set('page_size', String(params.page_size));
+  const query = qs.toString();
+  return apiRequest<ProtoImportOwnerListResponse>(`/proto-import-owners${query ? `?${query}` : ''}`);
+}
+
+export async function upsertProtoImportOwner(payload: {
+  logical_path: string;
+  owner_git_repo_id: number;
+  owner_bundle_id: number;
+}) {
+  return apiRequest<ProtoImportOwnerDTO>('/proto-import-owners', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteProtoImportOwner(id: number | string) {
+  return apiRequest<{ deleted: boolean; id: number }>(`/proto-import-owners/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function listProtoConflicts() {
+  return apiRequest<ProtoConflictsReportDTO>('/proto-conflicts');
+}
+
+export async function resolveProtoConflict(payload: ResolveProtoConflictInput) {
+  return apiRequest<{ resolved: boolean; owners: ProtoImportOwnerDTO[] }>('/proto-conflicts/resolve', {
+    method: 'POST',
+    body: JSON.stringify(payload),
   });
 }
