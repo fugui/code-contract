@@ -1,11 +1,14 @@
 package transport
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -424,5 +427,77 @@ func TestMultiPIDCapture_TCPAndUprobe_FiveExitCleanup(t *testing.T) {
 	}
 	if err := uprobeDrv.Close(); err != nil {
 		t.Fatalf("DRTUprobeDriver second Close failed: %v", err)
+	}
+}
+
+func TestDRTUprobeDriver_StatsAndVerboseNoPayload(t *testing.T) {
+	var logBuf bytes.Buffer
+	origOut := log.Writer()
+	log.SetOutput(&logBuf)
+	defer log.SetOutput(origOut)
+
+	drv := NewDRTUprobeDriver(nil, DRTUprobeConfig{
+		ProcRoot: "/proc",
+		Verbose:  true,
+	})
+
+	sink := FrameSinkFunc(func(h agentproto.EnvelopeHeader, payload []byte) error {
+		return nil
+	})
+
+	secretReq := "SUPER_SECRET_REQ_PAYLOAD_XYZ"
+	secretRsp := "SUPER_SECRET_RSP_PAYLOAD_ABC"
+
+	// 1. REQ
+	reqPkt := buildMockCrosPacket(crosrpc.TransportMesh, 7001, crosrpc.MsgTypeReq, []byte(secretReq))
+	if err := drv.ProcessEvent(DRTUprobeEvent{
+		SessionID: 1, ProcessID: 10, PID: 1001, Handle: 0x11, DataLen: uint32(len(reqPkt)), Data: reqPkt,
+	}, sink); err != nil {
+		t.Fatalf("ProcessEvent req failed: %v", err)
+	}
+
+	// 2. RSP 配对 (含截断标记)
+	rspPkt := buildMockCrosPacket(crosrpc.TransportMesh, 7001, crosrpc.MsgTypeRsp, []byte(secretRsp))
+	if err := drv.ProcessEvent(DRTUprobeEvent{
+		SessionID: 1, ProcessID: 11, PID: 1002, Handle: 0x22, DataLen: uint32(len(rspPkt)), IsTruncated: true, Data: rspPkt,
+	}, sink); err != nil {
+		t.Fatalf("ProcessEvent rsp paired failed: %v", err)
+	}
+
+	// 3. RSP 孤立
+	orphanPkt := buildMockCrosPacket(crosrpc.TransportMesh, 7002, crosrpc.MsgTypeRsp, []byte(secretRsp))
+	if err := drv.ProcessEvent(DRTUprobeEvent{
+		SessionID: 1, ProcessID: 11, PID: 1002, Handle: 0x22, DataLen: uint32(len(orphanPkt)), Data: orphanPkt,
+	}, sink); err != nil {
+		t.Fatalf("ProcessEvent rsp orphan failed: %v", err)
+	}
+
+	// 4. 非法 Magic 拒绝
+	badPkt := make([]byte, 32)
+	copy(badPkt, []byte("BAD.HDR_0123456789ABCDEF"))
+	if err := drv.ProcessEvent(DRTUprobeEvent{
+		SessionID: 1, ProcessID: 10, PID: 1001, Handle: 0x11, DataLen: uint32(len(badPkt)), Data: badPkt,
+	}, sink); err == nil {
+		t.Fatalf("expected error for invalid magic packet")
+	}
+
+	// 5. 缓冲区过短拒绝
+	if err := drv.ProcessEvent(DRTUprobeEvent{
+		SessionID: 1, ProcessID: 10, PID: 1001, Handle: 0x11, DataLen: 8, Data: []byte("short"),
+	}, sink); err == nil {
+		t.Fatalf("expected error for short buffer")
+	}
+
+	st := drv.Stats()
+	if st.RawEvents != 5 || st.ValidFrames != 3 || st.ReqFrames != 1 || st.RspPaired != 1 || st.RspOrphan != 1 || st.TruncatedFrames != 1 || st.DroppedEvents != 2 {
+		t.Fatalf("unexpected DRTUprobeStats: %+v", st)
+	}
+
+	logs := logBuf.String()
+	if !strings.Contains(logs, "[DRTUprobe][FirstFrame]") || !strings.Contains(logs, "[DRTUprobe][Truncated]") || !strings.Contains(logs, "[DRTUprobe][Drop]") {
+		t.Fatalf("expected verbose first-frame/truncated/drop logs, got:\n%s", logs)
+	}
+	if strings.Contains(logs, secretReq) || strings.Contains(logs, secretRsp) {
+		t.Fatalf("verbose logs must NEVER contain business payload, got:\n%s", logs)
 	}
 }

@@ -66,6 +66,9 @@ func (s *AgentServer) handleCSGTopology(w http.ResponseWriter, r *http.Request) 
 	if l1Err != nil {
 		rep.Errors = append(rep.Errors, fmt.Sprintf("L1 proc scan degraded: %v", l1Err))
 	}
+	if s.cfg.Verbose {
+		s.logf("[Agent][CSGTopo] L1扫描=%d, mode=%s, 发现服务数=%d, 订阅数=%d, errors=%d", len(procs), rep.DiscoveryMode, len(rep.Services), len(rep.Subscriptions), len(rep.Errors))
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(rep)
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"strconv"
 	"strings"
@@ -57,6 +58,21 @@ var proxyBufPool = sync.Pool{
 	},
 }
 
+// EgressStats 出站代理累计统计快照
+type EgressStats struct {
+	CapturedFrames  int64
+	ReqFrames       int64
+	RspFrames       int64
+	MngFrames       int64
+	TruncatedFrames int64
+	DlinkEvents     int64
+	ActiveConns     int64
+	NatMiss         int64
+	DialFail        int64
+	MockHit         int64
+	MockMiss        int64
+}
+
 // EgressProxy 透明 TCP 出站代理（三态隔离与零泄漏不断连机制）
 type EgressProxy struct {
 	mu              sync.RWMutex
@@ -69,6 +85,16 @@ type EgressProxy struct {
 	closed          chan struct{}
 	statCaptured    int64
 	statDlinkEvents int64
+	statReqFrames   atomic.Int64
+	statRspFrames   atomic.Int64
+	statMngFrames   atomic.Int64
+	statTruncated   atomic.Int64
+	statActiveConns atomic.Int64
+	statNatMiss     atomic.Int64
+	statDialFail    atomic.Int64
+	statMockHit     atomic.Int64
+	statMockMiss    atomic.Int64
+	verbose         atomic.Bool
 	mode            int32 // ProxyMode (atomic)
 	activeSessionID atomic.Uint64
 	mockMatcher     *replay.ScopedMockMatcher
@@ -102,6 +128,34 @@ func NewEgressProxy(natLookup NatLookupFunc, frameSink FrameSinkFunc) (*EgressPr
 // ProxyPort 获取当前监听端口
 func (p *EgressProxy) ProxyPort() uint16 {
 	return p.proxyPort
+}
+
+// SetVerbose 设置是否输出详细诊断日志（不打印业务 payload）
+func (p *EgressProxy) SetVerbose(v bool) {
+	if p == nil {
+		return
+	}
+	p.verbose.Store(v)
+}
+
+// Stats 返回出站代理累计统计快照
+func (p *EgressProxy) Stats() EgressStats {
+	if p == nil {
+		return EgressStats{}
+	}
+	return EgressStats{
+		CapturedFrames:  atomic.LoadInt64(&p.statCaptured),
+		ReqFrames:       p.statReqFrames.Load(),
+		RspFrames:       p.statRspFrames.Load(),
+		MngFrames:       p.statMngFrames.Load(),
+		TruncatedFrames: p.statTruncated.Load(),
+		DlinkEvents:     atomic.LoadInt64(&p.statDlinkEvents),
+		ActiveConns:     p.statActiveConns.Load(),
+		NatMiss:         p.statNatMiss.Load(),
+		DialFail:        p.statDialFail.Load(),
+		MockHit:         p.statMockHit.Load(),
+		MockMiss:        p.statMockMiss.Load(),
+	}
 }
 
 // Mode 获取当前代理模式
@@ -275,6 +329,10 @@ func (p *EgressProxy) handleConnection(clientConn net.Conn) {
 		processID, pid, origIP, origPort, ok = p.natLookup(clientPort)
 	}
 	if !ok || origPort == 0 {
+		p.statNatMiss.Add(1)
+		if p.verbose.Load() {
+			log.Printf("[EgressProxy] NAT 未命中，关闭连接 (clientPort=%d)", clientPort)
+		}
 		return // 未在 NAT 表找到合法条目，静默关闭
 	}
 
@@ -289,7 +347,14 @@ func (p *EgressProxy) handleConnection(clientConn net.Conn) {
 			// 核心红线：回放 Mock 接管时，绝对禁止向真实 targetConn 发起任何 Dial！
 			// 确保 0 字节外泄到真实网络，直接将请求导入用户态 MockMatcher 并执行头部自愈
 			p.activeConns.Store(clientConn, true)
-			defer p.activeConns.Delete(clientConn)
+			p.statActiveConns.Add(1)
+			defer func() {
+				p.activeConns.Delete(clientConn)
+				p.statActiveConns.Add(-1)
+			}()
+			if p.verbose.Load() {
+				log.Printf("[EgressProxy] Mock 接管连接: pid=%d %d -> %s:%d (connSeq=%d)", pid, clientPort, origIP, origPort, connSeq)
+			}
 
 			p.handleMockConnection(clientConn, origIP, origPort)
 			return
@@ -300,9 +365,17 @@ func (p *EgressProxy) handleConnection(clientConn net.Conn) {
 	targetAddr := net.JoinHostPort(origIP.String(), strconv.Itoa(int(origPort)))
 	targetConn, err := net.DialTimeout("tcp", targetAddr, 3*time.Second)
 	if err != nil {
+		p.statDialFail.Add(1)
+		if p.verbose.Load() {
+			log.Printf("[EgressProxy] 连接下游失败: pid=%d target=%s err=%v", pid, targetAddr, err)
+		}
 		if p.Mode() == ModeReplayMock {
 			p.activeConns.Store(clientConn, true)
-			defer p.activeConns.Delete(clientConn)
+			p.statActiveConns.Add(1)
+			defer func() {
+				p.activeConns.Delete(clientConn)
+				p.statActiveConns.Add(-1)
+			}()
 			p.handleMockConnection(clientConn, origIP, origPort)
 		}
 		return
@@ -311,9 +384,17 @@ func (p *EgressProxy) handleConnection(clientConn net.Conn) {
 
 	p.activeConns.Store(clientConn, true)
 	p.activeConns.Store(targetConn, true)
+	p.statActiveConns.Add(1)
+	if p.verbose.Load() {
+		log.Printf("[EgressProxy] 建立代理连接: pid=%d :%d -> %s (mode=%s connSeq=%d)", pid, clientPort, targetAddr, p.Mode().String(), connSeq)
+	}
 	defer func() {
 		p.activeConns.Delete(clientConn)
 		p.activeConns.Delete(targetConn)
+		p.statActiveConns.Add(-1)
+		if p.verbose.Load() {
+			log.Printf("[EgressProxy] 关闭代理连接: pid=%d :%d -> %s (connSeq=%d)", pid, clientPort, targetAddr, connSeq)
+		}
 	}()
 
 	var wg sync.WaitGroup
@@ -433,10 +514,19 @@ func (p *EgressProxy) relayBidirectional(
 							for _, f := range frames {
 								matchRes, mErr := matcher.MatchAndHealWithDst(f.Data, origAddr)
 								if mErr == nil && matchRes != nil && len(matchRes.ResponseFrames) > 0 {
+									p.statMockHit.Add(1)
+									if p.verbose.Load() {
+										log.Printf("[EgressProxy][REPLAY_MOCK] target=%s hit=true rspFrames=%d", origAddr, len(matchRes.ResponseFrames))
+									}
 									for _, rsp := range matchRes.ResponseFrames {
 										if _, wErr := src.Write(rsp); wErr != nil {
 											return
 										}
+									}
+								} else {
+									p.statMockMiss.Add(1)
+									if p.verbose.Load() {
+										log.Printf("[EgressProxy][REPLAY_MOCK] target=%s hit=false err=%v", origAddr, mErr)
 									}
 								}
 							}
@@ -472,6 +562,17 @@ func (p *EgressProxy) relayBidirectional(
 							flags := uint8(0)
 							if f.IsTruncated {
 								flags |= agentproto.FlagIsTruncated
+								p.statTruncated.Add(1)
+							}
+							if comm, cErr := crosrpc.ParseCommHead(f.Data); cErr == nil {
+								switch {
+								case comm.MsgType == crosrpc.MsgTypeReq:
+									p.statReqFrames.Add(1)
+								case comm.MsgType == crosrpc.MsgTypeRsp || comm.MsgType == crosrpc.MsgTypeRspSeg:
+									p.statRspFrames.Add(1)
+								case comm.MsgType >= crosrpc.MsgTypeMng:
+									p.statMngFrames.Add(1)
+								}
 							}
 							header := agentproto.EnvelopeHeader{
 								Magic:           agentproto.EnvelopeMagic,
@@ -538,10 +639,19 @@ func (p *EgressProxy) handleMockConnection(clientConn net.Conn, origIP net.IP, o
 					for _, f := range frames {
 						matchRes, mErr := matcher.MatchAndHealWithDst(f.Data, origAddr)
 						if mErr == nil && matchRes != nil && len(matchRes.ResponseFrames) > 0 {
+							p.statMockHit.Add(1)
+							if p.verbose.Load() {
+								log.Printf("[EgressProxy][REPLAY_MOCK] target=%s hit=true rspFrames=%d", origAddr, len(matchRes.ResponseFrames))
+							}
 							for _, rsp := range matchRes.ResponseFrames {
 								if _, wErr := clientConn.Write(rsp); wErr != nil {
 									return
 								}
+							}
+						} else {
+							p.statMockMiss.Add(1)
+							if p.verbose.Load() {
+								log.Printf("[EgressProxy][REPLAY_MOCK] target=%s hit=false err=%v", origAddr, mErr)
 							}
 						}
 					}
@@ -651,6 +761,9 @@ func (p *EgressProxy) observeDlinkChunk(
 		header.SetDstIP(origIP)
 		p.frameSink(agentproto.MarshalEnvelope(header, payload))
 		atomic.AddInt64(&p.statDlinkEvents, 1)
+		if p.verbose.Load() {
+			log.Printf("[EgressProxy][DLNK] pid=%d dir=%s subtype=%s svc=%s instances=%d", pid, ev.Direction, ev.SubTypeName, ev.ServiceName, len(ev.Instances))
+		}
 	}
 }
 

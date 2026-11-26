@@ -4,6 +4,7 @@ import (
 	"container/list"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"code-contract/pkg/agentproto"
@@ -159,10 +160,26 @@ type ProcessChunkResult struct {
 	HasGap bool
 }
 
+// IngressStats 入站分帧器实时累计统计快照
+type IngressStats struct {
+	CapturedFrames  int64
+	ReqFrames       int64
+	RspFrames       int64
+	MngFrames       int64
+	TruncatedFrames int64
+	GapCount        int64
+}
+
 // GapAwareIngressReader 丢包感知的入站字节分帧重组器
 type GapAwareIngressReader struct {
 	pool            *GlobalFramerBudgetPool
 	maxCaptureBytes int
+	statFrames      atomic.Int64
+	statReqFrames   atomic.Int64
+	statRspFrames   atomic.Int64
+	statMngFrames   atomic.Int64
+	statTruncated   atomic.Int64
+	statGaps        atomic.Int64
 }
 
 // NewGapAwareIngressReader 构造阅读器
@@ -176,6 +193,21 @@ func NewGapAwareIngressReader(pool *GlobalFramerBudgetPool, maxCaptureBytes int)
 	return &GapAwareIngressReader{
 		pool:            pool,
 		maxCaptureBytes: maxCaptureBytes,
+	}
+}
+
+// Stats 返回入站分帧累计统计
+func (r *GapAwareIngressReader) Stats() IngressStats {
+	if r == nil {
+		return IngressStats{}
+	}
+	return IngressStats{
+		CapturedFrames:  r.statFrames.Load(),
+		ReqFrames:       r.statReqFrames.Load(),
+		RspFrames:       r.statRspFrames.Load(),
+		MngFrames:       r.statMngFrames.Load(),
+		TruncatedFrames: r.statTruncated.Load(),
+		GapCount:        r.statGaps.Load(),
 	}
 }
 
@@ -193,6 +225,7 @@ func (r *GapAwareIngressReader) FeedChunk(chunk IngressChunk) (ProcessChunkResul
 	if entry.expectedOff != 0 && chunk.StreamOff != entry.expectedOff {
 		entry.hasGap = true
 		hasGapNow = true
+		r.statGaps.Add(1)
 		// 丢包断流：重置分帧器内部缓冲，强制滑窗重对齐魔术字
 		entry.framer = crosrpc.NewStreamFramer(r.maxCaptureBytes)
 	}
@@ -204,9 +237,21 @@ func (r *GapAwareIngressReader) FeedChunk(chunk IngressChunk) (ProcessChunkResul
 	var envelopes [][]byte
 
 	for _, sf := range stampedFrames {
+		r.statFrames.Add(1)
 		flags := uint8(0)
 		if sf.IsTruncated {
 			flags |= agentproto.FlagIsTruncated
+			r.statTruncated.Add(1)
+		}
+		if comm, cErr := crosrpc.ParseCommHead(sf.Data); cErr == nil {
+			switch {
+			case comm.MsgType == crosrpc.MsgTypeReq:
+				r.statReqFrames.Add(1)
+			case comm.MsgType == crosrpc.MsgTypeRsp || comm.MsgType == crosrpc.MsgTypeRspSeg:
+				r.statRspFrames.Add(1)
+			case comm.MsgType >= crosrpc.MsgTypeMng:
+				r.statMngFrames.Add(1)
+			}
 		}
 		if entry.hasGap {
 			flags |= agentproto.FlagHasGap

@@ -106,6 +106,7 @@ type ManagerConfig struct {
 	ProcRoot           string
 	MaxCaptureBytes    int
 	MaxFramerBudget    int
+	Verbose            bool
 	CapabilityChecker  CapabilityChecker
 	FrameSink          FrameSinkFunc
 	LifecycleEventSink LifecycleEventSink
@@ -278,6 +279,9 @@ func (m *Manager) startRingbufConsumer(rb *ringbuf.Reader) {
 			}
 
 			res, _ := m.ingressReader.FeedChunk(chunk)
+			if res.HasGap && m.cfg.Verbose {
+				log.Printf("[eBPF][Ingress] 检测到流断层 (Gap): pid=%d connSeq=%d dir=%d streamOff=%d", pid, connSeq, direction, streamOff)
+			}
 			if m.cfg.FrameSink != nil {
 				for _, env := range res.Frames {
 					m.cfg.FrameSink(env)
@@ -788,6 +792,7 @@ func (m *Manager) attachLocked() error {
 	if err != nil {
 		return fmt.Errorf("启动 EgressProxy 失败: %w", err)
 	}
+	proxy.SetVerbose(m.cfg.Verbose)
 	m.egressProxy = proxy
 
 	// 加载 BPF 对象
@@ -1011,6 +1016,28 @@ func (m *Manager) GetStats() (bypassedSelf, ringbufDrops, redirected int64) {
 // IngressReader 获取内部分帧器
 func (m *Manager) IngressReader() *GapAwareIngressReader {
 	return m.ingressReader
+}
+
+// IngressStats 返回入站分帧累计统计快照 (nil 安全)
+func (m *Manager) IngressStats() IngressStats {
+	if m == nil || m.ingressReader == nil {
+		return IngressStats{}
+	}
+	return m.ingressReader.Stats()
+}
+
+// EgressStats 返回出站代理累计统计快照 (nil 安全)
+func (m *Manager) EgressStats() EgressStats {
+	if m == nil {
+		return EgressStats{}
+	}
+	m.mu.Lock()
+	proxy := m.egressProxy
+	m.mu.Unlock()
+	if proxy == nil {
+		return EgressStats{}
+	}
+	return proxy.Stats()
 }
 
 // DRTUprobeProgram 返回 DRT_WriteBulk uprobe 对应的 eBPF 程序 (ADR-23)

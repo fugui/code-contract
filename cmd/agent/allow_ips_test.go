@@ -54,3 +54,26 @@ func TestParseAllowIPs(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveDefaultVerbose(t *testing.T) {
+	_ = os.Unsetenv("CONTRACT_AGENT_VERBOSE")
+	if resolveDefaultVerbose() {
+		t.Fatalf("expected resolveDefaultVerbose()=false when unset")
+	}
+
+	truthy := []string{"1", "true", "TRUE", "Yes", " on ", "True"}
+	for _, v := range truthy {
+		t.Setenv("CONTRACT_AGENT_VERBOSE", v)
+		if !resolveDefaultVerbose() {
+			t.Errorf("expected resolveDefaultVerbose()=true for %q", v)
+		}
+	}
+
+	falsy := []string{"", "0", "false", "no", "off", "invalid"}
+	for _, v := range falsy {
+		t.Setenv("CONTRACT_AGENT_VERBOSE", v)
+		if resolveDefaultVerbose() {
+			t.Errorf("expected resolveDefaultVerbose()=false for %q", v)
+		}
+	}
+}

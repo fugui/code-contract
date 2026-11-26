@@ -35,10 +35,13 @@ type AgentServerConfig struct {
 	AllowIPs              []string
 	MaxSessionBufferBytes int64
 	GracePeriod           time.Duration
+	StatsInterval         time.Duration
 	ClaimCode             string
 	ClaimCodeFile         string
 	AgentVersion          string
 	ProcRoot              string
+	Verbose               bool
+	LogFunc               func(format string, args ...interface{})
 	CapabilityChecker     ebpf.CapabilityChecker
 	CSGAddrs              []string
 	CSGMonitorAddr        string
@@ -54,15 +57,20 @@ type AgentServer struct {
 	startedAt         time.Time
 	buffer            *BoundedSessionBuffer
 	ebpfMgr           *ebpf.Manager
+	drtDriver         *transport.DRTUprobeDriver
 	replayExec        *replay.ReplayExecutor
 	procScanner       *ebpf.ProcScanner
 	activeLeaseType   string
 	activeRefID       uint64
 	lastContactAt     time.Time
 	wsActive          int32
+	wsSentFrames      atomic.Int64
 	httpServer        *http.Server
 	listener          net.Listener
 	watchdogStop      chan struct{}
+	statsStop         chan struct{}
+	windowMu          sync.Mutex
+	windowBreakdown   map[frameBreakdownKey]int64
 	upgrader          websocket.Upgrader
 	armedRevision     uint64
 	armedDigest       string
@@ -80,6 +88,9 @@ func NewAgentServer(cfg AgentServerConfig) (*AgentServer, error) {
 	}
 	if cfg.GracePeriod <= 0 {
 		cfg.GracePeriod = 5 * time.Minute
+	}
+	if cfg.StatsInterval <= 0 {
+		cfg.StatsInterval = 5 * time.Second
 	}
 	if cfg.MaxSessionBufferBytes <= 0 {
 		cfg.MaxSessionBufferBytes = DefaultMaxSessionBufferBytes
@@ -135,16 +146,18 @@ func NewAgentServer(cfg AgentServerConfig) (*AgentServer, error) {
 	buf := NewBoundedSessionBuffer(cfg.MaxSessionBufferBytes)
 
 	s := &AgentServer{
-		cfg:           cfg,
-		allowPrefixes: prefixes,
-		claimCode:     claimCode,
-		bootID:        bootID,
-		startedAt:     time.Now(),
-		buffer:        buf,
-		procScanner:   ebpf.NewProcScanner(cfg.ProcRoot),
-		replayExec:    replay.NewReplayExecutor(),
-		lastContactAt: time.Now(),
-		watchdogStop:  make(chan struct{}),
+		cfg:             cfg,
+		allowPrefixes:   prefixes,
+		claimCode:       claimCode,
+		bootID:          bootID,
+		startedAt:       time.Now(),
+		buffer:          buf,
+		procScanner:     ebpf.NewProcScanner(cfg.ProcRoot),
+		replayExec:      replay.NewReplayExecutor(),
+		lastContactAt:   time.Now(),
+		watchdogStop:    make(chan struct{}),
+		statsStop:       make(chan struct{}),
+		windowBreakdown: make(map[frameBreakdownKey]int64),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				return true
@@ -156,8 +169,10 @@ func NewAgentServer(cfg AgentServerConfig) (*AgentServer, error) {
 	ebpfConfig := ebpf.ManagerConfig{
 		ProcRoot:          cfg.ProcRoot,
 		MaxFramerBudget:   int(cfg.MaxSessionBufferBytes),
+		Verbose:           cfg.Verbose,
 		CapabilityChecker: cfg.CapabilityChecker,
 		FrameSink: func(env []byte) {
+			s.recordFrameEnvelope(env)
 			s.buffer.Push(env)
 		},
 		LifecycleEventSink: func(eventType uint8, eventData []byte) {
@@ -175,10 +190,12 @@ func NewAgentServer(cfg AgentServerConfig) (*AgentServer, error) {
 
 	s.transportRegistry = transport.NewRegistry()
 	_ = s.transportRegistry.Register(transport.NewTCPDriver(s.ebpfMgr))
-	_ = s.transportRegistry.Register(transport.NewDRTUprobeDriver(s.ebpfMgr, transport.DRTUprobeConfig{
+	s.drtDriver = transport.NewDRTUprobeDriver(s.ebpfMgr, transport.DRTUprobeConfig{
 		ProcRoot:      s.cfg.ProcRoot,
 		PayloadOffset: 0,
-	}))
+		Verbose:       s.cfg.Verbose,
+	})
+	_ = s.transportRegistry.Register(s.drtDriver)
 
 	return s, nil
 }
@@ -247,8 +264,9 @@ func (s *AgentServer) Start() error {
 		WriteTimeout: 30 * time.Second,
 	}
 
-	// 启动失联自洁看门狗
+	// 启动失联自洁看门狗与 5 秒滚动统计汇报
 	go s.watchdogLoop()
+	go s.statsLoop()
 
 	go func() {
 		_ = s.httpServer.Serve(ln)
@@ -274,6 +292,11 @@ func (s *AgentServer) Shutdown(ctx context.Context) error {
 	case <-s.watchdogStop:
 	default:
 		close(s.watchdogStop)
+	}
+	select {
+	case <-s.statsStop:
+	default:
+		close(s.statsStop)
 	}
 	s.mu.Unlock()
 
@@ -426,11 +449,13 @@ func (s *AgentServer) handleHandshake(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	// 若主控判定租约已过期清空 (expectedType == "" 或 "NONE")，而 Agent 仍持有租约，立即触发自洁
 	if (expectedType == "" || expectedType == "NONE") && s.activeLeaseType != "" {
+		s.logf("[Agent] [Handshake] 租约对账触发自洁: expected=(%q,%d) actual=(%s,%d)", expectedType, expectedRef, s.activeLeaseType, s.activeRefID)
 		s.mu.Unlock()
 		s.PurgeAll()
 		s.mu.Lock()
 	} else if expectedType != "" && (expectedType != s.activeLeaseType || expectedRef != s.activeRefID) {
 		// 租约失调自愈
+		s.logf("[Agent] [Handshake] 租约失调触发自洁: expected=(%q,%d) actual=(%s,%d)", expectedType, expectedRef, s.activeLeaseType, s.activeRefID)
 		s.mu.Unlock()
 		s.PurgeAll()
 		s.mu.Lock()
@@ -480,9 +505,15 @@ func (s *AgentServer) handleDiscoverProcesses(w http.ResponseWriter, r *http.Req
 	if procs == nil {
 		procs = []agentproto.DiscoveredProcess{}
 	}
+	l1Count := len(procs)
 
-	if _, fused, err := s.discoverCSGAndFuse(r.Context(), r.URL.Query().Get("csg_addr"), procs, true); err == nil && len(fused) > 0 {
+	explicitCSG := r.URL.Query().Get("csg_addr")
+	_, fused, fuseErr := s.discoverCSGAndFuse(r.Context(), explicitCSG, procs, true)
+	if fuseErr == nil && len(fused) > 0 {
 		procs = fused
+	}
+	if s.cfg.Verbose {
+		s.logf("[Agent][Discover] L1扫描TCP进程=%d, CSG端点=%q, 融合后总进程=%d, err=%v", l1Count, s.resolveEffectiveCSGAddr(explicitCSG), len(procs), fuseErr)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -549,18 +580,22 @@ func (s *AgentServer) handleSyncMonitors(w http.ResponseWriter, r *http.Request)
 			})
 		}
 		sink := transport.FrameSinkFunc(func(h agentproto.EnvelopeHeader, payload []byte) error {
+			s.recordFramePayload(h, payload)
 			s.buffer.Push(agentproto.MarshalEnvelope(h, payload))
 			return nil
 		})
-		_ = s.transportRegistry.StartCapture(r.Context(), transport.CaptureSpec{
+		if capErr := s.transportRegistry.StartCapture(r.Context(), transport.CaptureSpec{
 			SessionOrTaskID: req.SessionID,
 			RefKind:         agentproto.RefKindRecordingSession,
 			Processes:       targetProcs,
 			Sink:            sink,
-		})
+		}); capErr != nil {
+			s.logf("[Agent] [⚠️ transportRegistry.StartCapture 警告]: SessionID=%d, err=%v", req.SessionID, capErr)
+		}
 	}
 
-	log.Printf("[Agent] [✓ 监控下发成功]: SessionID=%d, 诊断进程数=%d", req.SessionID, len(diags))
+	s.logDiagDetails("SyncMonitors", diags, req.Processes)
+	s.logf("[Agent] [✓ 监控下发成功]: SessionID=%d, 诊断进程数=%d", req.SessionID, len(diags))
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -606,6 +641,7 @@ func (s *AgentServer) handleArmStandby(w http.ResponseWriter, r *http.Request) {
 	s.latestDiags = diags
 	s.mu.Unlock()
 
+	s.logDiagDetails("ArmStandby", diags, req.Processes)
 	log.Printf("[Agent] [✓ 待命预挂载生效 (ARMED)]: Revision=%d, 摘要=%s, 就绪进程数=%d", req.Revision, digest, len(diags))
 
 	resp := agentproto.ArmStandbyResp{
@@ -680,7 +716,10 @@ func (s *AgentServer) handleStopMonitor(w http.ResponseWriter, r *http.Request) 
 		_ = s.transportRegistry.StopCapture(r.Context(), oldRefID)
 	}
 
-	log.Printf("[Agent] [✓ 停录完成]: SessionID=%d, 捕获总帧数=%d, 丢帧=%d, 恢复 ARMED 待命状态", oldRefID, total, dropped)
+	finalSnap := s.captureStatsSnapshot()
+	s.logf("[Agent] [✓ 停录完成]: SessionID=%d, 捕获总帧数=%d, 丢帧=%d, TCP-In=%d, TCP-Out=%d(dlink=%d), Mesh=%d(截断=%d,丢弃=%d), WS已发=%d, 恢复 ARMED 待命状态",
+		oldRefID, total, dropped, finalSnap.ingress.CapturedFrames, finalSnap.egress.CapturedFrames, finalSnap.egress.DlinkEvents,
+		finalSnap.drt.ValidFrames, finalSnap.drt.TruncatedFrames, finalSnap.drt.DroppedEvents, finalSnap.wsSent)
 
 	resp := agentproto.StopMonitorResp{
 		CapturedFrames:    total,
@@ -948,13 +987,19 @@ func (s *AgentServer) handleStream(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	log.Printf("[Agent] [HTTP] 管控端已建立流量数据流 WebSocket 传输信道 (RemoteAddr: %s)", r.RemoteAddr)
+	s.logf("[Agent] [HTTP] 管控端已建立流量数据流 WebSocket 传输信道 (RemoteAddr: %s)", r.RemoteAddr)
 
 	atomic.StoreInt32(&s.wsActive, 1)
 	defer atomic.StoreInt32(&s.wsActive, 0)
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
+
+	var connSent int64
+	var closeReason error
+	defer func() {
+		s.logf("[Agent] [HTTP] WebSocket 流量信道已断开 (RemoteAddr: %s, 本次推送=%d帧, 原因=%v)", r.RemoteAddr, connSent, closeReason)
+	}()
 
 	// 异步读取客户端消息 (维持握手探活)
 	go func() {
@@ -970,11 +1015,32 @@ func (s *AgentServer) handleStream(w http.ResponseWriter, r *http.Request) {
 	for {
 		item, ok := s.buffer.Pop(ctx)
 		if !ok || ctx.Err() != nil {
+			closeReason = ctx.Err()
 			return
 		}
 
 		if err := conn.WriteMessage(websocket.BinaryMessage, item); err != nil {
+			closeReason = err
 			return
+		}
+		connSent++
+		s.wsSentFrames.Add(1)
+	}
+}
+
+func (s *AgentServer) logDiagDetails(stage string, diags []agentproto.ProcessDiagStatus, specs []agentproto.ProcessMonitorSpec) {
+	specByID := make(map[uint64]agentproto.ProcessMonitorSpec, len(specs))
+	for _, sp := range specs {
+		specByID[sp.ProcessID] = sp
+	}
+	for _, d := range diags {
+		sp := specByID[d.ProcessID]
+		if s.cfg.Verbose {
+			s.logf("[Agent][%s] ProcessID=%d Status=%s PIDs=%v ListenPort=%d Cmd=%q Conns=%d NeedReconnect=%v Msg=%q",
+				stage, d.ProcessID, d.Status, d.ResolvedPIDs, sp.ListenPort, sp.CmdPattern, d.EstablishedConns, d.NeedReconnect, d.Message)
+		} else if d.Status == "NOT_FOUND" || d.NeedReconnect {
+			s.logf("[Agent][%s][⚠️] ProcessID=%d Status=%s ListenPort=%d NeedReconnect=%v Msg=%q",
+				stage, d.ProcessID, d.Status, sp.ListenPort, d.NeedReconnect, d.Message)
 		}
 	}
 }

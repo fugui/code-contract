@@ -34,6 +34,17 @@ func resolveDefaultAllowIPs() string {
 	return DefaultAllowIPs
 }
 
+// resolveDefaultVerbose 支持环境变量 CONTRACT_AGENT_VERBOSE 开启详细诊断日志
+func resolveDefaultVerbose() bool {
+	val := strings.ToLower(strings.TrimSpace(os.Getenv("CONTRACT_AGENT_VERBOSE")))
+	switch val {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
 // parseAllowIPs 解析逗号分隔的 IP / CIDR 字符串
 func parseAllowIPs(raw string) []string {
 	var allowIPs []string
@@ -124,6 +135,7 @@ func runDoctorCheck(procRoot string) int {
 
 func main() {
 	defaultAllowIPs := resolveDefaultAllowIPs()
+	defaultVerbose := resolveDefaultVerbose()
 
 	var (
 		listenAddr     = flag.String("listen", "0.0.0.0:9091", "Agent 监听地址 (IP:Port)")
@@ -136,6 +148,8 @@ func main() {
 		doctor         = flag.Bool("doctor", false, "执行环境与内核特权就绪体检诊断并退出")
 		check          = flag.Bool("check", false, "执行环境与内核特权就绪体检诊断并退出 (等同于 --doctor)")
 		requireCaps    = flag.Bool("require-caps", false, "是否强制要求必须具备 eBPF 内核特权，若缺少则拒绝启动")
+		verbose        = flag.Bool("verbose", defaultVerbose, "开启详细控制台诊断日志（不打印业务 payload）")
+		verboseShort   = flag.Bool("v", defaultVerbose, "等同于 --verbose")
 		csgAddr        = flag.String("csg-addr", os.Getenv("CONTRACT_AGENT_CSG_ADDR"), "可选预设 CSG 控制面端点 (<ip>:<port>，支持逗号分隔)")
 		csgMonitorAddr = flag.String("csg-monitor-addr", os.Getenv("CONTRACT_AGENT_CSG_MONITOR_ADDR"), "可选预设 RPCMonitorService 端点 (<ip>:<port> 或 dophi_mesh://ipv4:<ip>:<port>)")
 	)
@@ -170,6 +184,8 @@ func main() {
 		}
 	}
 
+	effectiveVerbose := *verbose || *verboseShort
+
 	cfg := server.AgentServerConfig{
 		ListenAddr:            *listenAddr,
 		AllowIPs:              allowIPs,
@@ -180,6 +196,7 @@ func main() {
 		ProcRoot:              *procRoot,
 		CSGAddrs:              csgAddrs,
 		CSGMonitorAddr:        strings.TrimSpace(*csgMonitorAddr),
+		Verbose:               effectiveVerbose,
 	}
 
 	srv, err := server.NewAgentServer(cfg)
@@ -192,6 +209,7 @@ func main() {
 	log.Printf("[Agent] 认领码 (ClaimCode): %s", srv.ClaimCode())
 	log.Printf("[Agent] 实例 BootID: %s", srv.BootID())
 	log.Printf("[Agent] CSG 发现配置: csg_addrs=%v, monitor_addr=%q (支持纯 Go dlink 自动发现 tcp:// 与 dophi_mesh://)", cfg.CSGAddrs, cfg.CSGMonitorAddr)
+	log.Printf("[Agent] 日志模式: verbose=%v (可通过 --verbose / -v 或 CONTRACT_AGENT_VERBOSE=1 开启)", cfg.Verbose)
 
 	// 启动特权自检与显式横幅输出
 	if srv.EbpfManager() != nil {

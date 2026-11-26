@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"code-contract/pkg/agentproto"
@@ -25,7 +26,21 @@ type DRTUprobeConfig struct {
 	PayloadOffset    int                                                  // 业务载荷偏移量 (默认 0: 首 64B 自动锚定 "CSE.TCP")
 	MaxInflight      int                                                  // 在途请求容量上限 (默认 10000)
 	InflightTTL      time.Duration                                        // 在途请求超时清理时间 (默认 30s)
+	Verbose          bool                                                 // 开启详细头自检与首帧诊断日志（不打印业务 payload）
 	AttachUprobeFunc func(procRoot string, pid uint32) (io.Closer, error) `json:"-"` // 可选测试注入钩子
+}
+
+// DRTUprobeStats dophi_mesh uprobe 采集累计统计快照
+type DRTUprobeStats struct {
+	RawEvents       int64
+	ValidFrames     int64
+	ReqFrames       int64
+	RspPaired       int64
+	RspOrphan       int64
+	MngFrames       int64
+	TruncatedFrames int64
+	DroppedEvents   int64
+	ActiveLinks     int
 }
 
 // DRTUprobeEvent 从 drt_ringbuf 消费的内核事件反序列化结构
@@ -56,15 +71,26 @@ type inflightReq struct {
 
 // DRTUprobeDriver dophi_mesh 数据面 uprobe 旁路采集传输驱动 (ADR-22 & ADR-23)
 type DRTUprobeDriver struct {
-	mu            sync.Mutex
-	mgr           *ebpf.Manager
-	cfg           DRTUprobeConfig
-	closed        bool
-	activeSpecs   map[uint64]CaptureSpec
-	links         map[string]io.Closer
-	ringbufReader *ringbuf.Reader
-	readerStop    chan struct{}
-	inflightReqs  map[uint64]*inflightReq
+	mu              sync.Mutex
+	mgr             *ebpf.Manager
+	cfg             DRTUprobeConfig
+	closed          bool
+	activeSpecs     map[uint64]CaptureSpec
+	links           map[string]io.Closer
+	ringbufReader   *ringbuf.Reader
+	readerStop      chan struct{}
+	inflightReqs    map[uint64]*inflightReq
+	seenChannels    map[string]bool
+	errLogCount     int
+	truncLogCount   int
+	statRawEvents   atomic.Int64
+	statValidFrames atomic.Int64
+	statReqFrames   atomic.Int64
+	statRspPaired   atomic.Int64
+	statRspOrphan   atomic.Int64
+	statMngFrames   atomic.Int64
+	statTruncated   atomic.Int64
+	statDropped     atomic.Int64
 }
 
 // NewDRTUprobeDriver 实例化 builtin-drt-uprobe 传输驱动
@@ -84,6 +110,25 @@ func NewDRTUprobeDriver(mgr *ebpf.Manager, cfg DRTUprobeConfig) *DRTUprobeDriver
 		activeSpecs:  make(map[uint64]CaptureSpec),
 		links:        make(map[string]io.Closer),
 		inflightReqs: make(map[uint64]*inflightReq),
+		seenChannels: make(map[string]bool),
+	}
+}
+
+// Stats 返回 dophi_mesh uprobe 采集累计统计快照
+func (d *DRTUprobeDriver) Stats() DRTUprobeStats {
+	d.mu.Lock()
+	activeLinks := len(d.links)
+	d.mu.Unlock()
+	return DRTUprobeStats{
+		RawEvents:       d.statRawEvents.Load(),
+		ValidFrames:     d.statValidFrames.Load(),
+		ReqFrames:       d.statReqFrames.Load(),
+		RspPaired:       d.statRspPaired.Load(),
+		RspOrphan:       d.statRspOrphan.Load(),
+		MngFrames:       d.statMngFrames.Load(),
+		TruncatedFrames: d.statTruncated.Load(),
+		DroppedEvents:   d.statDropped.Load(),
+		ActiveLinks:     activeLinks,
 	}
 }
 
@@ -162,18 +207,49 @@ func ParseDRTUprobeEvent(raw []byte) (DRTUprobeEvent, error) {
 
 // ProcessEvent 处理单条 DRT Uprobe 事件，执行双向相关性归一化与 56B 信封封装推送
 func (d *DRTUprobeDriver) ProcessEvent(evt DRTUprobeEvent, sink FrameSink) error {
-	crosPkt, _ := ExtractCROSPacket(evt.Data, d.cfg.PayloadOffset)
-	if len(crosPkt) < crosrpc.CommHeadLen {
-		return crosrpc.ErrBufferTooShort
-	}
+	d.statRawEvents.Add(1)
 
-	comm, err := crosrpc.ParseCommHead(crosPkt)
-	if err != nil {
-		return err
+	crosPkt, payloadOff := ExtractCROSPacket(evt.Data, d.cfg.PayloadOffset)
+	var comm crosrpc.CommHead
+	var parseErr error
+	if len(crosPkt) < crosrpc.CommHeadLen {
+		parseErr = crosrpc.ErrBufferTooShort
+	} else {
+		comm, parseErr = crosrpc.ParseCommHead(crosPkt)
+		if parseErr == nil && !bytes.Equal(comm.Magic[:], []byte(crosrpc.MagicPrefix)) {
+			parseErr = crosrpc.ErrInvalidMagic
+		}
+	}
+	if parseErr != nil {
+		d.statDropped.Add(1)
+		d.logHeaderError(evt, payloadOff, parseErr)
+		return parseErr
 	}
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
+
+	if evt.IsTruncated {
+		d.statTruncated.Add(1)
+		truncLimit := 5
+		if d.cfg.Verbose {
+			truncLimit = 10
+		}
+		if d.truncLogCount < truncLimit {
+			d.truncLogCount++
+			log.Printf("[DRTUprobe][Truncated] PID=%d handle=0x%x dataLen=%d (>4096B 已截断, proto=%d msgType=%d sno=%d)",
+				evt.PID, evt.Handle, evt.DataLen, comm.TransportProto, comm.MsgType, comm.SNO)
+		}
+	}
+
+	if d.cfg.Verbose && len(d.seenChannels) < 256 {
+		chanKey := fmt.Sprintf("%d:%d", evt.PID, evt.Handle)
+		if !d.seenChannels[chanKey] {
+			d.seenChannels[chanKey] = true
+			log.Printf("[DRTUprobe][FirstFrame] PID=%d handle=0x%x dataLen=%d payloadOff=%d proto=%d msgType=%d sno=%d truncated=%v hdr40[:16]=%x",
+				evt.PID, evt.Handle, evt.DataLen, payloadOff, comm.TransportProto, comm.MsgType, comm.SNO, evt.IsTruncated, evt.Hdr40[:16])
+		}
+	}
 
 	now := time.Now()
 	d.evictExpiredInflightLocked(now)
@@ -197,8 +273,10 @@ func (d *DRTUprobeDriver) ProcessEvent(evt DRTUprobeEvent, sink FrameSink) error
 		env.Flags |= agentproto.FlagIsTruncated
 	}
 
+	var frameKind string
 	switch {
 	case comm.MsgType == crosrpc.MsgTypeReq:
+		frameKind = "REQ"
 		env.Direction = agentproto.DirectionEgress
 		item := &inflightReq{
 			sessionID:   evt.SessionID,
@@ -219,6 +297,7 @@ func (d *DRTUprobeDriver) ProcessEvent(evt DRTUprobeEvent, sink FrameSink) error
 
 	case comm.MsgType == crosrpc.MsgTypeRsp || comm.MsgType == crosrpc.MsgTypeRspSeg:
 		if req, ok := d.inflightReqs[comm.SNO]; ok {
+			frameKind = "RSP_PAIRED"
 			// ADR-11 投影归一化：将应答帧投影到对应的请求四元组与 ProcessID，保证 ExchangeAssembler 配对
 			env.ProcessID = req.processID
 			env.CapturedPID = req.capturedPID
@@ -233,6 +312,7 @@ func (d *DRTUprobeDriver) ProcessEvent(evt DRTUprobeEvent, sink FrameSink) error
 				delete(d.inflightReqs, comm.SNO)
 			}
 		} else {
+			frameKind = "RSP_ORPHAN"
 			env.Direction = agentproto.DirectionIngress
 			env.SrcPort = 8000
 			env.DstPort = uint16(evt.PID)
@@ -240,13 +320,47 @@ func (d *DRTUprobeDriver) ProcessEvent(evt DRTUprobeEvent, sink FrameSink) error
 
 	default:
 		// 管理帧或其它控制帧
+		frameKind = "MNG"
 		env.Direction = agentproto.DirectionIngress
+	}
+
+	d.statValidFrames.Add(1)
+	switch frameKind {
+	case "REQ":
+		d.statReqFrames.Add(1)
+	case "RSP_PAIRED":
+		d.statRspPaired.Add(1)
+	case "RSP_ORPHAN":
+		d.statRspOrphan.Add(1)
+	case "MNG":
+		d.statMngFrames.Add(1)
 	}
 
 	if sink != nil {
 		return sink.PushFrame(env, crosPkt)
 	}
 	return nil
+}
+
+func (d *DRTUprobeDriver) logHeaderError(evt DRTUprobeEvent, payloadOff int, err error) {
+	d.mu.Lock()
+	limit := 5
+	if d.cfg.Verbose {
+		limit = 20
+	}
+	if d.errLogCount >= limit {
+		d.mu.Unlock()
+		return
+	}
+	d.errLogCount++
+	d.mu.Unlock()
+
+	headHexLen := len(evt.Data)
+	if headHexLen > 24 {
+		headHexLen = 24
+	}
+	log.Printf("[DRTUprobe][Drop] PID=%d handle=0x%x dataLen=%d payloadOff=%d err=%v hdr40[:16]=%x head[:%d]=%x",
+		evt.PID, evt.Handle, evt.DataLen, payloadOff, err, evt.Hdr40[:16], headHexLen, evt.Data[:headHexLen])
 }
 
 func (d *DRTUprobeDriver) evictExpiredInflightLocked(now time.Time) {
@@ -312,9 +426,16 @@ func (d *DRTUprobeDriver) StartCapture(ctx context.Context, spec CaptureSpec) er
 	}
 
 	prog := d.mgr.DRTUprobeProgram()
-	if prog != nil {
+	if prog == nil {
+		log.Printf("[DRTUprobe] 跳过挂载: 内核 CrosDrtWriteBulk eBPF 程序未就绪 (SessionID=%d)", spec.SessionOrTaskID)
+	} else {
 		for _, p := range spec.Processes {
-			for _, pid := range p.EffectivePIDs() {
+			pids := p.EffectivePIDs()
+			if len(pids) == 0 {
+				log.Printf("[DRTUprobe] 跳过挂载: ProcessID=%d 未解析到存活 PID (cmd=%q)", p.ProcessID, p.CmdPattern)
+				continue
+			}
+			for _, pid := range pids {
 				linkKey := fmt.Sprintf("%d:%d:%d", spec.SessionOrTaskID, p.ProcessID, pid)
 				if _, exists := d.links[linkKey]; exists {
 					continue
@@ -322,11 +443,13 @@ func (d *DRTUprobeDriver) StartCapture(ctx context.Context, spec CaptureSpec) er
 
 				soPath, err := FindMappedLibraryPath(d.cfg.ProcRoot, pid, "libdopra")
 				if err != nil {
+					log.Printf("[DRTUprobe] 跳过挂载: PID=%d (ProcessID=%d) 未找到 libdopra 映射: %v", pid, p.ProcessID, err)
 					continue
 				}
 
 				offsets, err := ResolveDRTSymbolOffsets(soPath)
 				if err != nil || offsets.WriteBulkOffset == 0 {
+					log.Printf("[DRTUprobe] 跳过挂载: PID=%d Lib=%s 解析 DRT_WriteBulk 失败: %v", pid, soPath, err)
 					continue
 				}
 
@@ -361,8 +484,16 @@ func (d *DRTUprobeDriver) StartCapture(ctx context.Context, spec CaptureSpec) er
 				d.readerStop = make(chan struct{})
 				go d.consumeRingbuf(rb, d.readerStop)
 				log.Printf("[DRTUprobe] drt_ringbuf 消费协程已启动")
+			} else {
+				log.Printf("[DRTUprobe] 启动 drt_ringbuf 消费失败: %v", err)
 			}
+		} else {
+			log.Printf("[DRTUprobe] drt_ringbuf Map 未就绪，无法消费 uprobe 事件")
 		}
+	}
+
+	if d.cfg.Verbose {
+		log.Printf("[DRTUprobe] StartCapture 完成: SessionID=%d, 本次活跃 uprobe 数=%d", spec.SessionOrTaskID, len(d.links))
 	}
 
 	return nil
@@ -386,6 +517,8 @@ func (d *DRTUprobeDriver) consumeRingbuf(rb *ringbuf.Reader, stopCh chan struct{
 
 		evt, pErr := ParseDRTUprobeEvent(rec.RawSample)
 		if pErr != nil {
+			d.statDropped.Add(1)
+			d.logHeaderError(DRTUprobeEvent{DataLen: uint32(len(rec.RawSample))}, -1, pErr)
 			continue
 		}
 
@@ -394,9 +527,14 @@ func (d *DRTUprobeDriver) consumeRingbuf(rb *ringbuf.Reader, stopCh chan struct{
 		sink := spec.Sink
 		d.mu.Unlock()
 
-		if ok && sink != nil {
-			_ = d.ProcessEvent(evt, sink)
+		if !ok || sink == nil {
+			d.statDropped.Add(1)
+			if d.cfg.Verbose {
+				d.logHeaderError(evt, -1, fmt.Errorf("session %d inactive or sink nil", evt.SessionID))
+			}
+			continue
 		}
+		_ = d.ProcessEvent(evt, sink)
 	}
 }
 
@@ -425,6 +563,9 @@ func (d *DRTUprobeDriver) StopCapture(ctx context.Context, sessionOrTaskID uint6
 			d.ringbufReader = nil
 		}
 		clear(d.inflightReqs)
+		clear(d.seenChannels)
+		d.errLogCount = 0
+		d.truncLogCount = 0
 	}
 
 	return nil
@@ -468,6 +609,9 @@ func (d *DRTUprobeDriver) Close() error {
 
 	clear(d.activeSpecs)
 	clear(d.inflightReqs)
+	clear(d.seenChannels)
+	d.errLogCount = 0
+	d.truncLogCount = 0
 	return nil
 }
 
