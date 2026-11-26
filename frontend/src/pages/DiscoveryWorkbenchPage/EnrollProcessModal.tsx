@@ -1,11 +1,14 @@
 import React from 'react';
 import { Modal } from '@code/common';
-import type { Agent, DiscoveryProcessGroupDTO } from '../../types';
+import type { Agent, ArchProcessGroup, DiscoveryProcessGroupDTO } from '../../types';
 
 export interface EnrollProcessModalProps {
   open: boolean;
   agent: Agent | null;
   selectedProcesses: DiscoveryProcessGroupDTO[];
+  processGroups?: ArchProcessGroup[];
+  targetGroupId?: string;
+  onTargetGroupChange?: (groupId: string) => void;
   submitting: boolean;
   onClose: () => void;
   onConfirm: () => void;
@@ -15,10 +18,15 @@ export const EnrollProcessModal: React.FC<EnrollProcessModalProps> = ({
   open,
   agent,
   selectedProcesses,
+  processGroups = [],
+  targetGroupId = '',
+  onTargetGroupChange,
   submitting,
   onClose,
   onConfirm,
 }) => {
+  const customGroups = processGroups.filter((g) => g.code !== 'PGRP_CSG_AUTO');
+
   return (
     <Modal
       open={open}
@@ -62,6 +70,33 @@ export const EnrollProcessModal: React.FC<EnrollProcessModalProps> = ({
               <code className="discovery-mono">PROVISIONAL</code> 试用态，仅您本人与管理员可见。
             </div>
           )}
+        </div>
+
+        <div className="discovery-enroll-group-field">
+          <label
+            htmlFor="enroll-target-group-select"
+            className="discovery-enroll-group-field__label"
+          >
+            新发现进程归属组：
+          </label>
+          <select
+            id="enroll-target-group-select"
+            className="code-select"
+            value={targetGroupId}
+            onChange={(e) => onTargetGroupChange?.(e.target.value)}
+            disabled={submitting}
+            data-testid="enroll-target-group-select"
+          >
+            <option value="">现网发现自动纳管进程组（默认暂存）</option>
+            {customGroups.map((g) => (
+              <option key={g.id} value={String(g.id)}>
+                {g.name} ({g.code})
+              </option>
+            ))}
+          </select>
+          <span className="discovery-enroll-group-field__help">
+            仅对本次新建的标准架构进程生效；已匹配既有进程的实例保持原所属组。
+          </span>
         </div>
 
         <div className="discovery-enroll-preview-list">

@@ -55,6 +55,8 @@ func respondDiscoveryError(c *gin.Context, err error) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "现网发现 V2 功能未开启"})
 	case errors.Is(err, discovery.ErrAgentNotFound), errors.Is(err, discovery.ErrSnapshotNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+	case errors.Is(err, discovery.ErrTargetGroupNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": "目标物理进程组不存在"})
 	case errors.Is(err, discovery.ErrAgentForbidden):
 		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问或操作该私有环境资源"})
 	case errors.Is(err, discovery.ErrRefreshRateLimited):
@@ -382,9 +384,10 @@ func DiffDiscoverySnapshots(c *gin.Context) {
 
 // EnrollDiscoveryReq defines POST /api/discovery/enroll request body.
 type EnrollDiscoveryReq struct {
-	AgentID FlexUint64                  `json:"agent_id" binding:"required"`
-	CSGAddr string                      `json:"csg_addr"`
-	Items   []discovery.EnrollItemInput `json:"items"`
+	AgentID       FlexUint64                  `json:"agent_id" binding:"required"`
+	CSGAddr       string                      `json:"csg_addr"`
+	TargetGroupID *FlexUint64                 `json:"target_group_id"`
+	Items         []discovery.EnrollItemInput `json:"items"`
 }
 
 // EnrollDiscoveryProcesses handles POST /api/discovery/enroll.
@@ -413,12 +416,19 @@ func EnrollDiscoveryProcesses(c *gin.Context) {
 		operator = uc.Username
 	}
 
+	var targetGroupIDPtr *uint64
+	if req.TargetGroupID != nil && req.TargetGroupID.Uint64() > 0 {
+		gid := req.TargetGroupID.Uint64()
+		targetGroupIDPtr = &gid
+	}
+
 	res, err := discovery.Enroll(c.Request.Context(), models.DB, GetDiscoveryService(), discovery.EnrollInput{
-		AgentID:    uint64(req.AgentID),
-		CSGAddr:    strings.TrimSpace(req.CSGAddr),
-		Items:      req.Items,
-		OperatorID: userID,
-		IsAdmin:    isAdmin,
+		AgentID:       uint64(req.AgentID),
+		CSGAddr:       strings.TrimSpace(req.CSGAddr),
+		TargetGroupID: targetGroupIDPtr,
+		Items:         req.Items,
+		OperatorID:    userID,
+		IsAdmin:       isAdmin,
 	})
 	if err != nil {
 		var valErr *discovery.EnrollValidationError

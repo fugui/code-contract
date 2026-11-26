@@ -74,6 +74,12 @@ type ArchProcessUpdateReq struct {
 	Description             *string          `json:"description"`
 }
 
+// ArchProcessBatchMoveReq 批量移动标准架构进程所属组请求体
+type ArchProcessBatchMoveReq struct {
+	ProcessIDs    FlexUint64Slice `json:"process_ids"`
+	TargetGroupID FlexUint64      `json:"target_group_id"`
+}
+
 // ListArchProcessGroups GET /api/arch/process-groups
 func ListArchProcessGroups(c *gin.Context) {
 	search := strings.TrimSpace(c.Query("search"))
@@ -856,6 +862,125 @@ func UpdateArchProcess(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"arch_process":          existing,
 		"auto_pinned_overrides": autoPinnedList,
+	})
+}
+
+var errBatchMoveMissingProcs = errors.New("部分标准架构进程不存在")
+
+// BatchMoveArchProcesses POST /api/arch/processes/batch-move (AdminOnly)
+func BatchMoveArchProcesses(c *gin.Context) {
+	var req ArchProcessBatchMoveReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数不合法: " + err.Error()})
+		return
+	}
+
+	seen := make(map[uint64]struct{}, len(req.ProcessIDs))
+	uniqueIDs := make([]uint64, 0, len(req.ProcessIDs))
+	for _, id := range req.ProcessIDs {
+		if id == 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		uniqueIDs = append(uniqueIDs, id)
+	}
+	if len(uniqueIDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请选择至少一个待移动的标准架构进程"})
+		return
+	}
+
+	targetGroupID := req.TargetGroupID.Uint64()
+	if targetGroupID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "目标物理进程组 ID 必填"})
+		return
+	}
+
+	var targetGroup models.ArchProcessGroup
+	if err := models.DB.First(&targetGroup, targetGroupID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "目标物理进程组不存在"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询目标物理进程组失败"})
+		return
+	}
+
+	userID := uint(0)
+	if uc := commonAuth.GetUserContext(c); uc != nil {
+		userID = uc.UserID
+	}
+
+	var movedIDs []uint64
+	var skippedCount int
+	beforeGroups := make(map[uint64]uint64)
+
+	txErr := models.DB.Transaction(func(tx *gorm.DB) error {
+		var procs []models.ArchProcess
+		if err := tx.Where("id IN ?", uniqueIDs).Find(&procs).Error; err != nil {
+			return err
+		}
+		if len(procs) != len(uniqueIDs) {
+			return errBatchMoveMissingProcs
+		}
+
+		toMoveIDs := make([]uint64, 0, len(procs))
+		for _, p := range procs {
+			if p.GroupID == targetGroupID {
+				skippedCount++
+				continue
+			}
+			beforeGroups[p.ID] = p.GroupID
+			toMoveIDs = append(toMoveIDs, p.ID)
+		}
+
+		if len(toMoveIDs) > 0 {
+			if err := tx.Model(&models.ArchProcess{}).
+				Where("id IN ?", toMoveIDs).
+				Updates(map[string]interface{}{
+					"group_id":   targetGroupID,
+					"updated_by": userID,
+				}).Error; err != nil {
+				return err
+			}
+		}
+		movedIDs = toMoveIDs
+		return nil
+	})
+
+	if txErr != nil {
+		if errors.Is(txErr, errBatchMoveMissingProcs) {
+			c.JSON(http.StatusNotFound, gin.H{"error": errBatchMoveMissingProcs.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "批量移动标准架构进程失败: " + txErr.Error()})
+		return
+	}
+
+	if movedIDs == nil {
+		movedIDs = []uint64{}
+	}
+
+	recordAudit(
+		c,
+		"batch_move",
+		commonModels.AuditLevelP2,
+		fmt.Sprintf("批量移动 %d 个标准架构进程至 [%s]", len(movedIDs), targetGroup.Name),
+		"arch_process_group",
+		targetGroup.ID,
+		targetGroup.Name,
+		map[string]interface{}{"process_origin_groups": beforeGroups},
+		map[string]interface{}{"target_group_id": targetGroup.ID, "moved_ids": movedIDs, "skipped_count": skippedCount},
+	)
+
+	c.JSON(http.StatusOK, gin.H{
+		"target_group_id":   targetGroup.ID,
+		"target_group_name": targetGroup.Name,
+		"moved_count":       len(movedIDs),
+		"skipped_count":     skippedCount,
+		"moved_ids":         movedIDs,
 	})
 }
 

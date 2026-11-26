@@ -130,6 +130,7 @@ func RegisterAPIRoutes(r *gin.Engine) {
 		protected.DELETE("/arch/process-groups/:id", requireAdmin, DeleteArchProcessGroup)
 
 		protected.GET("/arch/processes/tree", GetArchProcessTree)
+		protected.POST("/arch/processes/batch-move", requireAdmin, BatchMoveArchProcesses)
 		protected.GET("/arch/processes", ListArchProcesses)
 		protected.GET("/arch/processes/:id", GetArchProcess)
 		protected.POST("/arch/processes", requireAdmin, CreateArchProcess)

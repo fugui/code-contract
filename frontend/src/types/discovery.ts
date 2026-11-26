@@ -184,6 +184,7 @@ export interface EnrolledProcessDTO {
   arch_process_id: number;
   arch_process_code: string;
   arch_process_name: string;
+  group_id?: number;
   lifecycle: string;
   process_id: number;
   result: string;

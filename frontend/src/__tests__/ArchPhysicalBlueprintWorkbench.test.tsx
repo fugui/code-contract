@@ -154,10 +154,32 @@ describe('ArchPhysicalBlueprintWorkbench Test Suite', () => {
     is_super_admin: false,
   };
 
-  it('renders ArchProcessTreePanel with groups, processes, port badges and mount counts', () => {
+  it('renders ArchProcessTreePanel with groups, processes, port badges, staging badge, batch & drag controls', () => {
+    const groupsWithStaging: ArchProcessGroup[] = [
+      ...dummyGroups,
+      {
+        id: 2,
+        code: 'PGRP_CSG_AUTO',
+        name: '现网发现自动纳管进程组',
+        sort_order: 999,
+        processes: [
+          {
+            id: 103,
+            group_id: 2,
+            code: 'backend-account',
+            name: 'backend-account',
+            default_listen_port: 0,
+            default_cmd_pattern: './bin/backend-account',
+            sort_order: 1,
+            mount_count: 1,
+          },
+        ],
+      },
+    ];
+
     const html = renderToString(
       <ArchProcessTreePanel
-        groups={dummyGroups}
+        groups={groupsWithStaging}
         selectedProcessId="101"
         onSelectProcess={() => {}}
         isAdmin={true}
@@ -165,6 +187,8 @@ describe('ArchPhysicalBlueprintWorkbench Test Suite', () => {
         onEditGroup={() => {}}
         onDeleteGroup={() => {}}
         onCreateProcess={() => {}}
+        onBatchMoveProcesses={async () => {}}
+        onDropMoveProcess={async () => {}}
       />
     );
 
@@ -178,6 +202,55 @@ describe('ArchPhysicalBlueprintWorkbench Test Suite', () => {
     expect(html).toContain('纯客户端');
     expect(html).toContain('data-testid="create-process-group-btn"');
     expect(html).toContain('data-testid="create-arch-process-btn"');
+    expect(html).toContain('data-testid="toggle-batch-move-btn"');
+    expect(html).toContain('data-testid="staging-group-badge"');
+    expect(html).toContain('待归类 1');
+    expect(html).toContain('data-testid="staging-group-batch-btn"');
+    expect(html).toContain('draggable="true"');
+  });
+
+  it('renders quick group switcher only for admin when onQuickChangeGroup is provided', () => {
+    const adminHtml = renderToString(
+      <MemoryRouter>
+        <ArchProcessDetailPane
+          archProcess={dummyArchProcess}
+          processGroups={dummyGroups}
+          modules={dummyModules}
+          providedServices={dummyServices}
+          dependencies={dummyDependencies}
+          agentMounts={dummyAgentMounts}
+          allModules={dummyModules}
+          isAdmin={true}
+          onEditProcess={() => {}}
+          onDeleteProcess={() => {}}
+          onQuickChangeGroup={async () => {}}
+          onQuickCreateGroupAndMove={async () => {}}
+        />
+      </MemoryRouter>
+    );
+    expect(adminHtml).toContain('data-testid="quick-group-switcher-trigger"');
+    expect(adminHtml).toContain('核心服务组');
+
+    const viewerHtml = renderToString(
+      <MemoryRouter>
+        <ArchProcessDetailPane
+          archProcess={dummyArchProcess}
+          processGroups={dummyGroups}
+          modules={dummyModules}
+          providedServices={dummyServices}
+          dependencies={dummyDependencies}
+          agentMounts={dummyAgentMounts}
+          allModules={dummyModules}
+          isAdmin={false}
+          onEditProcess={() => {}}
+          onDeleteProcess={() => {}}
+          onQuickChangeGroup={async () => {}}
+        />
+      </MemoryRouter>
+    );
+    expect(viewerHtml).not.toContain('data-testid="quick-group-switcher-trigger"');
+    expect(viewerHtml).toContain('所属组:');
+    expect(viewerHtml).toContain('核心服务组');
   });
 
   it('renders ArchProcessDetailPane with modules, contracts, multi-env agent mounts and auto-pin warning banner', () => {

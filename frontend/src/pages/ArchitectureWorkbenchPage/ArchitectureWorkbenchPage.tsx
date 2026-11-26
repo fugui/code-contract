@@ -126,6 +126,22 @@ export const ArchitectureWorkbenchPage: React.FC = () => {
   const [selectedArchProcessId, setSelectedArchProcessId] = useState<string>(urlProcessId);
   const [selectedArchProcessDetail, setSelectedArchProcessDetail] = useState<ArchProcessDetailDTO | null>(null);
   const [autoPinnedOverrides, setAutoPinnedOverrides] = useState<AutoPinnedOverride[]>([]);
+  const [expandGroupSignal, setExpandGroupSignal] = useState<{ groupId: string; seq: number } | null>(null);
+  const [quickMoveUndo, setQuickMoveUndo] = useState<{
+    processId: string;
+    originGroupId: string;
+    originGroupName: string;
+    targetGroupName: string;
+    processName: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!quickMoveUndo) return;
+    const timer = window.setTimeout(() => {
+      setQuickMoveUndo(null);
+    }, 8000);
+    return () => window.clearTimeout(timer);
+  }, [quickMoveUndo]);
 
   // 物理进程组抽屉
   const [archGroupDrawerOpen, setArchGroupDrawerOpen] = useState(false);
@@ -642,6 +658,138 @@ export const ArchitectureWorkbenchPage: React.FC = () => {
     }
   };
 
+  // 快捷移组 / 拖拽移组 / 批量移组与就地建组
+  const triggerExpandGroup = useCallback((groupId: string | number) => {
+    setExpandGroupSignal((prev) => ({
+      groupId: String(groupId),
+      seq: (prev?.seq ?? 0) + 1,
+    }));
+  }, []);
+
+  const findGroupAndProcessMeta = useCallback(
+    (processId: string | number) => {
+      const pid = String(processId);
+      for (const g of archProcessGroups) {
+        const proc = (g.processes || []).find((p) => String(p.id) === pid);
+        if (proc) {
+          return { group: g, process: proc };
+        }
+      }
+      return null;
+    },
+    [archProcessGroups]
+  );
+
+  const handleQuickMoveProcessGroup = useCallback(
+    async (
+      processId: string | number,
+      targetGroupId: string,
+      options?: { skipUndo?: boolean }
+    ) => {
+      const pid = String(processId);
+      const targetGroup = archProcessGroups.find((g) => String(g.id) === targetGroupId);
+      const meta = findGroupAndProcessMeta(pid);
+      const originGroupId = meta
+        ? String(meta.group.id)
+        : selectedArchProcessDetail && String(selectedArchProcessDetail.arch_process.id) === pid
+        ? String(selectedArchProcessDetail.arch_process.group_id)
+        : '';
+      const originGroupName = meta?.group.name || selectedArchProcessDetail?.arch_process.group?.name || '原进程组';
+      const procName = meta?.process.name || selectedArchProcessDetail?.arch_process.name || `#${pid}`;
+      const targetGroupName = targetGroup?.name || `进程组 #${targetGroupId}`;
+
+      if (originGroupId && originGroupId === targetGroupId) return;
+
+      try {
+        await archApi.updateArchProcess(pid, { group_id: targetGroupId });
+        toast.success(`已将 [${procName}] 移至「${targetGroupName}」`);
+        triggerExpandGroup(targetGroupId);
+        void loadArchProcessTree();
+        if (String(selectedArchProcessId) === pid) {
+          void loadArchProcessDetail(pid);
+        }
+        if (!options?.skipUndo && originGroupId) {
+          setQuickMoveUndo({
+            processId: pid,
+            originGroupId,
+            originGroupName,
+            targetGroupName,
+            processName: procName,
+          });
+        } else if (options?.skipUndo) {
+          setQuickMoveUndo(null);
+        }
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : '移动进程所属组失败');
+        throw err;
+      }
+    },
+    [
+      archProcessGroups,
+      findGroupAndProcessMeta,
+      loadArchProcessDetail,
+      loadArchProcessTree,
+      selectedArchProcessDetail,
+      selectedArchProcessId,
+      toast,
+      triggerExpandGroup,
+    ]
+  );
+
+  const handleQuickCreateGroup = useCallback(
+    async (payload: { code: string; name: string; description?: string }): Promise<ArchProcessGroup> => {
+      try {
+        const created = await archApi.createArchProcessGroup({
+          code: payload.code,
+          name: payload.name,
+          sort_order: 10,
+          description: payload.description || '',
+        });
+        toast.success(`物理进程组「${created.name}」创建成功`);
+        void loadArchProcessTree();
+        return created;
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : '创建物理进程组失败');
+        throw err;
+      }
+    },
+    [loadArchProcessTree, toast]
+  );
+
+  const handleQuickCreateGroupAndMove = useCallback(
+    async (processId: string | number, payload: { code: string; name: string; description?: string }) => {
+      const created = await handleQuickCreateGroup(payload);
+      await handleQuickMoveProcessGroup(processId, String(created.id), { skipUndo: true });
+    },
+    [handleQuickCreateGroup, handleQuickMoveProcessGroup]
+  );
+
+  const handleBatchMoveProcesses = useCallback(
+    async (processIds: string[], targetGroupId: string) => {
+      try {
+        const res = await archApi.batchMoveArchProcesses({
+          process_ids: processIds,
+          target_group_id: targetGroupId,
+        });
+        toast.success(
+          `已将 ${res.moved_count} 个进程移至「${res.target_group_name}」${
+            res.skipped_count > 0 ? `（${res.skipped_count} 个已在目标组跳过）` : ''
+          }`
+        );
+        setQuickMoveUndo(null);
+        triggerExpandGroup(targetGroupId);
+        void loadArchProcessTree();
+        if (selectedArchProcessId && processIds.includes(String(selectedArchProcessId))) {
+          void loadArchProcessDetail(selectedArchProcessId);
+        }
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : '批量移动进程所属组失败');
+        throw err;
+      }
+    },
+    [loadArchProcessDetail, loadArchProcessTree, selectedArchProcessId, toast, triggerExpandGroup]
+  );
+
   const parseOptionalLayerLevel = (raw: string): number | undefined | 'INVALID' => {
     const trimmed = raw.trim();
     if (!trimmed) return undefined;
@@ -1051,6 +1199,12 @@ export const ArchitectureWorkbenchPage: React.FC = () => {
                 });
                 setArchProcessDrawerOpen(true);
               }}
+              onBatchMoveProcesses={handleBatchMoveProcesses}
+              onQuickCreateGroup={handleQuickCreateGroup}
+              onDropMoveProcess={(procId, targetGroupId) =>
+                handleQuickMoveProcessGroup(procId, targetGroupId)
+              }
+              expandGroupSignal={expandGroupSignal}
             />
 
             <div
@@ -1063,6 +1217,7 @@ export const ArchitectureWorkbenchPage: React.FC = () => {
             {selectedArchProcessDetail ? (
               <ArchProcessDetailPane
                 archProcess={selectedArchProcessDetail.arch_process}
+                processGroups={archProcessGroups}
                 modules={selectedArchProcessDetail.modules || []}
                 providedServices={selectedArchProcessDetail.provided_services || []}
                 dependencies={selectedArchProcessDetail.dependencies || []}
@@ -1070,6 +1225,22 @@ export const ArchitectureWorkbenchPage: React.FC = () => {
                 autoPinnedOverrides={autoPinnedOverrides}
                 allModules={subsystemModules}
                 isAdmin={isAdmin}
+                undoHint={
+                  quickMoveUndo &&
+                  String(quickMoveUndo.processId) ===
+                    String(selectedArchProcessDetail.arch_process.id)
+                    ? {
+                        message: `已将 [${quickMoveUndo.processName}] 从「${quickMoveUndo.originGroupName}」移至「${quickMoveUndo.targetGroupName}」`,
+                        onUndo: () =>
+                          handleQuickMoveProcessGroup(
+                            quickMoveUndo.processId,
+                            quickMoveUndo.originGroupId,
+                            { skipUndo: true }
+                          ),
+                        onDismiss: () => setQuickMoveUndo(null),
+                      }
+                    : null
+                }
                 onEditProcess={() => {
                   const p = selectedArchProcessDetail.arch_process;
                   setEditingArchProcess(p);
@@ -1086,6 +1257,18 @@ export const ArchitectureWorkbenchPage: React.FC = () => {
                 }}
                 onDeleteProcess={() =>
                   void handleDeleteArchProcess(selectedArchProcessDetail.arch_process.id)
+                }
+                onQuickChangeGroup={(targetGroupId) =>
+                  handleQuickMoveProcessGroup(
+                    selectedArchProcessDetail.arch_process.id,
+                    targetGroupId
+                  )
+                }
+                onQuickCreateGroupAndMove={(payload) =>
+                  handleQuickCreateGroupAndMove(
+                    selectedArchProcessDetail.arch_process.id,
+                    payload
+                  )
                 }
                 onUnbindModule={handleUnbindModuleFromProcess}
                 onBindModule={handleBindModuleToProcess}

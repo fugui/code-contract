@@ -135,6 +135,8 @@ describe('M30b Discovery Enroll & Physical Topology V2 UI', () => {
     expect(selectedHtml).toContain('批量纳管（不布防）');
     expect(selectedHtml).toContain('零侵扰物理纳管确认');
     expect(selectedHtml).toContain('DISARMED');
+    expect(selectedHtml).toContain('data-testid="enroll-target-group-select"');
+    expect(selectedHtml).toContain('现网发现自动纳管进程组（默认暂存）');
 
     const disambigPayload: EnrollValidationErrorPayload = {
       code: 'IDENTITY_AMBIGUOUS',

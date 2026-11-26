@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useModulePath } from '../../hooks/useModulePath';
 import {
@@ -16,10 +16,17 @@ import {
   Activity,
   Plus,
   Unlink,
+  ChevronDown,
+  Check,
+  Search,
+  RotateCcw,
+  X,
 } from 'lucide-react';
 import { Drawer } from '@code/common';
+import './ArchProcessBlueprint.css';
 import type {
   ArchProcess,
+  ArchProcessGroup,
   Module,
   ModuleService,
   ModuleDependency,
@@ -27,8 +34,11 @@ import type {
   AutoPinnedOverride,
 } from '../../types';
 
+const PGRP_CODE_REGEX = /^[A-Z0-9_-]{2,64}$/;
+
 export interface ArchProcessDetailPaneProps {
   archProcess: ArchProcess;
+  processGroups?: ArchProcessGroup[];
   modules: Module[];
   providedServices: ModuleService[];
   dependencies: ModuleDependency[];
@@ -36,14 +46,22 @@ export interface ArchProcessDetailPaneProps {
   autoPinnedOverrides?: AutoPinnedOverride[];
   allModules?: Module[];
   isAdmin: boolean;
+  undoHint?: {
+    message: string;
+    onUndo: () => void | Promise<void>;
+    onDismiss: () => void;
+  } | null;
   onEditProcess: () => void;
   onDeleteProcess: () => void;
+  onQuickChangeGroup?: (targetGroupId: string) => Promise<void>;
+  onQuickCreateGroupAndMove?: (payload: { code: string; name: string; description?: string }) => Promise<void>;
   onUnbindModule?: (moduleId: string) => Promise<void>;
   onBindModule?: (moduleId: string) => Promise<void>;
 }
 
 export const ArchProcessDetailPane: React.FC<ArchProcessDetailPaneProps> = ({
   archProcess,
+  processGroups = [],
   modules,
   providedServices,
   dependencies,
@@ -51,8 +69,11 @@ export const ArchProcessDetailPane: React.FC<ArchProcessDetailPaneProps> = ({
   autoPinnedOverrides = [],
   allModules = [],
   isAdmin,
+  undoHint = null,
   onEditProcess,
   onDeleteProcess,
+  onQuickChangeGroup,
+  onQuickCreateGroupAndMove,
   onUnbindModule,
   onBindModule,
 }) => {
@@ -62,6 +83,111 @@ export const ArchProcessDetailPane: React.FC<ArchProcessDetailPaneProps> = ({
   const [bindDrawerOpen, setBindDrawerOpen] = useState(false);
   const [selectedModuleIdToBind, setSelectedModuleIdToBind] = useState('');
   const [bindingSubmitting, setBindingSubmitting] = useState(false);
+
+  // 顶部所属组快捷切换下拉状态
+  const [groupMenuOpen, setGroupMenuOpen] = useState(false);
+  const [groupSearch, setGroupSearch] = useState('');
+  const [groupMoving, setGroupMoving] = useState(false);
+  const [creatingGroup, setCreatingGroup] = useState(false);
+  const [newGroupName, setNewGroupName] = useState('');
+  const [newGroupCode, setNewGroupCode] = useState('');
+  const [newGroupDesc, setNewGroupDesc] = useState('');
+  const [createGroupError, setCreateGroupError] = useState('');
+  const switcherRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!groupMenuOpen) return;
+    const handleOutsideClick = (event: MouseEvent) => {
+      if (switcherRef.current && !switcherRef.current.contains(event.target as Node)) {
+        setGroupMenuOpen(false);
+        setCreatingGroup(false);
+        setCreateGroupError('');
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setGroupMenuOpen(false);
+        setCreatingGroup(false);
+        setCreateGroupError('');
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [groupMenuOpen]);
+
+  const filteredGroups = useMemo(() => {
+    const q = groupSearch.trim().toLowerCase();
+    if (!q) return processGroups;
+    return processGroups.filter(
+      (g) => g.name.toLowerCase().includes(q) || g.code.toLowerCase().includes(q)
+    );
+  }, [processGroups, groupSearch]);
+
+  const handleToggleGroupMenu = () => {
+    if (groupMoving) return;
+    setGroupMenuOpen((prev) => {
+      const next = !prev;
+      if (next) {
+        setGroupSearch('');
+        setCreatingGroup(false);
+        setCreateGroupError('');
+      }
+      return next;
+    });
+  };
+
+  const handleSelectQuickGroup = async (targetGroupId: string) => {
+    if (!onQuickChangeGroup || groupMoving) return;
+    if (String(archProcess.group_id) === targetGroupId) {
+      setGroupMenuOpen(false);
+      return;
+    }
+    setGroupMoving(true);
+    try {
+      await onQuickChangeGroup(targetGroupId);
+      setGroupMenuOpen(false);
+    } catch {
+      // 错误提示由父组件统一处理
+    } finally {
+      setGroupMoving(false);
+    }
+  };
+
+  const handleSubmitQuickCreateGroup = async () => {
+    if (!onQuickCreateGroupAndMove || groupMoving) return;
+    const code = newGroupCode.trim().toUpperCase();
+    const name = newGroupName.trim();
+    if (!PGRP_CODE_REGEX.test(code)) {
+      setCreateGroupError('编码需为 2-64 位大写字母、数字、下划线或中划线');
+      return;
+    }
+    if (!name) {
+      setCreateGroupError('请填写物理进程组名称');
+      return;
+    }
+    setCreateGroupError('');
+    setGroupMoving(true);
+    try {
+      await onQuickCreateGroupAndMove({
+        code,
+        name,
+        description: newGroupDesc.trim() || undefined,
+      });
+      setNewGroupCode('');
+      setNewGroupName('');
+      setNewGroupDesc('');
+      setCreatingGroup(false);
+      setGroupMenuOpen(false);
+    } catch (err) {
+      setCreateGroupError(err instanceof Error ? err.message : '新建物理进程组失败');
+    } finally {
+      setGroupMoving(false);
+    }
+  };
 
   const isClient = archProcess.default_listen_port === 0;
 
@@ -227,6 +353,32 @@ export const ArchProcessDetailPane: React.FC<ArchProcessDetailPaneProps> = ({
         background: 'var(--color-bg-surface)',
       }}
     >
+      {/* 快捷移组撤回提示条 */}
+      {undoHint && (
+        <div className="code-arch-proc-undo-bar" data-testid="quick-move-undo-bar">
+          <span>{undoHint.message}</span>
+          <div className="code-arch-proc-undo-bar__actions">
+            <button
+              type="button"
+              className="code-btn code-btn--secondary code-btn--xs"
+              onClick={() => void undoHint.onUndo()}
+              data-testid="quick-move-undo-btn"
+            >
+              <RotateCcw size={12} />
+              <span>撤销</span>
+            </button>
+            <button
+              type="button"
+              className="code-btn-icon"
+              onClick={undoHint.onDismiss}
+              title="关闭提示"
+            >
+              <X size={13} />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* 头部摘要信息区 */}
       <div
         style={{
@@ -237,7 +389,7 @@ export const ArchProcessDetailPane: React.FC<ArchProcessDetailPaneProps> = ({
       >
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.35rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.35rem', flexWrap: 'wrap' }}>
               <Server size={20} style={{ color: 'var(--color-primary)' }} />
               <h3
                 style={{
@@ -262,9 +414,179 @@ export const ArchProcessDetailPane: React.FC<ArchProcessDetailPaneProps> = ({
               >
                 {archProcess.code}
               </span>
-              <span className="code-badge code-badge--secondary" style={{ fontSize: '0.75rem' }}>
-                所属组: {archProcess.group?.name || '默认进程组'}
-              </span>
+              {isAdmin && onQuickChangeGroup ? (
+                <div className="code-arch-proc-group-switcher" ref={switcherRef}>
+                  <button
+                    type="button"
+                    className="code-arch-proc-group-trigger"
+                    onClick={handleToggleGroupMenu}
+                    disabled={groupMoving}
+                    data-testid="quick-group-switcher-trigger"
+                    title="点击快捷切换所属物理进程组"
+                  >
+                    <span>所属组:</span>
+                    <span className="code-arch-proc-group-trigger__name">
+                      {archProcess.group?.name || '默认进程组'}
+                    </span>
+                    <ChevronDown size={12} />
+                  </button>
+
+                  {groupMenuOpen && (
+                    <div
+                      className="code-arch-proc-group-menu"
+                      data-testid="quick-group-switcher-menu"
+                    >
+                      {creatingGroup ? (
+                        <div className="code-arch-proc-group-menu__create-form">
+                          <div className="code-arch-proc-group-menu__create-title">
+                            新建进程组并立即移入
+                          </div>
+                          <input
+                            type="text"
+                            className="code-input"
+                            value={newGroupName}
+                            onChange={(e) => setNewGroupName(e.target.value)}
+                            placeholder="进程组名称，如 支付核心组"
+                            style={{ height: '30px', fontSize: '0.8rem' }}
+                          />
+                          <input
+                            type="text"
+                            className="code-input code-font-mono"
+                            value={newGroupCode}
+                            onChange={(e) => setNewGroupCode(e.target.value.toUpperCase())}
+                            placeholder="编码，如 PAYMENT_CORE"
+                            style={{ height: '30px', fontSize: '0.8rem' }}
+                          />
+                          <input
+                            type="text"
+                            className="code-input"
+                            value={newGroupDesc}
+                            onChange={(e) => setNewGroupDesc(e.target.value)}
+                            placeholder="描述说明（可选）"
+                            style={{ height: '30px', fontSize: '0.8rem' }}
+                          />
+                          {createGroupError && (
+                            <div style={{ fontSize: '0.75rem', color: 'var(--color-danger)' }}>
+                              {createGroupError}
+                            </div>
+                          )}
+                          <div className="code-arch-proc-group-menu__create-actions">
+                            <button
+                              type="button"
+                              className="code-btn code-btn--secondary code-btn--xs"
+                              onClick={() => {
+                                setCreatingGroup(false);
+                                setCreateGroupError('');
+                              }}
+                              disabled={groupMoving}
+                            >
+                              取消
+                            </button>
+                            <button
+                              type="button"
+                              className="code-btn code-btn--primary code-btn--xs"
+                              onClick={() => void handleSubmitQuickCreateGroup()}
+                              disabled={groupMoving}
+                              data-testid="quick-create-group-submit-btn"
+                            >
+                              {groupMoving ? '创建中...' : '创建并移入'}
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="code-arch-proc-group-menu__search">
+                            <Search
+                              size={12}
+                              className="code-arch-proc-group-menu__search-icon"
+                            />
+                            <input
+                              type="text"
+                              className="code-input"
+                              value={groupSearch}
+                              onChange={(e) => setGroupSearch(e.target.value)}
+                              placeholder="搜索进程组名称或编码..."
+                              style={{ paddingLeft: '1.7rem', height: '28px', fontSize: '0.78rem' }}
+                            />
+                          </div>
+
+                          <div className="code-arch-proc-group-menu__list">
+                            {filteredGroups.length === 0 ? (
+                              <div
+                                style={{
+                                  padding: '0.85rem',
+                                  textAlign: 'center',
+                                  fontSize: '0.75rem',
+                                  color: 'var(--color-text-muted)',
+                                }}
+                              >
+                                无匹配的物理进程组
+                              </div>
+                            ) : (
+                              filteredGroups.map((g) => {
+                                const isCurrent = String(g.id) === String(archProcess.group_id);
+                                const isStaging = g.code === 'PGRP_CSG_AUTO';
+                                const procCount = g.processes?.length ?? g.process_count ?? 0;
+
+                                return (
+                                  <button
+                                    key={g.id}
+                                    type="button"
+                                    className={`code-arch-proc-group-menu__item ${
+                                      isCurrent ? 'code-arch-proc-group-menu__item--current' : ''
+                                    }`}
+                                    onClick={() => void handleSelectQuickGroup(String(g.id))}
+                                    disabled={groupMoving}
+                                    data-testid={`quick-group-option-${g.id}`}
+                                  >
+                                    <div className="code-arch-proc-group-menu__item-main">
+                                      <span className="code-arch-proc-group-menu__item-name">
+                                        {g.name}
+                                      </span>
+                                      <span className="code-arch-proc-group-menu__item-code code-font-mono">
+                                        {g.code}
+                                      </span>
+                                    </div>
+                                    <div className="code-arch-proc-group-menu__item-meta">
+                                      {isStaging && (
+                                        <span className="code-arch-proc-staging-badge">暂存</span>
+                                      )}
+                                      <span>{procCount}</span>
+                                      {isCurrent && <Check size={13} />}
+                                    </div>
+                                  </button>
+                                );
+                              })
+                            )}
+                          </div>
+
+                          {onQuickCreateGroupAndMove && (
+                            <div className="code-arch-proc-group-menu__footer">
+                              <button
+                                type="button"
+                                className="code-btn code-btn--secondary code-btn--xs"
+                                style={{ width: '100%', justifyContent: 'center' }}
+                                onClick={() => {
+                                  setCreatingGroup(true);
+                                  setCreateGroupError('');
+                                }}
+                                data-testid="quick-create-group-trigger"
+                              >
+                                <Plus size={12} />
+                                <span>新建进程组并移入</span>
+                              </button>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <span className="code-badge code-badge--secondary" style={{ fontSize: '0.75rem' }}>
+                  所属组: {archProcess.group?.name || '默认进程组'}
+                </span>
+              )}
             </div>
 
             <div

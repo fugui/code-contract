@@ -240,6 +240,7 @@ func RegisterRoutesForTest(r *gin.Engine) {
 		protected.DELETE("/arch/process-groups/:id", requireAdmin, handlers.DeleteArchProcessGroup)
 
 		protected.GET("/arch/processes/tree", handlers.GetArchProcessTree)
+		protected.POST("/arch/processes/batch-move", requireAdmin, handlers.BatchMoveArchProcesses)
 		protected.GET("/arch/processes", handlers.ListArchProcesses)
 		protected.GET("/arch/processes/:id", handlers.GetArchProcess)
 		protected.POST("/arch/processes", requireAdmin, handlers.CreateArchProcess)

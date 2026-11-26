@@ -523,6 +523,25 @@ export async function deleteArchProcess(id: string | number) {
   });
 }
 
+export async function batchMoveArchProcesses(data: {
+  process_ids: (string | number)[];
+  target_group_id: string | number;
+}) {
+  return apiRequest<{
+    target_group_id: number;
+    target_group_name: string;
+    moved_count: number;
+    skipped_count: number;
+    moved_ids: number[];
+  }>('/arch/processes/batch-move', {
+    method: 'POST',
+    body: JSON.stringify({
+      process_ids: data.process_ids.map((id) => Number(id)),
+      target_group_id: Number(data.target_group_id),
+    }),
+  });
+}
+
 interface CachedGraph {
   etag: string;
   data: TopologyGraphDTO;

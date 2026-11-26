@@ -100,13 +100,18 @@ export async function diffDiscoverySnapshots(params: {
 export async function enrollDiscoveryProcesses(data: {
   agent_id: string | number;
   csg_addr?: string;
+  target_group_id?: string | number;
   items: EnrollItemInput[];
 }): Promise<EnrollResultDTO> {
+  const targetGroupNum = data.target_group_id !== undefined && data.target_group_id !== ''
+    ? Number(data.target_group_id)
+    : 0;
   return apiRequestWithErrorPayload<EnrollResultDTO>('/discovery/enroll', {
     method: 'POST',
     body: JSON.stringify({
       agent_id: Number(data.agent_id),
       csg_addr: data.csg_addr,
+      ...(targetGroupNum > 0 ? { target_group_id: targetGroupNum } : {}),
       items: data.items,
     }),
   });

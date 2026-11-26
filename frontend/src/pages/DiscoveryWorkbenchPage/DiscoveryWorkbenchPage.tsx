@@ -3,11 +3,13 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { Modal } from '@code/common';
 import { useModulePath } from '../../hooks/useModulePath';
 import * as agentApi from '../../api/agent';
+import * as archApi from '../../api/arch';
 import * as discoveryApi from '../../api/discovery';
 import { ApiRequestError } from '../../api/client';
 import { useToast } from '../../utils/toast';
 import type {
   Agent,
+  ArchProcessGroup,
   DiscoveryLiveRespDTO,
   DiscoveryProcessGroupDTO,
   DiscoverySnapshotDiffDTO,
@@ -123,11 +125,31 @@ export const DiscoveryWorkbenchPage: React.FC<DiscoveryWorkbenchPageProps> = ({
   );
   const [enrollModalOpen, setEnrollModalOpen] = useState(initialEnrollModalOpen);
   const [enrolling, setEnrolling] = useState(false);
+  const [enrollTargetGroupId, setEnrollTargetGroupId] = useState('');
+  const [processGroups, setProcessGroups] = useState<ArchProcessGroup[]>([]);
   const [enrollOverrides, setEnrollOverrides] = useState<Record<string, Partial<EnrollItemInput>>>(
     {}
   );
   const [disambiguationPayload, setDisambiguationPayload] =
     useState<EnrollValidationErrorPayload | null>(initialDisambiguation);
+
+  useEffect(() => {
+    if (!enrollModalOpen) return;
+    let active = true;
+    void (async () => {
+      try {
+        const res = await archApi.listArchProcessGroups();
+        if (active) {
+          setProcessGroups(res.items ?? []);
+        }
+      } catch {
+        // 加载失败时静默降级为默认暂存组，不阻塞纳管流程
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [enrollModalOpen]);
 
   const syncQuery = useCallback(
     (patch: Record<string, string | null>) => {
@@ -290,12 +312,14 @@ export const DiscoveryWorkbenchPage: React.FC<DiscoveryWorkbenchPageProps> = ({
         const res = await discoveryApi.enrollDiscoveryProcesses({
           agent_id: selectedAgentId,
           csg_addr: selectedCsgAddr || undefined,
+          target_group_id: enrollTargetGroupId || undefined,
           items,
         });
         toast.success(
           `成功零侵扰纳管 ${res.enrolled.length} 个进程（放置 ${res.placements_count}，订阅 ${res.dependencies_count}）`
         );
         setEnrollModalOpen(false);
+        setEnrollTargetGroupId('');
         setDisambiguationPayload(null);
         setSelectedKeys(new Set());
         setEnrollOverrides({});
@@ -321,7 +345,7 @@ export const DiscoveryWorkbenchPage: React.FC<DiscoveryWorkbenchPageProps> = ({
         setEnrolling(false);
       }
     },
-    [selectedAgentId, selectedCsgAddr, selectedKeys, enrollOverrides, toast]
+    [selectedAgentId, selectedCsgAddr, enrollTargetGroupId, selectedKeys, enrollOverrides, toast]
   );
 
   const handleQuickRecord = useCallback(async () => {
@@ -641,6 +665,9 @@ export const DiscoveryWorkbenchPage: React.FC<DiscoveryWorkbenchPageProps> = ({
         open={enrollModalOpen}
         agent={selectedAgent}
         selectedProcesses={selectedProcesses}
+        processGroups={processGroups}
+        targetGroupId={enrollTargetGroupId}
+        onTargetGroupChange={setEnrollTargetGroupId}
         submitting={enrolling}
         onClose={() => setEnrollModalOpen(false)}
         onConfirm={() => void submitEnroll()}

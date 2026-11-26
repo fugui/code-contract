@@ -37,6 +37,8 @@ var (
 	ErrEnrollRateLimited = errors.New("enroll rate limited")
 	// ErrEnrollTargetMissing 表示请求中指定的 process_key 在当前发现视图中不存在
 	ErrEnrollTargetMissing = errors.New("discovery process_key not found")
+	// ErrTargetGroupNotFound 表示纳管指定的目标物理进程组不存在
+	ErrTargetGroupNotFound = errors.New("target process group not found")
 )
 
 // EnrollValidationError 表示需要前端交互确认（422 语义歧义或低置信）的校验错误
@@ -66,6 +68,7 @@ type EnrollItemInput struct {
 type EnrollInput struct {
 	AgentID         uint64
 	CSGAddr         string
+	TargetGroupID   *uint64
 	Items           []EnrollItemInput
 	OperatorID      uint
 	IsAdmin         bool
@@ -78,6 +81,7 @@ type EnrolledProcessDTO struct {
 	ArchProcessID     uint64 `json:"arch_process_id"`
 	ArchProcessCode   string `json:"arch_process_code"`
 	ArchProcessName   string `json:"arch_process_name"`
+	GroupID           uint64 `json:"group_id,omitempty"`
 	Lifecycle         string `json:"lifecycle"`
 	ProcessID         uint64 `json:"process_id"`
 	Result            string `json:"result"` // MATCHED | CREATED_PROVISIONAL | CREATED_CONFIRMED
@@ -238,9 +242,19 @@ func Enroll(ctx context.Context, db *gorm.DB, liveSvc *LiveDiscoveryService, in 
 			return err
 		}
 
-		autoGroup, err := ensureCSGAutoProcessGroupTx(tx)
-		if err != nil {
-			return err
+		var targetGroup models.ArchProcessGroup
+		if in.TargetGroupID != nil && *in.TargetGroupID > 0 {
+			if err := tx.First(&targetGroup, *in.TargetGroupID).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return ErrTargetGroupNotFound
+				}
+				return err
+			}
+		} else {
+			targetGroup, err = ensureCSGAutoProcessGroupTx(tx)
+			if err != nil {
+				return err
+			}
 		}
 
 		// 载入全部 Agent 作用域索引与所有标准架构进程
@@ -340,7 +354,7 @@ func Enroll(ctx context.Context, db *gorm.DB, liveSvc *LiveDiscoveryService, in 
 
 			if targetAP.ID == 0 {
 				var created bool
-				targetAP, err = createDiscoveredArchProcessTx(tx, &lockedAgent, autoGroup.ID, lp, identity, it.DisplayName, in.OperatorID, usedCodes)
+				targetAP, err = createDiscoveredArchProcessTx(tx, &lockedAgent, targetGroup.ID, lp, identity, it.DisplayName, in.OperatorID, usedCodes)
 				if err != nil {
 					return err
 				}
@@ -388,6 +402,7 @@ func Enroll(ctx context.Context, db *gorm.DB, liveSvc *LiveDiscoveryService, in 
 				ArchProcessID:   targetAP.ID,
 				ArchProcessCode: targetAP.Code,
 				ArchProcessName: targetAP.Name,
+				GroupID:         targetAP.GroupID,
 				Lifecycle:       targetAP.Lifecycle,
 				ProcessID:       procRow.ID,
 				Result:          resultKind,
