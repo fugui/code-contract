@@ -39,6 +39,49 @@ export interface GroupedProcesses {
 }
 
 /**
+ * 统一规范化后端 uint64 (number) 或前端 string 形态的实体 ID 为字符串，
+ * 避免 `<select>` 原生 string value 与 JSON 数值 ID 使用 `===` 比较失配。
+ */
+export function normalizeId(id: string | number | null | undefined): string {
+  if (id === null || id === undefined) return '';
+  return String(id);
+}
+
+/**
+ * 解析当前应选中的 Agent ID（统一返回 string）：
+ * 1. 若 currentSelectedId 在 agents 中存在，保持当前选择；
+ * 2. 否则若 preferredUrlAgentId 在 agents 中存在，优先使用 URL 指定 Agent；
+ * 3. 否则按 ONLINE 空闲 -> ONLINE -> 首个 Agent 兜底。
+ */
+export function resolveSelectedAgentId(
+  agents: Agent[],
+  currentSelectedId?: string | number | null,
+  preferredUrlAgentId?: string | number | null
+): string {
+  if (!agents || agents.length === 0) return '';
+
+  const currentNorm = normalizeId(currentSelectedId);
+  if (currentNorm) {
+    const existing = agents.find((a) => normalizeId(a.id) === currentNorm);
+    if (existing) return normalizeId(existing.id);
+  }
+
+  const preferredNorm = normalizeId(preferredUrlAgentId);
+  if (preferredNorm) {
+    const preferred = agents.find((a) => normalizeId(a.id) === preferredNorm);
+    if (preferred) return normalizeId(preferred.id);
+  }
+
+  const ideal = agents.find((a) => a.status === 'ONLINE' && !a.lease_type);
+  if (ideal) return normalizeId(ideal.id);
+
+  const online = agents.find((a) => a.status === 'ONLINE');
+  if (online) return normalizeId(online.id);
+
+  return normalizeId(agents[0].id);
+}
+
+/**
  * 智能默认预选规则 (ADR-11 / F-15.4):
  * - 排除已卸载探针进程 (probe_desired_state === 'DISARMED')
  * - 可用数 1 <= N <= 5: 默认自动全选（单进程开箱 0 次额外点击）
@@ -48,9 +91,9 @@ export function computeSmartDefaultSelection(procs: Process[]): string[] {
   const available = procs.filter((p) => p.probe_desired_state !== 'DISARMED');
   if (available.length === 0) return [];
   if (available.length <= 5) {
-    return available.map((p) => p.id);
+    return available.map((p) => normalizeId(p.id));
   }
-  return available.filter((p) => p.probe_status === 'READY').map((p) => p.id);
+  return available.filter((p) => p.probe_status === 'READY').map((p) => normalizeId(p.id));
 }
 
 interface RecordingStartInnerProps extends RecordingStartContentProps {
@@ -77,29 +120,15 @@ const RecordingStartInner: React.FC<RecordingStartInnerProps> = ({
   const [name, setName] = useState(() => urlSessionNo || '');
   const [scope, setScope] = useState<'SHARED' | 'PRIVATE'>('PRIVATE');
 
-  const [selectedAgentId, setSelectedAgentId] = useState<string>(() => {
-    if (urlAgentId && allAgents.some((a) => a.id === urlAgentId)) {
-      return urlAgentId;
-    }
-    if (!allAgents || allAgents.length === 0) return '';
-    const ideal = allAgents.find((a) => a.status === 'ONLINE' && !a.lease_type);
-    if (ideal) return ideal.id;
-    const online = allAgents.find((a) => a.status === 'ONLINE');
-    if (online) return online.id;
-    return allAgents[0].id;
-  });
+  const [selectedAgentId, setSelectedAgentId] = useState<string>(() =>
+    resolveSelectedAgentId(allAgents, '', urlAgentId)
+  );
 
   // 3. 业务进程树状态（智能默认规则：1..5 可用进程全选，>5 仅选 READY）
   const [targetProcessIds, setTargetProcessIds] = useState<string[]>(() => {
-    const agtId =
-      urlAgentId && allAgents.some((a) => a.id === urlAgentId)
-        ? urlAgentId
-        : allAgents.find((a) => a.status === 'ONLINE' && !a.lease_type)?.id ||
-          allAgents.find((a) => a.status === 'ONLINE')?.id ||
-          allAgents[0]?.id ||
-          '';
+    const agtId = resolveSelectedAgentId(allAgents, '', urlAgentId);
     if (!agtId) return [];
-    const procs = allProcesses.filter((p) => p.agent_id === agtId);
+    const procs = allProcesses.filter((p) => normalizeId(p.agent_id) === agtId);
     return computeSmartDefaultSelection(procs);
   });
   const [searchQuery, setSearchQuery] = useState('');
@@ -111,71 +140,97 @@ const RecordingStartInner: React.FC<RecordingStartInnerProps> = ({
   const [description, setDescription] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  // 处理深层链接参数初始化
+  const initializedAgentRef = useRef<string | null>(null);
+  // 记录已生效过的 urlAgentId，避免异步刷新 allAgents/allProcesses 时覆盖用户的手动切换
+  const appliedUrlAgentRef = useRef<string | null>(
+    (() => {
+      const normUrl = normalizeId(urlAgentId);
+      if (normUrl && allAgents.some((a) => normalizeId(a.id) === normUrl)) {
+        return normUrl;
+      }
+      return null;
+    })()
+  );
+
+  // 处理深层链接参数初始化（仅在 urlAgentId 首次命中可用 Agent 时单次生效）
   useEffect(() => {
     if (urlSessionNo) {
       setName((prev) => prev || urlSessionNo);
     }
-    if (urlAgentId && allAgents.some((a) => a.id === urlAgentId)) {
-      setSelectedAgentId(urlAgentId);
-      const agentProcs = allProcesses.filter((p) => p.agent_id === urlAgentId);
+    const normUrlAgentId = normalizeId(urlAgentId);
+    if (!normUrlAgentId) {
+      appliedUrlAgentRef.current = null;
+      return;
+    }
+    if (appliedUrlAgentRef.current === normUrlAgentId) {
+      return;
+    }
+    if (allAgents.some((a) => normalizeId(a.id) === normUrlAgentId)) {
+      appliedUrlAgentRef.current = normUrlAgentId;
+      setSelectedAgentId(normUrlAgentId);
+      const agentProcs = allProcesses.filter((p) => normalizeId(p.agent_id) === normUrlAgentId);
       if (agentProcs.length > 0) {
+        initializedAgentRef.current = normUrlAgentId;
         setTargetProcessIds(computeSmartDefaultSelection(agentProcs));
+      } else {
+        initializedAgentRef.current = null;
       }
     }
   }, [urlAgentId, urlSessionNo, allAgents, allProcesses]);
 
-  // 智能默认选中首个在线且空闲的 Agent
+  // 智能默认选中首个在线且空闲的 Agent（仅在未选中或当前选中已不存在时触发）
   useEffect(() => {
     if (allAgents.length === 0) {
-      setSelectedAgentId('');
+      if (selectedAgentId !== '') {
+        setSelectedAgentId('');
+      }
       return;
     }
 
-    if (selectedAgentId && allAgents.some((a) => a.id === selectedAgentId)) {
+    const normSelected = normalizeId(selectedAgentId);
+    if (normSelected && allAgents.some((a) => normalizeId(a.id) === normSelected)) {
       return;
     }
 
-    const ideal = allAgents.find((a) => a.status === 'ONLINE' && !a.lease_type);
-    if (ideal) {
-      setSelectedAgentId(ideal.id);
-      return;
-    }
-
-    const online = allAgents.find((a) => a.status === 'ONLINE');
-    if (online) {
-      setSelectedAgentId(online.id);
-      return;
-    }
-
-    setSelectedAgentId(allAgents[0].id);
-  }, [allAgents, selectedAgentId]);
+    const fallbackId = resolveSelectedAgentId(
+      allAgents,
+      '',
+      appliedUrlAgentRef.current ? '' : urlAgentId
+    );
+    setSelectedAgentId(fallbackId);
+  }, [allAgents, selectedAgentId, urlAgentId]);
 
   // 当切换选中的 Agent 时，对新 Agent 下的进程执行智能默认预选
   const handleAgentChange = (newAgentId: string) => {
-    setSelectedAgentId(newAgentId);
-    const procs = allProcesses.filter((p) => p.agent_id === newAgentId);
+    const normId = normalizeId(newAgentId);
+    if (urlAgentId) {
+      appliedUrlAgentRef.current = normalizeId(urlAgentId);
+    }
+    setSelectedAgentId(normId);
+    const procs = allProcesses.filter((p) => normalizeId(p.agent_id) === normId);
+    initializedAgentRef.current = procs.length > 0 ? normId : null;
     setTargetProcessIds(computeSmartDefaultSelection(procs));
   };
 
   const currentAgent = useMemo(() => {
-    return allAgents.find((a) => a.id === selectedAgentId);
+    const normSelected = normalizeId(selectedAgentId);
+    return allAgents.find((a) => normalizeId(a.id) === normSelected);
   }, [allAgents, selectedAgentId]);
 
   const isAgentOffline = currentAgent?.status === 'OFFLINE';
   const isAgentLeased = Boolean(currentAgent?.lease_type);
 
   const currentAgentProcesses = useMemo(() => {
-    if (!selectedAgentId) return [];
-    return allProcesses.filter((p) => p.agent_id === selectedAgentId);
+    const normSelected = normalizeId(selectedAgentId);
+    if (!normSelected) return [];
+    return allProcesses.filter((p) => normalizeId(p.agent_id) === normSelected);
   }, [allProcesses, selectedAgentId]);
 
-  const initializedAgentRef = useRef<string | null>(null);
-
   useEffect(() => {
-    if (!selectedAgentId) return;
-    if (initializedAgentRef.current !== selectedAgentId && currentAgentProcesses.length > 0) {
-      initializedAgentRef.current = selectedAgentId;
+    const normSelected = normalizeId(selectedAgentId);
+    if (!normSelected) return;
+    if (initializedAgentRef.current !== normSelected && currentAgentProcesses.length > 0) {
+      initializedAgentRef.current = normSelected;
       setTargetProcessIds(computeSmartDefaultSelection(currentAgentProcesses));
     }
   }, [selectedAgentId, currentAgentProcesses]);
@@ -210,8 +265,8 @@ const RecordingStartInner: React.FC<RecordingStartInnerProps> = ({
 
   // 选中的进程实体集合
   const selectedProcesses = useMemo(() => {
-    const idSet = new Set(targetProcessIds);
-    return currentAgentProcesses.filter((p) => idSet.has(p.id));
+    const idSet = new Set(targetProcessIds.map(normalizeId));
+    return currentAgentProcesses.filter((p) => idSet.has(normalizeId(p.id)));
   }, [currentAgentProcesses, targetProcessIds]);
 
   // 是否所有选中的进程探针均处于 READY 状态 (零重启录制)
@@ -350,15 +405,16 @@ const RecordingStartInner: React.FC<RecordingStartInnerProps> = ({
     setName(`rec-${agentName}-${timeStr}`);
   };
 
-  const toggleProcess = (procId: string) => {
-    const proc = currentAgentProcesses.find((p) => p.id === procId);
+  const toggleProcess = (procId: string | number) => {
+    const normProcId = normalizeId(procId);
+    const proc = currentAgentProcesses.find((p) => normalizeId(p.id) === normProcId);
     if (proc?.probe_desired_state === 'DISARMED') return;
     setTargetProcessIds((prev) => {
-      const set = new Set(prev);
-      if (set.has(procId)) {
-        set.delete(procId);
+      const set = new Set(prev.map(normalizeId));
+      if (set.has(normProcId)) {
+        set.delete(normProcId);
       } else {
-        set.add(procId);
+        set.add(normProcId);
       }
       return Array.from(set);
     });
@@ -368,12 +424,13 @@ const RecordingStartInner: React.FC<RecordingStartInnerProps> = ({
     const availableGroupProcs = group.processes.filter(
       (p) => p.probe_desired_state !== 'DISARMED'
     );
-    const groupProcIds = availableGroupProcs.map((p) => p.id);
+    const groupProcIds = availableGroupProcs.map((p) => normalizeId(p.id));
     if (groupProcIds.length === 0) return;
-    const allSelected = groupProcIds.every((id) => targetProcessIds.includes(id));
+    const selectedSet = new Set(targetProcessIds.map(normalizeId));
+    const allSelected = groupProcIds.every((id) => selectedSet.has(id));
 
     setTargetProcessIds((prev) => {
-      const set = new Set(prev);
+      const set = new Set(prev.map(normalizeId));
       if (allSelected) {
         groupProcIds.forEach((id) => set.delete(id));
       } else {
@@ -392,19 +449,19 @@ const RecordingStartInner: React.FC<RecordingStartInnerProps> = ({
 
   const handleSelectAll = () => {
     const avail = currentAgentProcesses.filter((p) => p.probe_desired_state !== 'DISARMED');
-    setTargetProcessIds(avail.map((p) => p.id));
+    setTargetProcessIds(avail.map((p) => normalizeId(p.id)));
   };
 
   const handleSelectOnlyReady = () => {
     const ready = currentAgentProcesses.filter(
       (p) => p.probe_desired_state !== 'DISARMED' && p.probe_status === 'READY'
     );
-    setTargetProcessIds(ready.map((p) => p.id));
+    setTargetProcessIds(ready.map((p) => normalizeId(p.id)));
   };
 
   const handleCascadeDownstreams = () => {
-    const selectedSet = new Set(targetProcessIds);
-    const selectedProcs = currentAgentProcesses.filter((p) => selectedSet.has(p.id));
+    const selectedSet = new Set(targetProcessIds.map(normalizeId));
+    const selectedProcs = currentAgentProcesses.filter((p) => selectedSet.has(normalizeId(p.id)));
     const toAdd = new Set<string>();
 
     selectedProcs.forEach((proc) => {
@@ -420,21 +477,22 @@ const RecordingStartInner: React.FC<RecordingStartInnerProps> = ({
 
           currentAgentProcesses.forEach((candidate) => {
             if (candidate.probe_desired_state === 'DISARMED') return;
-            if (selectedSet.has(candidate.id)) return;
+            const candId = normalizeId(candidate.id);
+            if (selectedSet.has(candId)) return;
 
             if (
               providerArchProcId != null &&
               candidate.arch_process_id != null &&
               String(candidate.arch_process_id) === String(providerArchProcId)
             ) {
-              toAdd.add(candidate.id);
-            } else if (providerProcId != null && candidate.id === providerProcId) {
-              toAdd.add(candidate.id);
+              toAdd.add(candId);
+            } else if (providerProcId != null && candId === normalizeId(providerProcId)) {
+              toAdd.add(candId);
             } else if (providerModuleId != null) {
               if (candidate.process_modules?.some((pm) => String(pm.module_id) === String(providerModuleId))) {
-                toAdd.add(candidate.id);
+                toAdd.add(candId);
               } else if (candidate.arch_process?.modules?.some((m) => String(m.id) === String(providerModuleId))) {
-                toAdd.add(candidate.id);
+                toAdd.add(candId);
               }
             }
           });
@@ -449,17 +507,18 @@ const RecordingStartInner: React.FC<RecordingStartInnerProps> = ({
       extraDownstreams.forEach((endpoint) => {
         currentAgentProcesses.forEach((candidate) => {
           if (candidate.probe_desired_state === 'DISARMED') return;
-          if (selectedSet.has(candidate.id)) return;
+          const candId = normalizeId(candidate.id);
+          if (selectedSet.has(candId)) return;
           const candPort = String(candidate.effective_listen_port ?? candidate.listen_port);
           if (candPort !== '0' && (endpoint.endsWith(`:${candPort}`) || endpoint === candPort)) {
-            toAdd.add(candidate.id);
+            toAdd.add(candId);
           }
         });
       });
     });
 
     if (toAdd.size > 0) {
-      setTargetProcessIds((prev) => Array.from(new Set([...prev, ...toAdd])));
+      setTargetProcessIds((prev) => Array.from(new Set([...prev.map(normalizeId), ...toAdd])));
       toast.success(`已自动级联勾选 ${toAdd.size} 个同机下游依赖进程`);
     } else {
       toast.info('未发现更多未勾选的同机依赖下游进程');
@@ -629,7 +688,7 @@ const RecordingStartInner: React.FC<RecordingStartInnerProps> = ({
           <div className="code-agent-selector-wrapper">
             <select
               className="code-select code-agent-select-field"
-              value={selectedAgentId}
+              value={normalizeId(selectedAgentId)}
               onChange={(e) => handleAgentChange(e.target.value)}
               data-testid="select-target-agent"
             >
@@ -637,6 +696,7 @@ const RecordingStartInner: React.FC<RecordingStartInnerProps> = ({
                 <option value="">暂无可用 Agent</option>
               ) : (
                 allAgents.map((agt) => {
+                  const agtId = normalizeId(agt.id);
                   const isOnline = agt.status === 'ONLINE';
                   const isBusy = Boolean(agt.lease_type);
                   let statusLabel = isOnline ? '🟢 在线 / 空闲' : '🔴 离线';
@@ -644,7 +704,7 @@ const RecordingStartInner: React.FC<RecordingStartInnerProps> = ({
                     statusLabel = `🔒 占用中 (${agt.lease_type})`;
                   }
                   return (
-                    <option key={agt.id} value={agt.id}>
+                    <option key={agtId} value={agtId}>
                       {agt.name} ({agt.endpoint || '无端点'}) [{statusLabel}] [{agt.scope}]
                     </option>
                   );
@@ -788,9 +848,10 @@ const RecordingStartInner: React.FC<RecordingStartInnerProps> = ({
               ) : (
                 groupedProcesses.map((group) => {
                   const isCollapsed = Boolean(collapsedGroups[group.groupName]) && !searchQuery;
-                  const groupProcIds = group.processes.map((p) => p.id);
+                  const groupProcIds = group.processes.map((p) => normalizeId(p.id));
+                  const selectedSet = new Set(targetProcessIds.map(normalizeId));
                   const selectedCount = groupProcIds.filter((id) =>
-                    targetProcessIds.includes(id)
+                    selectedSet.has(id)
                   ).length;
                   const isAllSelected =
                     selectedCount === groupProcIds.length && groupProcIds.length > 0;
@@ -831,18 +892,19 @@ const RecordingStartInner: React.FC<RecordingStartInnerProps> = ({
                       {!isCollapsed && (
                         <div className="code-process-leaf-list">
                           {group.processes.map((proc) => {
+                            const procId = normalizeId(proc.id);
                             const isDisarmed = proc.probe_desired_state === 'DISARMED';
-                            const checked = targetProcessIds.includes(proc.id);
+                            const checked = selectedSet.has(procId);
                             const moduleBinding = proc.process_modules?.[0];
                             const isClientOnly = proc.listen_port === 0;
 
                             return (
                               <div
-                                key={proc.id}
+                                key={procId}
                                 className={`code-process-leaf-item ${isDisarmed ? 'code-process-leaf-item--disabled' : ''}`}
                                 style={isDisarmed ? { opacity: 0.6, cursor: 'not-allowed' } : undefined}
                                 onClick={() => {
-                                  if (!isDisarmed) toggleProcess(proc.id);
+                                  if (!isDisarmed) toggleProcess(procId);
                                 }}
                                 title={isDisarmed ? '探针已被卸载，需在 Agent 管理中重新挂载' : undefined}
                               >
@@ -852,7 +914,7 @@ const RecordingStartInner: React.FC<RecordingStartInnerProps> = ({
                                     checked={checked && !isDisarmed}
                                     disabled={isDisarmed}
                                     onChange={() => {
-                                      if (!isDisarmed) toggleProcess(proc.id);
+                                      if (!isDisarmed) toggleProcess(procId);
                                     }}
                                     onClick={(e) => e.stopPropagation()}
                                   />

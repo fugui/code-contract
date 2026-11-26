@@ -38,10 +38,11 @@ export const RecordingWorkbenchPage: React.FC = () => {
 
   const handleCloseStartModal = useCallback(() => {
     setStartModalOpen(false);
-    if (searchParams.get('auto_start')) {
+    if (searchParams.get('auto_start') || searchParams.get('agent_id')) {
       setSearchParams((prev) => {
         const next = new URLSearchParams(prev);
         next.delete('auto_start');
+        next.delete('agent_id');
         return next;
       }, { replace: true });
     }

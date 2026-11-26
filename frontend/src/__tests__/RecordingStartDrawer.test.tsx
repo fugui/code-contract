@@ -5,6 +5,8 @@ import type { Agent, Process } from '../types';
 import {
   RecordingStartContent,
   computeSmartDefaultSelection,
+  normalizeId,
+  resolveSelectedAgentId,
 } from '../pages/RecordingWorkbenchPage/RecordingStartDrawer';
 
 describe('RecordingStartDrawer TDD Test Suite', () => {
@@ -330,5 +332,80 @@ describe('RecordingStartDrawer TDD Test Suite', () => {
     expect(html).toContain('🔗 勾选关联下游');
     expect(html).toContain('data-testid="clear-all-selection-btn"');
     expect(html).toContain('清空');
+  });
+
+  it('TC-REC-DRAWER-11: 后端返回数值 ID 时选择第二个 Agent 不应回退到第一个且能正确过滤进程', () => {
+    const numericAgents: Agent[] = [
+      {
+        id: 1 as unknown as string,
+        name: 'env-agent-01',
+        endpoint: '10.0.0.1:8091',
+        scope: 'SHARED',
+        status: 'ONLINE',
+        lease_type: '',
+      },
+      {
+        id: 2 as unknown as string,
+        name: 'env-agent-02',
+        endpoint: '10.0.0.2:8091',
+        scope: 'SHARED',
+        status: 'ONLINE',
+        lease_type: '',
+      },
+    ];
+
+    const numericProcesses: Process[] = [
+      {
+        id: 101 as unknown as string,
+        agent_id: 1 as unknown as string,
+        group_name: '环境一进程组',
+        name: 'svc-env1',
+        listen_port: 9101,
+        probe_status: 'READY',
+      },
+      {
+        id: 201 as unknown as string,
+        agent_id: 2 as unknown as string,
+        group_name: '环境二进程组',
+        name: 'svc-env2',
+        listen_port: 9201,
+        probe_status: 'READY',
+      },
+    ];
+
+    // 1. normalizeId 正确转换数值/字符串/空值
+    expect(normalizeId(2)).toBe('2');
+    expect(normalizeId('2')).toBe('2');
+    expect(normalizeId(null)).toBe('');
+    expect(normalizeId(undefined)).toBe('');
+
+    // 2. 默认选中首个在线空闲 Agent，返回字符串 "1"
+    expect(resolveSelectedAgentId(numericAgents)).toBe('1');
+
+    // 3. 用户从 <select> 选中第二个 Agent（DOM e.target.value 恒为 string "2"）时，必须保持 "2" 而非因 2 === "2" 失配跳回 "1"
+    expect(resolveSelectedAgentId(numericAgents, '2')).toBe('2');
+
+    // 4. 仅当已选 Agent 不再存在于列表中时才回退到 "1"
+    expect(resolveSelectedAgentId(numericAgents, '999')).toBe('1');
+
+    // 5. computeSmartDefaultSelection 对数值 ID 进程返回字符串 ID 数组
+    expect(computeSmartDefaultSelection([numericProcesses[1]])).toEqual(['201']);
+
+    // 6. URL ?agent_id=2 配合数值 ID 的 Agent/Process 列表渲染时正确选中第二个 Agent 并只展示其进程
+    const html = renderToString(
+      <MemoryRouter initialEntries={['/record?agent_id=2']}>
+        <RecordingStartContent
+          onClose={vi.fn()}
+          onSuccess={vi.fn()}
+          allProcesses={numericProcesses}
+          allAgents={numericAgents}
+          isAdmin={true}
+        />
+      </MemoryRouter>
+    );
+
+    expect(html).toContain('svc-env2');
+    expect(html).not.toContain('svc-env1');
+    expect(html).toContain('宿主: <strong>env-agent-02</strong>');
   });
 });
