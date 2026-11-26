@@ -701,13 +701,21 @@ export const ArchitectureWorkbenchPage: React.FC = () => {
       if (originGroupId && originGroupId === targetGroupId) return;
 
       try {
-        await archApi.updateArchProcess(pid, { group_id: targetGroupId });
+        const res = await archApi.updateArchProcess(pid, { group_id: targetGroupId });
+        if (
+          res?.arch_process?.group_id !== undefined &&
+          String(res.arch_process.group_id) !== targetGroupId
+        ) {
+          throw new Error('移动进程所属组未生效，请刷新页面后重试');
+        }
         toast.success(`已将 [${procName}] 移至「${targetGroupName}」`);
         triggerExpandGroup(targetGroupId);
-        void loadArchProcessTree();
-        if (String(selectedArchProcessId) === pid) {
-          void loadArchProcessDetail(pid);
-        }
+        await Promise.all([
+          loadArchProcessTree(),
+          String(selectedArchProcessId) === pid
+            ? loadArchProcessDetail(pid)
+            : Promise.resolve(),
+        ]);
         if (!options?.skipUndo && originGroupId) {
           setQuickMoveUndo({
             processId: pid,

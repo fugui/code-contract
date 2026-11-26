@@ -18,6 +18,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 func loadAgentScopeMapForVisibility() map[uint64]*models.Agent {
@@ -826,8 +827,8 @@ func UpdateArchProcess(c *gin.Context) {
 			}
 		}
 
-		// 2. 保存 ArchProcess
-		if err := tx.Save(&existing).Error; err != nil {
+		// 2. 保存 ArchProcess（跳过关联对象保存，防止预加载的旧 Group/Modules 回写覆盖 group_id 等外键）
+		if err := tx.Omit(clause.Associations).Save(&existing).Error; err != nil {
 			return err
 		}
 
@@ -853,14 +854,15 @@ func UpdateArchProcess(c *gin.Context) {
 		return
 	}
 
-	if err := models.DB.Preload("Group").Preload("Modules").First(&existing, existing.ID).Error; err != nil {
+	var updated models.ArchProcess
+	if err := models.DB.Preload("Group").Preload("Modules").First(&updated, existing.ID).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "重新加载标准架构进程失败"})
 		return
 	}
-	recordAudit(c, "update", commonModels.AuditLevelP2, fmt.Sprintf("更新标准架构进程 [%s]", existing.Name), "arch_process", existing.ID, existing.Name, before, existing)
+	recordAudit(c, "update", commonModels.AuditLevelP2, fmt.Sprintf("更新标准架构进程 [%s]", updated.Name), "arch_process", updated.ID, updated.Name, before, updated)
 
 	c.JSON(http.StatusOK, gin.H{
-		"arch_process":          existing,
+		"arch_process":          updated,
 		"auto_pinned_overrides": autoPinnedList,
 	})
 }
