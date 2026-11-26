@@ -13,6 +13,7 @@ import { DebugSessionContextBar } from '../DebugSessionContextBar';
 import { TrafficRecordTable } from '../TrafficRecordTable';
 import { EntityLifecycleFilterStrip } from '../EntityLifecycleFilterStrip';
 import { SequenceSwimlaneCanvas } from '../SequenceSwimlaneCanvas';
+import { TransactionSequenceDrawer } from '../TransactionSequenceDrawer';
 import { SinglePacketReplayContent } from '../SinglePacketReplayDrawer';
 import { resolveTopologyEndpoints, extractPureIP } from '../topologyUtils';
 
@@ -551,5 +552,65 @@ describe('M13 Frontend Test Suite: Transaction Call Tree and Sequence Workbench'
     );
     expect(flatHtml).not.toContain('- ➔ -');
     expect(flatHtml).toContain('外部客户端 (127.0.0.1) ➔ demo.order.OrderService');
+  });
+
+  it('T-M13-14: 泳道画布支持工具栏扩展、超长参与者截断提示与同进程自调用自环绘制', () => {
+    const longTitle = 'very-long-service-participant-name-exceeds-20';
+    const selfCallSeq: TransactionSequenceDTO = {
+      root_record_id: '301',
+      trace_id: 'trace-self-001',
+      total_duration_us: 1200,
+      participants: [
+        {
+          participant_key: 'proc:99',
+          title: longTitle,
+          subtitle: '127.0.0.1:9001-very-long-address',
+          kind: 'MONITORED_PROCESS',
+        },
+      ],
+      steps: [
+        {
+          step_index: 1,
+          record: {
+            ...mockRootSummary,
+            id: '301',
+            operation: 'InternalSelfLoopOp',
+          },
+          from_participant: 'proc:99',
+          to_participant: 'proc:99',
+          sibling_relation: 'ROOT',
+          offset_us: 0,
+          duration_us: 1200,
+        },
+      ],
+      parameter_lineages: [],
+      entity_chains: [],
+    };
+
+    const html = renderToString(
+      <SequenceSwimlaneCanvas
+        sequence={selfCallSeq}
+        selectedStepIndex={1}
+        onSelectStep={() => {}}
+        toolbarExtra={<button type="button" data-testid="toggle-anatomy-panel">展开报文解剖</button>}
+      />
+    );
+
+    expect(html).toContain('data-testid="toggle-anatomy-panel"');
+    expect(html).toContain('展开报文解剖');
+    expect(html).toContain(`<title>${longTitle}</title>`);
+    expect(html).toContain('…');
+    expect(html).toContain('<path');
+    expect(html).toContain('InternalSelfLoopOp');
+
+    const closedDrawerHtml = renderToString(
+      <TransactionSequenceDrawer
+        open={false}
+        onClose={() => {}}
+        sessionId="1"
+        rootRecordId="301"
+      />
+    );
+    expect(closedDrawerHtml).toBe('');
   });
 });

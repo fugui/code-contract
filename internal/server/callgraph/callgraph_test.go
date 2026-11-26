@@ -617,3 +617,138 @@ func TestBuildTransactionTrees_WithDBHydration(t *testing.T) {
 		t.Errorf("expected child DstModuleName '仓储库存履约模块', got '%s'", child.Record.DstModuleName)
 	}
 }
+
+func TestOrderSequenceParticipants_LeftToRightAndCycleHandling(t *testing.T) {
+	countBackwardEdges := func(participants []SequenceParticipantDTO, steps []SequenceStepDTO) int {
+		pos := make(map[string]int, len(participants))
+		for i, p := range participants {
+			pos[p.ParticipantKey] = i
+		}
+		bw := 0
+		for _, s := range steps {
+			if s.FromParticipant == s.ToParticipant {
+				continue
+			}
+			if pos[s.FromParticipant] > pos[s.ToParticipant] {
+				bw++
+			}
+		}
+		return bw
+	}
+
+	assertOrder := func(name string, got []SequenceParticipantDTO, want []string) {
+		t.Helper()
+		if len(got) != len(want) {
+			t.Fatalf("%s: participant count mismatch: got %d (%+v), want %d (%v)", name, len(got), got, len(want), want)
+		}
+		for i, k := range want {
+			if got[i].ParticipantKey != k {
+				t.Fatalf("%s: index %d got %s, want %s (full=%v)", name, i, got[i].ParticipantKey, k, got)
+			}
+		}
+	}
+
+	// 场景 1: 根为 EGRESS 跨跳缝合，包含未被引用的幽灵 caller:client
+	s1Map := map[string]*SequenceParticipantDTO{
+		"caller:client": {ParticipantKey: "caller:client", Title: "外部调用方", Kind: "EXTERNAL_CALLER"},
+		"proc:1":        {ParticipantKey: "proc:1", Title: "client", Kind: "MONITORED_PROCESS"},
+		"proc:2":        {ParticipantKey: "proc:2", Title: "backend-order", Kind: "MONITORED_PROCESS"},
+		"proc:3":        {ParticipantKey: "proc:3", Title: "backend-inventory", Kind: "MONITORED_PROCESS"},
+		"proc:4":        {ParticipantKey: "proc:4", Title: "backend-account", Kind: "MONITORED_PROCESS"},
+	}
+	s1Steps := []SequenceStepDTO{
+		{StepIndex: 1, FromParticipant: "proc:1", ToParticipant: "proc:2"},
+		{StepIndex: 2, FromParticipant: "proc:2", ToParticipant: "proc:3"},
+		{StepIndex: 3, FromParticipant: "proc:2", ToParticipant: "proc:4"},
+	}
+	s1Got := orderSequenceParticipants(s1Map, s1Steps)
+	assertOrder("场景1-根EGRESS去幽灵", s1Got, []string{"proc:1", "proc:2", "proc:3", "proc:4"})
+	if bw := countBackwardEdges(s1Got, s1Steps); bw != 0 {
+		t.Errorf("场景1期望零逆向边，实际 %d", bw)
+	}
+
+	// 场景 2: 根为 INGRESS 时保留 caller:client 且排在首位
+	s2Map := map[string]*SequenceParticipantDTO{
+		"caller:client": {ParticipantKey: "caller:client", Title: "外部调用方", Kind: "EXTERNAL_CALLER"},
+		"proc:10":       {ParticipantKey: "proc:10", Title: "order", Kind: "MONITORED_PROCESS"},
+		"proc:11":       {ParticipantKey: "proc:11", Title: "inventory", Kind: "MONITORED_PROCESS"},
+	}
+	s2Steps := []SequenceStepDTO{
+		{StepIndex: 1, FromParticipant: "caller:client", ToParticipant: "proc:10"},
+		{StepIndex: 2, FromParticipant: "proc:10", ToParticipant: "proc:11"},
+	}
+	s2Got := orderSequenceParticipants(s2Map, s2Steps)
+	assertOrder("场景2-根INGRESS", s2Got, []string{"caller:client", "proc:10", "proc:11"})
+	if bw := countBackwardEdges(s2Got, s2Steps); bw != 0 {
+		t.Errorf("场景2期望零逆向边，实际 %d", bw)
+	}
+
+	// 场景 3: 菱形/早跳深层下游 DAG (gw->cache, gw->order, order->cache) 应排为 [gw, order, cache]
+	s3Map := map[string]*SequenceParticipantDTO{
+		"gw":    {ParticipantKey: "gw", Title: "gw"},
+		"cache": {ParticipantKey: "cache", Title: "cache"},
+		"order": {ParticipantKey: "order", Title: "order"},
+	}
+	s3Steps := []SequenceStepDTO{
+		{StepIndex: 1, FromParticipant: "gw", ToParticipant: "cache"},
+		{StepIndex: 2, FromParticipant: "gw", ToParticipant: "order"},
+		{StepIndex: 3, FromParticipant: "order", ToParticipant: "cache"},
+	}
+	s3Got := orderSequenceParticipants(s3Map, s3Steps)
+	assertOrder("场景3-菱形DAG", s3Got, []string{"gw", "order", "cache"})
+	if bw := countBackwardEdges(s3Got, s3Steps); bw != 0 {
+		t.Errorf("场景3期望零逆向边，实际 %d", bw)
+	}
+
+	// 场景 4: 回调环 (client->A, A->B x2, B->A x1) 应排为 [client, A, B] 且仅 1 条逆向边
+	s4Map := map[string]*SequenceParticipantDTO{
+		"client": {ParticipantKey: "client", Title: "client"},
+		"A":      {ParticipantKey: "A", Title: "A"},
+		"B":      {ParticipantKey: "B", Title: "B"},
+	}
+	s4Steps := []SequenceStepDTO{
+		{StepIndex: 1, FromParticipant: "client", ToParticipant: "A"},
+		{StepIndex: 2, FromParticipant: "A", ToParticipant: "B"},
+		{StepIndex: 3, FromParticipant: "A", ToParticipant: "B"},
+		{StepIndex: 4, FromParticipant: "B", ToParticipant: "A"},
+	}
+	s4Got := orderSequenceParticipants(s4Map, s4Steps)
+	assertOrder("场景4-回调环", s4Got, []string{"client", "A", "B"})
+	if bw := countBackwardEdges(s4Got, s4Steps); bw != 1 {
+		t.Errorf("场景4期望最小逆向边 1，实际 %d", bw)
+	}
+
+	// 场景 5: 多次调用保持 100% 确定性，不受 Go map 遍历随机性影响
+	for i := 0; i < 50; i++ {
+		again := orderSequenceParticipants(s1Map, s1Steps)
+		assertOrder("场景5-确定性", again, []string{"proc:1", "proc:2", "proc:3", "proc:4"})
+	}
+
+	// 场景 6: 进程副标题地址解析（纯 EGRESS 取 SrcAddr；混合时优先保留 INGRESS 的 DstAddr）
+	sub1, fromIn1 := resolveMonitoredProcessSubtitle("", false, models.TrafficRecord{
+		Direction: "EGRESS",
+		SrcAddr:   "127.0.0.1:9001",
+		DstAddr:   "127.0.0.1:9003",
+	})
+	if sub1 != "127.0.0.1:9001" || fromIn1 {
+		t.Errorf("纯 EGRESS 期望取 SrcAddr 127.0.0.1:9001 且 fromIngress=false，实际 %s %v", sub1, fromIn1)
+	}
+
+	sub2, fromIn2 := resolveMonitoredProcessSubtitle(sub1, fromIn1, models.TrafficRecord{
+		Direction: "INGRESS",
+		SrcAddr:   "127.0.0.1:55766",
+		DstAddr:   "127.0.0.1:9002",
+	})
+	if sub2 != "127.0.0.1:9002" || !fromIn2 {
+		t.Errorf("INGRESS 应覆盖 EGRESS SrcAddr 为监听 DstAddr 127.0.0.1:9002，实际 %s %v", sub2, fromIn2)
+	}
+
+	sub3, fromIn3 := resolveMonitoredProcessSubtitle(sub2, fromIn2, models.TrafficRecord{
+		Direction: "EGRESS",
+		SrcAddr:   "127.0.0.1:51234",
+		DstAddr:   "127.0.0.1:9003",
+	})
+	if sub3 != "127.0.0.1:9002" || !fromIn3 {
+		t.Errorf("已有 INGRESS 地址时后续 EGRESS 不得覆盖，实际 %s %v", sub3, fromIn3)
+	}
+}

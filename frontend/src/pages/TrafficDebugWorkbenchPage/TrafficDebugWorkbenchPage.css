@@ -38,6 +38,286 @@
   color: var(--color-primary, #3b82f6);
 }
 
-.code-seq-step-group:hover line {
+.code-seq-step-group:hover line,
+.code-seq-step-group:hover path {
   stroke-width: 2.5px;
+}
+
+/* M13/UX: 时序泳道抽屉与按需可折叠紧凑报文解剖面板 */
+.code-sequence-replay-badge {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: var(--radius-xs);
+  background-color: var(--color-warning-subtle);
+  color: var(--color-warning);
+  border: 1px solid var(--color-warning-border);
+}
+
+.code-sequence-state-box {
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--color-text-secondary);
+}
+
+.code-sequence-state-box--error {
+  color: var(--color-danger);
+}
+
+.code-sequence-drawer-body {
+  display: flex;
+  height: 100%;
+  overflow: hidden;
+  background-color: var(--color-bg-surface);
+}
+
+.code-sequence-drawer-body.is-resizing {
+  user-select: none;
+  cursor: col-resize;
+}
+
+.code-sequence-drawer-left {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.code-sequence-resizer {
+  width: 6px;
+  flex: 0 0 6px;
+  cursor: col-resize;
+  background-color: var(--color-border-primary);
+  opacity: 0.45;
+  transition: opacity 0.15s ease, background-color 0.15s ease;
+}
+
+.code-sequence-resizer:hover,
+.code-sequence-resizer.is-dragging {
+  background-color: var(--color-primary);
+  opacity: 1;
+}
+
+.code-sequence-drawer-right {
+  flex: 0 0 auto;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background-color: var(--color-bg-app);
+  border-left: 1px solid var(--color-border-primary);
+}
+
+.code-sequence-anatomy-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  background-color: var(--color-bg-surface);
+  border-bottom: 1px solid var(--color-border-primary);
+  flex-shrink: 0;
+}
+
+.code-sequence-anatomy-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.code-sequence-anatomy-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.code-sequence-stitch-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 10px;
+  margin-bottom: 10px;
+  background-color: var(--color-primary-subtle);
+  border: 1px solid var(--color-primary-border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+
+.code-sequence-stitch-label {
+  font-weight: 600;
+  color: var(--color-primary);
+}
+
+.code-sequence-stitch-btn {
+  padding: 2px 8px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--color-border-primary);
+  background-color: transparent;
+  color: var(--color-text-secondary);
+  font-weight: 400;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.code-sequence-stitch-btn--active {
+  border-color: var(--color-primary);
+  background-color: var(--color-bg-surface);
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.code-sequence-stitch-hop {
+  margin-left: auto;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+/* SVG 泳道容器与工具栏 */
+.code-sequence-swimlane-container {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.code-sequence-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 16px;
+  background-color: var(--color-bg-elevated);
+  border-bottom: 1px solid var(--color-border-primary);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.code-sequence-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.code-sequence-toolbar-title {
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.code-sequence-toolbar-meta {
+  color: var(--color-text-secondary);
+}
+
+.code-sequence-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.code-sequence-lineage-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  color: var(--color-text-primary);
+}
+
+.code-sequence-svg-scroll-area {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background-color: var(--color-bg-surface);
+  padding: 16px;
+}
+
+.code-sequence-svg {
+  display: block;
+  margin: 0 auto;
+  font-family: var(--font-family-sans);
+}
+
+/* 泳道抽屉内嵌紧凑型报文解剖覆盖样式 */
+.code-sequence-anatomy-compact .code-anatomy-content {
+  gap: 0.75rem;
+  padding: 0;
+}
+
+.code-sequence-anatomy-compact .code-biz-summary-card {
+  padding: 0.7rem 0.85rem;
+  gap: 0.5rem;
+}
+
+.code-sequence-anatomy-compact .code-biz-summary-title-wrap {
+  min-width: 0;
+  gap: 0.35rem;
+}
+
+.code-sequence-anatomy-compact .code-biz-summary-heading {
+  font-size: 0.95rem;
+}
+
+.code-sequence-anatomy-compact .code-biz-meta-strip {
+  gap: 0.45rem 0.85rem;
+  padding-top: 0.45rem;
+  font-size: 0.78rem;
+}
+
+.code-sequence-anatomy-compact .code-biz-compare-container {
+  grid-template-columns: 1fr;
+  gap: 0.65rem;
+}
+
+.code-sequence-anatomy-compact .code-biz-compare-pane {
+  min-height: auto;
+}
+
+.code-sequence-anatomy-compact .code-biz-pane-header {
+  padding: 0.5rem 0.75rem;
+  gap: 0.4rem;
+}
+
+.code-sequence-anatomy-compact .code-biz-pane-title {
+  font-size: 0.84rem;
+}
+
+.code-sequence-anatomy-compact .code-biz-pane-body {
+  padding: 0.65rem 0.75rem;
+  max-height: 240px;
+}
+
+.code-sequence-anatomy-compact .code-payload-empty-box {
+  padding: 0.85rem 0.75rem;
+  gap: 0.3rem;
+}
+
+.code-sequence-anatomy-compact .code-payload-empty-icon {
+  font-size: 1.25rem;
+}
+
+.code-sequence-anatomy-compact .code-payload-empty-title {
+  font-size: 0.85rem;
+}
+
+.code-sequence-anatomy-compact .code-payload-empty-desc {
+  font-size: 0.76rem;
+}
+
+.code-sequence-anatomy-compact .code-latency-waterfall-card {
+  padding: 0.65rem 0.85rem;
+  gap: 0.5rem;
+}
+
+.code-sequence-anatomy-compact .code-protocol-accordion-header {
+  padding: 0.65rem 0.85rem;
+}
+
+.code-sequence-anatomy-compact .code-protocol-accordion-body {
+  padding: 0.75rem 0.85rem;
 }
