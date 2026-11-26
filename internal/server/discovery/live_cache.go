@@ -531,7 +531,7 @@ func AggregateProcessCentricForUser(db *gorm.DB, agentID uint64, report *agentpr
 		if normTr != "" {
 			g.transports[normTr] = struct{}{}
 		}
-		if ls.Port > 0 && !isRemote {
+		if ls.Port > 0 && !isRemote && normTr != "MESH" {
 			g.listenPorts[ls.Port] = struct{}{}
 		}
 

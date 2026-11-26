@@ -1118,3 +1118,154 @@ func TestProcScanner_OwnSocketInodesOnly_InboundPrewarm_AndProxyExclusion(t *tes
 		t.Fatalf("移除直连连接后预期 estConns=0, needRec=false (READY)，实际 estConns=%d, needRec=%v", estConns2, needRec2)
 	}
 }
+
+func TestMeshMultiPIDScan_PureMeshSkipNeedReconnect_CSGPortExclusion_AndRestartSink(t *testing.T) {
+	root := t.TempDir()
+	// 构造 /proc/net/tcp:
+	// - pid 201 (mesh_svr, 无 TCP_LISTEN) 持有连向 CSG :31806 的控制面长连接 + 连向 DB :5432 的连接
+	// - pid 202 (mesh_svr, 无 TCP_LISTEN) 多实例
+	// - pid 203 (tcp_svr, 监听 :8080) 仅持有连向 CSG :31806 的控制面长连接
+	// - pid 204 (tcp_svr_dirty, 监听 :8082) 持有指向下游 :9005 的未代理直连
+	tcpContent := strings.Join([]string{
+		"  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode",
+		"   0: 0100007F:C001 0100007F:7C3E 01 00000000:00000000 00:00000000 00000000  1000        0 20001", // 127.0.0.1:49153 -> 127.0.0.1:31806 (CSG)
+		"   1: 0100007F:C002 0100007F:1538 01 00000000:00000000 00:00000000 00000000  1000        0 20002", // 127.0.0.1:49154 -> 127.0.0.1:5432  (DB)
+		"   2: 00000000:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 20003", // 0.0.0.0:8080 LISTEN
+		"   3: 0100007F:C003 0100007F:7C3E 01 00000000:00000000 00:00000000 00000000  1000        0 20004", // 127.0.0.1:49155 -> 127.0.0.1:31806 (CSG)
+		"   4: 00000000:1F92 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 20006", // 0.0.0.0:8082 LISTEN
+		"   5: 0100007F:C005 0100007F:232D 01 00000000:00000000 00:00000000 00000000  1000        0 20007", // 127.0.0.1:49157 -> 127.0.0.1:9005 (直连下游)
+	}, "\n") + "\n"
+
+	_ = os.MkdirAll(filepath.Join(root, "net"), 0755)
+	_ = os.WriteFile(filepath.Join(root, "net", "tcp"), []byte(tcpContent), 0644)
+
+	mkProc := func(pid, cmdline, comm string, fds map[string]string) {
+		pDir := filepath.Join(root, pid)
+		fdDir := filepath.Join(pDir, "fd")
+		_ = os.MkdirAll(fdDir, 0755)
+		_ = os.WriteFile(filepath.Join(pDir, "cmdline"), []byte(cmdline), 0644)
+		_ = os.WriteFile(filepath.Join(pDir, "comm"), []byte(comm+"\n"), 0644)
+		for fd, target := range fds {
+			_ = os.Symlink(target, filepath.Join(fdDir, fd))
+		}
+	}
+
+	mkProc("201", "/opt/bin/mesh_svr\x00--role=worker", "mesh_svr", map[string]string{
+		"3": "socket:[20001]",
+		"4": "socket:[20002]",
+	})
+	mkProc("202", "/opt/bin/mesh_svr\x00--role=worker", "mesh_svr", nil)
+	mkProc("203", "/opt/bin/tcp_svr\x00--port=8080", "tcp_svr", map[string]string{
+		"3": "socket:[20003]",
+		"4": "socket:[20004]",
+	})
+	mkProc("204", "/opt/bin/tcp_svr_dirty\x00--port=8082", "tcp_svr_dirty", map[string]string{
+		"3": "socket:[20006]",
+		"4": "socket:[20007]",
+	})
+
+	scanner := NewProcScanner(root)
+
+	// 1. 多 PID 扫描 + 纯 Mesh 动态端口回退 cmd 匹配
+	meshPIDs, err := scanner.FindAllPIDsByPortAndCmd(25003, "mesh_svr", true)
+	if err != nil {
+		t.Fatalf("FindAllPIDsByPortAndCmd failed: %v", err)
+	}
+	if len(meshPIDs) != 2 || meshPIDs[0] != 201 || meshPIDs[1] != 202 {
+		t.Fatalf("expected mesh PIDs [201 202], got %v", meshPIDs)
+	}
+
+	// 2. ArmStandby & SyncMonitors：纯 Mesh 进程不报 NeedReconnect；TCP 进程排除 CSG 31806 端口后不误报
+	var sinkMu sync.Mutex
+	var changedCalls []struct {
+		sessID uint64
+		procID uint64
+		pids   []uint32
+	}
+	mgr := NewManager(ManagerConfig{
+		ProcRoot: root,
+		CapabilityChecker: &mockCapabilityChecker{
+			hasCaps: true,
+			detail:  "mock cap",
+		},
+		PIDsChangedSink: func(sessionID uint64, processID uint64, pids []uint32) {
+			sinkMu.Lock()
+			defer sinkMu.Unlock()
+			changedCalls = append(changedCalls, struct {
+				sessID uint64
+				procID uint64
+				pids   []uint32
+			}{sessionID, processID, append([]uint32(nil), pids...)})
+		},
+	})
+	mgr.mu.Lock()
+	mgr.attached = true // 跳过真实内核 BPF 加载以便单测
+	mgr.mu.Unlock()
+
+	specs := []agentproto.ProcessMonitorSpec{
+		{
+			ProcessID:  1,
+			ListenPort: 25003, // 模拟历史误存非零端口，纯 Mesh 仍应回退 cmd 定位 201/202 且免除 TCP NEED_RECONNECT
+			CmdPattern: "mesh_svr",
+			Transports: []string{"MESH"},
+			CSGAddr:    "127.0.0.1:31806",
+		},
+		{
+			ProcessID:  2,
+			ListenPort: 8080,
+			CmdPattern: "tcp_svr",
+			Transports: []string{"TCP"},
+			CSGAddr:    "127.0.0.1:31806",
+		},
+		{
+			ProcessID:  3,
+			ListenPort: 8082,
+			CmdPattern: "tcp_svr_dirty",
+			Transports: []string{"TCP"},
+			CSGAddr:    "127.0.0.1:31806",
+		},
+	}
+
+	diags, err := mgr.ArmStandby(specs)
+	if err != nil {
+		t.Fatalf("ArmStandby failed: %v", err)
+	}
+	if len(diags) != 3 {
+		t.Fatalf("expected 3 diagnostics, got %d", len(diags))
+	}
+	// Process 1: 纯 Mesh -> READY (NeedReconnect=false, ResolvedPIDs=[201, 202])
+	if diags[0].Status != "MONITORING" || diags[0].NeedReconnect || len(diags[0].ResolvedPIDs) != 2 {
+		t.Fatalf("expected pure mesh proc ready with 2 PIDs and NeedReconnect=false, got %+v", diags[0])
+	}
+	// Process 2: TCP + 仅连 CSG 31806 -> 排除 CSG 端口后 READY (NeedReconnect=false)
+	if diags[1].Status != "MONITORING" || diags[1].NeedReconnect {
+		t.Fatalf("expected tcp proc with only CSG conn not to trigger NeedReconnect, got %+v", diags[1])
+	}
+	// Process 3: TCP + 直连 :9005 -> 准确报警 NEED_RECONNECT
+	if diags[2].Status != "MONITORING" || !diags[2].NeedReconnect || diags[2].EstablishedConns != 1 {
+		t.Fatalf("expected dirty tcp proc NeedReconnect=true, EstablishedConns=1, got %+v", diags[2])
+	}
+
+	// 3. 验证录制期进程重启 / 扩容后 checkProcessesRestart 触发 PIDsChangedSink
+	syncDiags, err := mgr.SyncMonitors(77, specs[:1])
+	if err != nil || len(syncDiags) != 1 || syncDiags[0].NeedReconnect {
+		t.Fatalf("SyncMonitors pure mesh failed: diags=%+v, err=%v", syncDiags, err)
+	}
+	// 新增一个 mesh_svr 实例 PID 205，并下线 PID 202
+	_ = os.RemoveAll(filepath.Join(root, "202"))
+	mkProc("205", "/opt/bin/mesh_svr\x00--role=worker", "mesh_svr", nil)
+
+	mgr.checkProcessesRestart()
+
+	sinkMu.Lock()
+	defer sinkMu.Unlock()
+	if len(changedCalls) != 1 {
+		t.Fatalf("expected 1 PIDsChangedSink call, got %d", len(changedCalls))
+	}
+	if changedCalls[0].sessID != 77 || changedCalls[0].procID != 1 {
+		t.Fatalf("unexpected PIDsChangedSink session/process: %+v", changedCalls[0])
+	}
+	if len(changedCalls[0].pids) != 2 || changedCalls[0].pids[0] != 201 || changedCalls[0].pids[1] != 205 {
+		t.Fatalf("expected updated PIDs [201 205], got %v", changedCalls[0].pids)
+	}
+}

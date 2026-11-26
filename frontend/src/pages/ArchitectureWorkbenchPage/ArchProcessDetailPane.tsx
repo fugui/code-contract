@@ -33,6 +33,7 @@ import type {
   Process,
   AutoPinnedOverride,
 } from '../../types';
+import { isMeshTransportProcess } from '../../types';
 
 const PGRP_CODE_REGEX = /^[A-Z0-9_-]{2,64}$/;
 
@@ -1068,7 +1069,13 @@ export const ArchProcessDetailPane: React.FC<ArchProcessDetailPaneProps> = ({
                             </span>
                           </td>
                           <td className="code-font-mono" style={{ fontWeight: 600 }}>
-                            {effPort === 0 ? '0 (纯客户端)' : `${m.advertise_ip || '127.0.0.1'}:${effPort}`}
+                            {effPort === 0
+                              ? isMeshTransportProcess(m)
+                                ? m.observed_role === 'CLIENT_ONLY'
+                                  ? 'dophi_mesh (客户端)'
+                                  : 'dophi_mesh (内存环)'
+                                : '0 (纯客户端)'
+                              : `${m.advertise_ip || '127.0.0.1'}:${effPort}`}
                           </td>
                           <td>
                             {hasOverride ? (

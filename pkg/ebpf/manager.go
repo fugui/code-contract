@@ -110,6 +110,7 @@ type ManagerConfig struct {
 	CapabilityChecker  CapabilityChecker
 	FrameSink          FrameSinkFunc
 	LifecycleEventSink LifecycleEventSink
+	PIDsChangedSink    func(sessionID uint64, processID uint64, pids []uint32)
 }
 
 // MonitoredProc 内部维护的目标进程状态
@@ -152,11 +153,32 @@ func (m *Manager) resolveTargetPIDsLocked(spec agentproto.ProcessMonitorSpec) (u
 			return live[0], live, nil
 		}
 	}
-	pid, err := m.scanner.FindPIDByPortAndCmd(spec.ListenPort, spec.CmdPattern)
-	if err != nil || pid == 0 {
+	pids, err := m.scanner.FindAllPIDsByPortAndCmd(spec.ListenPort, spec.CmdPattern, spec.IsPureMesh())
+	if err != nil || len(pids) == 0 {
 		return 0, nil, err
 	}
-	return pid, []uint32{pid}, nil
+	return pids[0], pids, nil
+}
+
+// parsePortFromAddr 从 "<ip>:<port>" 或 "tcp://ipv4:<ip>:<port>" / "dophi_mesh://..." 中提取端口号
+func parsePortFromAddr(raw string) uint16 {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return 0
+	}
+	trimmed = strings.TrimPrefix(trimmed, "tcp://ipv4:")
+	trimmed = strings.TrimPrefix(trimmed, "dophi_mesh://ipv4:")
+	trimmed = strings.TrimPrefix(trimmed, "tcp://")
+	trimmed = strings.TrimPrefix(trimmed, "dophi_mesh://")
+	idx := strings.LastIndex(trimmed, ":")
+	if idx < 0 || idx == len(trimmed)-1 {
+		return 0
+	}
+	p, err := strconv.Atoi(trimmed[idx+1:])
+	if err != nil || p <= 0 || p > 65535 {
+		return 0
+	}
+	return uint16(p)
 }
 
 // Manager eBPF 探针装载、规则热更新与生命周期自洁中枢
@@ -318,8 +340,19 @@ func (m *Manager) SyncMonitors(sessionID uint64, specs []agentproto.ProcessMonit
 		}
 	}
 
-	// 录制阶段：动态按需挂载读写 Tracepoints，并将 EgressProxy 置为 CAPTURING 模式并原子注入 sessionID
-	m.attachCaptureTracepointsLocked()
+	// 录制阶段：仅存在非纯 Mesh 进程时动态按需挂载 TCP 读写 Tracepoints；纯 Mesh 走 DRT uprobe 无需全局 TCP syscall 挂载
+	needTCPTracepoints := len(specs) == 0
+	for _, sp := range specs {
+		if !sp.IsPureMesh() {
+			needTCPTracepoints = true
+			break
+		}
+	}
+	if needTCPTracepoints {
+		m.attachCaptureTracepointsLocked()
+	} else {
+		m.detachCaptureTracepointsLocked()
+	}
 	if m.egressProxy != nil {
 		m.egressProxy.StartCapture(sessionID)
 	}
@@ -348,18 +381,23 @@ func (m *Manager) SyncMonitors(sessionID uint64, specs []agentproto.ProcessMonit
 				msg = fmt.Sprintf("未在端口 %d 检测到符合特征的业务进程", spec.ListenPort)
 			}
 		} else {
-			for _, targetPID := range pids {
-				c, rec, diagErr := m.scanner.DiagnoseEstablishedConns(targetPID, spec.Downstreams, spec.ListenPort, proxyPort)
-				if diagErr != nil {
-					log.Printf("[eBPF] 诊断存量连接 (pid=%d) 警告: %v", targetPID, diagErr)
+			if spec.IsPureMesh() {
+				msg = "dophi_mesh 共享内存环进程就绪（按需 uprobe 旁路采集，无需 TCP 重连）"
+			} else {
+				csgPort := parsePortFromAddr(spec.CSGAddr)
+				for _, targetPID := range pids {
+					c, rec, diagErr := m.scanner.DiagnoseEstablishedConns(targetPID, spec.Downstreams, spec.ListenPort, proxyPort, csgPort)
+					if diagErr != nil {
+						log.Printf("[eBPF] 诊断存量连接 (pid=%d) 警告: %v", targetPID, diagErr)
+					}
+					estConns += c
+					if rec {
+						needRec = true
+					}
 				}
-				estConns += c
-				if rec {
-					needRec = true
+				if needRec {
+					msg = fmt.Sprintf("检测到 %d 条存量已建立长连接，需重启业务进程生效 (A-01)", estConns)
 				}
-			}
-			if needRec {
-				msg = fmt.Sprintf("检测到 %d 条存量已建立长连接，需重启业务进程生效 (A-01)", estConns)
 			}
 
 			// 更新 BPF Map（覆盖全部多实例 PID）
@@ -501,18 +539,23 @@ func (m *Manager) ArmStandby(specs []agentproto.ProcessMonitorSpec) ([]agentprot
 				msg = fmt.Sprintf("未在端口 %d 检测到符合特征的业务进程", spec.ListenPort)
 			}
 		} else {
-			for _, targetPID := range pids {
-				c, rec, diagErr := m.scanner.DiagnoseEstablishedConns(targetPID, spec.Downstreams, spec.ListenPort, proxyPort)
-				if diagErr != nil {
-					log.Printf("[eBPF] ArmStandby 诊断存量连接 (pid=%d) 警告: %v", targetPID, diagErr)
+			if spec.IsPureMesh() {
+				msg = "dophi_mesh 共享内存环进程就绪（按需 uprobe 旁路采集，无需 TCP 重连）"
+			} else {
+				csgPort := parsePortFromAddr(spec.CSGAddr)
+				for _, targetPID := range pids {
+					c, rec, diagErr := m.scanner.DiagnoseEstablishedConns(targetPID, spec.Downstreams, spec.ListenPort, proxyPort, csgPort)
+					if diagErr != nil {
+						log.Printf("[eBPF] ArmStandby 诊断存量连接 (pid=%d) 警告: %v", targetPID, diagErr)
+					}
+					estConns += c
+					if rec {
+						needRec = true
+					}
 				}
-				estConns += c
-				if rec {
-					needRec = true
+				if needRec {
+					msg = fmt.Sprintf("检测到 %d 条存量已建立长连接，需重启业务进程生效 (A-01)", estConns)
 				}
-			}
-			if needRec {
-				msg = fmt.Sprintf("检测到 %d 条存量已建立长连接，需重启业务进程生效 (A-01)", estConns)
 			}
 
 			// 预设 BPF Map
@@ -938,37 +981,103 @@ func (m *Manager) backgroundProcessWatcher() {
 	}
 }
 
+func samePIDSet(a, b []uint32) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	setA := make(map[uint32]struct{}, len(a))
+	for _, v := range a {
+		setA[v] = struct{}{}
+	}
+	for _, v := range b {
+		if _, ok := setA[v]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 func (m *Manager) checkProcessesRestart() {
+	type pidChange struct {
+		processID uint64
+		pids      []uint32
+	}
+
 	m.mu.Lock()
-	if !m.attached || m.objs == nil {
+	if !m.attached {
 		m.mu.Unlock()
 		return
 	}
+	sessionID := m.sessionID
 	var eventsToEmit [][]byte
+	var changesToNotify []pidChange
+
 	for _, proc := range m.monitoredProcs {
-		newPID, err := m.scanner.FindPIDByPortAndCmd(proc.Spec.ListenPort, proc.Spec.CmdPattern)
-		if err == nil && newPID > 0 && newPID != proc.CurrentPID {
-			oldPID := proc.CurrentPID
-			// 移除旧 PID
-			if oldPID > 0 {
-				if err := m.objs.TargetPidsMap.Delete(oldPID); err != nil {
-					log.Printf("[eBPF] TargetPidsMap.Delete (oldPID=%d) 警告: %v", oldPID, err)
+		newPIDs, err := m.scanner.FindAllPIDsByPortAndCmd(proc.Spec.ListenPort, proc.Spec.CmdPattern, proc.Spec.IsPureMesh())
+		if err != nil {
+			continue
+		}
+
+		oldPIDs := proc.effectivePIDs()
+		if len(newPIDs) == 0 && proc.Spec.ListenPort == 0 && strings.TrimSpace(proc.Spec.CmdPattern) == "" {
+			for _, op := range oldPIDs {
+				if m.scanner.PIDExists(op) {
+					newPIDs = append(newPIDs, op)
 				}
 			}
-			// 登记新 PID
+		}
+
+		if samePIDSet(oldPIDs, newPIDs) {
+			continue
+		}
+
+		oldSet := make(map[uint32]struct{}, len(oldPIDs))
+		for _, op := range oldPIDs {
+			oldSet[op] = struct{}{}
+		}
+		newSet := make(map[uint32]struct{}, len(newPIDs))
+		for _, np := range newPIDs {
+			newSet[np] = struct{}{}
+		}
+
+		if m.objs != nil {
+			for op := range oldSet {
+				if _, stillAlive := newSet[op]; !stillAlive {
+					if err := m.objs.TargetPidsMap.Delete(op); err != nil {
+						log.Printf("[eBPF] TargetPidsMap.Delete (oldPID=%d) 警告: %v", op, err)
+					}
+				}
+			}
 			tp := cros_probeTargetProc{
-				SessionId:  m.sessionID,
+				SessionId:  sessionID,
 				ProcessId:  proc.Spec.ProcessID,
 				ListenPort: proc.Spec.ListenPort,
 				Mode:       0,
 			}
-			if err := m.objs.TargetPidsMap.Put(newPID, tp); err != nil {
-				log.Printf("[eBPF] TargetPidsMap.Put (newPID=%d) 警告: %v", newPID, err)
+			for _, np := range newPIDs {
+				if _, existed := oldSet[np]; !existed {
+					if err := m.objs.TargetPidsMap.Put(np, tp); err != nil {
+						log.Printf("[eBPF] TargetPidsMap.Put (newPID=%d) 警告: %v", np, err)
+					}
+				}
 			}
-			proc.CurrentPID = newPID
+		}
 
-			// 组装 PROCESS_RESTARTED 事件
-			eventData := []byte(fmt.Sprintf(`{"process_id":%d,"old_pid":%d,"new_pid":%d,"event":"PROCESS_RESTARTED"}`, proc.Spec.ProcessID, oldPID, newPID))
+		oldMainPID := proc.CurrentPID
+		newMainPID := uint32(0)
+		if len(newPIDs) > 0 {
+			newMainPID = newPIDs[0]
+		}
+		proc.CurrentPID = newMainPID
+		proc.CurrentPIDs = append([]uint32(nil), newPIDs...)
+
+		changesToNotify = append(changesToNotify, pidChange{
+			processID: proc.Spec.ProcessID,
+			pids:      append([]uint32(nil), newPIDs...),
+		})
+
+		if newMainPID > 0 && newMainPID != oldMainPID {
+			eventData := []byte(fmt.Sprintf(`{"process_id":%d,"old_pid":%d,"new_pid":%d,"event":"PROCESS_RESTARTED"}`, proc.Spec.ProcessID, oldMainPID, newMainPID))
 			eventsToEmit = append(eventsToEmit, eventData)
 		}
 	}
@@ -977,6 +1086,11 @@ func (m *Manager) checkProcessesRestart() {
 	if m.cfg.LifecycleEventSink != nil {
 		for _, evt := range eventsToEmit {
 			m.cfg.LifecycleEventSink(agentproto.EventProcessLifecycle, evt)
+		}
+	}
+	if m.cfg.PIDsChangedSink != nil {
+		for _, ch := range changesToNotify {
+			m.cfg.PIDsChangedSink(sessionID, ch.processID, ch.pids)
 		}
 	}
 }

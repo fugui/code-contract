@@ -728,3 +728,96 @@ func TestFetchAgentCSGTopology_ExceedsHeartbeatTimeout(t *testing.T) {
 		t.Fatalf("unexpected topology report: %+v", rep)
 	}
 }
+
+func TestAutoRearmAgent_PureMeshProcessNormalizesNeedReconnectToReady(t *testing.T) {
+	db := setupTestDB(t)
+
+	group := models.ArchProcessGroup{Code: "PG_MESH", Name: "Mesh 进程组"}
+	if err := db.Create(&group).Error; err != nil {
+		t.Fatalf("创建进程组失败: %v", err)
+	}
+	archProc := models.ArchProcess{
+		GroupID:           group.ID,
+		Code:              "mesh-worker",
+		Name:              "Mesh业务进程",
+		DefaultListenPort: 0,
+		DefaultCmdPattern: "mesh_worker",
+	}
+	if err := db.Create(&archProc).Error; err != nil {
+		t.Fatalf("创建架构进程失败: %v", err)
+	}
+
+	var capturedReq agentproto.ArmStandbyReq
+	agentSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/agent/v1/monitors/arm" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewDecoder(r.Body).Decode(&capturedReq)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(agentproto.ArmStandbyResp{
+			Revision:    capturedReq.Revision,
+			ArmedDigest: agentproto.ComputeArmedDigest(capturedReq.Processes),
+			Diagnostics: []agentproto.ProcessDiagStatus{
+				{
+					ProcessID:        capturedReq.Processes[0].ProcessID,
+					Status:           "MONITORING",
+					ResolvedPID:      3301,
+					EstablishedConns: 2,
+					NeedReconnect:    true, // 模拟旧版 Agent 误报 NEED_RECONNECT
+					Message:          "检测到 2 条存量已建立长连接",
+				},
+			},
+		})
+	}))
+	defer agentSrv.Close()
+
+	agent := models.Agent{
+		Name:           "MeshAgent",
+		Endpoint:       agentSrv.URL,
+		Scope:          models.ScopeShared,
+		Status:         models.AgentStatusOnline,
+		MountsRevision: 1,
+	}
+	if err := db.Create(&agent).Error; err != nil {
+		t.Fatalf("create agent failed: %v", err)
+	}
+
+	proc := models.Process{
+		AgentID:             agent.ID,
+		ArchProcessID:       archProc.ID,
+		EffectiveListenPort: 0,
+		ObservedTransports:  datatypes.JSON(`["MESH"]`),
+		ObservedPIDs:        datatypes.JSON(`[3301,3302]`),
+		ProbeDesiredState:   models.ProbeDesiredStateArmed,
+		ProbeStatus:         models.ProbeStatusNeedReconnect,
+		NeedReconnect:       true,
+	}
+	if err := db.Create(&proc).Error; err != nil {
+		t.Fatalf("create proc failed: %v", err)
+	}
+
+	mgr := hub.NewManager(db, &config.Config{})
+	if _, err := mgr.AutoRearmAgent(context.Background(), agent.ID); err != nil {
+		t.Fatalf("AutoRearmAgent failed: %v", err)
+	}
+
+	if len(capturedReq.Processes) != 1 {
+		t.Fatalf("expected 1 spec, got %d", len(capturedReq.Processes))
+	}
+	if !capturedReq.Processes[0].IsPureMesh() {
+		t.Fatalf("expected Transports=[MESH] forwarded to Agent, got %+v", capturedReq.Processes[0].Transports)
+	}
+	if len(capturedReq.Processes[0].TargetPIDs) != 2 {
+		t.Fatalf("expected TargetPIDs=[3301,3302], got %v", capturedReq.Processes[0].TargetPIDs)
+	}
+
+	var fresh models.Process
+	if err := db.First(&fresh, proc.ID).Error; err != nil {
+		t.Fatalf("query process failed: %v", err)
+	}
+	if fresh.ProbeStatus != models.ProbeStatusArmed || fresh.NeedReconnect || fresh.EstablishedConns != 0 {
+		t.Fatalf("expected pure mesh process normalized to READY with need_reconnect=false, got status=%s need_reconnect=%v conns=%d",
+			fresh.ProbeStatus, fresh.NeedReconnect, fresh.EstablishedConns)
+	}
+}

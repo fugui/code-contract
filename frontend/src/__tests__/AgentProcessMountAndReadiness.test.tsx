@@ -449,4 +449,59 @@ describe('AgentProcessMountAndReadiness Test Suite', () => {
     expect(html).toContain('data-testid="empty-guide-direct-register-btn"');
     expect(html).toContain('+ 已有运行中的 Agent？直接登记');
   });
+
+  it('renders dophi_mesh endpoint label and NEED_RECONNECT reason with retry button', () => {
+    const meshProc: Process = {
+      id: 'proc-mesh-1',
+      agent_id: 'agent-101',
+      name: 'mesh-order-svc',
+      listen_port: 0,
+      observed_role: 'SERVER',
+      observed_transports: ['MESH'],
+      probe_desired_state: 'ARMED',
+      probe_status: 'READY',
+    };
+    const needReconnectProc: Process = {
+      id: 'proc-tcp-warn-1',
+      agent_id: 'agent-101',
+      name: 'tcp-gw-svc',
+      listen_port: 8080,
+      observed_transports: ['TCP'],
+      probe_desired_state: 'ARMED',
+      probe_status: 'NEED_RECONNECT',
+      diag_message: '检测到 1 条存量已建立长连接，需重启业务进程生效 (A-01)',
+    };
+    const dummyAgent: Agent = {
+      id: 'agent-101',
+      name: 'SIT-Mesh-Node',
+      endpoint: 'http://10.10.1.5:9091',
+      scope: 'SHARED',
+      status: 'ONLINE',
+      has_ebpf_cap: true,
+      lease_type: '',
+    };
+
+    const html = renderToString(
+      <MemoryRouter>
+        <ModuleUserProvider
+          value={{
+            user: adminUser,
+            loadingUser: false,
+            isEmbedded: false,
+            reloadUser: async () => {},
+          }}
+        >
+          <AgentManagementPage
+            initialAgent={dummyAgent}
+            initialProcesses={[meshProc, needReconnectProc]}
+          />
+        </ModuleUserProvider>
+      </MemoryRouter>
+    );
+
+    expect(html).toContain('dophi_mesh (内存环)');
+    expect(html).not.toContain('0 (纯客户端)');
+    expect(html).toContain('检测到 1 条存量已建立长连接，需重启业务进程生效 (A-01)');
+    expect(html).toContain('data-testid="rearm-process-proc-tcp-warn-1"');
+  });
 });

@@ -130,3 +130,50 @@ func TestHandshakeResp_TransportDriversJSONRoundtrip(t *testing.T) {
 		t.Errorf("driver 1 mismatch: %+v", decoded.TransportDrivers[1])
 	}
 }
+
+func TestIsPureMeshTransports(t *testing.T) {
+	cases := []struct {
+		name       string
+		transports []string
+		want       bool
+	}{
+		{name: "single MESH", transports: []string{"MESH"}, want: true},
+		{name: "lowercase dophi_mesh", transports: []string{"dophi_mesh"}, want: true},
+		{name: "mesh with blank", transports: []string{"", " MESH "}, want: true},
+		{name: "single TCP", transports: []string{"TCP"}, want: false},
+		{name: "dual TCP and MESH", transports: []string{"TCP", "MESH"}, want: false},
+		{name: "MIXED", transports: []string{"MIXED"}, want: false},
+		{name: "empty slice", transports: []string{}, want: false},
+		{name: "nil", transports: nil, want: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsPureMeshTransports(tc.transports); got != tc.want {
+				t.Fatalf("IsPureMeshTransports(%v) = %v, want %v", tc.transports, got, tc.want)
+			}
+			spec := ProcessMonitorSpec{ProcessID: 1, Transports: tc.transports}
+			if got := spec.IsPureMesh(); got != tc.want {
+				t.Fatalf("ProcessMonitorSpec.IsPureMesh() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+
+	// 验证 ComputeArmedDigest 不受 Transports 字段影响（保持与旧版 Agent 摘要兼容）
+	dWithout := ComputeArmedDigest([]ProcessMonitorSpec{{
+		ProcessID:  10,
+		ListenPort: 0,
+		CmdPattern: "mesh_svr",
+	}})
+	dWith := ComputeArmedDigest([]ProcessMonitorSpec{{
+		ProcessID:  10,
+		ListenPort: 0,
+		CmdPattern: "mesh_svr",
+		Transports: []string{"MESH"},
+		TargetPIDs: []uint32{1001, 1002},
+		CSGAddr:    "127.0.0.1:31806",
+	}})
+	if dWithout != dWith {
+		t.Fatalf("ComputeArmedDigest should stay backward compatible: %s != %s", dWithout, dWith)
+	}
+}

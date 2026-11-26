@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -141,14 +142,30 @@ func (s *ProcScanner) ScanListenProcesses() ([]agentproto.DiscoveredProcess, err
 
 // FindPIDByCmd 纯客户端进程无监听端口时，按命令行特征反查实时 PID
 func (s *ProcScanner) FindPIDByCmd(cmdPattern string) (uint32, error) {
+	pids, err := s.FindAllPIDsByCmd(cmdPattern)
+	if err != nil || len(pids) == 0 {
+		return 0, err
+	}
+	return pids[0], nil
+}
+
+// FindAllPIDsByCmd 按命令行/可执行名/comm 特征反查所有匹配的实时 PID（升序去重）
+func (s *ProcScanner) FindAllPIDsByCmd(cmdPattern string) ([]uint32, error) {
 	cmdPattern = strings.TrimSpace(cmdPattern)
 	if cmdPattern == "" {
-		return 0, nil
+		return nil, nil
 	}
 	entries, err := os.ReadDir(s.root)
 	if err != nil {
-		return 0, fmt.Errorf("读取 %s 目录失败: %w", s.root, err)
+		return nil, fmt.Errorf("读取 %s 目录失败: %w", s.root, err)
 	}
+	selfPID := uint32(0)
+	if s.root == DefaultProcRoot {
+		selfPID = uint32(os.Getpid())
+	}
+
+	seen := make(map[uint32]struct{})
+	var pids []uint32
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -158,6 +175,9 @@ func (s *ProcScanner) FindPIDByCmd(cmdPattern string) (uint32, error) {
 			continue
 		}
 		pid := uint32(pid64)
+		if pid == 0 || (selfPID > 0 && pid == selfPID) {
+			continue
+		}
 		cmdlinePath := filepath.Join(s.root, entry.Name(), "cmdline")
 		cmdBytes, err := os.ReadFile(cmdlinePath)
 		if err != nil {
@@ -169,31 +189,56 @@ func (s *ProcScanner) FindPIDByCmd(cmdPattern string) (uint32, error) {
 		commBytes, _ := os.ReadFile(filepath.Join(s.root, entry.Name(), "comm"))
 		commName := strings.TrimSpace(string(commBytes))
 		if strings.Contains(cmdline, cmdPattern) || strings.Contains(exeName, cmdPattern) || (commName != "" && strings.Contains(commName, cmdPattern)) {
-			return pid, nil
+			if _, ok := seen[pid]; !ok {
+				seen[pid] = struct{}{}
+				pids = append(pids, pid)
+			}
 		}
 	}
-	return 0, nil
+	sort.Slice(pids, func(i, j int) bool { return pids[i] < pids[j] })
+	return pids, nil
 }
 
 // FindPIDByPortAndCmd 按监听端口与命令行正则查找实时 PID (listenPort = 0 时按纯命令行特征查找客户端进程)
 func (s *ProcScanner) FindPIDByPortAndCmd(listenPort uint16, cmdPattern string) (uint32, error) {
+	pids, err := s.FindAllPIDsByPortAndCmd(listenPort, cmdPattern, false)
+	if err != nil || len(pids) == 0 {
+		return 0, err
+	}
+	return pids[0], nil
+}
+
+// FindAllPIDsByPortAndCmd 按监听端口与命令行特征查找全部匹配的实时 PID（升序去重）。
+// 当 fallbackCmd 为 true 且端口匹配结果为空时（如纯 dophi_mesh 进程使用动态端口），回退按 cmdPattern 反查全量 PID。
+func (s *ProcScanner) FindAllPIDsByPortAndCmd(listenPort uint16, cmdPattern string, fallbackCmd bool) ([]uint32, error) {
 	if listenPort == 0 {
-		return s.FindPIDByCmd(cmdPattern)
+		return s.FindAllPIDsByCmd(cmdPattern)
 	}
 	procs, err := s.ScanListenProcesses()
 	if err != nil {
-		return 0, err
+		if fallbackCmd && strings.TrimSpace(cmdPattern) != "" {
+			return s.FindAllPIDsByCmd(cmdPattern)
+		}
+		return nil, err
 	}
 
+	seen := make(map[uint32]struct{})
+	var pids []uint32
 	for _, p := range procs {
 		if p.ListenPort == listenPort {
 			if cmdPattern == "" || strings.Contains(p.Cmdline, cmdPattern) || strings.Contains(p.ExeName, cmdPattern) {
-				return p.PID, nil
+				if _, ok := seen[p.PID]; !ok {
+					seen[p.PID] = struct{}{}
+					pids = append(pids, p.PID)
+				}
 			}
 		}
 	}
-
-	return 0, nil
+	sort.Slice(pids, func(i, j int) bool { return pids[i] < pids[j] })
+	if len(pids) == 0 && fallbackCmd && strings.TrimSpace(cmdPattern) != "" {
+		return s.FindAllPIDsByCmd(cmdPattern)
+	}
+	return pids, nil
 }
 
 // EstablishedSocket 表示由目标进程自有 Socket Inode 关联的 TCP_ESTABLISHED 状态连接 (F-08, ADR-11)

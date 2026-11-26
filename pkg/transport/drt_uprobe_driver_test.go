@@ -501,3 +501,69 @@ func TestDRTUprobeDriver_StatsAndVerboseNoPayload(t *testing.T) {
 		t.Fatalf("verbose logs must NEVER contain business payload, got:\n%s", logs)
 	}
 }
+
+type fakeCloser struct {
+	closed atomic.Bool
+}
+
+func (f *fakeCloser) Close() error {
+	f.closed.Store(true)
+	return nil
+}
+
+func TestDRTUprobeDriver_SyncProcessPIDs_DynamicReattachAndStandbyGuard(t *testing.T) {
+	closers := make(map[uint32]*fakeCloser)
+	drv := NewDRTUprobeDriver(nil, DRTUprobeConfig{
+		AttachUprobeFunc: func(_ string, pid uint32) (io.Closer, error) {
+			fc := &fakeCloser{}
+			closers[pid] = fc
+			return fc, nil
+		},
+	})
+
+	// 1. 待命期（Session 未在 StartCapture 激活）严禁挂载任何 uprobe
+	if err := drv.SyncProcessPIDs(99, 10, []uint32{1001}); err != nil {
+		t.Fatalf("SyncProcessPIDs in standby failed: %v", err)
+	}
+	if drv.ActiveLinksCount() != 0 {
+		t.Fatalf("expected 0 active links when session is not capturing, got %d", drv.ActiveLinksCount())
+	}
+
+	// 2. 开启录制挂载初始 PID [1001, 1002]
+	if err := drv.StartCapture(context.Background(), CaptureSpec{
+		SessionOrTaskID: 99,
+		Processes: []TargetProcess{
+			{ProcessID: 10, PID: 1001, PIDs: []uint32{1001, 1002}},
+		},
+	}); err != nil {
+		t.Fatalf("StartCapture failed: %v", err)
+	}
+	if drv.ActiveLinksCount() != 2 {
+		t.Fatalf("expected 2 active links, got %d", drv.ActiveLinksCount())
+	}
+
+	// 3. 进程 1002 退出、新进程 1003 拉起 -> 摘除 1002，保留 1001，补挂 1003
+	if err := drv.SyncProcessPIDs(99, 10, []uint32{1001, 1003}); err != nil {
+		t.Fatalf("SyncProcessPIDs during capture failed: %v", err)
+	}
+	if drv.ActiveLinksCount() != 2 {
+		t.Fatalf("expected 2 active links after sync, got %d", drv.ActiveLinksCount())
+	}
+	if closers[1001].closed.Load() {
+		t.Fatalf("expected PID 1001 link to stay open")
+	}
+	if !closers[1002].closed.Load() {
+		t.Fatalf("expected dead PID 1002 link to be closed")
+	}
+	if closers[1003] == nil || closers[1003].closed.Load() {
+		t.Fatalf("expected new PID 1003 link to be attached and open")
+	}
+
+	// 4. 停录卸载全部链接
+	if err := drv.StopCapture(context.Background(), 99); err != nil {
+		t.Fatalf("StopCapture failed: %v", err)
+	}
+	if drv.ActiveLinksCount() != 0 {
+		t.Fatalf("expected 0 active links after StopCapture, got %d", drv.ActiveLinksCount())
+	}
+}

@@ -356,6 +356,17 @@ func TestAggregateProcessCentric_FiltersUnrelatedHostProcessesAndInfersClientTra
 		if !reflect.DeepEqual(cliMesh.ObservedTransports, []string{"MESH"}) {
 			t.Fatalf("mode=%s expected cli_mesh observed_transports [MESH], got %v", mode, cliMesh.ObservedTransports)
 		}
+		meshSvr, ok := byName["mesh_svr"]
+		if !ok {
+			t.Fatalf("mode=%s expected mesh_svr to be present", mode)
+		}
+		if len(meshSvr.ListenPorts) != 0 {
+			t.Fatalf("mode=%s expected pure MESH server mesh_svr ListenPorts empty (not Mesh URI port), got %v", mode, meshSvr.ListenPorts)
+		}
+		tcpSvr, ok := byName["tcp_svr"]
+		if !ok || !reflect.DeepEqual(tcpSvr.ListenPorts, []uint16{25002}) {
+			t.Fatalf("mode=%s expected tcp_svr ListenPorts [25002], got %+v", mode, tcpSvr)
+		}
 		cliOffline, ok := byName["cli_offline"]
 		if !ok {
 			t.Fatalf("mode=%s expected cli_offline to be present", mode)

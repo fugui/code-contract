@@ -6,6 +6,7 @@ import { useToast } from '../../utils/toast';
 import { useModulePath } from '../../hooks/useModulePath';
 import * as trafficApi from '../../api/traffic';
 import type { RecordingSession, Process, Agent } from '../../types';
+import { isMeshTransportProcess } from '../../types';
 import './recording_drawer.css';
 
 export interface RecordingStartDrawerProps {
@@ -857,9 +858,15 @@ const RecordingStartInner: React.FC<RecordingStartInnerProps> = ({
                                   />
                                   <span className="code-process-leaf-name">{proc.name}</span>
                                   {isClientOnly ? (
-                                    <span className="code-process-port-badge code-process-port-badge--client">
-                                      纯客户端
-                                    </span>
+                                    isMeshTransportProcess(proc) ? (
+                                      <span className="code-process-port-badge code-process-port-badge--client">
+                                        dophi_mesh
+                                      </span>
+                                    ) : (
+                                      <span className="code-process-port-badge code-process-port-badge--client">
+                                        纯客户端
+                                      </span>
+                                    )
                                   ) : (
                                     <span className="code-process-port-badge">
                                       端口: {proc.listen_port}

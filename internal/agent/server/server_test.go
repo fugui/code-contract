@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"go/parser"
@@ -321,5 +322,84 @@ func TestAgentServer_HandshakeReportsTransportDrivers(t *testing.T) {
 	}
 	if !foundDRT {
 		t.Errorf("expected to find builtin-drt-uprobe driver in HandshakeResp, got %+v", resp.TransportDrivers)
+	}
+}
+
+func TestAgentServer_PureMeshReplaySkipsUnrelatedTCPNeedReconnectAndKeepsExplicitDownstreamGuard(t *testing.T) {
+	procRoot := t.TempDir()
+	tcpContent := strings.Join([]string{
+		"  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode",
+		"   0: 0100007F:C001 0100007F:1538 01 00000000:00000000 00:00000000 00000000  1000        0 30001", // 127.0.0.1:49153 -> 127.0.0.1:5432
+	}, "\n") + "\n"
+	_ = os.MkdirAll(filepath.Join(procRoot, "net"), 0755)
+	_ = os.WriteFile(filepath.Join(procRoot, "net", "tcp"), []byte(tcpContent), 0644)
+
+	pDir := filepath.Join(procRoot, "401")
+	_ = os.MkdirAll(filepath.Join(pDir, "fd"), 0755)
+	_ = os.WriteFile(filepath.Join(pDir, "cmdline"), []byte("/opt/bin/mesh_worker\x00--mesh"), 0644)
+	_ = os.WriteFile(filepath.Join(pDir, "comm"), []byte("mesh_worker\n"), 0644)
+	_ = os.Symlink("socket:[30001]", filepath.Join(pDir, "fd", "3"))
+
+	srv, err := NewAgentServer(AgentServerConfig{
+		ListenAddr: "127.0.0.1:0",
+		ProcRoot:   procRoot,
+		CSGAddrs:   []string{"127.0.0.1:31806"},
+	})
+	if err != nil {
+		t.Fatalf("NewAgentServer failed: %v", err)
+	}
+	defer srv.PurgeAll()
+
+	// 1. 验证 enrichSpecsWithCSGAddr 自动注入默认 CSG 端点
+	enriched := srv.enrichSpecsWithCSGAddr([]agentproto.ProcessMonitorSpec{{ProcessID: 1}})
+	if len(enriched) != 1 || enriched[0].CSGAddr != "127.0.0.1:31806" {
+		t.Fatalf("expected CSGAddr enriched to 127.0.0.1:31806, got %+v", enriched)
+	}
+
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	// 2. 纯 MESH 进程无显式 TCP 下游：携带无关 TCP 长连接 (5432) 不应误报 409 NEED_RECONNECT
+	reqBody1, _ := json.Marshal(agentproto.ExecuteReplayReq{
+		TaskID: 501,
+		ProcessSpec: agentproto.ProcessMonitorSpec{
+			ProcessID:  1,
+			ListenPort: 0,
+			CmdPattern: "mesh_worker",
+			TargetPIDs: []uint32{401},
+			Transports: []string{"MESH"},
+		},
+		TimeoutMs: 500,
+	})
+	req1 := httptest.NewRequest(http.MethodPost, "/agent/v1/replays/execute", bytes.NewReader(reqBody1))
+	req1.RemoteAddr = "127.0.0.1:12345"
+	rec1 := httptest.NewRecorder()
+	mux.ServeHTTP(rec1, req1)
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for pure mesh replay without explicit downstreams, got %d (body: %s)", rec1.Code, rec1.Body.String())
+	}
+
+	// 释放 TaskID 501 租约后再测试显式下游拦截
+	srv.PurgeAll()
+
+	// 3. 若显式指定了指向 127.0.0.1:5432 的 Mock 下游端点，仍必须守住零外泄 409 拦截
+	reqBody2, _ := json.Marshal(agentproto.ExecuteReplayReq{
+		TaskID: 502,
+		ProcessSpec: agentproto.ProcessMonitorSpec{
+			ProcessID:   1,
+			ListenPort:  0,
+			CmdPattern:  "mesh_worker",
+			TargetPIDs:  []uint32{401},
+			Transports:  []string{"MESH"},
+			Downstreams: []agentproto.DownstreamEndpoint{{IP: "127.0.0.1", Port: 5432}},
+		},
+		TimeoutMs: 500,
+	})
+	req2 := httptest.NewRequest(http.MethodPost, "/agent/v1/replays/execute", bytes.NewReader(reqBody2))
+	req2.RemoteAddr = "127.0.0.1:12345"
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusConflict || !strings.Contains(rec2.Body.String(), "NEED_RECONNECT") {
+		t.Fatalf("expected 409 NEED_RECONNECT when explicit downstream matches live socket, got %d (body: %s)", rec2.Code, rec2.Body.String())
 	}
 }

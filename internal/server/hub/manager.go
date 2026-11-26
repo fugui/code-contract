@@ -818,9 +818,20 @@ func (m *Manager) AutoRearmAgent(ctx context.Context, agentID uint64) (*agentpro
 
 		// 编译当前待命规格
 		specs := make([]agentproto.ProcessMonitorSpec, 0, len(agent.Processes))
+		transportsByProc := make(map[uint64][]string, len(agent.Processes))
 		for _, p := range agent.Processes {
+			var obsTransports []string
+			if len(p.ObservedTransports) > 0 {
+				_ = json.Unmarshal(p.ObservedTransports, &obsTransports)
+			}
+			transportsByProc[p.ID] = obsTransports
+
 			if p.ProbeDesiredState == models.ProbeDesiredStateDisarmed {
 				continue
+			}
+			var obsPIDs []uint32
+			if len(p.ObservedPIDs) > 0 {
+				_ = json.Unmarshal(p.ObservedPIDs, &obsPIDs)
 			}
 			downstreams, _ := topology.CompileProcessDownstreams(m.db, p.ID, nil, nil)
 			p.FillFromArchProcess()
@@ -828,6 +839,8 @@ func (m *Manager) AutoRearmAgent(ctx context.Context, agentID uint64) (*agentpro
 				ProcessID:   p.ID,
 				ListenPort:  uint16(p.EffectiveListenPort),
 				CmdPattern:  p.EffectiveCmdPattern(),
+				TargetPIDs:  obsPIDs,
+				Transports:  obsTransports,
 				Downstreams: downstreams,
 			})
 		}
@@ -963,10 +976,19 @@ func (m *Manager) AutoRearmAgent(ctx context.Context, agentID uint64) (*agentpro
 					continue
 				}
 
+				needReconnect := diag.NeedReconnect
+				diagMsg := diag.Message
+				estConns := diag.EstablishedConns
+				if agentproto.IsPureMeshTransports(transportsByProc[p.ID]) && needReconnect {
+					needReconnect = false
+					estConns = 0
+					diagMsg = "dophi_mesh 共享内存环进程就绪（按需 uprobe 旁路采集，无需 TCP 重连）"
+				}
+
 				probeStatus := models.ProbeStatusArmed
 				if diag.Status == "NOT_FOUND" {
 					probeStatus = models.ProbeStatusWaitingProc
-				} else if diag.NeedReconnect {
+				} else if needReconnect {
 					probeStatus = models.ProbeStatusNeedReconnect
 				} else if diag.Status == "CAP_DENIED" {
 					probeStatus = models.ProbeStatusCapDenied
@@ -977,9 +999,9 @@ func (m *Manager) AutoRearmAgent(ctx context.Context, agentID uint64) (*agentpro
 				_ = tx.Model(&models.Process{}).Where("id = ?", p.ID).Updates(map[string]interface{}{
 					"probe_status":      probeStatus,
 					"resolved_p_id":     diag.ResolvedPID,
-					"established_conns": diag.EstablishedConns,
-					"need_reconnect":    diag.NeedReconnect,
-					"diag_message":      diag.Message,
+					"established_conns": estConns,
+					"need_reconnect":    needReconnect,
+					"diag_message":      diagMsg,
 					"last_diag_at":      &nowDiag,
 				}).Error
 			}

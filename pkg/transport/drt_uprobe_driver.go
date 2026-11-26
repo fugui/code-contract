@@ -388,6 +388,99 @@ func (d *DRTUprobeDriver) evictOldestInflightLocked() {
 	}
 }
 
+func (d *DRTUprobeDriver) attachPIDLocked(sessionOrTaskID uint64, processID uint64, pid uint32) {
+	if pid == 0 {
+		return
+	}
+	linkKey := fmt.Sprintf("%d:%d:%d", sessionOrTaskID, processID, pid)
+	if _, exists := d.links[linkKey]; exists {
+		return
+	}
+
+	if d.cfg.AttachUprobeFunc != nil {
+		lnk, err := d.cfg.AttachUprobeFunc(d.cfg.ProcRoot, pid)
+		if err != nil || lnk == nil {
+			return
+		}
+		d.links[linkKey] = lnk
+		return
+	}
+
+	if d.mgr == nil {
+		return
+	}
+	prog := d.mgr.DRTUprobeProgram()
+	if prog == nil {
+		return
+	}
+
+	soPath, err := FindMappedLibraryPath(d.cfg.ProcRoot, pid, "libdopra")
+	if err != nil {
+		log.Printf("[DRTUprobe] 跳过挂载: PID=%d (ProcessID=%d) 未找到 libdopra 映射: %v", pid, processID, err)
+		return
+	}
+
+	offsets, err := ResolveDRTSymbolOffsets(soPath)
+	if err != nil || offsets.WriteBulkOffset == 0 {
+		log.Printf("[DRTUprobe] 跳过挂载: PID=%d Lib=%s 解析 DRT_WriteBulk 失败: %v", pid, soPath, err)
+		return
+	}
+
+	ex, err := link.OpenExecutable(soPath)
+	if err != nil {
+		log.Printf("[DRTUprobe] OpenExecutable(%s) 失败: %v", soPath, err)
+		return
+	}
+
+	up, err := ex.Uprobe("DRT_WriteBulk", prog, &link.UprobeOptions{
+		Offset: offsets.WriteBulkOffset,
+		PID:    int(pid),
+	})
+	if err != nil {
+		log.Printf("[DRTUprobe] Uprobe(pid=%d) 挂载失败: %v", pid, err)
+		return
+	}
+
+	d.links[linkKey] = up
+	log.Printf("[DRTUprobe] [✓ Uprobe 动态挂载成功] PID=%d, Lib=%s, Offset=0x%x, SessionID=%d", pid, soPath, offsets.WriteBulkOffset, sessionOrTaskID)
+}
+
+// SyncProcessPIDs 在 CAPTURING 期间按最新存活 PID 列表动态同步 uprobe（摘除退出旧 PID，补挂新 PID）；待命期不执行挂载
+func (d *DRTUprobeDriver) SyncProcessPIDs(sessionOrTaskID uint64, processID uint64, pids []uint32) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if d.closed || sessionOrTaskID == 0 {
+		return nil
+	}
+	if _, active := d.activeSpecs[sessionOrTaskID]; !active {
+		return nil
+	}
+
+	desired := make(map[string]struct{}, len(pids))
+	for _, pid := range pids {
+		if pid == 0 {
+			continue
+		}
+		desired[fmt.Sprintf("%d:%d:%d", sessionOrTaskID, processID, pid)] = struct{}{}
+	}
+
+	prefix := fmt.Sprintf("%d:%d:", sessionOrTaskID, processID)
+	for k, l := range d.links {
+		if len(k) >= len(prefix) && k[:len(prefix)] == prefix {
+			if _, keep := desired[k]; !keep {
+				_ = l.Close()
+				delete(d.links, k)
+			}
+		}
+	}
+
+	for _, pid := range pids {
+		d.attachPIDLocked(sessionOrTaskID, processID, pid)
+	}
+	return nil
+}
+
 // StartCapture 下发采集规格并在 CAPTURING 期间按 PID 挂载 DRT_WriteBulk uprobe（支持同进程多 PID）
 func (d *DRTUprobeDriver) StartCapture(ctx context.Context, spec CaptureSpec) error {
 	d.mu.Lock()
@@ -402,15 +495,7 @@ func (d *DRTUprobeDriver) StartCapture(ctx context.Context, spec CaptureSpec) er
 	if d.cfg.AttachUprobeFunc != nil {
 		for _, p := range spec.Processes {
 			for _, pid := range p.EffectivePIDs() {
-				linkKey := fmt.Sprintf("%d:%d:%d", spec.SessionOrTaskID, p.ProcessID, pid)
-				if _, exists := d.links[linkKey]; exists {
-					continue
-				}
-				lnk, err := d.cfg.AttachUprobeFunc(d.cfg.ProcRoot, pid)
-				if err != nil || lnk == nil {
-					continue
-				}
-				d.links[linkKey] = lnk
+				d.attachPIDLocked(spec.SessionOrTaskID, p.ProcessID, pid)
 			}
 		}
 		return nil
@@ -436,40 +521,7 @@ func (d *DRTUprobeDriver) StartCapture(ctx context.Context, spec CaptureSpec) er
 				continue
 			}
 			for _, pid := range pids {
-				linkKey := fmt.Sprintf("%d:%d:%d", spec.SessionOrTaskID, p.ProcessID, pid)
-				if _, exists := d.links[linkKey]; exists {
-					continue
-				}
-
-				soPath, err := FindMappedLibraryPath(d.cfg.ProcRoot, pid, "libdopra")
-				if err != nil {
-					log.Printf("[DRTUprobe] 跳过挂载: PID=%d (ProcessID=%d) 未找到 libdopra 映射: %v", pid, p.ProcessID, err)
-					continue
-				}
-
-				offsets, err := ResolveDRTSymbolOffsets(soPath)
-				if err != nil || offsets.WriteBulkOffset == 0 {
-					log.Printf("[DRTUprobe] 跳过挂载: PID=%d Lib=%s 解析 DRT_WriteBulk 失败: %v", pid, soPath, err)
-					continue
-				}
-
-				ex, err := link.OpenExecutable(soPath)
-				if err != nil {
-					log.Printf("[DRTUprobe] OpenExecutable(%s) 失败: %v", soPath, err)
-					continue
-				}
-
-				up, err := ex.Uprobe("DRT_WriteBulk", prog, &link.UprobeOptions{
-					Offset: offsets.WriteBulkOffset,
-					PID:    int(pid),
-				})
-				if err != nil {
-					log.Printf("[DRTUprobe] Uprobe(pid=%d) 挂载失败: %v", pid, err)
-					continue
-				}
-
-				d.links[linkKey] = up
-				log.Printf("[DRTUprobe] [✓ Uprobe 动态挂载成功] PID=%d, Lib=%s, Offset=0x%x, SessionID=%d", pid, soPath, offsets.WriteBulkOffset, spec.SessionOrTaskID)
+				d.attachPIDLocked(spec.SessionOrTaskID, p.ProcessID, pid)
 			}
 		}
 	}

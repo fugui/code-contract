@@ -185,6 +185,11 @@ func NewAgentServer(cfg AgentServerConfig) (*AgentServer, error) {
 			}
 			s.buffer.Push(agentproto.MarshalEnvelope(env, eventData))
 		},
+		PIDsChangedSink: func(sessionID uint64, processID uint64, pids []uint32) {
+			if sessionID > 0 && s.drtDriver != nil {
+				_ = s.drtDriver.SyncProcessPIDs(sessionID, processID, pids)
+			}
+		},
 	}
 	s.ebpfMgr = ebpf.NewManager(ebpfConfig)
 
@@ -522,6 +527,34 @@ func (s *AgentServer) handleDiscoverProcesses(w http.ResponseWriter, r *http.Req
 	})
 }
 
+func (s *AgentServer) enrichSpecsWithCSGAddr(specs []agentproto.ProcessMonitorSpec) []agentproto.ProcessMonitorSpec {
+	if len(specs) == 0 {
+		return specs
+	}
+	needDefault := false
+	for _, sp := range specs {
+		if strings.TrimSpace(sp.CSGAddr) == "" {
+			needDefault = true
+			break
+		}
+	}
+	if !needDefault {
+		return specs
+	}
+	defaultCSG := s.resolveEffectiveCSGAddr("")
+	if defaultCSG == "" {
+		return specs
+	}
+	out := make([]agentproto.ProcessMonitorSpec, len(specs))
+	copy(out, specs)
+	for i := range out {
+		if strings.TrimSpace(out[i].CSGAddr) == "" {
+			out[i].CSGAddr = defaultCSG
+		}
+	}
+	return out
+}
+
 func (s *AgentServer) handleSyncMonitors(w http.ResponseWriter, r *http.Request) {
 	var req agentproto.SyncMonitorReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -544,7 +577,8 @@ func (s *AgentServer) handleSyncMonitors(w http.ResponseWriter, r *http.Request)
 	s.activeRefID = req.SessionID
 	s.mu.Unlock()
 
-	diags, err := s.ebpfMgr.SyncMonitors(req.SessionID, req.Processes)
+	enrichedSpecs := s.enrichSpecsWithCSGAddr(req.Processes)
+	diags, err := s.ebpfMgr.SyncMonitors(req.SessionID, enrichedSpecs)
 	if err != nil {
 		log.Printf("[Agent] [❌ 下发监控失败 (HTTP 503)]: %v (SessionID=%d)", err, req.SessionID)
 		http.Error(w, fmt.Sprintf("下发监控失败: %v", err), http.StatusServiceUnavailable)
@@ -620,7 +654,8 @@ func (s *AgentServer) handleArmStandby(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[Agent] [HTTP] 收到待命预挂载请求: Revision=%d, 进程数=%d (RemoteAddr: %s)", req.Revision, len(req.Processes), r.RemoteAddr)
 
-	diags, err := s.ebpfMgr.ArmStandby(req.Processes)
+	enrichedSpecs := s.enrichSpecsWithCSGAddr(req.Processes)
+	diags, err := s.ebpfMgr.ArmStandby(enrichedSpecs)
 	if err != nil {
 		log.Printf("[Agent] [❌ 待命预挂载被拒绝 (HTTP 503)]: %v (进程数=%d)", err, len(req.Processes))
 		w.Header().Set("Content-Type", "application/json")
@@ -753,8 +788,19 @@ func (s *AgentServer) handleExecuteReplay(w http.ResponseWriter, r *http.Request
 	}
 
 	// 1. 拦截检查：若目标进程处于 NEED_RECONNECT 或 WAITING_PROC / NOT_FOUND，直接以 HTTP 409 拦截并卸载本次 CSG 仿真资源
-	pid, err := s.procScanner.FindPIDByPortAndCmd(effectivePort, req.ProcessSpec.CmdPattern)
-	if err != nil || pid == 0 {
+	var pid uint32
+	for _, cand := range req.ProcessSpec.TargetPIDs {
+		if cand > 0 && s.procScanner.PIDExists(cand) {
+			pid = cand
+			break
+		}
+	}
+	if pid == 0 {
+		if pids, findErr := s.procScanner.FindAllPIDsByPortAndCmd(effectivePort, req.ProcessSpec.CmdPattern, req.ProcessSpec.IsPureMesh()); findErr == nil && len(pids) > 0 {
+			pid = pids[0]
+		}
+	}
+	if pid == 0 {
 		s.finishCSGSim(simCtrl, 0)
 		s.replayExec.CloseMockListener()
 		w.Header().Set("Content-Type", "application/json")
@@ -779,7 +825,11 @@ func (s *AgentServer) handleExecuteReplay(w http.ResponseWriter, r *http.Request
 	if _, p, ok := csg.ParseCSGAddr(csgAddr); ok {
 		csgPort = p
 	}
-	estConns, needRec, _ := s.procScanner.DiagnoseEstablishedConns(pid, req.ProcessSpec.Downstreams, effectivePort, proxyPort, csgPort)
+	var estConns int
+	var needRec bool
+	if !req.ProcessSpec.IsPureMesh() || len(req.ProcessSpec.Downstreams) > 0 {
+		estConns, needRec, _ = s.procScanner.DiagnoseEstablishedConns(pid, req.ProcessSpec.Downstreams, effectivePort, proxyPort, csgPort)
+	}
 	if needRec {
 		s.finishCSGSim(simCtrl, 0)
 		s.replayExec.CloseMockListener()

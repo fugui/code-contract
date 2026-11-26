@@ -432,6 +432,7 @@ func ExecuteQuickRecordSaga(
 			ListenPort:  uint16(p.EffectiveListenPort),
 			CmdPattern:  p.EffectiveCmdPattern(),
 			TargetPIDs:  obsPIDs,
+			Transports:  obsTransports,
 			Downstreams: downstreams,
 			CSGAddr:     strings.TrimSpace(in.CSGAddr),
 		})

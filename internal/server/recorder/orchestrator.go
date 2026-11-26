@@ -226,11 +226,16 @@ func (o *Orchestrator) StartSession(
 				if len(targetPIDs) == 0 && len(p.ObservedPIDs) > 0 {
 					_ = json.Unmarshal(p.ObservedPIDs, &targetPIDs)
 				}
+				var obsTransports []string
+				if len(p.ObservedTransports) > 0 {
+					_ = json.Unmarshal(p.ObservedTransports, &obsTransports)
+				}
 				specs = append(specs, agentproto.ProcessMonitorSpec{
 					ProcessID:   p.ID,
 					ListenPort:  uint16(p.EffectiveListenPort),
 					CmdPattern:  p.CmdPattern,
 					TargetPIDs:  targetPIDs,
+					Transports:  obsTransports,
 					Downstreams: downstreams,
 				})
 			}

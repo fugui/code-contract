@@ -5,6 +5,7 @@ import { useToast } from '../../utils/toast';
 import { useModuleUser } from '../../context/ModuleUserContext';
 import * as agentApi from '../../api/agent';
 import type { Agent, Process } from '../../types';
+import { isMeshTransportProcess } from '../../types';
 import { useModulePath } from '../../hooks/useModulePath';
 import { AgentScopeTabs, AgentScopeType } from './AgentScopeTabs';
 import { AgentInstallGuidePane } from './AgentInstallGuidePane';
@@ -337,7 +338,7 @@ export const AgentManagementPage: React.FC<AgentManagementPageProps> = ({
               color: 'var(--color-success)',
               border: '1px solid var(--color-success)',
             }}
-            title="探针就绪且心跳健康 (READY)"
+            title={reason || '探针就绪且心跳健康 (READY)'}
             data-testid="probe-badge-ready"
           >
             🟢 READY
@@ -345,18 +346,25 @@ export const AgentManagementPage: React.FC<AgentManagementPageProps> = ({
         );
       case 'NEED_RECONNECT':
         return (
-          <span
-            className="code-badge"
-            style={{
-              background: 'rgba(234, 179, 8, 0.15)',
-              color: 'var(--color-warning)',
-              border: '1px solid var(--color-warning)',
-            }}
-            title="需重连以截获长连接 (NEED_RECONNECT)"
-            data-testid="probe-badge-need-reconnect"
-          >
-            🟡 NEED_RECONNECT
-          </span>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '2px' }}>
+            <span
+              className="code-badge"
+              style={{
+                background: 'rgba(234, 179, 8, 0.15)',
+                color: 'var(--color-warning)',
+                border: '1px solid var(--color-warning)',
+              }}
+              title={reason || '需重连以截获长连接 (NEED_RECONNECT)'}
+              data-testid="probe-badge-need-reconnect"
+            >
+              🟡 NEED_RECONNECT
+            </span>
+            {reason && (
+              <span className="code-text-xs code-color-muted" style={{ maxWidth: 260 }}>
+                {reason}
+              </span>
+            )}
+          </div>
         );
       case 'WAITING_PROC':
         return (
@@ -367,7 +375,7 @@ export const AgentManagementPage: React.FC<AgentManagementPageProps> = ({
               color: 'var(--color-primary)',
               border: '1px solid var(--color-primary)',
             }}
-            title="等待宿主机目标进程启动 (WAITING_PROC)"
+            title={reason || '等待宿主机目标进程启动 (WAITING_PROC)'}
             data-testid="probe-badge-waiting-proc"
           >
             🔵 WAITING_PROC
@@ -920,7 +928,35 @@ export const AgentManagementPage: React.FC<AgentManagementPageProps> = ({
                             </div>
                           </td>
                           <td className="code-font-mono" style={{ fontWeight: 600 }}>
-                            {effPort === 0 ? '0 (纯客户端)' : `${proc.advertise_ip || '127.0.0.1'}:${effPort}`}
+                            {effPort === 0 ? (
+                              isMeshTransportProcess(proc) ? (
+                                proc.observed_role === 'CLIENT_ONLY' ? (
+                                  'dophi_mesh (客户端)'
+                                ) : (
+                                  'dophi_mesh (内存环)'
+                                )
+                              ) : (
+                                '0 (纯客户端)'
+                              )
+                            ) : (
+                              <>
+                                {`${proc.advertise_ip || '127.0.0.1'}:${effPort}`}
+                                {isMeshTransportProcess(proc) && (
+                                  <span
+                                    className="code-badge"
+                                    style={{
+                                      marginLeft: '6px',
+                                      fontSize: '0.675rem',
+                                      padding: '0 4px',
+                                      background: 'rgba(59, 130, 246, 0.12)',
+                                      color: 'var(--color-primary)',
+                                    }}
+                                  >
+                                    dophi_mesh
+                                  </span>
+                                )}
+                              </>
+                            )}
                           </td>
                           <td>
                             {hasOverride ? (
@@ -967,7 +1003,10 @@ export const AgentManagementPage: React.FC<AgentManagementPageProps> = ({
                             <div className="code-table-actions">
                               {canWriteSelectedAgent ? (
                                 <>
-                                  {(proc.probe_status === 'ERROR' || proc.probe_status === 'CAP_DENIED') && (
+                                  {(proc.probe_status === 'ERROR' ||
+                                    proc.probe_status === 'CAP_DENIED' ||
+                                    proc.probe_status === 'NEED_RECONNECT' ||
+                                    proc.probe_status === 'WAITING_PROC') && (
                                     <button
                                       type="button"
                                       className="code-btn code-btn--primary code-btn--xs"

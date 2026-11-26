@@ -81,6 +81,11 @@ export interface Process {
   probe_status?: ProbeStatus;
   probe_status_reason?: string;
   diag_message?: string;
+  observed_role?: string;
+  observed_transports?: string[];
+  observed_pids?: number[];
+  established_conns?: number;
+  need_reconnect?: boolean;
   module_ids?: string[];
   extra_downstreams?: string[];
   description?: string;
@@ -88,6 +93,16 @@ export interface Process {
   process_modules?: ProcessModuleBinding[];
   created_at?: string;
   updated_at?: string;
+}
+
+/** 判断挂载进程是否观测到 dophi_mesh 共享内存环传输制式 */
+export function isMeshTransportProcess(proc?: Pick<Process, 'observed_transports'> | null): boolean {
+  const list = proc?.observed_transports;
+  if (!Array.isArray(list) || list.length === 0) return false;
+  return list.some((t) => {
+    const norm = String(t || '').trim().toUpperCase();
+    return norm === 'MESH' || norm === 'DOPHI_MESH' || norm === 'MIXED';
+  });
 }
 
 export interface BatchProcessMountItem {

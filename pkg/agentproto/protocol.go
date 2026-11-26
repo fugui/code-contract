@@ -174,8 +174,32 @@ type ProcessMonitorSpec struct {
 	ListenPort  uint16               `json:"listen_port"`           // 唯一监听端口 (A-02)
 	CmdPattern  string               `json:"cmd_pattern"`           // /proc/<pid>/cmdline 匹配表达式
 	TargetPIDs  []uint32             `json:"target_pids,omitempty"` // M31 多实例目标 PID 集合（为空时退化为单 PID 解析）
+	Transports  []string             `json:"transports,omitempty"`  // 观测到的传输制式（如 ["MESH"] / ["TCP"] / ["TCP","MESH"]）
 	Downstreams []DownstreamEndpoint `json:"downstreams"`           // 下游端点清单
 	CSGAddr     string               `json:"csg_addr,omitempty"`    // 可选 CSG 控制面端点 (<ip>:<port>)
+}
+
+// IsPureMeshTransports 判断观测到的传输制式集合是否仅为 dophi_mesh（不含 TCP / MIXED）
+func IsPureMeshTransports(transports []string) bool {
+	hasMesh := false
+	for _, t := range transports {
+		switch strings.ToUpper(strings.TrimSpace(t)) {
+		case "":
+			continue
+		case "TCP", "MIXED":
+			return false
+		case "MESH", "DOPHI_MESH":
+			hasMesh = true
+		default:
+			return false
+		}
+	}
+	return hasMesh
+}
+
+// IsPureMesh 判断当前进程监控规格是否为纯 dophi_mesh 共享内存环进程
+func (s ProcessMonitorSpec) IsPureMesh() bool {
+	return IsPureMeshTransports(s.Transports)
 }
 
 // ProcessDiagStatus 下发监控后的实时定位与存量长连接诊断结果

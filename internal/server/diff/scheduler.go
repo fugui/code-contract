@@ -379,10 +379,20 @@ func (s *ReplayScheduler) buildSessionExecReq(
 
 	downstreams, _ := topology.CompileProcessDownstreams(s.db, targetProc.ID, nil, historyEgressEndpoints)
 	targetProc.FillFromArchProcess()
+	var targetPIDs []uint32
+	if len(targetProc.ObservedPIDs) > 0 {
+		_ = json.Unmarshal(targetProc.ObservedPIDs, &targetPIDs)
+	}
+	var obsTransports []string
+	if len(targetProc.ObservedTransports) > 0 {
+		_ = json.Unmarshal(targetProc.ObservedTransports, &obsTransports)
+	}
 	spec := agentproto.ProcessMonitorSpec{
 		ProcessID:   targetProc.ID,
 		ListenPort:  uint16(targetProc.EffectiveListenPort),
 		CmdPattern:  targetProc.CmdPattern,
+		TargetPIDs:  targetPIDs,
+		Transports:  obsTransports,
 		Downstreams: downstreams,
 		CSGAddr:     strings.TrimSpace(csgAddr),
 	}
@@ -1267,10 +1277,20 @@ func (s *ReplayScheduler) buildSuiteExecReq(
 
 	downstreams, _ := topology.CompileProcessDownstreams(s.db, targetProc.ID, nil, historyEgressEndpoints)
 	targetProc.FillFromArchProcess()
+	var targetPIDs []uint32
+	if len(targetProc.ObservedPIDs) > 0 {
+		_ = json.Unmarshal(targetProc.ObservedPIDs, &targetPIDs)
+	}
+	var obsTransports []string
+	if len(targetProc.ObservedTransports) > 0 {
+		_ = json.Unmarshal(targetProc.ObservedTransports, &obsTransports)
+	}
 	spec := agentproto.ProcessMonitorSpec{
 		ProcessID:   targetProc.ID,
 		ListenPort:  uint16(targetProc.EffectiveListenPort),
 		CmdPattern:  targetProc.CmdPattern,
+		TargetPIDs:  targetPIDs,
+		Transports:  obsTransports,
 		Downstreams: downstreams,
 		CSGAddr:     strings.TrimSpace(csgAddr),
 	}
