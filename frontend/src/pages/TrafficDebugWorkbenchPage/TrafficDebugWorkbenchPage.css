@@ -65,6 +65,7 @@
 
 .code-sequence-drawer-body {
   display: flex;
+  flex-direction: column;
   height: 100%;
   overflow: hidden;
   background-color: var(--color-bg-surface);
@@ -72,22 +73,23 @@
 
 .code-sequence-drawer-body.is-resizing {
   user-select: none;
-  cursor: col-resize;
+  cursor: row-resize;
 }
 
-.code-sequence-drawer-left {
+.code-sequence-drawer-top {
   flex: 1 1 auto;
-  min-width: 0;
-  height: 100%;
+  min-height: 160px;
+  width: 100%;
   overflow: hidden;
   display: flex;
   flex-direction: column;
 }
 
 .code-sequence-resizer {
-  width: 6px;
+  width: 100%;
+  height: 6px;
   flex: 0 0 6px;
-  cursor: col-resize;
+  cursor: row-resize;
   background-color: var(--color-border-primary);
   opacity: 0.45;
   transition: opacity 0.15s ease, background-color 0.15s ease;
@@ -99,14 +101,16 @@
   opacity: 1;
 }
 
-.code-sequence-drawer-right {
+.code-sequence-drawer-bottom {
   flex: 0 0 auto;
-  height: 100%;
+  width: 100%;
+  height: clamp(240px, 48%, 460px);
+  max-height: calc(100% - 160px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
   background-color: var(--color-bg-app);
-  border-left: 1px solid var(--color-border-primary);
+  border-top: 1px solid var(--color-border-primary);
 }
 
 .code-sequence-anatomy-header {
@@ -243,15 +247,20 @@
   font-family: var(--font-family-sans);
 }
 
-/* 泳道抽屉内嵌紧凑型报文解剖覆盖样式 */
+/* 泳道抽屉内嵌紧凑型报文解剖覆盖样式（下方全宽并排展示） */
 .code-sequence-anatomy-compact .code-anatomy-content {
   gap: 0.75rem;
   padding: 0;
 }
 
 .code-sequence-anatomy-compact .code-biz-summary-card {
-  padding: 0.7rem 0.85rem;
-  gap: 0.5rem;
+  padding: 0.6rem 0.9rem;
+  gap: 0.45rem;
+}
+
+.code-sequence-anatomy-compact .code-biz-summary-main {
+  align-items: center;
+  gap: 0.75rem;
 }
 
 .code-sequence-anatomy-compact .code-biz-summary-title-wrap {
@@ -270,8 +279,7 @@
 }
 
 .code-sequence-anatomy-compact .code-biz-compare-container {
-  grid-template-columns: 1fr;
-  gap: 0.65rem;
+  gap: 0.75rem;
 }
 
 .code-sequence-anatomy-compact .code-biz-compare-pane {
@@ -289,7 +297,7 @@
 
 .code-sequence-anatomy-compact .code-biz-pane-body {
   padding: 0.65rem 0.75rem;
-  max-height: 240px;
+  max-height: 260px;
 }
 
 .code-sequence-anatomy-compact .code-payload-empty-box {

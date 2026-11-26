@@ -30,21 +30,22 @@ export const TransactionSequenceDrawer: React.FC<TransactionSequenceDrawerProps>
   const [sequence, setSequence] = useState<TransactionSequenceDTO | null>(null);
   const [selectedStep, setSelectedStep] = useState<SequenceStepDTO | null>(null);
 
-  // 右侧报文解剖面板默认收起，按需展开且支持拖拽调整宽度
+  // 下方报文解剖面板默认收起，按需展开且支持拖拽调整高度
   const [anatomyOpen, setAnatomyOpen] = useState(false);
-  const [anatomyWidth, setAnatomyWidth] = useState(380);
+  const [anatomyHeight, setAnatomyHeight] = useState<number | null>(null);
   const [isResizing, setIsResizing] = useState(false);
   const bodyRef = useRef<HTMLDivElement | null>(null);
 
   // 跨跳缝合视角切换 (EGRESS 客户端视角 vs INGRESS 服务端视角)
   const [stitchPerspective, setStitchPerspective] = useState<'EGRESS' | 'INGRESS'>('EGRESS');
 
-  // 右侧报文解剖状态
+  // 下方报文解剖状态
   const [anatomyLoading, setAnatomyLoading] = useState(false);
   const [anatomyData, setAnatomyData] = useState<PacketAnatomyDrawerDTO | null>(null);
 
   useEffect(() => {
     setAnatomyOpen(false);
+    setAnatomyHeight(null);
     setSelectedStep(null);
     setAnatomyData(null);
 
@@ -109,17 +110,17 @@ export const TransactionSequenceDrawer: React.FC<TransactionSequenceDrawerProps>
     };
   }, [anatomyOpen, selectedStep, stitchPerspective, sessionId]);
 
-  // 拖拽调整右侧报文解剖面板宽度
+  // 拖拽调整下方报文解剖面板高度
   useEffect(() => {
     if (!isResizing) return;
 
     const handleMouseMove = (e: MouseEvent) => {
       if (!bodyRef.current) return;
       const rect = bodyRef.current.getBoundingClientRect();
-      const rawWidth = rect.right - e.clientX;
-      const maxByContainer = Math.max(320, rect.width - 420);
-      const clamped = Math.min(680, maxByContainer, Math.max(320, rawWidth));
-      setAnatomyWidth(clamped);
+      const rawHeight = rect.bottom - e.clientY;
+      const maxByContainer = Math.max(180, rect.height - 160);
+      const clamped = Math.min(maxByContainer, Math.max(180, rawHeight));
+      setAnatomyHeight(clamped);
     };
 
     const handleMouseUp = () => {
@@ -189,8 +190,8 @@ export const TransactionSequenceDrawer: React.FC<TransactionSequenceDrawerProps>
           ref={bodyRef}
           className={`code-sequence-drawer-body ${isResizing ? 'is-resizing' : ''}`}
         >
-          {/* 左栏：SVG 时序泳道画布（默认占满全宽，展开解剖后自适应剩余空间） */}
-          <div className="code-sequence-drawer-left">
+          {/* 上栏：SVG 时序泳道画布（始终 100% 横向全宽，展开下方解剖后自适应剩余高度） */}
+          <div className="code-sequence-drawer-top">
             <SequenceSwimlaneCanvas
               sequence={sequence}
               selectedStepIndex={selectedStep?.step_index}
@@ -208,7 +209,7 @@ export const TransactionSequenceDrawer: React.FC<TransactionSequenceDrawerProps>
             />
           </div>
 
-          {/* 展开态：拖拽分隔条 + 右栏紧凑报文解剖 */}
+          {/* 展开态：水平拖拽分隔条 + 下方全宽紧凑报文解剖 */}
           {anatomyOpen && (
             <>
               <div
@@ -218,12 +219,12 @@ export const TransactionSequenceDrawer: React.FC<TransactionSequenceDrawerProps>
                   setIsResizing(true);
                 }}
                 role="separator"
-                aria-orientation="vertical"
-                title="拖拽调整报文解剖面板宽度"
+                aria-orientation="horizontal"
+                title="拖拽调整报文解剖面板高度"
               />
               <div
-                className="code-sequence-drawer-right"
-                style={{ width: `${anatomyWidth}px` }}
+                className="code-sequence-drawer-bottom"
+                style={anatomyHeight !== null ? { height: `${anatomyHeight}px` } : undefined}
                 data-testid="sequence-anatomy-panel"
               >
                 <div className="code-sequence-anatomy-header">
