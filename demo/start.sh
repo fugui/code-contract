@@ -243,6 +243,13 @@ tmux select-pane -t "$PANE_R_BOT"  -T "右下: client (TUI 交互控制台)"
 # ==============================================================================
 log_info "正在向各窗格分发启动指令..."
 
+if [ "$EUID" -ne 0 ]; then
+    log_warn "检测到当前以非 root (UID=$EUID) 运行，将为 code-contract-agent 使用 sudo 提权以获取 eBPF 内核特权..."
+    AGENT_CMD="sudo ./bin/code-contract-agent --listen=127.0.0.1:9091"
+else
+    AGENT_CMD="./bin/code-contract-agent --listen=127.0.0.1:9091"
+fi
+
 if [ "$USE_CSG" = true ]; then
     # 0. 启动 CSG 控制面与 RPCMonitorService
     tmux send-keys -t "$PANE_R_CSG" "./bin/csgserver --addr=$CSG_ADDR --monitor=$CSG_MON_ADDR" C-m
@@ -254,7 +261,7 @@ if [ "$USE_CSG" = true ]; then
     tmux send-keys -t "$PANE_L_BOT"  "sleep 0.4 && ./bin/backend-payment --addr=127.0.0.1:9005 --channel=WECHAT --csg=$CSG_ADDR" C-m
 
     # 2. 启动数据面 code-contract-agent (:9091) - 自动通过 /proc/net/tcp 与 dlink 发现 CSG 及监控端点
-    tmux send-keys -t "$PANE_R_MID" "sleep 0.6 && ./start-agent.sh --listen=127.0.0.1:9091" C-m
+    tmux send-keys -t "$PANE_R_MID" "sleep 0.6 && $AGENT_CMD" C-m
 
     # 3. 启动订单网关核心 (:9001) - 自动 PUB OrderService 并经 CSG SUB 解析下游
     tmux send-keys -t "$PANE_R_TOP" "sleep 0.8 && ./bin/sut-order --addr=127.0.0.1:9001 --csg=$CSG_ADDR" C-m
@@ -268,7 +275,7 @@ else
     tmux send-keys -t "$PANE_L_MID1" "./bin/backend-inventory --addr=127.0.0.1:9003 --csg=''" C-m
     tmux send-keys -t "$PANE_L_MID2" "./bin/backend-payment --addr=127.0.0.1:9004 --channel=ALIPAY --csg=''" C-m
     tmux send-keys -t "$PANE_L_BOT"  "./bin/backend-payment --addr=127.0.0.1:9005 --channel=WECHAT --csg=''" C-m
-    tmux send-keys -t "$PANE_R_MID" "./start-agent.sh --listen=127.0.0.1:9091" C-m
+    tmux send-keys -t "$PANE_R_MID" "$AGENT_CMD" C-m
     tmux send-keys -t "$PANE_R_TOP" "sleep 0.2 && ./bin/sut-order --addr=127.0.0.1:9001 --csg='' --account-addr=127.0.0.1:9002 --inventory-addr=127.0.0.1:9003 --payment-alipay-addr=127.0.0.1:9004 --payment-wechat-addr=127.0.0.1:9005" C-m
     if [ "$LAUNCH_CLIENT" = true ]; then
         tmux send-keys -t "$PANE_R_BOT" "sleep 0.6 && ./bin/client --csg='' --addr=127.0.0.1:9001" C-m
