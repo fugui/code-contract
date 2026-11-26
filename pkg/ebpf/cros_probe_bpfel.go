@@ -57,10 +57,14 @@ type cros_probeDrtUprobeEvent struct {
 	Pid         uint32
 	DataLen     uint32
 	IsTruncated uint8
-	Pad         [3]uint8
+	ChunkIdx    uint8
+	ChunkCount  uint8
+	Pad         uint8
 	Hdr40       [40]uint8
-	Data        [4096]uint8
-	_           [4]byte
+	OrigLen     uint32
+	ChunkSeq    uint32
+	Tid         uint32
+	Data        [32768]uint8
 }
 
 type cros_probeDsKey struct {

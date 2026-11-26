@@ -89,6 +89,15 @@ func (d *TCPDriver) RemoveTarget(sessionOrTaskID uint64, processID uint64) error
 	return nil
 }
 
+// Reset 幂等重置驱动活跃状态但不永久关闭，支持后续重新 StartCapture
+func (d *TCPDriver) Reset() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	clear(d.active)
+	clear(d.sessionPIDs)
+	return nil
+}
+
 // Close 幂等自洁关闭
 func (d *TCPDriver) Close() error {
 	d.mu.Lock()

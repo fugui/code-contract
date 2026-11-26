@@ -127,7 +127,28 @@ func (r *Registry) RemoveTarget(sessionOrTaskID uint64, processID uint64) error 
 	return firstErr
 }
 
-// CloseAll 幂等关闭所有已注册驱动（五出口自洁核心调用）
+// ResetAll 幂等重置所有已注册驱动（清理活跃状态但不永久关闭，支持 PurgeAll 后继续复用）
+func (r *Registry) ResetAll() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var firstErr error
+	for _, name := range r.ordered {
+		d := r.drivers[name]
+		var err error
+		if rd, ok := d.(ResettableDriver); ok {
+			err = rd.Reset()
+		} else {
+			err = d.Close()
+		}
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// CloseAll 幂等关闭所有已注册驱动（进程退出永久清理）
 func (r *Registry) CloseAll() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

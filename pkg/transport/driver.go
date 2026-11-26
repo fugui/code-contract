@@ -87,3 +87,8 @@ type Driver interface {
 	// Close 释放驱动内部持有的一切句柄与资源（五出口自洁）
 	Close() error
 }
+
+// ResettableDriver 支持可复用自洁重置（不永久关闭驱动）的传输驱动可选接口
+type ResettableDriver interface {
+	Reset() error
+}

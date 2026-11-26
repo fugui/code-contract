@@ -64,7 +64,73 @@ type Orchestrator struct {
 	httpClient    *http.Client
 	timers        sync.Map // sessionID (uint64) -> *time.Timer
 	streamCancels sync.Map // sessionID (uint64) -> context.CancelFunc
+	streamDrains  sync.Map // sessionID (uint64) -> *sessionDrainTracker
+	drainTimeout  time.Duration
 	mu            sync.Mutex
+}
+
+var errSessionDrained = errors.New("agent stream session drained")
+
+type sessionDrainTracker struct {
+	mu        sync.Mutex
+	connected int
+	drained   int
+	waiting   bool
+	doneCh    chan struct{}
+	closed    bool
+}
+
+func newSessionDrainTracker() *sessionDrainTracker {
+	return &sessionDrainTracker{
+		doneCh: make(chan struct{}),
+	}
+}
+
+func (t *sessionDrainTracker) registerStream() (markDone func()) {
+	t.mu.Lock()
+	t.connected++
+	t.mu.Unlock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			t.mu.Lock()
+			t.drained++
+			if t.waiting && t.drained >= t.connected && !t.closed {
+				t.closed = true
+				close(t.doneCh)
+			}
+			t.mu.Unlock()
+		})
+	}
+}
+
+func (t *sessionDrainTracker) wait(ctx context.Context, timeout time.Duration) {
+	t.mu.Lock()
+	if t.connected == 0 || t.drained >= t.connected {
+		t.mu.Unlock()
+		return
+	}
+	t.waiting = true
+	doneCh := t.doneCh
+	t.mu.Unlock()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-doneCh:
+	case <-timer.C:
+	case <-ctx.Done():
+	}
+}
+
+func (o *Orchestrator) getOrCreateDrainTracker(sessionID uint64) *sessionDrainTracker {
+	if val, ok := o.streamDrains.Load(sessionID); ok {
+		return val.(*sessionDrainTracker)
+	}
+	tr := newSessionDrainTracker()
+	actual, _ := o.streamDrains.LoadOrStore(sessionID, tr)
+	return actual.(*sessionDrainTracker)
 }
 
 // NewOrchestrator 构造 Orchestrator
@@ -76,9 +142,10 @@ func NewOrchestrator(db *gorm.DB, assembler *ExchangeAssembler) *Orchestrator {
 		},
 	}
 	return &Orchestrator{
-		db:         db,
-		assembler:  assembler,
-		httpClient: client,
+		db:           db,
+		assembler:    assembler,
+		httpClient:   client,
+		drainTimeout: 2 * time.Second,
 	}
 }
 
@@ -353,14 +420,9 @@ func (o *Orchestrator) StopSession(
 		return nil, ErrSessionAlreadyEnded
 	}
 
-	// 取消定时器与采集流
+	// 先取消自动停录定时器；保持 WebSocket 采集流开启以接收 Agent /stop 排空的尾部帧与 EventSessionDrained
 	if tVal, ok := o.timers.LoadAndDelete(sessionID); ok {
 		tVal.(*time.Timer).Stop()
-	}
-	if cancelVal, ok := o.streamCancels.LoadAndDelete(sessionID); ok {
-		if cancelFn, ok := cancelVal.(context.CancelFunc); ok {
-			cancelFn()
-		}
 	}
 
 	// 1. 解析参与 Agent 列表
@@ -372,9 +434,25 @@ func (o *Orchestrator) StopSession(
 		_ = o.db.WithContext(ctx).Where("id IN ?", agentIDs).Find(&agents).Error
 	}
 
-	// 2. 并发向所有相关 Agent 发送 /stop
+	// 2. 向所有相关 Agent 发送 /stop（触发内核/驱动排空并投递 EventSessionDrained）
 	for _, agt := range agents {
 		o.callAgentStop(ctx, &agt, session.ID)
+	}
+
+	// 2.5 等待所有已连接的 Agent WebSocket 流收到 EventSessionDrained（兜底超时 2s）
+	if trackerVal, ok := o.streamDrains.LoadAndDelete(sessionID); ok {
+		timeout := o.drainTimeout
+		if timeout <= 0 {
+			timeout = 2 * time.Second
+		}
+		trackerVal.(*sessionDrainTracker).wait(ctx, timeout)
+	}
+
+	// 2.6 关闭采集流协程上下文
+	if cancelVal, ok := o.streamCancels.LoadAndDelete(sessionID); ok {
+		if cancelFn, ok := cancelVal.(context.CancelFunc); ok {
+			cancelFn()
+		}
 	}
 
 	// 3. 刷空 ExchangeAssembler 挂起帧
@@ -772,9 +850,9 @@ func (o *Orchestrator) startAgentStream(ctx context.Context, sessionID uint64, a
 			}
 		}
 
-		_ = o.readAgentStream(ctx, sessionID, agt.ID, conn)
+		err = o.readAgentStream(ctx, sessionID, agt.ID, conn)
 		_ = conn.Close()
-		if ctx.Err() != nil {
+		if errors.Is(err, errSessionDrained) || ctx.Err() != nil {
 			return
 		}
 		time.Sleep(500 * time.Millisecond)
@@ -782,6 +860,9 @@ func (o *Orchestrator) startAgentStream(ctx context.Context, sessionID uint64, a
 }
 
 func (o *Orchestrator) readAgentStream(ctx context.Context, sessionID uint64, agentID uint64, conn *websocket.Conn) error {
+	markDone := o.getOrCreateDrainTracker(sessionID).registerStream()
+	defer markDone()
+
 	pingCtx, pingCancel := context.WithCancel(ctx)
 	defer pingCancel()
 
@@ -836,6 +917,8 @@ func (o *Orchestrator) readAgentStream(ctx context.Context, sessionID uint64, ag
 			}
 		case agentproto.EventSessionDrained:
 			log.Printf("[Orchestrator] Agent 会话排空信号: session=%d", sessionID)
+			markDone()
+			return errSessionDrained
 		case agentproto.EventCSGObservation:
 			o.handleCSGObservationPayload(sessionID, payload)
 		}

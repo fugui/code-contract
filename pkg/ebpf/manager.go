@@ -194,7 +194,7 @@ type Manager struct {
 	rwLinks       []link.Link
 	ringbufReader *ringbuf.Reader
 	attached      bool
-	stopChan      chan struct{}
+	watcherStop   chan struct{}
 	sessionID     uint64
 
 	monitoredProcs      map[uint64]*MonitoredProc // processID -> MonitoredProc
@@ -381,7 +381,6 @@ func NewManager(cfg ManagerConfig) *Manager {
 		scanner:             NewProcScanner(cfg.ProcRoot),
 		ingressReader:       reader,
 		monitoredProcs:      make(map[uint64]*MonitoredProc),
-		stopChan:            make(chan struct{}),
 		effectiveCgroupPath: effectiveCgroup,
 		cgroupFSType:        cgroupFS,
 		kernelRelease:       kernelRel,
@@ -930,6 +929,10 @@ func (m *Manager) PurgeAllMonitors() {
 }
 
 func (m *Manager) purgeLocked() {
+	if m.watcherStop != nil {
+		close(m.watcherStop)
+		m.watcherStop = nil
+	}
 	m.detachCaptureTracepointsLocked()
 
 	// 1. 关闭 RingBuf Reader
@@ -1221,7 +1224,9 @@ func (m *Manager) attachLocked() error {
 	m.attached = true
 
 	// 启动后台 2s 巡检协程
-	go m.backgroundProcessWatcher()
+	watcherStop := make(chan struct{})
+	m.watcherStop = watcherStop
+	go m.backgroundProcessWatcher(watcherStop)
 
 	return nil
 }
@@ -1270,13 +1275,13 @@ func (m *Manager) detachCaptureTracepointsLocked() {
 	log.Printf("[eBPF] 停录完成，已卸载 %d 个动态读写 tracepoints，恢复 ARMED 零损耗待命状态", count)
 }
 
-func (m *Manager) backgroundProcessWatcher() {
+func (m *Manager) backgroundProcessWatcher(stopCh <-chan struct{}) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-m.stopChan:
+		case <-stopCh:
 			return
 		case <-ticker.C:
 			m.checkProcessesRestart()

@@ -111,7 +111,9 @@ typedef struct {
 } conn_observe_event;
 
 #define DRT_HEADER_LEN 40
-#define MAX_DRT_CHUNK_SIZE 4096
+#define MAX_DRT_CHUNK_SIZE 32768
+#define MAX_DRT_CHUNKS 8
+#define MAX_DRT_TOTAL_SIZE (MAX_DRT_CHUNK_SIZE * MAX_DRT_CHUNKS)
 
 struct drt_msg_entry {
     __u64 pc_msg;
@@ -127,8 +129,13 @@ typedef struct {
     __u32 pid;
     __u32 data_len;
     __u8  is_truncated;
-    __u8  pad[3];
+    __u8  chunk_idx;
+    __u8  chunk_count;
+    __u8  pad;
     __u8  hdr40[DRT_HEADER_LEN];
+    __u32 orig_len;
+    __u32 chunk_seq;
+    __u32 tid;
     __u8  data[MAX_DRT_CHUNK_SIZE];
 } drt_uprobe_event;
 
@@ -206,7 +213,7 @@ struct {
 
 struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
-    __uint(max_entries, 16 * 1024 * 1024); // 16MB
+    __uint(max_entries, 32 * 1024 * 1024); // 32MB
 } drt_ringbuf SEC(".maps");
 
 struct {
@@ -551,6 +558,7 @@ SEC("uprobe/DRT_WriteBulk")
 int cros_drt_write_bulk(struct pt_regs *ctx) {
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     __u32 pid = (__u32)(pid_tgid >> 32);
+    __u32 tid = (__u32)pid_tgid;
 
     target_proc *tp = bpf_map_lookup_elem(&target_pids_map, &pid);
     if (!tp || tp->session_id == 0) {
@@ -577,34 +585,58 @@ int cros_drt_write_bulk(struct pt_regs *ctx) {
         return 0;
     }
 
-    drt_uprobe_event *evt = bpf_ringbuf_reserve(&drt_ringbuf, sizeof(*evt), 0);
-    if (!evt) {
-        incr_stat(STAT_RINGBUF_DROPS);
-        return 0;
+    __u64 ts_ns = bpf_ktime_get_ns();
+    __u32 total_to_capture = payload_len > MAX_DRT_TOTAL_SIZE ? MAX_DRT_TOTAL_SIZE : payload_len;
+    __u8 is_trunc = payload_len > MAX_DRT_TOTAL_SIZE ? 1 : 0;
+    __u8 chunk_count = (__u8)((total_to_capture + MAX_DRT_CHUNK_SIZE - 1) / MAX_DRT_CHUNK_SIZE);
+
+    #pragma unroll
+    for (int i = 0; i < MAX_DRT_CHUNKS; i++) {
+        __u32 off = (__u32)i * MAX_DRT_CHUNK_SIZE;
+        if (off >= total_to_capture) {
+            break;
+        }
+        __u32 rem = total_to_capture - off;
+        __u32 chunk_len = rem > MAX_DRT_CHUNK_SIZE ? MAX_DRT_CHUNK_SIZE : rem;
+
+        drt_uprobe_event *evt = bpf_ringbuf_reserve(&drt_ringbuf, sizeof(*evt), 0);
+        if (!evt) {
+            incr_stat(STAT_RINGBUF_DROPS);
+            return 0;
+        }
+
+        evt->session_id = tp->session_id;
+        evt->process_id = tp->process_id;
+        evt->timestamp_ns = ts_ns;
+        evt->handle = handle;
+        evt->pid = pid;
+        evt->data_len = chunk_len;
+        evt->is_truncated = is_trunc;
+        evt->chunk_idx = (__u8)i;
+        evt->chunk_count = chunk_count;
+        evt->pad = 0;
+        evt->orig_len = payload_len;
+        evt->chunk_seq = 0;
+        evt->tid = tid;
+
+        if (i == 0 && entries[0].pc_msg != 0 && entries[0].ui_msg_len >= DRT_HEADER_LEN) {
+            bpf_probe_read_user(evt->hdr40, DRT_HEADER_LEN, (void *)entries[0].pc_msg);
+        } else {
+            __builtin_memset(evt->hdr40, 0, DRT_HEADER_LEN);
+        }
+
+        if (chunk_len == MAX_DRT_CHUNK_SIZE) {
+            bpf_probe_read_user(evt->data, MAX_DRT_CHUNK_SIZE, (void *)(payload_ptr + off));
+        } else {
+            __u32 bounded_len = chunk_len & (MAX_DRT_CHUNK_SIZE - 1);
+            if (bounded_len > 0) {
+                bpf_probe_read_user(evt->data, bounded_len, (void *)(payload_ptr + off));
+            }
+        }
+
+        bpf_ringbuf_submit(evt, 0);
     }
 
-    evt->session_id = tp->session_id;
-    evt->process_id = tp->process_id;
-    evt->timestamp_ns = bpf_ktime_get_ns();
-    evt->handle = handle;
-    evt->pid = pid;
-    evt->is_truncated = 0;
-    evt->pad[0] = 0; evt->pad[1] = 0; evt->pad[2] = 0;
-
-    if (entries[0].pc_msg != 0 && entries[0].ui_msg_len >= DRT_HEADER_LEN) {
-        bpf_probe_read_user(evt->hdr40, DRT_HEADER_LEN, (void *)entries[0].pc_msg);
-    } else {
-        __builtin_memset(evt->hdr40, 0, DRT_HEADER_LEN);
-    }
-
-    __u32 chunk_len = payload_len > MAX_DRT_CHUNK_SIZE ? MAX_DRT_CHUNK_SIZE : payload_len;
-    if (payload_len > MAX_DRT_CHUNK_SIZE) {
-        evt->is_truncated = 1;
-    }
-    evt->data_len = chunk_len;
-    bpf_probe_read_user(evt->data, chunk_len, (void *)payload_ptr);
-
-    bpf_ringbuf_submit(evt, 0);
     return 0;
 }
 

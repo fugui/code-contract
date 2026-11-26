@@ -26,6 +26,7 @@ type DRTUprobeConfig struct {
 	PayloadOffset    int                                                  // 业务载荷偏移量 (默认 0: 首 64B 自动锚定 "CSE.TCP")
 	MaxInflight      int                                                  // 在途请求容量上限 (默认 10000)
 	InflightTTL      time.Duration                                        // 在途请求超时清理时间 (默认 30s)
+	StopDrainWait    time.Duration                                        // 停录摘除 uprobe 后等待 RingBuf 排空时间 (默认 50ms，负数为 0)
 	Verbose          bool                                                 // 开启详细头自检与首帧诊断日志（不打印业务 payload）
 	AttachUprobeFunc func(procRoot string, pid uint32) (io.Closer, error) `json:"-"` // 可选测试注入钩子
 }
@@ -52,7 +53,11 @@ type DRTUprobeEvent struct {
 	PID         uint32
 	DataLen     uint32
 	IsTruncated bool
+	ChunkIdx    uint8
+	ChunkCount  uint8
 	Hdr40       [40]byte
+	OrigLen     uint32
+	TID         uint32
 	Data        []byte
 }
 
@@ -66,10 +71,40 @@ type inflightReq struct {
 	dstIP       [4]byte
 	dstPort     uint16
 	connSeq     uint32
+	serviceName string
+	operation   string
 	createdAt   time.Time
 }
 
-const drtWriteBulkSymbol = "DRT_WriteBulk"
+type drtChunkKey struct {
+	sessionID   uint64
+	pid         uint32
+	tid         uint32
+	timestampNs uint64
+	handle      uint64
+}
+
+type drtChunkAssembly struct {
+	chunks      [][]byte
+	received    int
+	totalLen    int
+	chunkCount  uint8
+	origLen     uint32
+	isTruncated bool
+	hdr40       [40]byte
+	createdAt   time.Time
+}
+
+const (
+	drtWriteBulkSymbol      = "DRT_WriteBulk"
+	DRTUprobeEventHeaderLen = 96
+	MaxDRTChunkSize         = 32768
+	MaxDRTChunks            = 8
+	MaxDRTTotalSize         = MaxDRTChunkSize * MaxDRTChunks
+	defaultChunkTTL         = 5 * time.Second
+	maxPendingChunks        = 1024
+	defaultStopDrainWait    = 50 * time.Millisecond
+)
 
 func buildDRTUprobeOptions(fileOffset uint64, pid uint32) *link.UprobeOptions {
 	return &link.UprobeOptions{
@@ -90,7 +125,9 @@ type DRTUprobeDriver struct {
 	attachExecUprobe func(ex *link.Executable, symbol string, opts *link.UprobeOptions) (io.Closer, error)
 	ringbufReader    *ringbuf.Reader
 	readerStop       chan struct{}
-	inflightReqs     map[uint64]*inflightReq
+	inflightReqs     map[uint64][]*inflightReq
+	inflightCount    int
+	pendingChunks    map[drtChunkKey]*drtChunkAssembly
 	seenChannels     map[string]bool
 	errLogCount      int
 	truncLogCount    int
@@ -115,13 +152,19 @@ func NewDRTUprobeDriver(mgr *ebpf.Manager, cfg DRTUprobeConfig) *DRTUprobeDriver
 	if cfg.InflightTTL <= 0 {
 		cfg.InflightTTL = 30 * time.Second
 	}
+	if cfg.StopDrainWait == 0 {
+		cfg.StopDrainWait = defaultStopDrainWait
+	} else if cfg.StopDrainWait < 0 {
+		cfg.StopDrainWait = 0
+	}
 	return &DRTUprobeDriver{
 		mgr:           mgr,
 		cfg:           cfg,
 		activeSpecs:   make(map[uint64]CaptureSpec),
 		links:         make(map[string]io.Closer),
 		lastAttachErr: make(map[string]string),
-		inflightReqs:  make(map[uint64]*inflightReq),
+		inflightReqs:  make(map[uint64][]*inflightReq),
+		pendingChunks: make(map[drtChunkKey]*drtChunkAssembly),
 		seenChannels:  make(map[string]bool),
 	}
 }
@@ -191,10 +234,10 @@ func ExtractCROSPacket(raw []byte, configuredOffset int) ([]byte, int) {
 	return raw, 0
 }
 
-// ParseDRTUprobeEvent 从内核 RingBuf 原始字节流反序列化 DRTUprobeEvent
+// ParseDRTUprobeEvent 从内核 RingBuf 原始字节流反序列化 DRTUprobeEvent (96B 定长头 + 载荷切片)
 func ParseDRTUprobeEvent(raw []byte) (DRTUprobeEvent, error) {
-	if len(raw) < 84 {
-		return DRTUprobeEvent{}, errors.New("drt uprobe event buffer too short (must be >= 84 bytes)")
+	if len(raw) < DRTUprobeEventHeaderLen {
+		return DRTUprobeEvent{}, fmt.Errorf("drt uprobe event buffer too short (must be >= %d bytes)", DRTUprobeEventHeaderLen)
 	}
 
 	var evt DRTUprobeEvent
@@ -205,20 +248,165 @@ func ParseDRTUprobeEvent(raw []byte) (DRTUprobeEvent, error) {
 	evt.PID = binary.LittleEndian.Uint32(raw[32:36])
 	evt.DataLen = binary.LittleEndian.Uint32(raw[36:40])
 	evt.IsTruncated = raw[40] != 0
+	evt.ChunkIdx = raw[41]
+	evt.ChunkCount = raw[42]
 	copy(evt.Hdr40[:], raw[44:84])
+	evt.OrigLen = binary.LittleEndian.Uint32(raw[84:88])
+	evt.TID = binary.LittleEndian.Uint32(raw[92:96])
 
 	payloadLen := int(evt.DataLen)
-	if len(raw) >= 84+payloadLen {
-		evt.Data = raw[84 : 84+payloadLen]
-	} else if len(raw) > 84 {
-		evt.Data = raw[84:]
+	if len(raw) >= DRTUprobeEventHeaderLen+payloadLen {
+		evt.Data = raw[DRTUprobeEventHeaderLen : DRTUprobeEventHeaderLen+payloadLen]
+	} else if len(raw) > DRTUprobeEventHeaderLen {
+		evt.Data = raw[DRTUprobeEventHeaderLen:]
 	}
 
 	return evt, nil
 }
 
-// ProcessEvent 处理单条 DRT Uprobe 事件，执行双向相关性归一化与 56B 信封封装推送
+func (d *DRTUprobeDriver) evictPendingChunksLocked(now time.Time) {
+	for k, asm := range d.pendingChunks {
+		if now.Sub(asm.createdAt) > defaultChunkTTL {
+			delete(d.pendingChunks, k)
+			d.statDropped.Add(1)
+		}
+	}
+}
+
+func (d *DRTUprobeDriver) evictOldestPendingChunkLocked() {
+	var oldestKey drtChunkKey
+	var oldestTime time.Time
+	first := true
+	for k, asm := range d.pendingChunks {
+		if first || asm.createdAt.Before(oldestTime) {
+			oldestTime = asm.createdAt
+			oldestKey = k
+			first = false
+		}
+	}
+	if !first {
+		delete(d.pendingChunks, oldestKey)
+		d.statDropped.Add(1)
+	}
+}
+
+func (d *DRTUprobeDriver) reassembleChunkLocked(evt DRTUprobeEvent, now time.Time) (DRTUprobeEvent, bool, error) {
+	if evt.ChunkCount <= 1 {
+		return evt, true, nil
+	}
+	if evt.ChunkCount > MaxDRTChunks || evt.ChunkIdx >= evt.ChunkCount {
+		d.statDropped.Add(1)
+		return DRTUprobeEvent{}, false, fmt.Errorf("invalid drt chunk metadata: chunk_idx=%d chunk_count=%d", evt.ChunkIdx, evt.ChunkCount)
+	}
+
+	d.evictPendingChunksLocked(now)
+
+	key := drtChunkKey{
+		sessionID:   evt.SessionID,
+		pid:         evt.PID,
+		tid:         evt.TID,
+		timestampNs: evt.TimestampNs,
+		handle:      evt.Handle,
+	}
+
+	asm, exists := d.pendingChunks[key]
+	if !exists {
+		if len(d.pendingChunks) >= maxPendingChunks {
+			d.evictOldestPendingChunkLocked()
+		}
+		asm = &drtChunkAssembly{
+			chunks:      make([][]byte, evt.ChunkCount),
+			chunkCount:  evt.ChunkCount,
+			origLen:     evt.OrigLen,
+			isTruncated: evt.IsTruncated,
+			createdAt:   now,
+		}
+		d.pendingChunks[key] = asm
+	} else if asm.chunkCount != evt.ChunkCount {
+		delete(d.pendingChunks, key)
+		d.statDropped.Add(1)
+		return DRTUprobeEvent{}, false, fmt.Errorf("mismatched drt chunk_count: got %d expected %d", evt.ChunkCount, asm.chunkCount)
+	}
+
+	if evt.ChunkIdx == 0 {
+		asm.hdr40 = evt.Hdr40
+	}
+	if evt.OrigLen > 0 {
+		asm.origLen = evt.OrigLen
+	}
+	if evt.IsTruncated {
+		asm.isTruncated = true
+	}
+
+	if asm.chunks[evt.ChunkIdx] == nil {
+		cp := make([]byte, len(evt.Data))
+		copy(cp, evt.Data)
+		asm.chunks[evt.ChunkIdx] = cp
+		asm.received++
+		asm.totalLen += len(cp)
+	}
+
+	if asm.received < int(asm.chunkCount) {
+		return DRTUprobeEvent{}, false, nil
+	}
+
+	delete(d.pendingChunks, key)
+	fullData := make([]byte, 0, asm.totalLen)
+	for _, part := range asm.chunks {
+		fullData = append(fullData, part...)
+	}
+
+	out := evt
+	out.ChunkIdx = 0
+	out.ChunkCount = 1
+	out.DataLen = uint32(len(fullData))
+	out.OrigLen = asm.origLen
+	out.IsTruncated = asm.isTruncated
+	out.Hdr40 = asm.hdr40
+	out.Data = fullData
+	return out, true, nil
+}
+
+func findMatchingInflight(bucket []*inflightReq, pid uint32, svcName, opName string) (int, *inflightReq) {
+	if len(bucket) == 0 {
+		return -1, nil
+	}
+	if svcName != "" {
+		// 1. 优先精确匹配服务/方法且来自对端进程 (排除同进程冲突)
+		for i, req := range bucket {
+			if req.serviceName == svcName && req.operation == opName && req.capturedPID != pid {
+				return i, req
+			}
+		}
+		// 2. 同进程自调：精确匹配服务/方法
+		for i, req := range bucket {
+			if req.serviceName == svcName && req.operation == opName {
+				return i, req
+			}
+		}
+	}
+	// 3. 向后兼容：若任一方缺少服务/方法头（如极简测试帧），按 FIFO 匹配首条无冲突记录
+	for i, req := range bucket {
+		if svcName == "" || req.serviceName == "" {
+			return i, req
+		}
+	}
+	return -1, nil
+}
+
+// ProcessEvent 处理单条 DRT Uprobe 事件，执行多分片重组、双向相关性归一化与 56B 信封封装推送
 func (d *DRTUprobeDriver) ProcessEvent(evt DRTUprobeEvent, sink FrameSink) error {
+	now := time.Now()
+	if evt.ChunkCount > 1 {
+		d.mu.Lock()
+		reassembled, ready, err := d.reassembleChunkLocked(evt, now)
+		d.mu.Unlock()
+		if err != nil || !ready {
+			return err
+		}
+		evt = reassembled
+	}
+
 	d.statRawEvents.Add(1)
 
 	crosPkt, payloadOff := ExtractCROSPacket(evt.Data, d.cfg.PayloadOffset)
@@ -238,6 +426,22 @@ func (d *DRTUprobeDriver) ProcessEvent(evt DRTUprobeEvent, sink FrameSink) error
 		return parseErr
 	}
 
+	// 尽力提取 ServiceName / Operation 与 Oneway 标记，避免多进程 SNO 冲突误配对
+	var svcName, opName string
+	isOneway := false
+	if parsed, pErr := crosrpc.ParsePacket(crosPkt); pErr == nil && parsed != nil {
+		if parsed.Req != nil {
+			svcName = parsed.Req.ServiceName
+			opName = parsed.Req.Operation
+			if parsed.Req.ReqType == crosrpc.ReqTypeOneway {
+				isOneway = true
+			}
+		} else if parsed.Rsp != nil {
+			svcName = parsed.Rsp.ServiceName
+			opName = parsed.Rsp.Operation
+		}
+	}
+
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -249,8 +453,12 @@ func (d *DRTUprobeDriver) ProcessEvent(evt DRTUprobeEvent, sink FrameSink) error
 		}
 		if d.truncLogCount < truncLimit {
 			d.truncLogCount++
-			log.Printf("[DRTUprobe][Truncated] PID=%d handle=0x%x dataLen=%d (>4096B 已截断, proto=%d msgType=%d sno=%d)",
-				evt.PID, evt.Handle, evt.DataLen, comm.TransportProto, comm.MsgType, comm.SNO)
+			origLen := evt.OrigLen
+			if origLen == 0 {
+				origLen = evt.DataLen
+			}
+			log.Printf("[DRTUprobe][Truncated] PID=%d handle=0x%x origLen=%d capturedLen=%d (>%dB 已截断, proto=%d msgType=%d sno=%d)",
+				evt.PID, evt.Handle, origLen, evt.DataLen, MaxDRTTotalSize, comm.TransportProto, comm.MsgType, comm.SNO)
 		}
 	}
 
@@ -258,12 +466,11 @@ func (d *DRTUprobeDriver) ProcessEvent(evt DRTUprobeEvent, sink FrameSink) error
 		chanKey := fmt.Sprintf("%d:%d", evt.PID, evt.Handle)
 		if !d.seenChannels[chanKey] {
 			d.seenChannels[chanKey] = true
-			log.Printf("[DRTUprobe][FirstFrame] PID=%d handle=0x%x dataLen=%d payloadOff=%d proto=%d msgType=%d sno=%d truncated=%v hdr40[:16]=%x",
-				evt.PID, evt.Handle, evt.DataLen, payloadOff, comm.TransportProto, comm.MsgType, comm.SNO, evt.IsTruncated, evt.Hdr40[:16])
+			log.Printf("[DRTUprobe][FirstFrame] PID=%d handle=0x%x dataLen=%d origLen=%d chunks=%d payloadOff=%d proto=%d msgType=%d sno=%d truncated=%v hdr40[:16]=%x",
+				evt.PID, evt.Handle, evt.DataLen, evt.OrigLen, evt.ChunkCount, payloadOff, comm.TransportProto, comm.MsgType, comm.SNO, evt.IsTruncated, evt.Hdr40[:16])
 		}
 	}
 
-	now := time.Now()
 	d.evictExpiredInflightLocked(now)
 
 	env := agentproto.EnvelopeHeader{
@@ -290,25 +497,31 @@ func (d *DRTUprobeDriver) ProcessEvent(evt DRTUprobeEvent, sink FrameSink) error
 	case comm.MsgType == crosrpc.MsgTypeReq:
 		frameKind = "REQ"
 		env.Direction = agentproto.DirectionEgress
-		item := &inflightReq{
-			sessionID:   evt.SessionID,
-			processID:   evt.ProcessID,
-			capturedPID: evt.PID,
-			direction:   agentproto.DirectionEgress,
-			srcIP:       env.SrcIPv4,
-			srcPort:     env.SrcPort,
-			dstIP:       env.DstIPv4,
-			dstPort:     env.DstPort,
-			connSeq:     env.ConnSeq,
-			createdAt:   now,
+		if !isOneway {
+			item := &inflightReq{
+				sessionID:   evt.SessionID,
+				processID:   evt.ProcessID,
+				capturedPID: evt.PID,
+				direction:   agentproto.DirectionEgress,
+				srcIP:       env.SrcIPv4,
+				srcPort:     env.SrcPort,
+				dstIP:       env.DstIPv4,
+				dstPort:     env.DstPort,
+				connSeq:     env.ConnSeq,
+				serviceName: svcName,
+				operation:   opName,
+				createdAt:   now,
+			}
+			for d.inflightCount >= d.cfg.MaxInflight {
+				d.evictOldestInflightLocked()
+			}
+			d.inflightReqs[comm.SNO] = append(d.inflightReqs[comm.SNO], item)
+			d.inflightCount++
 		}
-		if len(d.inflightReqs) >= d.cfg.MaxInflight {
-			d.evictOldestInflightLocked()
-		}
-		d.inflightReqs[comm.SNO] = item
 
 	case comm.MsgType == crosrpc.MsgTypeRsp || comm.MsgType == crosrpc.MsgTypeRspSeg:
-		if req, ok := d.inflightReqs[comm.SNO]; ok {
+		bucket := d.inflightReqs[comm.SNO]
+		if idx, req := findMatchingInflight(bucket, evt.PID, svcName, opName); req != nil {
 			frameKind = "RSP_PAIRED"
 			// ADR-11 投影归一化：将应答帧投影到对应的请求四元组与 ProcessID，保证 ExchangeAssembler 配对
 			env.ProcessID = req.processID
@@ -321,7 +534,14 @@ func (d *DRTUprobeDriver) ProcessEvent(evt DRTUprobeEvent, sink FrameSink) error
 			env.ConnSeq = req.connSeq
 
 			if comm.MsgType == crosrpc.MsgTypeRsp {
-				delete(d.inflightReqs, comm.SNO)
+				if len(bucket) <= 1 {
+					delete(d.inflightReqs, comm.SNO)
+				} else {
+					d.inflightReqs[comm.SNO] = append(bucket[:idx], bucket[idx+1:]...)
+				}
+				if d.inflightCount > 0 {
+					d.inflightCount--
+				}
 			}
 		} else {
 			frameKind = "RSP_ORPHAN"
@@ -377,26 +597,51 @@ func (d *DRTUprobeDriver) logHeaderError(evt DRTUprobeEvent, payloadOff int, err
 
 func (d *DRTUprobeDriver) evictExpiredInflightLocked(now time.Time) {
 	ttl := d.cfg.InflightTTL
-	for sno, item := range d.inflightReqs {
-		if now.Sub(item.createdAt) > ttl {
+	for sno, bucket := range d.inflightReqs {
+		kept := bucket[:0]
+		for _, item := range bucket {
+			if now.Sub(item.createdAt) > ttl {
+				if d.inflightCount > 0 {
+					d.inflightCount--
+				}
+				continue
+			}
+			kept = append(kept, item)
+		}
+		if len(kept) == 0 {
 			delete(d.inflightReqs, sno)
+		} else {
+			d.inflightReqs[sno] = kept
 		}
 	}
 }
 
 func (d *DRTUprobeDriver) evictOldestInflightLocked() {
 	var oldestSNO uint64
+	var oldestIdx int
 	var oldestTime time.Time
 	first := true
-	for sno, item := range d.inflightReqs {
-		if first || item.createdAt.Before(oldestTime) {
-			oldestTime = item.createdAt
-			oldestSNO = sno
-			first = false
+	for sno, bucket := range d.inflightReqs {
+		for idx, item := range bucket {
+			if first || item.createdAt.Before(oldestTime) {
+				oldestTime = item.createdAt
+				oldestSNO = sno
+				oldestIdx = idx
+				first = false
+			}
 		}
 	}
-	if !first {
+	if first {
+		return
+	}
+	bucket := d.inflightReqs[oldestSNO]
+	if len(bucket) <= 1 {
 		delete(d.inflightReqs, oldestSNO)
+	} else {
+		d.inflightReqs[oldestSNO] = append(bucket[:oldestIdx], bucket[oldestIdx+1:]...)
+	}
+	if d.inflightCount > 0 {
+		d.inflightCount--
 	}
 }
 
@@ -497,6 +742,7 @@ func (d *DRTUprobeDriver) SyncProcessPIDs(sessionOrTaskID uint64, processID uint
 			if _, keep := desired[k]; !keep {
 				_ = l.Close()
 				delete(d.links, k)
+				log.Printf("[DRTUprobe] [Detach] 动态对账摘除旧 PID uprobe: key=%s, remainingLinks=%d", k, len(d.links))
 			}
 		}
 	}
@@ -626,18 +872,16 @@ func (d *DRTUprobeDriver) consumeRingbuf(rb *ringbuf.Reader, stopCh chan struct{
 	}
 }
 
-// StopCapture 停止指定会话采集，幂等卸载对应 uprobe 链接
+// StopCapture 停止指定会话采集，先摘除 uprobe 链接、短暂排空 RingBuf 在途事件后再关闭消费器
 func (d *DRTUprobeDriver) StopCapture(ctx context.Context, sessionOrTaskID uint64) error {
 	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	delete(d.activeSpecs, sessionOrTaskID)
-
 	prefix := fmt.Sprintf("%d:", sessionOrTaskID)
+	detached := 0
 	for k, l := range d.links {
 		if len(k) >= len(prefix) && k[:len(prefix)] == prefix {
 			_ = l.Close()
 			delete(d.links, k)
+			detached++
 		}
 	}
 	for k := range d.lastAttachErr {
@@ -645,6 +889,28 @@ func (d *DRTUprobeDriver) StopCapture(ctx context.Context, sessionOrTaskID uint6
 			delete(d.lastAttachErr, k)
 		}
 	}
+	if detached > 0 {
+		log.Printf("[DRTUprobe] [✓ 停录卸载完成] SessionID=%d, 已摘除 %d 个 uprobe 链接, remainingLinks=%d", sessionOrTaskID, detached, len(d.links))
+	}
+
+	needDrain := d.ringbufReader != nil && d.cfg.StopDrainWait > 0
+	drainWait := d.cfg.StopDrainWait
+	d.mu.Unlock()
+
+	// 在释放 uprobe 后短暂等待 consumeRingbuf 将 drt_ringbuf 在途尾部事件推入 sink
+	if needDrain {
+		timer := time.NewTimer(drainWait)
+		select {
+		case <-ctx.Done():
+		case <-timer.C:
+		}
+		timer.Stop()
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	delete(d.activeSpecs, sessionOrTaskID)
 
 	if len(d.activeSpecs) == 0 {
 		if d.ringbufReader != nil {
@@ -656,6 +922,8 @@ func (d *DRTUprobeDriver) StopCapture(ctx context.Context, sessionOrTaskID uint6
 			d.ringbufReader = nil
 		}
 		clear(d.inflightReqs)
+		d.inflightCount = 0
+		clear(d.pendingChunks)
 		clear(d.seenChannels)
 		clear(d.lastAttachErr)
 		d.errLogCount = 0
@@ -671,10 +939,12 @@ func (d *DRTUprobeDriver) RemoveTarget(sessionOrTaskID uint64, processID uint64)
 	defer d.mu.Unlock()
 
 	prefix := fmt.Sprintf("%d:%d:", sessionOrTaskID, processID)
+	detached := 0
 	for k, l := range d.links {
 		if len(k) >= len(prefix) && k[:len(prefix)] == prefix {
 			_ = l.Close()
 			delete(d.links, k)
+			detached++
 		}
 	}
 	for k := range d.lastAttachErr {
@@ -682,15 +952,16 @@ func (d *DRTUprobeDriver) RemoveTarget(sessionOrTaskID uint64, processID uint64)
 			delete(d.lastAttachErr, k)
 		}
 	}
+	if detached > 0 {
+		log.Printf("[DRTUprobe] [Detach] 移除目标进程 uprobe: SessionID=%d, ProcessID=%d, detached=%d, remainingLinks=%d", sessionOrTaskID, processID, detached, len(d.links))
+	}
 	return nil
 }
 
-// Close 五出口幂等卸载：清理全部探针链接与环形缓冲 reader
-func (d *DRTUprobeDriver) Close() error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	d.closed = true
+func (d *DRTUprobeDriver) cleanupLocked(markClosed bool) {
+	if markClosed {
+		d.closed = true
+	}
 
 	for k, l := range d.links {
 		_ = l.Close()
@@ -708,10 +979,27 @@ func (d *DRTUprobeDriver) Close() error {
 
 	clear(d.activeSpecs)
 	clear(d.inflightReqs)
+	d.inflightCount = 0
+	clear(d.pendingChunks)
 	clear(d.seenChannels)
 	clear(d.lastAttachErr)
 	d.errLogCount = 0
 	d.truncLogCount = 0
+}
+
+// Reset 幂等自洁重置：卸载全部链接与 RingBuf reader，但不永久置 closed=true，支持后续录制复用
+func (d *DRTUprobeDriver) Reset() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.cleanupLocked(false)
+	return nil
+}
+
+// Close 五出口幂等卸载：永久关闭驱动并清理全部探针链接与环形缓冲 reader
+func (d *DRTUprobeDriver) Close() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.cleanupLocked(true)
 	return nil
 }
 

@@ -306,6 +306,9 @@ func (s *AgentServer) Shutdown(ctx context.Context) error {
 	s.mu.Unlock()
 
 	s.PurgeAll()
+	if s.transportRegistry != nil {
+		_ = s.transportRegistry.CloseAll()
+	}
 	s.buffer.Close()
 
 	if s.httpServer != nil {
@@ -314,14 +317,14 @@ func (s *AgentServer) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-// PurgeAll 清空所有监控、取消重放、卸载 CSG 仿真桩并释放本地排他租约
+// PurgeAll 清空所有监控、取消重放、卸载 CSG 仿真桩并释放本地排他租约（重置传输驱动保持可复用，并清空 armedDigest 以便主控心跳自动重布防）
 func (s *AgentServer) PurgeAll() {
 	s.mu.Lock()
 	if s.ebpfMgr != nil {
 		s.ebpfMgr.PurgeAllMonitors()
 	}
 	if s.transportRegistry != nil {
-		_ = s.transportRegistry.CloseAll()
+		_ = s.transportRegistry.ResetAll()
 	}
 	if s.replayExec != nil && s.activeRefID > 0 {
 		s.replayExec.Cancel(s.activeRefID)
@@ -331,10 +334,45 @@ func (s *AgentServer) PurgeAll() {
 	s.activeLeaseType = ""
 	s.activeRefID = 0
 	s.activeDone = nil
+	s.armedRevision = 0
+	s.armedDigest = ""
+	s.armedProcesses = nil
+	s.latestDiags = nil
 	s.buffer.Reset()
 	s.mu.Unlock()
 
 	s.finishCSGSim(sim, 0)
+}
+
+// releaseStaleLease 平滑释放本地残留租约并停止采集/重放，保留常驻 ARMED 待命态与传输驱动就绪状态
+func (s *AgentServer) releaseStaleLease() {
+	s.mu.Lock()
+	leaseType := s.activeLeaseType
+	refID := s.activeRefID
+	sim := s.activeCSGSim
+	s.activeLeaseType = ""
+	s.activeRefID = 0
+	s.activeCSGSim = nil
+	s.activeDone = nil
+	s.mu.Unlock()
+
+	switch leaseType {
+	case "RECORDING":
+		if s.ebpfMgr != nil {
+			s.ebpfMgr.StopCapture()
+		}
+		if s.transportRegistry != nil {
+			_ = s.transportRegistry.StopCapture(context.Background(), refID)
+		}
+	case "REPLAY":
+		if s.replayExec != nil && refID > 0 {
+			s.replayExec.Cancel(refID)
+		}
+		if s.ebpfMgr != nil {
+			s.ebpfMgr.ResetPassthrough()
+		}
+		s.finishCSGSim(sim, refID)
+	}
 }
 
 // IP 白名单中间件 (严格忽略可被伪造的 X-Forwarded-For，仅取 TCP RemoteAddr)
@@ -452,17 +490,23 @@ func (s *AgentServer) handleHandshake(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.mu.Lock()
-	// 若主控判定租约已过期清空 (expectedType == "" 或 "NONE")，而 Agent 仍持有租约，立即触发自洁
+	// 租约双向对账：
+	// 1. 主控已无租约而 Agent 仍持有残留租约 -> 平滑释放残留任务，保留 ARMED 待命态
+	// 2. 停录/重放刚结束的竞态窗口：主控仍期望租约但 Agent 已空闲 -> 绝不触发 PurgeAll，等待主控释放 DB 租约
+	// 3. 双方均持有租约但不一致 -> 平滑释放 Agent 本地脏租约
 	if (expectedType == "" || expectedType == "NONE") && s.activeLeaseType != "" {
-		s.logf("[Agent] [Handshake] 租约对账触发自洁: expected=(%q,%d) actual=(%s,%d)", expectedType, expectedRef, s.activeLeaseType, s.activeRefID)
+		s.logf("[Agent] [Handshake] 租约对账发现残留任务，执行平滑释放 (保留 ARMED 待命): expected=(%q,%d) actual=(%s,%d)", expectedType, expectedRef, s.activeLeaseType, s.activeRefID)
 		s.mu.Unlock()
-		s.PurgeAll()
+		s.releaseStaleLease()
 		s.mu.Lock()
-	} else if expectedType != "" && (expectedType != s.activeLeaseType || expectedRef != s.activeRefID) {
-		// 租约失调自愈
-		s.logf("[Agent] [Handshake] 租约失调触发自洁: expected=(%q,%d) actual=(%s,%d)", expectedType, expectedRef, s.activeLeaseType, s.activeRefID)
+	} else if expectedType != "" && expectedType != "NONE" && s.activeLeaseType == "" {
+		if s.cfg.Verbose {
+			s.logf("[Agent] [Handshake] 主控期望租约 (%s,%d)，本机已空闲，等待主控同步释放 (保留 ARMED 状态)", expectedType, expectedRef)
+		}
+	} else if expectedType != "" && expectedType != "NONE" && (expectedType != s.activeLeaseType || expectedRef != s.activeRefID) {
+		s.logf("[Agent] [Handshake] 租约失调触发平滑释放 (保留 ARMED 待命): expected=(%q,%d) actual=(%s,%d)", expectedType, expectedRef, s.activeLeaseType, s.activeRefID)
 		s.mu.Unlock()
-		s.PurgeAll()
+		s.releaseStaleLease()
 		s.mu.Lock()
 	}
 
@@ -471,6 +515,8 @@ func (s *AgentServer) handleHandshake(w http.ResponseWriter, r *http.Request) {
 
 	armedDigest := s.armedDigest
 	armedCount := len(s.armedProcesses)
+	activeLeaseType := s.activeLeaseType
+	activeRefID := s.activeRefID
 	s.mu.Unlock()
 
 	csgEps := s.locateCSGEndpoints()
@@ -488,8 +534,8 @@ func (s *AgentServer) handleHandshake(w http.ResponseWriter, r *http.Request) {
 		KernelVersion:     "Linux",
 		HasEbpfCap:        hasCaps,
 		CapDetail:         capDetail,
-		ActiveLeaseType:   s.activeLeaseType,
-		ActiveRefID:       s.activeRefID,
+		ActiveLeaseType:   activeLeaseType,
+		ActiveRefID:       activeRefID,
 		UptimeSec:         uptime,
 		ArmedProcessCount: armedCount,
 		ArmedDigest:       armedDigest,
@@ -724,33 +770,44 @@ func (s *AgentServer) handleRemoveProcessMonitor(w http.ResponseWriter, r *http.
 
 func (s *AgentServer) handleStopMonitor(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	log.Printf("[Agent] [HTTP] 收到停录请求: ActiveSessionID=%d (RemoteAddr: %s)", s.activeRefID, r.RemoteAddr)
-
-	_, dropped, total := s.buffer.Stats()
-	bypassed, _, _ := s.ebpfMgr.GetStats()
-
-	// 发送 EVENT_SESSION_DRAINED 终结信号
-	drainedEnv := agentproto.EnvelopeHeader{
-		Magic:           agentproto.EnvelopeMagic,
-		ProtoVer:        agentproto.EnvelopeProtoVer,
-		EventType:       agentproto.EventSessionDrained,
-		SessionOrTaskID: s.activeRefID,
-		CapturedAtNs:    time.Now().UnixNano(),
-	}
-	s.buffer.Push(agentproto.MarshalEnvelope(drainedEnv, nil))
-
-	// 平滑停止录制：排空在途数据并解绑大流量 Tracepoint，但保留长连接与待命状态 (停录不断连)
-	s.ebpfMgr.StopCapture()
 	oldRefID := s.activeRefID
-	s.activeLeaseType = ""
-	s.activeRefID = 0
+	if oldRefID == 0 {
+		if sidStr := r.PathValue("sessionId"); sidStr != "" {
+			oldRefID, _ = strconv.ParseUint(sidStr, 10, 64)
+		}
+	}
+	log.Printf("[Agent] [HTTP] 收到停录请求: ActiveSessionID=%d (RemoteAddr: %s)", oldRefID, r.RemoteAddr)
+	s.mu.Unlock()
 
+	// 1. 先平滑停止录制并排空在途 TCP 与 Mesh RingBuf 数据，期间暂保留租约防止并发心跳误判
+	if s.ebpfMgr != nil {
+		s.ebpfMgr.StopCapture()
+	}
 	if s.transportRegistry != nil {
 		_ = s.transportRegistry.StopCapture(r.Context(), oldRefID)
 	}
 
+	// 2. 全部尾部帧入队后，释放本地租约并投递 EVENT_SESSION_DRAINED 终结哨兵帧
+	s.mu.Lock()
+	if s.activeLeaseType == "RECORDING" && (s.activeRefID == oldRefID || oldRefID == 0) {
+		s.activeLeaseType = ""
+		s.activeRefID = 0
+	}
+	drainedEnv := agentproto.EnvelopeHeader{
+		Magic:           agentproto.EnvelopeMagic,
+		ProtoVer:        agentproto.EnvelopeProtoVer,
+		EventType:       agentproto.EventSessionDrained,
+		SessionOrTaskID: oldRefID,
+		CapturedAtNs:    time.Now().UnixNano(),
+	}
+	s.buffer.Push(agentproto.MarshalEnvelope(drainedEnv, nil))
+	s.mu.Unlock()
+
+	_, dropped, total := s.buffer.Stats()
+	var bypassed int64
+	if s.ebpfMgr != nil {
+		bypassed, _, _ = s.ebpfMgr.GetStats()
+	}
 	finalSnap := s.captureStatsSnapshot()
 	s.logf("[Agent] [✓ 停录完成]: SessionID=%d, 捕获总帧数=%d, 丢帧=%d, TCP-In=%d, TCP-Out=%d(dlink=%d), Mesh=%d(截断=%d,丢弃=%d), WS已发=%d, 恢复 ARMED 待命状态",
 		oldRefID, total, dropped, finalSnap.ingress.CapturedFrames, finalSnap.egress.CapturedFrames, finalSnap.egress.DlinkEvents,

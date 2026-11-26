@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"go/parser"
 	"go/token"
@@ -16,6 +17,8 @@ import (
 	"time"
 
 	"code-contract/pkg/agentproto"
+	"code-contract/pkg/crosrpc"
+	"code-contract/pkg/transport"
 )
 
 // TestAgentZeroSchemaAndZeroDBDeps 静态架构断言: 数据面零 gorm、零 dynamicpb/protoregistry、零 os/exec
@@ -401,5 +404,159 @@ func TestAgentServer_PureMeshReplaySkipsUnrelatedTCPNeedReconnectAndKeepsExplici
 	mux.ServeHTTP(rec2, req2)
 	if rec2.Code != http.StatusConflict || !strings.Contains(rec2.Body.String(), "NEED_RECONNECT") {
 		t.Fatalf("expected 409 NEED_RECONNECT when explicit downstream matches live socket, got %d (body: %s)", rec2.Code, rec2.Body.String())
+	}
+}
+
+func makeMinimalAgentCrosFrame(sno uint64) []byte {
+	pkt := make([]byte, crosrpc.CommHeadLen)
+	copy(pkt[0:7], []byte(crosrpc.MagicPrefix))
+	pkt[7] = crosrpc.TransportMesh
+	binary.BigEndian.PutUint64(pkt[8:16], sno)
+	binary.BigEndian.PutUint32(pkt[16:20], 0)
+	binary.BigEndian.PutUint16(pkt[20:22], 0)
+	pkt[22] = crosrpc.MsgTypeReq
+	return pkt
+}
+
+func TestAgentServer_StopRecordingLeaseRaceDoesNotPurgeOrBrickDrivers(t *testing.T) {
+	srv, err := NewAgentServer(AgentServerConfig{
+		ListenAddr: "127.0.0.1:0",
+	})
+	if err != nil {
+		t.Fatalf("NewAgentServer failed: %v", err)
+	}
+	defer srv.Shutdown(context.Background())
+
+	// 模拟处于 ARMED 待命并正在录制 SessionID=777
+	srv.mu.Lock()
+	srv.armedDigest = "digest-armed-777"
+	srv.armedProcesses = []agentproto.ProcessMonitorSpec{{ProcessID: 1, ListenPort: 8001}}
+	srv.activeLeaseType = "RECORDING"
+	srv.activeRefID = 777
+	srv.mu.Unlock()
+
+	if err := srv.transportRegistry.StartCapture(context.Background(), transport.CaptureSpec{
+		SessionOrTaskID: 777,
+		RefKind:         agentproto.RefKindRecordingSession,
+	}); err != nil {
+		t.Fatalf("StartCapture 777 failed: %v", err)
+	}
+
+	// 模拟 2 帧在途流量先入缓冲
+	for i := uint64(1); i <= 2; i++ {
+		env := agentproto.EnvelopeHeader{
+			Magic:           agentproto.EnvelopeMagic,
+			ProtoVer:        agentproto.EnvelopeProtoVer,
+			EventType:       agentproto.EventTrafficFrame,
+			SessionOrTaskID: 777,
+			CapturedAtNs:    time.Now().UnixNano(),
+		}
+		srv.buffer.Push(agentproto.MarshalEnvelope(env, makeMinimalAgentCrosFrame(i)))
+	}
+
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	// 1. 触发停录 /stop
+	stopReq := httptest.NewRequest(http.MethodPost, "/agent/v1/monitors/777/stop", nil)
+	stopReq.RemoteAddr = "127.0.0.1:12345"
+	stopRec := httptest.NewRecorder()
+	mux.ServeHTTP(stopRec, stopReq)
+	if stopRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK from /stop, got %d", stopRec.Code)
+	}
+
+	// 验证缓冲中 EventSessionDrained 严格排在 2 条流量帧之后
+	items := srv.buffer.Drain()
+	if len(items) != 3 {
+		t.Fatalf("expected 3 frames in buffer (2 traffic + 1 drained), got %d", len(items))
+	}
+	lastHdr, _, err := agentproto.UnmarshalEnvelope(items[2])
+	if err != nil || lastHdr.EventType != agentproto.EventSessionDrained {
+		t.Fatalf("expected last frame to be EventSessionDrained, got %+v (err=%v)", lastHdr, err)
+	}
+
+	// 2. 紧接着模拟主控在释放 DB 租约前发起的携带 RECORDING/777 的心跳握手（竞态窗口）
+	hsReq := httptest.NewRequest(http.MethodGet, "/agent/v1/handshake", nil)
+	hsReq.RemoteAddr = "127.0.0.1:12345"
+	hsReq.Header.Set(agentproto.HeaderExpectedLeaseType, "RECORDING")
+	hsReq.Header.Set(agentproto.HeaderExpectedLeaseRef, "777")
+	hsRec := httptest.NewRecorder()
+	mux.ServeHTTP(hsRec, hsReq)
+	if hsRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK from /handshake, got %d", hsRec.Code)
+	}
+
+	var hsResp agentproto.HandshakeResp
+	if err := json.Unmarshal(hsRec.Body.Bytes(), &hsResp); err != nil {
+		t.Fatalf("unmarshal HandshakeResp failed: %v", err)
+	}
+	if hsResp.ArmedDigest != "digest-armed-777" {
+		t.Fatalf("expected ArmedDigest preserved after stop+handshake race, got %q", hsResp.ArmedDigest)
+	}
+	if hsResp.ActiveLeaseType != "" || hsResp.ActiveRefID != 0 {
+		t.Fatalf("expected empty active lease, got (%q,%d)", hsResp.ActiveLeaseType, hsResp.ActiveRefID)
+	}
+
+	// 3. 确认传输驱动未被永久关闭，后续 SessionID=778 录制可正常启动
+	if err := srv.transportRegistry.StartCapture(context.Background(), transport.CaptureSpec{
+		SessionOrTaskID: 778,
+		RefKind:         agentproto.RefKindRecordingSession,
+	}); err != nil {
+		t.Fatalf("subsequent StartCapture 778 failed (driver bricked?): %v", err)
+	}
+}
+
+func TestAgentServer_PurgeAllClearsArmedDigestAndKeepsDriversReusable(t *testing.T) {
+	srv, err := NewAgentServer(AgentServerConfig{
+		ListenAddr: "127.0.0.1:0",
+	})
+	if err != nil {
+		t.Fatalf("NewAgentServer failed: %v", err)
+	}
+
+	srv.mu.Lock()
+	srv.armedRevision = 3
+	srv.armedDigest = "digest-armed-888"
+	srv.armedProcesses = []agentproto.ProcessMonitorSpec{{ProcessID: 1, ListenPort: 8001}}
+	srv.activeLeaseType = "RECORDING"
+	srv.activeRefID = 888
+	srv.mu.Unlock()
+
+	srv.PurgeAll()
+
+	mux := http.NewServeMux()
+	srv.registerRoutes(mux)
+
+	hsReq := httptest.NewRequest(http.MethodGet, "/agent/v1/handshake", nil)
+	hsReq.RemoteAddr = "127.0.0.1:12345"
+	hsRec := httptest.NewRecorder()
+	mux.ServeHTTP(hsRec, hsReq)
+	if hsRec.Code != http.StatusOK {
+		t.Fatalf("handshake failed: %d", hsRec.Code)
+	}
+
+	var hsResp agentproto.HandshakeResp
+	if err := json.Unmarshal(hsRec.Body.Bytes(), &hsResp); err != nil {
+		t.Fatalf("unmarshal HandshakeResp failed: %v", err)
+	}
+	if hsResp.ArmedDigest != "" || hsResp.ArmedProcessCount != 0 {
+		t.Fatalf("expected ArmedDigest and ArmedProcessCount cleared after PurgeAll so AutoRearm triggers, got digest=%q count=%d", hsResp.ArmedDigest, hsResp.ArmedProcessCount)
+	}
+
+	// PurgeAll 重置驱动后，仍可复用 StartCapture
+	if err := srv.transportRegistry.StartCapture(context.Background(), transport.CaptureSpec{
+		SessionOrTaskID: 889,
+		RefKind:         agentproto.RefKindRecordingSession,
+	}); err != nil {
+		t.Fatalf("StartCapture after PurgeAll failed: %v", err)
+	}
+
+	// Shutdown 进程退出时才会永久关闭驱动
+	if err := srv.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown failed: %v", err)
+	}
+	if err := srv.drtDriver.StartCapture(context.Background(), transport.CaptureSpec{SessionOrTaskID: 890}); err == nil {
+		t.Fatalf("expected StartCapture to fail after Shutdown permanently closes driver")
 	}
 }

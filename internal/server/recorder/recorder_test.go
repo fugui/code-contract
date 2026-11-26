@@ -20,6 +20,7 @@ import (
 	"code-contract/models"
 	"code-contract/pkg/agentproto"
 	"code-contract/pkg/crosrpc"
+	"github.com/gorilla/websocket"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/descriptorpb"
 	"gorm.io/datatypes"
@@ -821,5 +822,128 @@ func TestOrchestrator_LiveCapturedFrames_ListAndGet(t *testing.T) {
 	}
 	if byID[doneSess.ID].CapturedFrames != 5 {
 		t.Errorf("ListSessions 对已完成会话预期保留 captured_frames=5，实际 %d", byID[doneSess.ID].CapturedFrames)
+	}
+}
+
+func TestOrchestrator_StopSessionDrainsTrailingFramesOverWebSocketBeforeClosing(t *testing.T) {
+	db := setupIsolatedRecorderDB(t)
+	ctx := context.Background()
+
+	agt := models.Agent{
+		Name:      "test-agent-drain-ws",
+		Endpoint:  "http://127.0.0.1:19899",
+		Scope:     models.ScopeShared,
+		Status:    models.AgentStatusOnline,
+		CreatedBy: 1,
+	}
+	if err := db.Create(&agt).Error; err != nil {
+		t.Fatalf("创建 Agent 失败: %v", err)
+	}
+
+	session := models.RecordingSession{
+		SessionNo:        "REC_TEST_WS_DRAIN_01",
+		Name:             "停录尾部帧排空测试",
+		Scope:            models.ScopeShared,
+		OwnerID:          1,
+		Status:           models.SessionStatusRecording,
+		TargetProcessIDs: datatypes.JSON([]byte("[1]")),
+		LeasedAgentIDs:   datatypes.JSON([]byte(fmt.Sprintf("[%d]", agt.ID))),
+		MaxFrames:        1000,
+		CreatedBy:        1,
+	}
+	if err := db.Create(&session).Error; err != nil {
+		t.Fatalf("创建录制会话失败: %v", err)
+	}
+	if err := hub.AcquireAgentLeases(ctx, db, []uint64{agt.ID}, models.AgentLeaseRecording, session.ID, 1, time.Hour); err != nil {
+		t.Fatalf("锁定 Agent 租约失败: %v", err)
+	}
+
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	wsConnected := make(chan struct{})
+	sendStopFrames := make(chan struct{})
+	var wsWriteDone atomic.Bool
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/agent/v1/stream":
+			conn, err := upgrader.Upgrade(w, r, nil)
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+			close(wsConnected)
+
+			// 等待 /stop 触发后发送 17 条尾部 Oneway 帧，再发送 EventSessionDrained
+			<-sendStopFrames
+			for i := 1; i <= 17; i++ {
+				frame := buildCrosReqFrame(uint64(8000+i), crosrpc.ReqTypeOneway, "dophi.drain.DrainService", "TailOp", []byte(fmt.Sprintf("tail-%d", i)))
+				env := agentproto.EnvelopeHeader{
+					Magic:           agentproto.EnvelopeMagic,
+					ProtoVer:        agentproto.EnvelopeProtoVer,
+					EventType:       agentproto.EventTrafficFrame,
+					SessionOrTaskID: session.ID,
+					ProcessID:       1,
+					CapturedPID:     999,
+					Direction:       agentproto.DirectionEgress,
+					TransportProto:  crosrpc.TransportMesh,
+					CapturedAtNs:    time.Now().UnixNano(),
+				}
+				if err := conn.WriteMessage(websocket.BinaryMessage, agentproto.MarshalEnvelope(env, frame)); err != nil {
+					return
+				}
+			}
+			drained := agentproto.EnvelopeHeader{
+				Magic:           agentproto.EnvelopeMagic,
+				ProtoVer:        agentproto.EnvelopeProtoVer,
+				EventType:       agentproto.EventSessionDrained,
+				SessionOrTaskID: session.ID,
+				CapturedAtNs:    time.Now().UnixNano(),
+			}
+			if err := conn.WriteMessage(websocket.BinaryMessage, agentproto.MarshalEnvelope(drained, nil)); err != nil {
+				return
+			}
+			wsWriteDone.Store(true)
+			time.Sleep(200 * time.Millisecond)
+
+		case strings.HasPrefix(r.URL.Path, "/agent/v1/monitors/") && strings.HasSuffix(r.URL.Path, "/stop"):
+			close(sendStopFrames)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(agentproto.StopMonitorResp{CapturedFrames: 17})
+		}
+	}))
+	defer srv.Close()
+	db.Model(&agt).Update("endpoint", srv.URL)
+
+	assembler := NewExchangeAssembler(db, nil, nil, nil, nil, &AssemblerConfig{
+		WorkerShards:  2,
+		BatchSize:     50,
+		FlushInterval: 20 * time.Millisecond,
+	})
+	defer assembler.Close()
+
+	orch := NewOrchestrator(db, assembler)
+	orch.AttachRecordingSession(ctx, &session, &agt)
+
+	select {
+	case <-wsConnected:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for Orchestrator WebSocket stream connection")
+	}
+
+	stopped, err := orch.StopSession(ctx, session.ID, 1, true, "USER_STOP")
+	if err != nil {
+		t.Fatalf("StopSession failed: %v", err)
+	}
+	if !wsWriteDone.Load() {
+		t.Fatalf("expected mock Agent WS to finish pushing trailing frames + EventSessionDrained before StopSession completed")
+	}
+	if stopped.CapturedFrames != 17 {
+		t.Fatalf("expected all 17 trailing frames persisted on StopSession, got %d", stopped.CapturedFrames)
+	}
+
+	var dbCount int64
+	db.Model(&models.TrafficRecord{}).Where("session_id = ?", session.ID).Count(&dbCount)
+	if dbCount != 17 {
+		t.Fatalf("expected 17 TrafficRecord rows in DB, got %d", dbCount)
 	}
 }

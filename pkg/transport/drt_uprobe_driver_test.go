@@ -229,13 +229,13 @@ func TestDRTUprobeDriver_ArmedZeroAttach_AndFiveExitCleanup(t *testing.T) {
 }
 
 func TestParseDRTUprobeEvent_BufferValidation(t *testing.T) {
-	// 缓冲区过短
-	_, err := ParseDRTUprobeEvent(make([]byte, 50))
+	// 缓冲区过短 (< 96B)
+	_, err := ParseDRTUprobeEvent(make([]byte, 84))
 	if err == nil {
-		t.Fatalf("expected error for buffer < 84 bytes")
+		t.Fatalf("expected error for buffer < 96 bytes")
 	}
 
-	raw := make([]byte, 84+10)
+	raw := make([]byte, DRTUprobeEventHeaderLen+10)
 	binary.LittleEndian.PutUint64(raw[0:8], 111)
 	binary.LittleEndian.PutUint64(raw[8:16], 222)
 	binary.LittleEndian.PutUint64(raw[16:24], 333)
@@ -243,13 +243,18 @@ func TestParseDRTUprobeEvent_BufferValidation(t *testing.T) {
 	binary.LittleEndian.PutUint32(raw[32:36], 555)
 	binary.LittleEndian.PutUint32(raw[36:40], 10)
 	raw[40] = 1 // isTruncated
-	copy(raw[84:], []byte("0123456789"))
+	raw[41] = 2 // chunkIdx
+	raw[42] = 4 // chunkCount
+	binary.LittleEndian.PutUint32(raw[84:88], 131072)
+	binary.LittleEndian.PutUint32(raw[92:96], 556)
+	copy(raw[DRTUprobeEventHeaderLen:], []byte("0123456789"))
 
 	evt, err := ParseDRTUprobeEvent(raw)
 	if err != nil {
 		t.Fatalf("ParseDRTUprobeEvent failed: %v", err)
 	}
-	if evt.SessionID != 111 || evt.ProcessID != 222 || evt.PID != 555 || !evt.IsTruncated {
+	if evt.SessionID != 111 || evt.ProcessID != 222 || evt.PID != 555 || !evt.IsTruncated ||
+		evt.ChunkIdx != 2 || evt.ChunkCount != 4 || evt.OrigLen != 131072 || evt.TID != 556 {
 		t.Errorf("parsed event mismatch: %+v", evt)
 	}
 	if string(evt.Data) != "0123456789" {
@@ -744,5 +749,271 @@ func TestDRTUprobeDriver_AttachFailureLogDedupAndCleanup(t *testing.T) {
 	drv.mu.Unlock()
 	if errCacheLen != 0 {
 		t.Fatalf("expected lastAttachErr cleared after StopCapture, got %d", errCacheLen)
+	}
+}
+
+func buildFullCrosReqPacket(proto uint8, sno uint64, reqType uint8, svc, op string, body []byte) []byte {
+	headLen := crosrpc.ReqHeadMinLen
+	sessionHead := make([]byte, headLen)
+	binary.BigEndian.PutUint16(sessionHead[0:2], 1)
+	binary.BigEndian.PutUint16(sessionHead[2:4], uint16(headLen))
+	copy(sessionHead[8:72], []byte(svc))
+	copy(sessionHead[72:136], []byte(op))
+	sessionHead[136] = reqType
+
+	comm := crosrpc.CommHead{
+		TransportProto: proto,
+		SNO:            sno,
+		Length:         uint32(headLen + len(body)),
+		HeadLen:        uint16(headLen),
+		MsgType:        crosrpc.MsgTypeReq,
+		IsPacked:       1,
+	}
+	copy(comm.Magic[:], []byte(crosrpc.MagicPrefix))
+
+	out := make([]byte, 0, crosrpc.CommHeadLen+headLen+len(body))
+	out = append(out, comm.Marshal()...)
+	out = append(out, sessionHead...)
+	out = append(out, body...)
+	return out
+}
+
+func buildFullCrosRspPacket(proto uint8, sno uint64, svc, op string, body []byte) []byte {
+	headLen := crosrpc.RspHeadMinLen
+	rspHead := make([]byte, headLen)
+	binary.BigEndian.PutUint16(rspHead[0:2], 1)
+	binary.BigEndian.PutUint16(rspHead[2:4], uint16(headLen))
+	copy(rspHead[24:88], []byte(svc))
+	copy(rspHead[88:152], []byte(op))
+
+	comm := crosrpc.CommHead{
+		TransportProto: proto,
+		SNO:            sno,
+		Length:         uint32(headLen + len(body)),
+		HeadLen:        uint16(headLen),
+		MsgType:        crosrpc.MsgTypeRsp,
+		IsPacked:       1,
+	}
+	copy(comm.Magic[:], []byte(crosrpc.MagicPrefix))
+
+	out := make([]byte, 0, crosrpc.CommHeadLen+headLen+len(body))
+	out = append(out, comm.Marshal()...)
+	out = append(out, rspHead...)
+	out = append(out, body...)
+	return out
+}
+
+func TestDRTUprobeDriver_LargePayloadChunkReassembly_32K_124K_256K_AndTruncation(t *testing.T) {
+	var logBuf bytes.Buffer
+	origOut := log.Writer()
+	log.SetOutput(&logBuf)
+	defer log.SetOutput(origOut)
+
+	drv := NewDRTUprobeDriver(nil, DRTUprobeConfig{ProcRoot: "/proc"})
+
+	var capturedEnvs []agentproto.EnvelopeHeader
+	var capturedPayloads [][]byte
+	sink := FrameSinkFunc(func(h agentproto.EnvelopeHeader, payload []byte) error {
+		capturedEnvs = append(capturedEnvs, h)
+		cp := make([]byte, len(payload))
+		copy(cp, payload)
+		capturedPayloads = append(capturedPayloads, cp)
+		return nil
+	})
+
+	makePatternBody := func(size int, seed byte) []byte {
+		b := make([]byte, size)
+		for i := range b {
+			b[i] = byte((int(seed) + i) % 251)
+		}
+		return b
+	}
+
+	emitInChunks := func(sessionID, procID, ts, handle uint64, pid, tid uint32, full []byte, origLen uint32, isTrunc bool) {
+		chunkCount := (len(full) + MaxDRTChunkSize - 1) / MaxDRTChunkSize
+		for i := 0; i < chunkCount; i++ {
+			start := i * MaxDRTChunkSize
+			end := start + MaxDRTChunkSize
+			if end > len(full) {
+				end = len(full)
+			}
+			evt := DRTUprobeEvent{
+				SessionID:   sessionID,
+				ProcessID:   procID,
+				TimestampNs: ts,
+				Handle:      handle,
+				PID:         pid,
+				TID:         tid,
+				DataLen:     uint32(end - start),
+				OrigLen:     origLen,
+				IsTruncated: isTrunc,
+				ChunkIdx:    uint8(i),
+				ChunkCount:  uint8(chunkCount),
+				Data:        full[start:end],
+			}
+			if err := drv.ProcessEvent(evt, sink); err != nil {
+				t.Fatalf("ProcessEvent chunk %d/%d failed: %v", i, chunkCount, err)
+			}
+		}
+	}
+
+	// 1. 32KB 单分片快路径
+	pkt32K := buildFullCrosReqPacket(crosrpc.TransportMesh, 1001, crosrpc.ReqTypeSync, "svc.A", "Op32K", makePatternBody(32*1024-crosrpc.CommHeadLen-crosrpc.ReqHeadMinLen, 1))
+	emitInChunks(1, 10, 1000, 0x10, 2001, 2001, pkt32K, uint32(len(pkt32K)), false)
+
+	// 2. 124KB (4 chunks) 与 256KB (8 chunks) 交错到达 (来自不同 TID)
+	pkt124K := buildFullCrosReqPacket(crosrpc.TransportMesh, 1002, crosrpc.ReqTypeSync, "svc.B", "Op124K", makePatternBody(124*1024-crosrpc.CommHeadLen-crosrpc.ReqHeadMinLen, 7))
+	pkt256K := buildFullCrosReqPacket(crosrpc.TransportMesh, 1003, crosrpc.ReqTypeSync, "svc.C", "Op256K", makePatternBody(256*1024-crosrpc.CommHeadLen-crosrpc.ReqHeadMinLen, 13))
+
+	// 先发 pkt124K 的前 2 片，再发 pkt256K 的全部 8 片，最后发 pkt124K 的后 2 片
+	for i := 0; i < 2; i++ {
+		start, end := i*MaxDRTChunkSize, (i+1)*MaxDRTChunkSize
+		_ = drv.ProcessEvent(DRTUprobeEvent{
+			SessionID: 1, ProcessID: 10, TimestampNs: 2000, Handle: 0x20, PID: 2001, TID: 2002,
+			DataLen: uint32(end - start), OrigLen: uint32(len(pkt124K)), ChunkIdx: uint8(i), ChunkCount: 4, Data: pkt124K[start:end],
+		}, sink)
+	}
+	emitInChunks(1, 11, 3000, 0x30, 2002, 3001, pkt256K, uint32(len(pkt256K)), false)
+	for i := 2; i < 4; i++ {
+		start := i * MaxDRTChunkSize
+		end := start + MaxDRTChunkSize
+		if end > len(pkt124K) {
+			end = len(pkt124K)
+		}
+		_ = drv.ProcessEvent(DRTUprobeEvent{
+			SessionID: 1, ProcessID: 10, TimestampNs: 2000, Handle: 0x20, PID: 2001, TID: 2002,
+			DataLen: uint32(end - start), OrigLen: uint32(len(pkt124K)), ChunkIdx: uint8(i), ChunkCount: 4, Data: pkt124K[start:end],
+		}, sink)
+	}
+
+	// 3. >256KB (300KB) 截断并上报 origLen=307200
+	pkt300K := buildFullCrosReqPacket(crosrpc.TransportMesh, 1004, crosrpc.ReqTypeSync, "svc.D", "Op300K", makePatternBody(300*1024-crosrpc.CommHeadLen-crosrpc.ReqHeadMinLen, 29))
+	emitInChunks(1, 12, 4000, 0x40, 2003, 4001, pkt300K[:MaxDRTTotalSize], uint32(len(pkt300K)), true)
+
+	if len(capturedEnvs) != 4 {
+		t.Fatalf("expected 4 reassembled frames, got %d", len(capturedEnvs))
+	}
+	if capturedEnvs[0].IsTruncated() || !bytes.Equal(capturedPayloads[0], pkt32K) {
+		t.Errorf("32KB frame mismatch or unexpectedly truncated")
+	}
+	if capturedEnvs[1].IsTruncated() || !bytes.Equal(capturedPayloads[1], pkt256K) {
+		t.Errorf("256KB frame mismatch or unexpectedly truncated")
+	}
+	if capturedEnvs[2].IsTruncated() || !bytes.Equal(capturedPayloads[2], pkt124K) {
+		t.Errorf("124KB interleaved frame mismatch or unexpectedly truncated")
+	}
+	if !capturedEnvs[3].IsTruncated() || len(capturedPayloads[3]) != MaxDRTTotalSize {
+		t.Errorf("300KB frame expected truncated at %d, got trunc=%v len=%d", MaxDRTTotalSize, capturedEnvs[3].IsTruncated(), len(capturedPayloads[3]))
+	}
+
+	st := drv.Stats()
+	if st.RawEvents != 4 || st.ValidFrames != 4 || st.TruncatedFrames != 1 {
+		t.Fatalf("expected RawEvents=4 ValidFrames=4 TruncatedFrames=1, got %+v", st)
+	}
+	if !strings.Contains(logBuf.String(), fmt.Sprintf("origLen=%d", len(pkt300K))) {
+		t.Fatalf("expected truncation log to include origLen=%d, got:\n%s", len(pkt300K), logBuf.String())
+	}
+}
+
+func TestDRTUprobeDriver_MultiProcessSNOCollisionAndOneway(t *testing.T) {
+	drv := NewDRTUprobeDriver(nil, DRTUprobeConfig{ProcRoot: "/proc"})
+
+	var envs []agentproto.EnvelopeHeader
+	sink := FrameSinkFunc(func(h agentproto.EnvelopeHeader, payload []byte) error {
+		envs = append(envs, h)
+		return nil
+	})
+
+	// 两个独立进程均使用相同的 SNO=1 调用不同服务
+	reqA := buildFullCrosReqPacket(crosrpc.TransportMesh, 1, crosrpc.ReqTypeSync, "svc.Alpha", "DoA", []byte("a"))
+	reqB := buildFullCrosReqPacket(crosrpc.TransportMesh, 1, crosrpc.ReqTypeSync, "svc.Beta", "DoB", []byte("b"))
+	rspB := buildFullCrosRspPacket(crosrpc.TransportMesh, 1, "svc.Beta", "DoB", []byte("rb"))
+	rspA := buildFullCrosRspPacket(crosrpc.TransportMesh, 1, "svc.Alpha", "DoA", []byte("ra"))
+	oneway := buildFullCrosReqPacket(crosrpc.TransportMesh, 99, crosrpc.ReqTypeOneway, "svc.Notify", "Push", []byte("n"))
+
+	_ = drv.ProcessEvent(DRTUprobeEvent{SessionID: 1, ProcessID: 101, PID: 1001, Handle: 0x1, DataLen: uint32(len(reqA)), Data: reqA}, sink)
+	_ = drv.ProcessEvent(DRTUprobeEvent{SessionID: 1, ProcessID: 202, PID: 2001, Handle: 0x2, DataLen: uint32(len(reqB)), Data: reqB}, sink)
+	_ = drv.ProcessEvent(DRTUprobeEvent{SessionID: 1, ProcessID: 303, PID: 3001, Handle: 0x3, DataLen: uint32(len(rspB)), Data: rspB}, sink)
+	_ = drv.ProcessEvent(DRTUprobeEvent{SessionID: 1, ProcessID: 404, PID: 4001, Handle: 0x4, DataLen: uint32(len(rspA)), Data: rspA}, sink)
+	_ = drv.ProcessEvent(DRTUprobeEvent{SessionID: 1, ProcessID: 505, PID: 5001, Handle: 0x5, DataLen: uint32(len(oneway)), Data: oneway}, sink)
+
+	if len(envs) != 5 {
+		t.Fatalf("expected 5 emitted frames, got %d", len(envs))
+	}
+	// rspB 必须投影回 ProcessID=202, PID=2001
+	if envs[2].ProcessID != 202 || envs[2].CapturedPID != 2001 {
+		t.Errorf("rspB mis-projected: got ProcessID=%d PID=%d, want 202/2001", envs[2].ProcessID, envs[2].CapturedPID)
+	}
+	// rspA 必须投影回 ProcessID=101, PID=1001
+	if envs[3].ProcessID != 101 || envs[3].CapturedPID != 1001 {
+		t.Errorf("rspA mis-projected: got ProcessID=%d PID=%d, want 101/1001", envs[3].ProcessID, envs[3].CapturedPID)
+	}
+
+	st := drv.Stats()
+	if st.RspPaired != 2 || st.RspOrphan != 0 {
+		t.Fatalf("expected RspPaired=2 RspOrphan=0, got %+v", st)
+	}
+
+	drv.mu.Lock()
+	remaining := drv.inflightCount
+	drv.mu.Unlock()
+	if remaining != 0 {
+		t.Fatalf("expected 0 remaining inflight requests (oneway must not leak), got %d", remaining)
+	}
+}
+
+func TestDRTUprobeDriver_ResetAllowsReuseAndLogsDetach(t *testing.T) {
+	var logBuf bytes.Buffer
+	origOut := log.Writer()
+	log.SetOutput(&logBuf)
+	defer log.SetOutput(origOut)
+
+	drv := NewDRTUprobeDriver(nil, DRTUprobeConfig{
+		ProcRoot: "/proc",
+		AttachUprobeFunc: func(_ string, pid uint32) (io.Closer, error) {
+			return &mockClosableLink{}, nil
+		},
+	})
+
+	ctx := context.Background()
+	if err := drv.StartCapture(ctx, CaptureSpec{
+		SessionOrTaskID: 77,
+		Processes:       []TargetProcess{{ProcessID: 10, PIDs: []uint32{101, 102}}},
+	}); err != nil {
+		t.Fatalf("StartCapture failed: %v", err)
+	}
+
+	// SyncProcessPIDs 摘除 102
+	_ = drv.SyncProcessPIDs(77, 10, []uint32{101})
+	// RemoveTarget 摘除 101
+	_ = drv.RemoveTarget(77, 10)
+
+	// Reset 后仍可再次 StartCapture
+	if err := drv.Reset(); err != nil {
+		t.Fatalf("Reset failed: %v", err)
+	}
+	if err := drv.StartCapture(ctx, CaptureSpec{
+		SessionOrTaskID: 78,
+		Processes:       []TargetProcess{{ProcessID: 10, PIDs: []uint32{103}}},
+	}); err != nil {
+		t.Fatalf("StartCapture after Reset failed: %v", err)
+	}
+	if err := drv.StopCapture(ctx, 78); err != nil {
+		t.Fatalf("StopCapture failed: %v", err)
+	}
+
+	// Close 永久关闭后拒绝 StartCapture
+	if err := drv.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+	if err := drv.StartCapture(ctx, CaptureSpec{SessionOrTaskID: 79}); err == nil {
+		t.Fatalf("expected error from StartCapture after Close")
+	}
+
+	logs := logBuf.String()
+	for _, needle := range []string{"[DRTUprobe] [Detach] 动态对账摘除旧 PID uprobe", "[DRTUprobe] [Detach] 移除目标进程 uprobe", "[DRTUprobe] [✓ 停录卸载完成]"} {
+		if !strings.Contains(logs, needle) {
+			t.Errorf("expected log %q, got:\n%s", needle, logs)
+		}
 	}
 }
