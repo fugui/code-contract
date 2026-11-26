@@ -1,11 +1,12 @@
 # ADR-26：复用平台代码仓与共享宿主机 Git 缓存，构建「采集 → 清理整顿 → 解析 → 分仓编译」四段式跨仓 Proto 流水线与按子系统组织的只读聚合目录树
 
 - **文档编号**：`26-shared-git-cache-and-subsystem-proto-tree-adr.md`
-- **状态**：Proposed（评审修订 r2，待分期实施）
+- **状态**：Proposed（评审修订 r3，待分期实施）
 - **日期**：2026-11-26
 - **修订记录**：
   - r1：初稿，确立共享 `codes/` 缓存、无工作树直读、按子系统聚合目录树与两阶段编译。
   - r2：依据评审意见修订——采集范围改为 `pg` 目录白名单；在采集与编译之间**预留「清理整顿」环节**（规则由后续 ADR 定义）；修正 `ls-tree` 通配符、目录原子替换、仓级依赖成环、共享缓存浅克隆降级、远端跟踪引用互踩等技术缺陷；补充权威关系、命名规范化、同步触发、存量迁移、上线顺序与验收标准。
+  - r3：明确 `pg` 目录严格全小写（不含 `PG` / `Pg` 等大小写变体）；记录从 `raw` 到 `clean` 清理阶段预留辅助 `.json` 映射与清理规则配置文件，留待后续 ADR 定义。
 - **关联与演进关系**：
   - 修订并补充 [`ADR-18`](./18-proto-full-lifecycle-and-git-mr-governance-adr.md)：针对真实业务 Polyrepo 场景新增 `PLATFORM_SHARED` 平台代码仓共享模式与宿主机共享 Git 缓存协议；原独立 REST API / `go-git memfs` 拉取路径收敛为 `EXTERNAL_STANDALONE` 兼容模式，并进入弃用期（见 §2.1.3）。
   - 关联 [`ADR-10`](./10-enhanced-proto-schema-file-management-adr.md)（全局单一生效 `.pb` 池与冲突仲裁）、[`ADR-16`](./16-multi-implementation-service-contract-adr.md)（多实现服务契约）、[`ADR-19`](./19-proto-contract-ia-unbundling-and-four-workbenches-adr.md)（`/contract/proto-sources` 源码与 Git 仓工作台）。
@@ -95,7 +96,7 @@
 
 1. **默认采集规则（全局可配、仓库级可覆盖）**：
    - `collect_globs` 默认 `["pg/**/*.proto", "*/pg/**/*.proto"]`，即仓库根目录 `pg/` 与一级子目录下 `pg/` 及其任意深度子目录；
-   - `pg` 目录名默认**大小写敏感**，变体（`PG` / `Pg`）是否纳入由全局配置 `pg_dir_names` 决定（默认 `["pg"]`）；
+   - `pg` 目录名**严格区分大小写且固定为全小写 `pg`**，`PG`、`Pg` 等大小写变体一律不纳入采集范围；
    - 二级过滤 `exclude_globs` 默认 `["**/test/**", "**/testdata/**", "**/mock/**", "**/examples/**", "**/third_party/**", "**/vendor/**"]`，支持仓库 / Bundle 级增删；
    - 白名单之外的 `.proto` 一律不采集（不进入 raw 树与数据库），仅在发现预览中给出「白名单外 `.proto` 数量」作为提示。
 2. **对象读取实现（`git ls-tree` 不支持通配符与 `:(glob)` 魔法，必须按前缀列举）**：
@@ -151,19 +152,20 @@ flowchart TD
    ```go
    // Normalizer 将单仓（或单 Bundle）原始 .proto 集合清理为合法 Proto 源码。
    type Normalizer interface {
-       Version() string // 规则集版本号，参与增量键与审计
+       Version() string // 规则集版本号（含规则与辅助映射配置摘要），参与增量键与审计
        Normalize(ctx context.Context, in NormalizeInput) (NormalizeOutput, error)
    }
-   // NormalizeInput：仓库元数据 + 原始文件集合（repo_file_path → 原始字节）。
+   // NormalizeInput：仓库元数据 + 原始文件集合（repo_file_path → 原始字节）+ 辅助规则映射配置（预留）。
    // NormalizeOutput：逐文件清理后内容、诊断信息（规则 ID / 级别 / 行号）、
    //   行号映射 line_map（清理后行 → 原始行；声明 line-preserving 时可为空）。
    ```
 
    - 以**整仓文件集合**作为输入，为后续跨文件规则（如 import 路径改写）预留空间；
-   - 输出必须是确定性的：同一输入与同一 `Version()` 产出逐字节相同的结果。
+   - **预留辅助 `.json` 映射与清理规则配置**：从 `raw/` 清理到 `clean/` 时，后续将引入辅助 `.json` 配置文件以描述各代码仓的映射关系与专属清理规则；`NormalizeInput` 预留传入该配置，且配置版本/摘要须并入 `normalizer_version`。该辅助 `.json` 的存放位置、JSON Schema 与加载机制不在本 ADR 展开，留待后续《业务 Proto 清理整顿规则》ADR 定义；
+   - 输出必须是确定性的：同一输入（含辅助配置）与同一 `Version()` 产出逐字节相同的结果。
 2. **默认实现**：`PassthroughNormalizer`（`Version() = "passthrough-0"`）原样透传，确保在规则 ADR 落地前流水线可端到端运行。
 3. **后置语法校验（入池门禁）**：清理产物须通过 `protocompile` **仅解析、不链接**的语法检查。失败的文件标记 `QUARANTINED`（原因 `PARSE_FAILED`，附诊断），**不进入 Tier-2 源码池**，且不影响同仓其他文件与其他仓库；链接期错误（如缺失 import）归入 Stage D 的 Bundle 级编译诊断。
-4. **增量键**：`(raw_blob_sha, normalizer_version)` 均未变化则跳过清理。规则升级后可**全量重新清理而无需重新拉取**（直接读 raw 树或 Git 对象）。
+4. **增量键**：`(raw_blob_sha, normalizer_version)` 均未变化则跳过清理。规则或辅助 `.json` 映射配置升级后（带动 `normalizer_version` 变化），可**直接基于 `raw/` 树或 Git 对象全量重跑清理，无需重新 `git fetch`**。
 5. **行号映射**：规则须优先保持行号不变；无法保持时必须输出 `line_map`，供前端源码跳转、编译诊断与 F-26 报告回溯到原始行。
 6. **MR 门禁一致性**：[`virtual_tree.go`](../../internal/server/gitclient/virtual_tree.go) 合成「目标分支基线 + MR 变更补丁」时，补丁文件须经**同一白名单与同一版本 Normalizer**；清理失败在门禁结果中单独呈现为 `NORMALIZE_FAILED`，与编译失败区分。
 
@@ -199,7 +201,7 @@ flowchart TD
    | :--- | :--- | :--- |
    | 业务代码仓 Git | `.proto` 唯一写入口（SSOT） | — |
    | `protos/raw/` | Stage A 原样镜像，供清理工具（含外部脚本）输入、问题排查 | Git 对象 |
-   | DB `contract_proto_files` | **编译与浏览的权威派生数据**（清理后内容 + 状态 + 血缘） | raw + Normalizer |
+   | DB `contract_proto_files` | **编译与浏览的权威派生数据**（清理后内容 + 状态 + 血缘） | raw + Normalizer（及辅助规则配置 `.json`） |
    | `protos/clean/` | 清理后物化视图，供人工查阅、离线 `protoc`、IDE 等外部工具使用 | DB |
 
    - 两棵目录树均为只读派生视图，**严禁人工或工具直接编辑**；
@@ -303,7 +305,6 @@ flowchart TD
      shared_write_enabled: false # code-shield 完成两层锁升级前保持 false
    proto_collect:
      collect_globs: ["pg/**/*.proto", "*/pg/**/*.proto"]
-     pg_dir_names: ["pg"]
      exclude_globs: ["**/test/**", "**/testdata/**", "**/mock/**", "**/examples/**", "**/third_party/**", "**/vendor/**"]
      max_file_bytes: 2097152
      max_files_per_repo: 5000
@@ -352,12 +353,11 @@ flowchart TD
 
 ## 6. 待后续 ADR / 迭代决议事项
 
-1. **《业务 Proto 清理整顿规则》**：具体清理规则、规则 ID 体系、是否允许跨文件改写（如 import 重定向）、规则灰度与回滚策略（依赖 Phase 2 基线报告）。
-2. `pg` 目录名大小写变体是否纳入，以及是否存在 `pg` 之外的历史目录约定。
-3. 多分支 / Tag 契约采集（当前只采集 `repositories.Branch` 单分支）。
-4. 逐文件最后修改提交（`git log -1 -- <path>`）的按需计算与缓存策略。
-5. `ResolveRepoLocalPath` 引入 host 维度以消除跨服务器同名碰撞（需要 `code-shield` 协同迁移缓存目录）。
-6. `protos/clean/` 对外部工具的正式消费接口（如只读共享目录、打包下载、`buf` 工作区生成）。
+1. **《业务 Proto 清理整顿规则》**：定义从 `raw` 目录清理到 `clean` 目录所需的**辅助 `.json` 配置文件**（各代码仓的映射关系与清理规则配置、存放位置、JSON Schema、版本摘要混入增量键的方式与维护入口），以及具体清理规则、规则 ID 体系、是否允许跨文件改写（如 import 重定向）、规则灰度与回滚策略（依赖 Phase 2 基线报告）。
+2. 多分支 / Tag 契约采集（当前只采集 `repositories.Branch` 单分支）。
+3. 逐文件最后修改提交（`git log -1 -- <path>`）的按需计算与缓存策略。
+4. `ResolveRepoLocalPath` 引入 host 维度以消除跨服务器同名碰撞（需要 `code-shield` 协同迁移缓存目录）。
+5. `protos/clean/` 对外部工具的正式消费接口（如只读共享目录、打包下载、`buf` 工作区生成）。
 
 ---
 
