@@ -52,9 +52,11 @@ export interface ModuleContractDetailPaneProps {
     contract_id?: string | number | null;
     impl_key?: string | null;
     diff_ignore_paths?: string[];
+    is_noise_service?: boolean;
     description?: string;
   }) => Promise<void>;
   onUpdateServiceIgnorePaths: (serviceId: string, paths: string[]) => Promise<void>;
+  onToggleServiceNoise?: (svc: ModuleService) => Promise<void>;
   onDeleteService: (serviceId: string) => Promise<void>;
   onCreateDependency: (data: {
     is_external: boolean;
@@ -86,6 +88,7 @@ export const ModuleContractDetailPane: React.FC<ModuleContractDetailPaneProps> =
   onViewArchProcess,
   onCreateService,
   onUpdateServiceIgnorePaths,
+  onToggleServiceNoise,
   onDeleteService,
   onCreateDependency,
   onDeleteDependency,
@@ -121,6 +124,7 @@ export const ModuleContractDetailPane: React.FC<ModuleContractDetailPaneProps> =
     impl_key: '',
     published_service_name: '',
     diff_ignore_paths: '',
+    is_noise_service: false,
     description: '',
   });
 
@@ -389,10 +393,18 @@ export const ModuleContractDetailPane: React.FC<ModuleContractDetailPaneProps> =
         contract_id: matchedContract ? matchedContract.id : undefined,
         impl_key: matchedContract ? provideForm.impl_key.trim() : undefined,
         diff_ignore_paths: paths,
+        is_noise_service: provideForm.is_noise_service,
         description: provideForm.description.trim(),
       });
       setIsProvideDrawerOpen(false);
-      setProvideForm({ service_name: '', impl_key: '', published_service_name: '', diff_ignore_paths: '', description: '' });
+      setProvideForm({
+        service_name: '',
+        impl_key: '',
+        published_service_name: '',
+        diff_ignore_paths: '',
+        is_noise_service: false,
+        description: '',
+      });
       setProvideMode('CLAIM');
     } finally {
       setProvideSubmitting(false);
@@ -1168,6 +1180,7 @@ export const ModuleContractDetailPane: React.FC<ModuleContractDetailPaneProps> =
                       impl_key: '',
                       published_service_name: '',
                       diff_ignore_paths: '',
+                      is_noise_service: false,
                       description: '',
                     });
                     setIsProvideDrawerOpen(true);
@@ -1209,6 +1222,15 @@ export const ModuleContractDetailPane: React.FC<ModuleContractDetailPaneProps> =
                           >
                             {svc.service_name}
                           </Link>
+                          {svc.is_noise_service && (
+                            <span
+                              className="code-badge code-badge--warning"
+                              data-testid={`badge-service-noise-${svc.id}`}
+                              title="已标记为低关注/噪音服务：录制默认源头丢弃，事务分析默认隐藏"
+                            >
+                              🔇 噪音/忽略
+                            </span>
+                          )}
                           {isContractImpl && (
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' }}>
                               <span
@@ -1340,6 +1362,21 @@ export const ModuleContractDetailPane: React.FC<ModuleContractDetailPaneProps> =
                                 onClick={() => handleOpenAttachModal(undefined, String(svc.id))}
                               >
                                 归入契约
+                              </button>
+                            )}
+                            {onToggleServiceNoise && (
+                              <button
+                                type="button"
+                                className="code-btn code-btn--secondary code-btn--xs"
+                                data-testid={`btn-toggle-noise-${svc.id}`}
+                                title={
+                                  svc.is_noise_service
+                                    ? '取消低关注/噪音服务标记'
+                                    : '标记为低关注/噪音服务（录制默认源头丢弃，事务分析默认隐藏）'
+                                }
+                                onClick={() => void onToggleServiceNoise(svc)}
+                              >
+                                {svc.is_noise_service ? '取消噪音' : '设为噪音'}
                               </button>
                             )}
                             <button
@@ -1784,6 +1821,18 @@ export const ModuleContractDetailPane: React.FC<ModuleContractDetailPaneProps> =
               placeholder="逗号分隔，如 header.timestamp, trace_id, meta[*].token"
             />
             <span className="code-form-help">在流量双跑一致性比对时，该服务将默认忽略比对上述字段路径</span>
+          </div>
+
+          <div className="code-form-item">
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.85rem' }}>
+              <input
+                type="checkbox"
+                checked={provideForm.is_noise_service}
+                onChange={(e) => setProvideForm({ ...provideForm, is_noise_service: e.target.checked })}
+                data-testid="provide-is-noise-checkbox"
+              />
+              <span>标记为低关注/噪音服务（录制默认源头丢弃，事务分析默认隐藏）</span>
+            </label>
           </div>
 
           <div className="code-form-item">

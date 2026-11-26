@@ -197,6 +197,7 @@ type ModuleService struct {
 	ClaimedBy            uint                 `gorm:"not null;default:0" json:"claimed_by"`
 	ContractServiceName  string               `gorm:"-" json:"contract_service_name,omitempty"`                  // 多实现时填充关联契约名 (.pb 定义服务名)
 	DiffIgnorePaths      datatypes.JSON       `gorm:"type:jsonb;not null;default:'[]'" json:"diff_ignore_paths"` // 服务级默认回归 Diff 忽略字段路径 []string (F-14)
+	IsNoiseService       bool                 `gorm:"not null;default:false;index:idx_contract_mod_svc_noise" json:"is_noise_service"`
 	Description          string               `gorm:"type:text" json:"description"`
 	DownstreamCount      int                  `gorm:"-" json:"downstream_count"`               // 被下游模块依赖数量
 	DownstreamModules    []string             `gorm:"-" json:"downstream_modules,omitempty"`   // 被下游模块名称清单

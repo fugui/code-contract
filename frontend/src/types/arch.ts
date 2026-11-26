@@ -114,6 +114,7 @@ export interface ModuleService {
   contract_service_name?: string;
   contract?: ServiceContract;
   diff_ignore_paths?: string[];
+  is_noise_service?: boolean;
   description?: string;
   downstream_count?: number;
   downstream_modules?: string[];

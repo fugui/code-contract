@@ -20,6 +20,7 @@ import (
 	"code-contract/config"
 	"code-contract/internal/server/security"
 	"code-contract/models"
+	"code-contract/pkg/agentproto"
 
 	"github.com/gin-gonic/gin"
 )
@@ -30,6 +31,7 @@ const (
 	SettingKeyCodeNotifierTokenEnc = "code_notifier_token_enc"
 	SettingKeySMTPPasswordEnc      = "smtp_password_enc"
 	SettingKeyOutboundTrustedCIDRs = "outbound_trusted_cidrs"
+	SettingKeyNoiseServiceRules    = "noise_service_rules"
 	auditRedactedMask              = "***REDACTED***"
 )
 
@@ -214,7 +216,7 @@ func UpdateModuleSettings(c *gin.Context) {
 			return
 		}
 		maxLen := 512
-		if key == SettingKeyOutboundTrustedCIDRs {
+		if key == SettingKeyOutboundTrustedCIDRs || key == SettingKeyNoiseServiceRules {
 			maxLen = 4096
 		}
 		if utf8.RuneCountInString(val) > maxLen {
@@ -224,6 +226,12 @@ func UpdateModuleSettings(c *gin.Context) {
 		if key == SettingKeyOutboundTrustedCIDRs {
 			if _, parseErr := security.ParseTrustedAllowlist(val); parseErr != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": parseErr.Error()})
+				return
+			}
+		}
+		if key == SettingKeyNoiseServiceRules {
+			if ruleErr := agentproto.ValidateNoiseRules(agentproto.ParseNoiseRulesText(val)); ruleErr != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": ruleErr.Error()})
 				return
 			}
 		}

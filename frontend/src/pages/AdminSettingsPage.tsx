@@ -14,6 +14,7 @@ import { EmptyState, Modal, useConfirm } from '@code/common';
 import { useToast } from '../utils/toast';
 import { apiRequest } from '../api/client';
 import * as discoveryApi from '../api/discovery';
+import { getNoiseRulesConfig } from '../api/traffic';
 import { ADMIN_ROLE } from '../constants';
 import { useModuleUser } from '../context/ModuleUserContext';
 import type {
@@ -21,6 +22,7 @@ import type {
   CSGPlaceholderMigrationRespDTO,
   ModuleSettingItem,
   ModuleSettingsResponse,
+  NoiseRulesConfigDTO,
 } from '../types';
 
 interface DiscoverySettingSpec {
@@ -72,6 +74,7 @@ export const AdminSettingsPage: React.FC = () => {
   const [migrationLoading, setMigrationLoading] = useState<boolean>(false);
   const [migrationResult, setMigrationResult] = useState<CSGPlaceholderMigrationRespDTO | null>(null);
   const [lastBackupBatchId, setLastBackupBatchId] = useState<string>('');
+  const [noiseConfig, setNoiseConfig] = useState<NoiseRulesConfigDTO | null>(null);
 
   const isAdmin = Boolean(user?.is_super_admin || user?.is_module_admin);
 
@@ -87,6 +90,7 @@ export const AdminSettingsPage: React.FC = () => {
 
   const securityManagedKeys = new Set([
     'outbound_trusted_cidrs',
+    'noise_service_rules',
     'llm_enabled',
     'llm_base_url',
     'llm_model',
@@ -118,6 +122,9 @@ export const AdminSettingsPage: React.FC = () => {
     try {
       const data = await apiRequest<ModuleSettingsResponse>('/admin/settings');
       applySettingsResponse(data);
+      getNoiseRulesConfig()
+        .then((cfg) => setNoiseConfig(cfg))
+        .catch(() => {});
     } catch (err) {
       const msg = err instanceof Error ? err.message : '读取模块参数失败';
       showToast(msg, 'error');
@@ -143,6 +150,27 @@ export const AdminSettingsPage: React.FC = () => {
       }
       return prev.map((item) => (item.setting_key === key ? { ...item, setting_val: nextVal } : item));
     });
+  };
+
+  const handleAppendNoisePreset = (rules: string[]) => {
+    const existingLines = getSettingVal('noise_service_rules')
+      .split(/[\n\r,]+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0 && !s.startsWith('#'));
+    const seen = new Set(existingLines.map((s) => s.toLowerCase()));
+    const merged = [...existingLines];
+    rules.forEach((rule) => {
+      const clean = rule.trim();
+      if (clean && !seen.has(clean.toLowerCase())) {
+        seen.add(clean.toLowerCase());
+        merged.push(clean);
+      }
+    });
+    handleValueChange(
+      'noise_service_rules',
+      merged.join('\n'),
+      '全局低关注/噪音服务匹配规则（支持 * 通配与 Service:Operation）'
+    );
   };
 
   const handleSaveAll = async (e: React.FormEvent) => {
@@ -603,6 +631,51 @@ export const AdminSettingsPage: React.FC = () => {
               )}
             </div>
           ))}
+        </div>
+
+        <h3 className="code-tpl-panel-title code-mt-md">
+          <span>低关注 / 噪音服务全局过滤规则 (ADR-25)</span>
+        </h3>
+        <div className="admin-sec-grid" data-testid="admin-noise-rules-section">
+          <div className="admin-sec-field admin-sec-field--full">
+            <div className="admin-sec-field__head">
+              <code className="code-tpl-code-inline">noise_service_rules</code>
+              <span className="text-secondary">
+                每行一条规则，支持 <code>*</code> 通配与 <code>Service:Operation</code> 粒度（默认留空以防误伤业务；与服务台账标记取并集，当前台账已标记 {noiseConfig?.marked_services?.length ?? 0} 个服务）
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '8px' }}>
+              {(noiseConfig?.preset_templates ?? [
+                { id: 'logging', name: '日志类服务', description: '', rules: ['*LogService*', '*Logger*'] },
+                { id: 'monitoring', name: '监控与指标上报', description: '', rules: ['*MonitorService*', '*Metrics*', '*Telemetry*'] },
+                { id: 'heartbeat', name: '心跳与探活', description: '', rules: ['*Heartbeat*', '*:Ping', '*:HealthCheck'] },
+              ]).map((tpl) => (
+                <button
+                  key={tpl.id}
+                  type="button"
+                  className="btn btn-secondary btn-xs"
+                  data-testid={`btn-noise-preset-${tpl.id}`}
+                  onClick={() => handleAppendNoisePreset(tpl.rules)}
+                  title={tpl.description || tpl.rules.join(', ')}
+                >
+                  + 一键填入{tpl.name} ({tpl.rules.join(', ')})
+                </button>
+              ))}
+            </div>
+            <textarea
+              className="code-input admin-trusted-cidrs-textarea"
+              aria-label="noise_service_rules"
+              placeholder={'例如：\n*LogService*\n*MonitorService*\ndophi.infra.Heartbeat:Ping'}
+              value={getSettingVal('noise_service_rules')}
+              onChange={(e) =>
+                handleValueChange(
+                  'noise_service_rules',
+                  e.target.value,
+                  '全局低关注/噪音服务匹配规则（支持 * 通配与 Service:Operation）'
+                )
+              }
+            />
+          </div>
         </div>
 
         <h3 className="code-tpl-panel-title code-mt-md">

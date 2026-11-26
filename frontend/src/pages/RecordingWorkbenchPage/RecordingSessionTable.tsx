@@ -190,7 +190,14 @@ export const RecordingSessionTable: React.FC<RecordingSessionTableProps> = ({
                           {sess.status}
                         </span>
                       </td>
-                      <td className="code-font-mono">{sess.captured_frames} 帧</td>
+                      <td className="code-font-mono">
+                        <div>{sess.captured_frames} 帧</div>
+                        {sess.filtered_noise_frames !== undefined && sess.filtered_noise_frames > 0 && (
+                          <div className="code-text-xs code-text-muted" data-testid={`session-filtered-noise-${sess.id}`}>
+                            {`🔇 已源头过滤 ${sess.filtered_noise_frames} 帧`}
+                          </div>
+                        )}
+                      </td>
                       <td>{sess.owner_name || `用户#${sess.owner_id ?? '-'}`}</td>
                       <td className="code-text-xs code-font-mono">
                         {sess.created_at ? new Date(sess.created_at).toLocaleString() : '-'}

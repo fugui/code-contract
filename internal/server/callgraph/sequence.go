@@ -7,15 +7,33 @@ import (
 	"strconv"
 
 	"code-contract/models"
+	"code-contract/pkg/agentproto"
 	"gorm.io/gorm"
 )
 
-// BuildTransactionSequence 构建单事务的时序泳道响应 DTO
+// SequenceOptions 时序泳道降噪选项
+type SequenceOptions struct {
+	HideNoise    bool
+	NoiseMatcher *agentproto.NoiseMatcher
+}
+
+// BuildTransactionSequence 构建单事务的时序泳道响应 DTO（向后兼容旧签名）
 func BuildTransactionSequence(
 	db *gorm.DB,
 	sessionID uint64,
 	rootRecordID uint64,
 	replayTaskID uint64,
+) (*TransactionSequenceDTO, error) {
+	return BuildTransactionSequenceWithOptions(db, sessionID, rootRecordID, replayTaskID, SequenceOptions{})
+}
+
+// BuildTransactionSequenceWithOptions 构建单事务时序泳道 DTO（支持隐藏非异常噪音服务及泳道裁剪）
+func BuildTransactionSequenceWithOptions(
+	db *gorm.DB,
+	sessionID uint64,
+	rootRecordID uint64,
+	replayTaskID uint64,
+	opts SequenceOptions,
 ) (*TransactionSequenceDTO, error) {
 	// 1. 加载批次全部记录
 	var records []models.TrafficRecord
@@ -38,6 +56,14 @@ func BuildTransactionSequence(
 	}
 	if rootGroup == nil {
 		return nil, fmt.Errorf("未找到根记录 ID=%d 对应的事务树", rootRecordID)
+	}
+
+	hiddenNoiseSteps := 0
+	if opts.NoiseMatcher != nil && !opts.NoiseMatcher.Empty() {
+		annotateNoiseFlags(&rootGroup.Root, opts.NoiseMatcher)
+		if opts.HideNoise {
+			hiddenNoiseSteps = foldNoiseChildren(&rootGroup.Root)
+		}
 	}
 
 	// 3. 收集该事务树中包含的全部记录
@@ -241,13 +267,14 @@ func BuildTransactionSequence(
 	}
 
 	return &TransactionSequenceDTO{
-		RootRecordID:      rootGroup.RootRecordID,
-		TraceID:           rootGroup.TraceID,
-		TotalDurationUs:   rootGroup.TotalDurationUs,
-		Participants:      participants,
-		Steps:             steps,
-		ParameterLineages: lineages,
-		EntityChains:      entityChains,
+		RootRecordID:         rootGroup.RootRecordID,
+		TraceID:              rootGroup.TraceID,
+		TotalDurationUs:      rootGroup.TotalDurationUs,
+		HiddenNoiseStepCount: hiddenNoiseSteps,
+		Participants:         participants,
+		Steps:                steps,
+		ParameterLineages:    lineages,
+		EntityChains:         entityChains,
 	}, nil
 }
 

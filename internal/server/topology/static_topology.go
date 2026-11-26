@@ -94,6 +94,7 @@ type ModuleServiceInput struct {
 	ContractID       *uint64
 	ImplKey          string
 	DiffIgnorePaths  []string
+	IsNoiseService   bool
 	Description      string
 	OperatorID       uint
 }
@@ -134,6 +135,7 @@ type UpdateModuleServiceInput struct {
 	ProtoServiceName *string
 	ImplKey          *string
 	DiffIgnorePaths  []string
+	IsNoiseService   *bool
 	Description      string
 }
 
@@ -314,6 +316,7 @@ func CreateModuleService(db *gorm.DB, in ModuleServiceInput) (*models.ModuleServ
 				IsCustomServiceName: isCustom,
 				ContractServiceName: contract.ServiceName,
 				DiffIgnorePaths:     datatypes.JSON(diffPathsJSON),
+				IsNoiseService:      in.IsNoiseService,
 				Description:         in.Description,
 				CreatedBy:           in.OperatorID,
 			}
@@ -388,6 +391,7 @@ func CreateModuleService(db *gorm.DB, in ModuleServiceInput) (*models.ModuleServ
 			ServiceName:      serviceName,
 			ProtoServiceName: protoSvcName,
 			DiffIgnorePaths:  datatypes.JSON(diffPathsJSON),
+			IsNoiseService:   in.IsNoiseService,
 			Description:      in.Description,
 			CreatedBy:        in.OperatorID,
 		}
@@ -465,6 +469,11 @@ func UpdateModuleServiceWithOptions(db *gorm.DB, in UpdateModuleServiceInput) (*
 			newProtoSvcName = validatedProto
 		}
 
+		newIsNoise := before.IsNoiseService
+		if in.IsNoiseService != nil {
+			newIsNoise = *in.IsNoiseService
+		}
+
 		// 独占服务不允许修改服务名或设置 impl_key
 		if before.ContractID == nil {
 			if newServiceName != before.ServiceName {
@@ -476,10 +485,12 @@ func UpdateModuleServiceWithOptions(db *gorm.DB, in UpdateModuleServiceInput) (*
 			after = before
 			after.ProtoServiceName = newProtoSvcName
 			after.DiffIgnorePaths = datatypes.JSON(diffPathsJSON)
+			after.IsNoiseService = newIsNoise
 			after.Description = in.Description
 			return tx.Model(&models.ModuleService{}).Where("id = ?", in.ServiceID).Updates(map[string]interface{}{
 				"proto_service_name": newProtoSvcName,
 				"diff_ignore_paths":  datatypes.JSON(diffPathsJSON),
+				"is_noise_service":   newIsNoise,
 				"description":        in.Description,
 			}).Error
 		}
@@ -555,6 +566,7 @@ func UpdateModuleServiceWithOptions(db *gorm.DB, in UpdateModuleServiceInput) (*
 		after.IsCustomServiceName = newIsCustom
 		after.ContractServiceName = contract.ServiceName
 		after.DiffIgnorePaths = datatypes.JSON(diffPathsJSON)
+		after.IsNoiseService = newIsNoise
 		after.Description = in.Description
 
 		return tx.Model(&models.ModuleService{}).Where("id = ?", in.ServiceID).Updates(map[string]interface{}{
@@ -563,6 +575,7 @@ func UpdateModuleServiceWithOptions(db *gorm.DB, in UpdateModuleServiceInput) (*
 			"impl_key":               newImplKey,
 			"is_custom_service_name": newIsCustom,
 			"diff_ignore_paths":      datatypes.JSON(diffPathsJSON),
+			"is_noise_service":       newIsNoise,
 			"description":            in.Description,
 		}).Error
 	})

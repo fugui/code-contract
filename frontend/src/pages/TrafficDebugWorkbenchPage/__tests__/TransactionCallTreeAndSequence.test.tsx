@@ -613,4 +613,109 @@ describe('M13 Frontend Test Suite: Transaction Call Tree and Sequence Workbench'
     );
     expect(closedDrawerHtml).toBe('');
   });
+
+  it('TC-NOISE-UI-01: 渲染折叠噪音聚合胶囊、破格噪音徽章与 DebugSessionContextBar 隐藏开关', () => {
+    const treeWithFoldedNoise: TransactionTreeGroupDTO[] = [
+      {
+        root_record_id: '101',
+        trace_id: 'trace-noise-01',
+        total_node_count: 2,
+        truncated_children_count: 0,
+        total_duration_us: 12000,
+        has_protocol_error: true,
+        has_biz_error: false,
+        has_compensation: false,
+        entity_tags: [],
+        root: {
+          record: mockRootSummary,
+          depth: 0,
+          link_confidence: 'ROOT',
+          sibling_relation: 'ROOT',
+          waterfall_offset_pct: 0,
+          waterfall_width_pct: 100,
+          is_critical_path: true,
+          matched_filter: true,
+          children: [
+            {
+              record: {
+                ...mockChildLock,
+                id: '199',
+                service_name: 'infra.LogService',
+                operation: 'FlushErr',
+                is_noise: true,
+              },
+              depth: 1,
+              link_confidence: 'DOTR_EXACT',
+              sibling_relation: 'SEQUENTIAL',
+              waterfall_offset_pct: 10,
+              waterfall_width_pct: 20,
+              is_critical_path: false,
+              matched_filter: true,
+              children: [],
+            },
+          ],
+          folded_noise_summary: {
+            total_count: 5,
+            total_duration_us: 1500,
+            breakdown: [
+              { service_name: 'infra.LogService', operation: 'Write', count: 3, total_duration_us: 900 },
+              { service_name: 'infra.MonitorService', operation: 'Beat', count: 2, total_duration_us: 600 },
+            ],
+          },
+          folded_noise_children: [],
+        },
+      },
+    ];
+
+    const treeHtml = renderToString(
+      <TransactionCallTreeTable
+        groups={treeWithFoldedNoise}
+        onSelectRecordForAnatomy={() => {}}
+        onOpenSequenceDrawer={() => {}}
+        isAdmin={true}
+        onMuteServiceInView={() => {}}
+        onAddGlobalNoiseRule={() => {}}
+      />
+    );
+
+    expect(treeHtml).toContain('folded-noise-row-101');
+    expect(treeHtml).toContain('已折叠');
+    expect(treeHtml).toContain('infra.LogService.Write (×3)');
+    expect(treeHtml).toContain('badge-noise-node-199');
+    expect(treeHtml).toContain('btn-mute-service-101');
+    expect(treeHtml).toContain('btn-add-global-noise-101');
+
+    const ctxHtml = renderToString(
+      <DebugSessionContextBar
+        currentSessionId="1"
+        sessions={[
+          {
+            id: '1',
+            session_no: 'REC_01',
+            name: 'test-sess',
+            scope: 'PRIVATE',
+            status: 'COMPLETED',
+            target_process_ids: ['10'],
+            max_duration_sec: 1800,
+            max_frames: 100000,
+            captured_frames: 20,
+            filtered_noise_frames: 180,
+          },
+        ]}
+        onSelectSession={() => {}}
+        liveStreamActive={false}
+        onToggleLiveStream={() => {}}
+        isPaused={false}
+        onTogglePause={() => {}}
+        hideNoise={true}
+        hiddenNoiseCount={5}
+        onToggleHideNoise={() => {}}
+      />
+    );
+
+    expect(ctxHtml).toContain('session-filtered-noise-badge');
+    expect(ctxHtml).toContain('源头已过滤 180 帧');
+    expect(ctxHtml).toContain('btn-toggle-hide-noise');
+    expect(ctxHtml).toContain('已隐 5');
+  });
 });

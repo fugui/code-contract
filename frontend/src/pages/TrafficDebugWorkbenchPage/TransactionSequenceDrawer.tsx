@@ -16,6 +16,8 @@ export interface TransactionSequenceDrawerProps {
   sessionId: string;
   rootRecordId?: string;
   replayTaskId?: string;
+  hideNoise?: boolean;
+  excludeServices?: string[];
 }
 
 export const TransactionSequenceDrawer: React.FC<TransactionSequenceDrawerProps> = ({
@@ -24,7 +26,15 @@ export const TransactionSequenceDrawer: React.FC<TransactionSequenceDrawerProps>
   sessionId,
   rootRecordId,
   replayTaskId,
+  hideNoise = true,
+  excludeServices = [],
 }) => {
+  const [localHideNoise, setLocalHideNoise] = useState<boolean>(hideNoise);
+  useEffect(() => {
+    if (open) {
+      setLocalHideNoise(hideNoise);
+    }
+  }, [open, hideNoise]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sequence, setSequence] = useState<TransactionSequenceDTO | null>(null);
@@ -58,7 +68,10 @@ export const TransactionSequenceDrawer: React.FC<TransactionSequenceDrawerProps>
     setLoading(true);
     setError(null);
 
-    getTransactionSequence(sessionId, rootRecordId, replayTaskId)
+    getTransactionSequence(sessionId, rootRecordId, replayTaskId, {
+      hide_noise: localHideNoise,
+      exclude_services: excludeServices,
+    })
       .then((data) => {
         if (!isMounted) return;
         setSequence(data);
@@ -75,7 +88,7 @@ export const TransactionSequenceDrawer: React.FC<TransactionSequenceDrawerProps>
     return () => {
       isMounted = false;
     };
-  }, [open, sessionId, rootRecordId, replayTaskId]);
+  }, [open, sessionId, rootRecordId, replayTaskId, localHideNoise, excludeServices]);
 
   // 仅在解剖面板展开且已选步骤时加载四段解剖
   useEffect(() => {
@@ -197,14 +210,26 @@ export const TransactionSequenceDrawer: React.FC<TransactionSequenceDrawerProps>
               selectedStepIndex={selectedStep?.step_index}
               onSelectStep={handleSelectStep}
               toolbarExtra={
-                <button
-                  type="button"
-                  className="code-btn code-btn--secondary code-btn--sm"
-                  onClick={handleToggleAnatomy}
-                  data-testid="toggle-anatomy-panel"
-                >
-                  {anatomyOpen ? '收起报文解剖' : '展开报文解剖'}
-                </button>
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                  <button
+                    type="button"
+                    className={`code-btn code-btn--sm ${localHideNoise ? 'code-btn--primary' : 'code-btn--secondary'}`}
+                    onClick={() => setLocalHideNoise((prev) => !prev)}
+                    data-testid="sequence-toggle-hide-noise"
+                  >
+                    {localHideNoise
+                      ? `🔇 隐藏噪音${sequence.hidden_noise_step_count ? ` (${sequence.hidden_noise_step_count} 步)` : ''}`
+                      : '👁 显示噪音泳道'}
+                  </button>
+                  <button
+                    type="button"
+                    className="code-btn code-btn--secondary code-btn--sm"
+                    onClick={handleToggleAnatomy}
+                    data-testid="toggle-anatomy-panel"
+                  >
+                    {anatomyOpen ? '收起报文解剖' : '展开报文解剖'}
+                  </button>
+                </div>
               }
             />
           </div>

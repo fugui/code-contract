@@ -12,6 +12,9 @@ export interface DebugSessionContextBarProps {
   viewMode?: 'tree' | 'flat';
   onChangeViewMode?: (mode: 'tree' | 'flat') => void;
   onToggleExpandAll?: (expand: boolean) => void;
+  hideNoise?: boolean;
+  hiddenNoiseCount?: number;
+  onToggleHideNoise?: () => void;
 }
 
 export const DebugSessionContextBar: React.FC<DebugSessionContextBarProps> = ({
@@ -25,6 +28,9 @@ export const DebugSessionContextBar: React.FC<DebugSessionContextBarProps> = ({
   viewMode = 'tree',
   onChangeViewMode,
   onToggleExpandAll,
+  hideNoise = true,
+  hiddenNoiseCount = 0,
+  onToggleHideNoise,
 }) => {
   const currentSession = sessions.find((s) => String(s.id) === String(currentSessionId));
   const isRecording = currentSession?.status === 'RECORDING';
@@ -59,6 +65,15 @@ export const DebugSessionContextBar: React.FC<DebugSessionContextBarProps> = ({
               <span className="code-font-mono code-text-sm">
                 总帧数: {currentSession.captured_frames}
               </span>
+              {currentSession.filtered_noise_frames !== undefined && currentSession.filtered_noise_frames > 0 && (
+                <span
+                  className="code-badge code-badge--secondary"
+                  data-testid="session-filtered-noise-badge"
+                  title="录制期 Agent 源头丢弃的低关注/噪音帧数"
+                >
+                  {`🔇 源头已过滤 ${currentSession.filtered_noise_frames} 帧`}
+                </span>
+              )}
               {isRecording && (
                 <span className="code-recording-pulse-tag" data-testid="recording-pulse-badge">
                   <span className="code-pulse-dot" />
@@ -141,6 +156,20 @@ export const DebugSessionContextBar: React.FC<DebugSessionContextBarProps> = ({
                 全部折叠
               </button>
             </div>
+          )}
+
+          {onToggleHideNoise && (
+            <button
+              type="button"
+              className={`code-btn code-btn--sm ${hideNoise ? 'code-btn--primary' : 'code-btn--secondary'}`}
+              onClick={onToggleHideNoise}
+              data-testid="btn-toggle-hide-noise"
+              title={hideNoise ? '点击显示被隐藏的噪音/基础设施调用' : '点击隐藏低关注/噪音服务调用'}
+            >
+              {hideNoise
+                ? `🔇 隐藏噪音${hiddenNoiseCount > 0 ? ` (已隐 ${hiddenNoiseCount})` : ''}`
+                : '👁 显示全部 (含噪音)'}
+            </button>
           )}
 
           <button

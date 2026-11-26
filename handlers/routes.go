@@ -72,6 +72,7 @@ func RegisterAPIRoutes(r *gin.Engine) {
 			admin.DELETE("/ci-token", RevokeCIToken)
 			admin.POST("/arch-processes/:id/promote", PromoteArchProcess)
 			admin.POST("/migrations/csg-placeholder-modules", MigrateCSGPlaceholderModulesHandler)
+			admin.POST("/noise-rules/append", AppendGlobalNoiseRuleHandler)
 		}
 
 		// 4. 三级架构元素与静态拓扑域 (F-01, F-02, F-04)
@@ -267,6 +268,7 @@ func RegisterAPIRoutes(r *gin.Engine) {
 		protected.GET("/recording-sessions/:id/transactions/:rootRecordId/sequence", GetRecordingSessionTransactionSequence)
 
 		// 9. 流量检索与解剖域 (F-03, F-11)
+		protected.GET("/noise-rules", GetNoiseRulesHandler)
 		protected.GET("/traffic-records", ListTrafficRecords)
 		protected.GET("/traffic-records/:id/anatomy", GetTrafficRecordAnatomy)
 		protected.GET("/traffic-records/:id/replay-closure", GetTrafficRecordReplayClosure)

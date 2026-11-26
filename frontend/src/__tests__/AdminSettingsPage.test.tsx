@@ -109,6 +109,10 @@ describe('AdminSettingsPage CI Gate Token Governance', () => {
     expect(html).toContain('discovery.snapshot_retention_count');
     expect(html).toContain('discovery.snapshot_pin_limit');
 
+    expect(html).toContain('noise_service_rules');
+    expect(html).toContain('admin-noise-rules-section');
+    expect(html).toContain('btn-noise-preset-logging');
+
     expect(html).toContain('CSG 占位模块迁移治理');
     expect(html).toContain('admin-migration-dryrun-btn');
     expect(html).toContain('admin-migration-execute-btn');

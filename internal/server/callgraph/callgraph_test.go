@@ -11,6 +11,7 @@ import (
 	"code-common/backend/testdb"
 	"code-contract/config"
 	"code-contract/models"
+	"code-contract/pkg/agentproto"
 	"gorm.io/datatypes"
 )
 
@@ -750,5 +751,141 @@ func TestOrderSequenceParticipants_LeftToRightAndCycleHandling(t *testing.T) {
 	})
 	if sub3 != "127.0.0.1:9002" || !fromIn3 {
 		t.Errorf("已有 INGRESS 地址时后续 EGRESS 不得覆盖，实际 %s %v", sub3, fromIn3)
+	}
+}
+
+func TestCallGraph_NoiseFiltering_Folding_SelfExec_AndExceptionOverride(t *testing.T) {
+	tBase := int64(1700000000000000000)
+	latRoot := int64(10000)
+	latLog1 := int64(2000)
+	latLog2 := int64(1000)
+	latLogErr := int64(500)
+	latNoiseRoot := int64(400)
+
+	records := []models.TrafficRecord{
+		// 1. 业务根事务
+		{
+			ID: 1, SessionID: 99, SeqNo: 1, ProcessID: 10, Direction: "INGRESS",
+			ExchangeType: "UNARY", ServiceName: "biz.OrderService", Operation: "CreateOrder",
+			TraceID: "trace-biz", SpanID: "s-root", FatherSpanID: "",
+			ReqCapturedAtNs: tBase, LatencyUs: &latRoot, StatusCode: models.U64Numeric(0),
+			CreatedAt: time.Now(),
+		},
+		// 1.1 两条正常 Log 子调用（应折叠，且耗时仍须从父 SelfExecUs 扣除）
+		{
+			ID: 2, SessionID: 99, SeqNo: 2, ProcessID: 10, Direction: "EGRESS",
+			ExchangeType: "ONEWAY", ServiceName: "infra.LogService", Operation: "Write",
+			TraceID: "trace-biz", SpanID: "s-log-1", FatherSpanID: "s-root",
+			ReqCapturedAtNs: tBase + 1000, LatencyUs: &latLog1, StatusCode: models.U64Numeric(0),
+			CreatedAt: time.Now(),
+		},
+		{
+			ID: 3, SessionID: 99, SeqNo: 3, ProcessID: 10, Direction: "EGRESS",
+			ExchangeType: "ONEWAY", ServiceName: "infra.LogService", Operation: "Write",
+			TraceID: "trace-biz", SpanID: "s-log-2", FatherSpanID: "s-root",
+			ReqCapturedAtNs: tBase + 4000, LatencyUs: &latLog2, StatusCode: models.U64Numeric(0),
+			CreatedAt: time.Now(),
+		},
+		// 1.2 异常 Log 子调用（必须破格保留在 Children 中，不得折叠）
+		{
+			ID: 4, SessionID: 99, SeqNo: 4, ProcessID: 10, Direction: "EGRESS",
+			ExchangeType: "UNARY", ServiceName: "infra.LogService", Operation: "FlushErr",
+			TraceID: "trace-biz", SpanID: "s-log-err", FatherSpanID: "s-root",
+			ReqCapturedAtNs: tBase + 6000, LatencyUs: &latLogErr, StatusCode: models.U64Numeric(500),
+			CreatedAt: time.Now(),
+		},
+		// 2. 纯噪音独立根事务（在独立时间窗外，应整棵隐藏）
+		{
+			ID: 5, SessionID: 99, SeqNo: 5, ProcessID: 10, Direction: "EGRESS",
+			ExchangeType: "ONEWAY", ServiceName: "infra.MonitorService", Operation: "Beat",
+			TraceID: "trace-mon", SpanID: "s-mon", FatherSpanID: "",
+			ReqCapturedAtNs: tBase + 20_000_000, LatencyUs: &latNoiseRoot, StatusCode: models.U64Numeric(0),
+			CreatedAt: time.Now(),
+		},
+	}
+
+	matcher := agentproto.NewNoiseMatcher([]string{"*LogService*", "*MonitorService*"})
+	res := BuildTransactionTreesWithStats(nil, records, nil, &TreeFilterOptions{
+		HideNoise:    true,
+		NoiseMatcher: matcher,
+	})
+
+	if res.HiddenNoiseRootCount != 1 {
+		t.Fatalf("expected 1 hidden noise root, got %d", res.HiddenNoiseRootCount)
+	}
+	if res.FoldedNoiseChildCount != 2 {
+		t.Fatalf("expected 2 folded noise children, got %d", res.FoldedNoiseChildCount)
+	}
+	if len(res.Groups) != 1 {
+		t.Fatalf("expected 1 visible root group, got %d", len(res.Groups))
+	}
+
+	root := res.Groups[0].Root
+	if root.SelfExecUs == nil || *root.SelfExecUs != 6500 {
+		t.Fatalf("expected SelfExecUs=6500 (10000 - 2000 - 1000 - 500), got %v", root.SelfExecUs)
+	}
+	if len(root.Children) != 1 || root.Children[0].Record.ID != "4" {
+		t.Fatalf("expected only abnormal child id=4 to remain visible, got %+v", root.Children)
+	}
+	if !root.Children[0].Record.IsNoise {
+		t.Fatalf("expected abnormal child id=4 to still carry is_noise=true badge")
+	}
+	if root.FoldedNoiseSummary == nil || root.FoldedNoiseSummary.TotalCount != 2 || root.FoldedNoiseSummary.TotalDurationUs != 3000 {
+		t.Fatalf("unexpected FoldedNoiseSummary: %+v", root.FoldedNoiseSummary)
+	}
+	if len(root.FoldedNoiseChildren) != 2 {
+		t.Fatalf("expected 2 FoldedNoiseChildren, got %d", len(root.FoldedNoiseChildren))
+	}
+}
+
+func TestBuildTransactionSequenceWithOptions_HidesNoiseParticipants(t *testing.T) {
+	db := testdb.SetupIsolatedDB(t, config.ServiceName)
+	if err := models.SetupWithDB(db); err != nil {
+		t.Fatalf("SetupWithDB failed: %v", err)
+	}
+
+	tBase := int64(1700000000000000000)
+	lat := int64(5000)
+	latLog := int64(1000)
+	recs := []models.TrafficRecord{
+		{
+			ID: 901, SessionID: 88, SeqNo: 1, ProcessID: 1, Direction: "INGRESS",
+			ExchangeType: "UNARY", ServiceName: "biz.PayService", Operation: "Pay",
+			TraceID: "tr-seq-noise", SpanID: "sp-1", FatherSpanID: "",
+			ReqCapturedAtNs: tBase, LatencyUs: &lat, StatusCode: models.U64Numeric(0),
+			CreatedAt: time.Now(),
+		},
+		{
+			ID: 902, SessionID: 88, SeqNo: 2, ProcessID: 1, Direction: "EGRESS",
+			ExchangeType: "ONEWAY", ServiceName: "infra.LogService", Operation: "Log",
+			TraceID: "tr-seq-noise", SpanID: "sp-2", FatherSpanID: "sp-1",
+			ReqCapturedAtNs: tBase + 1000, LatencyUs: &latLog, StatusCode: models.U64Numeric(0),
+			CreatedAt: time.Now(),
+		},
+	}
+	for i := range recs {
+		if err := db.Create(&recs[i]).Error; err != nil {
+			t.Fatalf("insert record failed: %v", err)
+		}
+	}
+
+	matcher := agentproto.NewNoiseMatcher([]string{"*LogService*"})
+	dto, err := BuildTransactionSequenceWithOptions(db, 88, 901, 0, SequenceOptions{
+		HideNoise:    true,
+		NoiseMatcher: matcher,
+	})
+	if err != nil {
+		t.Fatalf("BuildTransactionSequenceWithOptions failed: %v", err)
+	}
+	if dto.HiddenNoiseStepCount != 1 {
+		t.Fatalf("expected HiddenNoiseStepCount=1, got %d", dto.HiddenNoiseStepCount)
+	}
+	if len(dto.Steps) != 1 {
+		t.Fatalf("expected 1 visible step, got %d", len(dto.Steps))
+	}
+	for _, p := range dto.Participants {
+		if p.ParticipantKey == "downstream:infra.LogService" {
+			t.Fatalf("expected noise participant infra.LogService to be pruned")
+		}
 	}
 }

@@ -8,6 +8,9 @@ export interface TrafficRecordTableProps {
   selectedRecordId?: string;
   onSinglePacketReplay?: (record: TrafficRecordSummary) => void;
   loading?: boolean;
+  isAdmin?: boolean;
+  onMuteServiceInView?: (serviceName: string) => void;
+  onAddGlobalNoiseRule?: (serviceName: string) => void;
 }
 
 export const TrafficRecordTable: React.FC<TrafficRecordTableProps> = ({
@@ -16,6 +19,9 @@ export const TrafficRecordTable: React.FC<TrafficRecordTableProps> = ({
   selectedRecordId,
   onSinglePacketReplay,
   loading = false,
+  isAdmin = false,
+  onMuteServiceInView,
+  onAddGlobalNoiseRule,
 }) => {
   return (
     <div className="code-table-wrapper" data-testid="traffic-record-table">
@@ -105,7 +111,14 @@ export const TrafficRecordTable: React.FC<TrafficRecordTableProps> = ({
                     </td>
                     <td>
                       <div style={{ display: 'flex', flexDirection: 'column' }}>
-                        <span style={{ fontWeight: 600 }}>{r.operation}</span>
+                        <span style={{ fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                          <span>{r.operation}</span>
+                          {r.is_noise && (
+                            <span className="code-noise-inline-badge" data-testid={`flat-noise-badge-${r.id}`}>
+                              🔇 噪音
+                            </span>
+                          )}
+                        </span>
                         <span className="code-text-xs code-color-muted">{r.service_name}</span>
                       </div>
                     </td>
@@ -166,6 +179,32 @@ export const TrafficRecordTable: React.FC<TrafficRecordTableProps> = ({
                             data-testid={`btn-single-replay-${r.id}`}
                           >
                             事务重放
+                          </button>
+                        )}
+                        {onMuteServiceInView && r.service_name && (
+                          <button
+                            type="button"
+                            className="code-btn code-btn--secondary code-btn--xs"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onMuteServiceInView(r.service_name);
+                            }}
+                            data-testid={`btn-flat-mute-${r.id}`}
+                          >
+                            🔇 屏蔽
+                          </button>
+                        )}
+                        {isAdmin && onAddGlobalNoiseRule && r.service_name && !r.is_noise && (
+                          <button
+                            type="button"
+                            className="code-btn code-btn--secondary code-btn--xs"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onAddGlobalNoiseRule(r.service_name);
+                            }}
+                            data-testid={`btn-flat-add-global-noise-${r.id}`}
+                          >
+                            + 全局噪音
                           </button>
                         )}
                       </div>

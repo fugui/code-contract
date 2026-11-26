@@ -5,7 +5,7 @@ import { Search, ChevronDown, ChevronRight, AlertCircle, Sparkles } from 'lucide
 import { useToast } from '../../utils/toast';
 import { useModulePath } from '../../hooks/useModulePath';
 import * as trafficApi from '../../api/traffic';
-import type { RecordingSession, Process, Agent } from '../../types';
+import type { RecordingSession, Process, Agent, NoiseRulesConfigDTO } from '../../types';
 import { isMeshTransportProcess } from '../../types';
 import './recording_drawer.css';
 
@@ -139,6 +139,49 @@ const RecordingStartInner: React.FC<RecordingStartInnerProps> = ({
   const [maxFrames, setMaxFrames] = useState(100000);
   const [description, setDescription] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  // 4.5 噪音服务源头过滤 (DROP_AT_AGENT, ADR-25)
+  const [noiseFilterEnabled, setNoiseFilterEnabled] = useState(true);
+  const [noiseConfig, setNoiseConfig] = useState<NoiseRulesConfigDTO | null>(null);
+  const [disabledDefaultRules, setDisabledDefaultRules] = useState<string[]>([]);
+  const [extraExcludeText, setExtraExcludeText] = useState('');
+  const [noisePanelExpanded, setNoisePanelExpanded] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    trafficApi
+      .getNoiseRulesConfig()
+      .then((cfg) => {
+        if (active) setNoiseConfig(cfg);
+      })
+      .catch(() => {
+        // 测试或离线环境静默回退为空规则
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const effectiveSelectedNoiseRules = useMemo(() => {
+    const disabledSet = new Set(disabledDefaultRules.map((r) => r.toLowerCase()));
+    const inherited = (noiseConfig?.effective_rules ?? []).filter(
+      (r) => !disabledSet.has(r.toLowerCase())
+    );
+    const extra = extraExcludeText
+      .split(/[\n\r,]+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0 && !s.startsWith('#'));
+    const seen = new Set<string>();
+    const merged: string[] = [];
+    [...inherited, ...extra].forEach((r) => {
+      const key = r.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        merged.push(r);
+      }
+    });
+    return merged;
+  }, [noiseConfig, disabledDefaultRules, extraExcludeText]);
 
   const initializedAgentRef = useRef<string | null>(null);
   // 记录已生效过的 urlAgentId，避免异步刷新 allAgents/allProcesses 时覆盖用户的手动切换
@@ -559,6 +602,8 @@ const RecordingStartInner: React.FC<RecordingStartInnerProps> = ({
         target_process_ids: targetProcessIds,
         max_duration_sec: maxDurationSec,
         max_frames: maxFrames,
+        noise_filter_enabled: noiseFilterEnabled,
+        noise_exclude_rules: noiseFilterEnabled ? effectiveSelectedNoiseRules : [],
         description: description.trim(),
       });
       toast.success(`协同录制批次 [${sess.session_no}] 启动成功`);
@@ -578,6 +623,8 @@ const RecordingStartInner: React.FC<RecordingStartInnerProps> = ({
     scope,
     maxDurationSec,
     maxFrames,
+    noiseFilterEnabled,
+    effectiveSelectedNoiseRules,
     description,
     toast,
     onSuccess,
@@ -1023,9 +1070,102 @@ const RecordingStartInner: React.FC<RecordingStartInnerProps> = ({
         </div>
       </section>
 
-      {/* 3. 录制阈值与备注区 */}
+      {/* 3. 噪音服务源头过滤 (DROP_AT_AGENT, ADR-25) */}
+      <section className="code-recording-drawer-section" data-testid="recording-noise-filter-section">
+        <div className="code-recording-drawer-section-title">3. 噪音服务源头过滤 (DROP_AT_AGENT)</div>
+        <div className="code-noise-filter-card">
+          <div className="code-noise-filter-card__head">
+            <label className="code-noise-filter-toggle">
+              <input
+                type="checkbox"
+                checked={noiseFilterEnabled}
+                onChange={(e) => setNoiseFilterEnabled(e.target.checked)}
+                data-testid="toggle-recording-noise-filter"
+              />
+              <span>
+                在 Agent 源头丢弃低关注/噪音服务流量（如 Log / Monitor，不占最大帧数配额）
+              </span>
+            </label>
+            <button
+              type="button"
+              className="code-process-tree-btn"
+              onClick={() => setNoisePanelExpanded((prev) => !prev)}
+              data-testid="btn-expand-noise-rules"
+            >
+              {noisePanelExpanded
+                ? '收起规则明细'
+                : `规则明细 (${effectiveSelectedNoiseRules.length} 条)`}
+            </button>
+          </div>
+          <div className="code-noise-filter-card__hint">
+            {noiseFilterEnabled
+              ? '提示：命中规则的流量将在采集侧直接丢弃；若后续需要对同步回包的噪音服务做完整离线重放，可取消勾选切换为全量录制。'
+              : '当前已切换为「全量录制」模式，不会在 Agent 源头丢弃任何服务流量。'}
+          </div>
+
+          {noisePanelExpanded && (
+            <div className="code-noise-filter-card__body">
+              <div className="code-noise-filter-subhead">
+                继承的全局规则与台账噪音服务（取消勾选可本次录制临时放行）：
+              </div>
+              {(noiseConfig?.effective_rules ?? []).length > 0 ? (
+                <div className="code-noise-rules-chips">
+                  {(noiseConfig?.effective_rules ?? []).map((rule) => {
+                    const isDisabled = disabledDefaultRules.some(
+                      (r) => r.toLowerCase() === rule.toLowerCase()
+                    );
+                    return (
+                      <label
+                        key={rule}
+                        className={`code-noise-rule-chip ${isDisabled ? 'code-noise-rule-chip--disabled' : ''}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={!isDisabled}
+                          disabled={!noiseFilterEnabled}
+                          onChange={() => {
+                            setDisabledDefaultRules((prev) => {
+                              const exists = prev.some(
+                                (r) => r.toLowerCase() === rule.toLowerCase()
+                              );
+                              if (exists) {
+                                return prev.filter((r) => r.toLowerCase() !== rule.toLowerCase());
+                              }
+                              return [...prev, rule];
+                            });
+                          }}
+                        />
+                        <code className="code-font-mono">{rule}</code>
+                      </label>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="code-noise-filter-empty">
+                  当前尚未配置全局噪音规则或台账标记（可在「管理设置 → noise_service_rules」或「架构台账 → 设为噪音」统一维护，或直接在下方临时填写）。
+                </div>
+              )}
+
+              <div className="code-form-item code-mt-xs">
+                <label className="code-form-label">本次录制临时追加排除规则（逗号或换行分隔）</label>
+                <textarea
+                  className="code-textarea"
+                  rows={2}
+                  disabled={!noiseFilterEnabled}
+                  placeholder="例如：*LogService*, MonitorSvc:Ping"
+                  value={extraExcludeText}
+                  onChange={(e) => setExtraExcludeText(e.target.value)}
+                  data-testid="input-extra-noise-rules"
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* 4. 录制阈值与备注区 */}
       <section className="code-recording-drawer-section">
-        <div className="code-recording-drawer-section-title">3. 录制阈值与备注</div>
+        <div className="code-recording-drawer-section-title">4. 录制阈值与备注</div>
 
         <div className="code-grid code-grid-2 code-gap-md">
           <div className="code-form-item">

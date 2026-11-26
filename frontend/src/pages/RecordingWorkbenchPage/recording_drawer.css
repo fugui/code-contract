@@ -355,3 +355,83 @@
   flex: 1;
 }
 
+/* ADR-25 录制源头噪音过滤卡片 */
+.code-noise-filter-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--radius-md);
+  background-color: var(--color-bg-muted);
+}
+
+.code-noise-filter-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.code-noise-filter-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+
+.code-noise-filter-card__hint {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+  line-height: 1.45;
+}
+
+.code-noise-filter-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding-top: var(--space-xs);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.code-noise-filter-subhead {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+}
+
+.code-noise-rules-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.code-noise-rule-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--color-border-primary);
+  background-color: var(--color-bg-surface);
+  font-size: 0.75rem;
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+
+.code-noise-rule-chip--disabled {
+  opacity: 0.55;
+  text-decoration: line-through;
+}
+
+.code-noise-filter-empty {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  padding: 6px 8px;
+  border-radius: var(--radius-xs);
+  background-color: var(--color-bg-surface);
+}
+

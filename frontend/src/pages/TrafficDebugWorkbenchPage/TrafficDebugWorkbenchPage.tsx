@@ -40,10 +40,15 @@ export const TrafficDebugWorkbenchPage: React.FC = () => {
   const urlView = (searchParams.get('view') as 'tree' | 'flat') || 'tree';
   const urlEntityKey = searchParams.get('entity_key') || undefined;
   const urlSeqRootId = searchParams.get('seq_root_id') || undefined;
+  const urlHideNoise = searchParams.get('hide_noise') !== '0';
 
   const [viewMode, setViewMode] = useState<'tree' | 'flat'>(urlView);
   const [selectedEntityKey, setSelectedEntityKey] = useState<string | undefined>(urlEntityKey);
   const [forceExpandAll, setForceExpandAll] = useState<boolean | undefined>(undefined);
+  const [hideNoise, setHideNoise] = useState<boolean>(urlHideNoise);
+  const [hiddenNoiseCount, setHiddenNoiseCount] = useState<number>(0);
+  const [tempMutedServices, setTempMutedServices] = useState<string[]>([]);
+  const isAdmin = Boolean(user?.is_super_admin || user?.is_module_admin);
 
   const [sessions, setSessions] = useState<RecordingSession[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string>(urlSessionId);
@@ -134,12 +139,15 @@ export const TrafficDebugWorkbenchPage: React.FC = () => {
           keyword: filters.keyword,
           is_replayable: filters.is_replayable,
           has_error: filters.has_error,
+          hide_noise: hideNoise,
+          exclude_services: tempMutedServices,
           page,
           page_size: pageSize,
         });
         setTreeGroups(res.items ?? []);
         setTotalRecords(res.total ?? 0);
         setEntityChains(res.entity_chains ?? []);
+        setHiddenNoiseCount(res.hidden_noise_count ?? 0);
       } else {
         const res = await trafficApi.listTrafficRecords({
           session_id: selectedSessionId,
@@ -153,18 +161,21 @@ export const TrafficDebugWorkbenchPage: React.FC = () => {
           sort_dir: 'asc',
           is_replayable: filters.is_replayable,
           has_error: filters.has_error,
+          hide_noise: hideNoise,
+          exclude_services: tempMutedServices,
           page,
           page_size: pageSize,
         });
         setRecords(res.items ?? []);
         setTotalRecords(res.total ?? 0);
+        setHiddenNoiseCount(res.hidden_noise_count ?? 0);
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '检索流量数据失败');
     } finally {
       setLoading(false);
     }
-  }, [selectedSessionId, viewMode, filters, selectedEntityKey, page, pageSize, toast]);
+  }, [selectedSessionId, viewMode, filters, selectedEntityKey, hideNoise, tempMutedServices, page, pageSize, toast]);
 
   useEffect(() => {
     void loadData();
@@ -256,7 +267,52 @@ export const TrafficDebugWorkbenchPage: React.FC = () => {
   const handleFilterReset = () => {
     setFilters({});
     setSelectedEntityKey(undefined);
+    setTempMutedServices([]);
     setPage(1);
+  };
+
+  const handleToggleHideNoise = () => {
+    const next = !hideNoise;
+    setHideNoise(next);
+    setPage(1);
+    setSearchParams((prev) => {
+      const sp = new URLSearchParams(prev);
+      if (next) {
+        sp.delete('hide_noise');
+      } else {
+        sp.set('hide_noise', '0');
+      }
+      sp.set('page', '1');
+      return sp;
+    });
+  };
+
+  const handleMuteServiceInView = (serviceName: string) => {
+    const trimmed = serviceName.trim();
+    if (!trimmed) return;
+    setTempMutedServices((prev) => {
+      if (prev.some((s) => s.toLowerCase() === trimmed.toLowerCase())) {
+        return prev;
+      }
+      return [...prev, trimmed];
+    });
+    setHideNoise(true);
+    setPage(1);
+    toast.info(`已在本视图临时屏蔽服务: ${trimmed}`);
+  };
+
+  const handleAddGlobalNoiseRule = async (serviceName: string) => {
+    const trimmed = serviceName.trim();
+    if (!trimmed) return;
+    try {
+      await trafficApi.appendGlobalNoiseRule(trimmed);
+      setHideNoise(true);
+      setPage(1);
+      toast.success(`已将 [${trimmed}] 加入全局噪音名单`);
+      await loadData();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '加入全局噪音名单失败');
+    }
   };
 
   const handleOpenAnatomy = async (record: TrafficRecordSummary) => {
@@ -319,6 +375,9 @@ export const TrafficDebugWorkbenchPage: React.FC = () => {
         viewMode={viewMode}
         onChangeViewMode={handleViewModeChange}
         onToggleExpandAll={(expand) => setForceExpandAll(expand)}
+        hideNoise={hideNoise}
+        hiddenNoiseCount={hiddenNoiseCount}
+        onToggleHideNoise={handleToggleHideNoise}
       />
 
       {/* 识别出的有状态业务实体胶囊筛选条 */}
@@ -339,6 +398,39 @@ export const TrafficDebugWorkbenchPage: React.FC = () => {
         />
       </div>
 
+      {/* 本次视图临时屏蔽胶囊栏 */}
+      {tempMutedServices.length > 0 && (
+        <div className="code-temp-muted-strip code-mt-xs" data-testid="temp-muted-services-strip">
+          <span className="code-text-xs code-text-secondary">本次视图临时屏蔽:</span>
+          {tempMutedServices.map((svc) => (
+            <span key={svc} className="code-temp-muted-chip">
+              <code className="code-font-mono">{svc}</code>
+              <button
+                type="button"
+                className="code-temp-muted-chip__close"
+                aria-label={`取消屏蔽 ${svc}`}
+                onClick={() => {
+                  setTempMutedServices((prev) => prev.filter((item) => item !== svc));
+                  setPage(1);
+                }}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+          <button
+            type="button"
+            className="code-btn code-btn--secondary code-btn--xs"
+            onClick={() => {
+              setTempMutedServices([]);
+              setPage(1);
+            }}
+          >
+            清空屏蔽
+          </button>
+        </div>
+      )}
+
       {/* 主表格：根据 viewMode 默认展示事务调用树或时序平铺 */}
       <div className="code-mt-sm">
         {viewMode === 'tree' ? (
@@ -350,6 +442,9 @@ export const TrafficDebugWorkbenchPage: React.FC = () => {
             onSinglePacketReplay={handleOpenSingleReplay}
             onCurateRecord={handleOpenCurate}
             forceExpandAll={forceExpandAll}
+            isAdmin={isAdmin}
+            onMuteServiceInView={handleMuteServiceInView}
+            onAddGlobalNoiseRule={(svc) => void handleAddGlobalNoiseRule(svc)}
           />
         ) : (
           <TrafficRecordTable
@@ -358,6 +453,9 @@ export const TrafficDebugWorkbenchPage: React.FC = () => {
             selectedRecordId={selectedRecordForAnatomy?.id}
             onSinglePacketReplay={handleOpenSingleReplay}
             loading={loading}
+            isAdmin={isAdmin}
+            onMuteServiceInView={handleMuteServiceInView}
+            onAddGlobalNoiseRule={(svc) => void handleAddGlobalNoiseRule(svc)}
           />
         )}
 
@@ -379,6 +477,8 @@ export const TrafficDebugWorkbenchPage: React.FC = () => {
         sessionId={selectedSessionId}
         rootRecordId={sequenceRootRecordId}
         replayTaskId={sequenceReplayTaskId}
+        hideNoise={hideNoise}
+        excludeServices={tempMutedServices}
       />
 
       {/* 四段深度报文解剖抽屉 */}

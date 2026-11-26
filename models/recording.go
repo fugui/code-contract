@@ -48,6 +48,9 @@ type RecordingSession struct {
 	MaxDurationSec        int            `gorm:"not null;default:1800" json:"max_duration_sec"`
 	MaxFrames             int            `gorm:"not null;default:100000" json:"max_frames"`
 	MaxFrameBytes         int            `gorm:"not null;default:4194304" json:"max_frame_bytes"`
+	NoiseFilterEnabled    bool           `gorm:"not null;default:false" json:"noise_filter_enabled"`
+	NoiseExcludeRules     datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"noise_exclude_rules"`
+	FilteredNoiseFrames   int64          `gorm:"not null;default:0" json:"filtered_noise_frames"`
 	CapturedFrames        int64          `gorm:"not null;default:0" json:"captured_frames"`
 	DroppedFrames         int64          `gorm:"not null;default:0" json:"dropped_frames"`
 	StartedAt             *time.Time     `json:"started_at"`

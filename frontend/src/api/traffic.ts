@@ -9,6 +9,7 @@ import type {
   EntityLifecycleChainDTO,
   TransactionSequenceDTO,
   ReplayClosurePreviewDTO,
+  NoiseRulesConfigDTO,
 } from '../types';
 
 export async function listRecordingSessions(params?: {
@@ -34,6 +35,17 @@ export async function getRecordingSession(id: string) {
   return apiRequest<RecordingSession>(`/recording-sessions/${id}`);
 }
 
+export async function getNoiseRulesConfig() {
+  return apiRequest<NoiseRulesConfigDTO>('/noise-rules');
+}
+
+export async function appendGlobalNoiseRule(rule: string) {
+  return apiRequest<NoiseRulesConfigDTO>('/admin/noise-rules/append', {
+    method: 'POST',
+    body: JSON.stringify({ rule }),
+  });
+}
+
 export async function startRecordingSession(data: {
   name: string;
   scope: 'SHARED' | 'PRIVATE';
@@ -41,6 +53,8 @@ export async function startRecordingSession(data: {
   max_duration_sec?: number;
   max_frames?: number;
   max_frame_bytes?: number;
+  noise_filter_enabled?: boolean;
+  noise_exclude_rules?: string[];
   description?: string;
 }) {
   const payload = {
@@ -103,6 +117,8 @@ export async function listTrafficRecords(params: {
   sort_dir?: 'asc' | 'desc';
   is_replayable?: boolean;
   has_error?: boolean;
+  hide_noise?: boolean;
+  exclude_services?: string[];
   page?: number;
   page_size?: number;
 }) {
@@ -122,10 +138,17 @@ export async function listTrafficRecords(params: {
   if (params.sort_dir) query.set('sort_dir', params.sort_dir);
   if (params.is_replayable !== undefined) query.set('is_replayable', String(params.is_replayable));
   if (params.has_error !== undefined) query.set('has_error', String(params.has_error));
+  if (params.hide_noise !== undefined) query.set('hide_noise', String(params.hide_noise));
+  if (params.exclude_services && params.exclude_services.length > 0) {
+    query.set('exclude_services', params.exclude_services.join(','));
+  }
   if (params.page) query.set('page', String(params.page));
   if (params.page_size) query.set('page_size', String(params.page_size));
   const qs = query.toString();
-  return apiRequest<PaginatedResponse<TrafficRecordSummary>>(`/traffic-records${qs ? `?${qs}` : ''}`);
+  return apiRequest<PaginatedResponse<TrafficRecordSummary> & {
+    hidden_noise_count?: number;
+    effective_noise_rules?: string[];
+  }>(`/traffic-records${qs ? `?${qs}` : ''}`);
 }
 
 export async function getTrafficRecordAnatomy(recordId: string, sessionId?: string) {
@@ -155,6 +178,8 @@ export interface TransactionListParams {
   has_error?: boolean;
   is_replayable?: boolean;
   keyword?: string;
+  hide_noise?: boolean;
+  exclude_services?: string[];
   page?: number;
   page_size?: number;
 }
@@ -165,6 +190,10 @@ export interface TransactionTreeListResponse {
   page: number;
   page_size: number;
   entity_chains: EntityLifecycleChainDTO[];
+  hidden_noise_root_count?: number;
+  folded_noise_child_count?: number;
+  hidden_noise_count?: number;
+  effective_noise_rules?: string[];
 }
 
 export async function getTransactionTrees(sessionId: string, params: TransactionListParams = {}) {
@@ -182,15 +211,28 @@ export async function getTransactionTrees(sessionId: string, params: Transaction
   if (params.keyword) query.set('keyword', params.keyword);
   if (params.is_replayable !== undefined) query.set('is_replayable', String(params.is_replayable));
   if (params.has_error !== undefined) query.set('has_error', String(params.has_error));
+  if (params.hide_noise !== undefined) query.set('hide_noise', String(params.hide_noise));
+  if (params.exclude_services && params.exclude_services.length > 0) {
+    query.set('exclude_services', params.exclude_services.join(','));
+  }
   if (params.page) query.set('page', String(params.page));
   if (params.page_size) query.set('page_size', String(params.page_size));
   const qs = query.toString();
   return apiRequest<TransactionTreeListResponse>(`/recording-sessions/${sessionId}/transactions${qs ? `?${qs}` : ''}`);
 }
 
-export async function getTransactionSequence(sessionId: string, rootRecordId: string, replayTaskId?: string) {
+export async function getTransactionSequence(
+  sessionId: string,
+  rootRecordId: string,
+  replayTaskId?: string,
+  options?: { hide_noise?: boolean; exclude_services?: string[] }
+) {
   const query = new URLSearchParams();
   if (replayTaskId) query.set('replay_task_id', replayTaskId);
+  if (options?.hide_noise !== undefined) query.set('hide_noise', String(options.hide_noise));
+  if (options?.exclude_services && options.exclude_services.length > 0) {
+    query.set('exclude_services', options.exclude_services.join(','));
+  }
   const qs = query.toString();
   return apiRequest<TransactionSequenceDTO>(`/recording-sessions/${sessionId}/transactions/${rootRecordId}/sequence${qs ? `?${qs}` : ''}`);
 }

@@ -134,8 +134,22 @@ export interface TrafficRecordSummary {
   decode_status: string;
   is_truncated?: boolean;
   is_replayable: boolean;
+  is_noise?: boolean;
   created_at?: string;
   captured_at?: string;
+}
+
+export interface FoldedNoiseBreakdownItem {
+  service_name: string;
+  operation: string;
+  count: number;
+  total_duration_us: number;
+}
+
+export interface FoldedNoiseSummaryDTO {
+  total_count: number;
+  total_duration_us: number;
+  breakdown: FoldedNoiseBreakdownItem[];
 }
 
 export interface TransactionTreeNodeDTO {
@@ -151,6 +165,8 @@ export interface TransactionTreeNodeDTO {
   is_critical_path: boolean;
   matched_filter: boolean;
   children: TransactionTreeNodeDTO[];
+  folded_noise_children?: TransactionTreeNodeDTO[];
+  folded_noise_summary?: FoldedNoiseSummaryDTO;
 }
 
 export interface EntityLifecycleStepDTO {
@@ -227,10 +243,33 @@ export interface TransactionSequenceDTO {
   root_record_id: string;
   trace_id: string;
   total_duration_us: number;
+  hidden_noise_step_count?: number;
   participants: SequenceParticipantDTO[];
   steps: SequenceStepDTO[];
   parameter_lineages?: ParameterLineageEdgeDTO[] | null;
   entity_chains?: EntityLifecycleChainDTO[] | null;
+}
+
+export interface MarkedNoiseServiceDTO {
+  id: string | number;
+  service_name: string;
+  proto_service_name?: string;
+  module_id?: string | number | null;
+  module_name?: string;
+}
+
+export interface NoiseRulePresetDTO {
+  id: string;
+  name: string;
+  description: string;
+  rules: string[];
+}
+
+export interface NoiseRulesConfigDTO {
+  global_rules: string[];
+  marked_services: MarkedNoiseServiceDTO[];
+  effective_rules: string[];
+  preset_templates: NoiseRulePresetDTO[];
 }
 
 export interface ReplayClosureMockItemDTO {
@@ -284,6 +323,9 @@ export interface RecordingSession {
   max_duration_sec: number;
   max_frames: number;
   captured_frames: number;
+  noise_filter_enabled?: boolean;
+  noise_exclude_rules?: string[];
+  filtered_noise_frames?: number;
   process_diagnostics?: ProcessDiagnostic[];
   description?: string;
   created_at?: string;

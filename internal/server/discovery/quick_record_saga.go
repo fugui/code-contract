@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"code-contract/internal/server/hub"
+	"code-contract/internal/server/noise"
 	"code-contract/internal/server/topology"
 	"code-contract/models"
 	"code-contract/pkg/agentproto"
@@ -360,6 +361,14 @@ func ExecuteQuickRecordSaga(
 
 	leasedBytes, _ := json.Marshal([]uint64{agent.ID})
 	targetProcBytes, _ := json.Marshal(enrolledProcIDs)
+	effectiveNoiseRules := []string{}
+	if noiseCfg, cfgErr := noise.LoadEffectiveNoiseConfig(ctx, db); cfgErr == nil && noiseCfg != nil && len(noiseCfg.EffectiveRules) > 0 {
+		effectiveNoiseRules = noiseCfg.EffectiveRules
+	}
+	noiseRulesBytes, _ := json.Marshal(effectiveNoiseRules)
+	if len(effectiveNoiseRules) == 0 {
+		noiseRulesBytes = []byte("[]")
+	}
 	now := time.Now()
 	session := &models.RecordingSession{
 		SessionNo:          fmt.Sprintf("QREC_%s_%d", now.Format("20060102150405"), now.UnixNano()%10000),
@@ -376,6 +385,8 @@ func ExecuteQuickRecordSaga(
 		MaxDurationSec:     maxDur,
 		MaxFrames:          maxFrames,
 		MaxFrameBytes:      maxBytes,
+		NoiseFilterEnabled: true,
+		NoiseExcludeRules:  datatypes.JSON(noiseRulesBytes),
 		CreatedBy:          in.OperatorID,
 		CreatedAt:          now,
 		UpdatedAt:          now,
@@ -443,6 +454,7 @@ func ExecuteQuickRecordSaga(
 		MaxFrameBytes:  maxBytes,
 		MaxBufferBytes: 64 * 1024 * 1024,
 		Processes:      specs,
+		ExcludeRules:   effectiveNoiseRules,
 	}
 
 	diags, syncErr := syncer.SyncMonitors(ctx, &agent, syncReq)

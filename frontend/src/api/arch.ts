@@ -222,6 +222,7 @@ export async function createModuleService(moduleId: string, data: {
   contract_id?: string | number | null;
   impl_key?: string | null;
   diff_ignore_paths?: string[];
+  is_noise_service?: boolean;
   description?: string;
 }) {
   return apiRequest<ModuleService>(`/arch/modules/${moduleId}/services`, {
@@ -237,6 +238,7 @@ export async function updateModuleService(serviceId: string, data: {
   service_name?: string;
   impl_key?: string;
   diff_ignore_paths: string[];
+  is_noise_service?: boolean;
   description?: string;
 }) {
   return apiRequest<ModuleService>(`/arch/module-services/${serviceId}`, {

@@ -17,6 +17,7 @@ import (
 	"code-contract/config"
 	"code-contract/internal/server/decoder"
 	"code-contract/internal/server/hub"
+	"code-contract/internal/server/noise"
 	"code-contract/internal/server/topology"
 	"code-contract/models"
 	"code-contract/pkg/agentproto"
@@ -44,6 +45,8 @@ type StartSessionReq struct {
 	MaxDurationSec      int                 `json:"max_duration_sec"`
 	MaxFrames           int                 `json:"max_frames"`
 	MaxFrameBytes       int                 `json:"max_frame_bytes"`
+	NoiseFilterEnabled  *bool               `json:"noise_filter_enabled,omitempty"`
+	NoiseExcludeRules   []string            `json:"noise_exclude_rules,omitempty"`
 	Description         string              `json:"description"`
 }
 
@@ -217,6 +220,33 @@ func (o *Orchestrator) StartSession(
 		maxBytes = 4194304 // 默认 4MB
 	}
 
+	noiseEnabled := true
+	if req.NoiseFilterEnabled != nil {
+		noiseEnabled = *req.NoiseFilterEnabled
+	}
+	effectiveNoiseRules := make([]string, 0)
+	if noiseEnabled {
+		if req.NoiseExcludeRules != nil {
+			normalized := agentproto.NormalizeNoiseRules(req.NoiseExcludeRules)
+			if err := agentproto.ValidateNoiseRules(normalized); err != nil {
+				return nil, fmt.Errorf("400 Bad Request: %w", err)
+			}
+			effectiveNoiseRules = normalized
+		} else {
+			noiseCfg, cfgErr := noise.LoadEffectiveNoiseConfig(ctx, o.db)
+			if cfgErr != nil {
+				return nil, fmt.Errorf("加载噪音服务规则失败: %w", cfgErr)
+			}
+			if noiseCfg != nil && len(noiseCfg.EffectiveRules) > 0 {
+				effectiveNoiseRules = noiseCfg.EffectiveRules
+			}
+		}
+	}
+	noiseRulesBytes, _ := json.Marshal(effectiveNoiseRules)
+	if len(effectiveNoiseRules) == 0 {
+		noiseRulesBytes = []byte("[]")
+	}
+
 	snapshots := make([]models.ProcessSnapshotItem, 0, len(procs))
 	for _, p := range procs {
 		var modIDs []uint64
@@ -260,6 +290,8 @@ func (o *Orchestrator) StartSession(
 		MaxDurationSec:     maxDur,
 		MaxFrames:          maxFrames,
 		MaxFrameBytes:      maxBytes,
+		NoiseFilterEnabled: noiseEnabled,
+		NoiseExcludeRules:  datatypes.JSON(noiseRulesBytes),
 		CreatedBy:          userID,
 		CreatedAt:          now,
 		UpdatedAt:          now,
@@ -309,8 +341,9 @@ func (o *Orchestrator) StartSession(
 		}
 
 		syncReq := agentproto.SyncMonitorReq{
-			SessionID: session.ID,
-			Processes: specs,
+			SessionID:    session.ID,
+			Processes:    specs,
+			ExcludeRules: effectiveNoiseRules,
 		}
 		diags, syncErr := o.callAgentSync(ctx, agt, syncReq)
 		if syncErr != nil {
@@ -435,8 +468,13 @@ func (o *Orchestrator) StopSession(
 	}
 
 	// 2. 向所有相关 Agent 发送 /stop（触发内核/驱动排空并投递 EventSessionDrained）
+	var totalFilteredNoiseFrames int64
+	var totalAgentDroppedFrames int64
 	for _, agt := range agents {
-		o.callAgentStop(ctx, &agt, session.ID)
+		if stopResp, stopErr := o.callAgentStop(ctx, &agt, session.ID); stopErr == nil && stopResp != nil {
+			totalFilteredNoiseFrames += stopResp.FilteredNoiseFrames
+			totalAgentDroppedFrames += stopResp.DroppedFrames
+		}
 	}
 
 	// 2.5 等待所有已连接的 Agent WebSocket 流收到 EventSessionDrained（兜底超时 2s）
@@ -485,10 +523,15 @@ func (o *Orchestrator) StopSession(
 	stoppedAt := time.Now()
 
 	updates := map[string]interface{}{
-		"status":          finalStatus,
-		"stopped_at":      &stoppedAt,
-		"stop_reason":     reason,
-		"captured_frames": capturedCount,
+		"status":                finalStatus,
+		"stopped_at":            &stoppedAt,
+		"stop_reason":           reason,
+		"captured_frames":       capturedCount,
+		"filtered_noise_frames": totalFilteredNoiseFrames,
+	}
+	if totalAgentDroppedFrames > session.DroppedFrames {
+		updates["dropped_frames"] = totalAgentDroppedFrames
+		session.DroppedFrames = totalAgentDroppedFrames
 	}
 
 	if err := o.db.WithContext(ctx).Model(&session).Updates(updates).Error; err != nil {
@@ -498,6 +541,7 @@ func (o *Orchestrator) StopSession(
 	session.StoppedAt = &stoppedAt
 	session.StopReason = reason
 	session.CapturedFrames = capturedCount
+	session.FilteredNoiseFrames = totalFilteredNoiseFrames
 
 	// 6. 审计日志
 	commonAudit.Push(&models.SysAuditLog{
@@ -799,19 +843,26 @@ func (o *Orchestrator) callAgentSync(ctx context.Context, agt *models.Agent, req
 	return result.Diagnostics, nil
 }
 
-func (o *Orchestrator) callAgentStop(ctx context.Context, agt *models.Agent, sessionID uint64) {
+func (o *Orchestrator) callAgentStop(ctx context.Context, agt *models.Agent, sessionID uint64) (*agentproto.StopMonitorResp, error) {
 	url := fmt.Sprintf("%s/agent/v1/monitors/%d/stop", agt.Endpoint, sessionID)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
 	if err != nil {
-		return
+		return nil, err
 	}
 	if agt.ClaimCode != "" {
 		httpReq.Header.Set(agentproto.HeaderClaimCode, agt.ClaimCode)
 	}
 	resp, err := o.httpClient.Do(httpReq)
-	if err == nil {
-		_ = resp.Body.Close()
+	if err != nil {
+		return nil, err
 	}
+	defer resp.Body.Close()
+
+	var stopResp agentproto.StopMonitorResp
+	if resp.StatusCode == http.StatusOK {
+		_ = json.NewDecoder(resp.Body).Decode(&stopResp)
+	}
+	return &stopResp, nil
 }
 
 func (o *Orchestrator) startAgentStream(ctx context.Context, sessionID uint64, agt *models.Agent) {

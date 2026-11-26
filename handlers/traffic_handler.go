@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -8,8 +9,10 @@ import (
 
 	commonAuth "code-common/backend/auth"
 	"code-contract/internal/server/callgraph"
+	"code-contract/internal/server/noise"
 	"code-contract/internal/server/recorder"
 	"code-contract/models"
+	"code-contract/pkg/agentproto"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -17,23 +20,46 @@ import (
 
 // TrafficRecordListQuery 流量检索查询参数
 type TrafficRecordListQuery struct {
-	SessionID    uint64 `form:"session_id"`
-	Scope        string `form:"scope"`
-	SubsystemID  uint64 `form:"subsystem_id"`
-	ModuleID     uint64 `form:"module_id"`
-	ProcessID    uint64 `form:"process_id"`
-	Direction    string `form:"direction"`
-	ExchangeType string `form:"exchange_type"`
-	ServiceName  string `form:"service_name"`
-	Operation    string `form:"operation"`
-	SNO          uint64 `form:"sno"`
-	TraceID      string `form:"trace_id"`
-	Keyword      string `form:"keyword"`
-	SortDir      string `form:"sort_dir"`
-	IsReplayable *bool  `form:"is_replayable"`
-	HasError     *bool  `form:"has_error"`
-	Page         int    `form:"page"`
-	PageSize     int    `form:"page_size"`
+	SessionID       uint64 `form:"session_id"`
+	Scope           string `form:"scope"`
+	SubsystemID     uint64 `form:"subsystem_id"`
+	ModuleID        uint64 `form:"module_id"`
+	ProcessID       uint64 `form:"process_id"`
+	Direction       string `form:"direction"`
+	ExchangeType    string `form:"exchange_type"`
+	ServiceName     string `form:"service_name"`
+	Operation       string `form:"operation"`
+	SNO             uint64 `form:"sno"`
+	TraceID         string `form:"trace_id"`
+	Keyword         string `form:"keyword"`
+	SortDir         string `form:"sort_dir"`
+	IsReplayable    *bool  `form:"is_replayable"`
+	HasError        *bool  `form:"has_error"`
+	HideNoise       *bool  `form:"hide_noise"`
+	ExcludeServices string `form:"exclude_services"`
+	Page            int    `form:"page"`
+	PageSize        int    `form:"page_size"`
+}
+
+func resolveTrafficNoiseConfig(
+	ctx context.Context,
+	db *gorm.DB,
+	hideNoisePtr *bool,
+	excludeCSV string,
+) (bool, *agentproto.NoiseMatcher, []string) {
+	hideNoise := true
+	if hideNoisePtr != nil {
+		hideNoise = *hideNoisePtr
+	}
+	combined := make([]string, 0)
+	if cfg, err := noise.LoadEffectiveNoiseConfig(ctx, db); err == nil && cfg != nil {
+		combined = append(combined, cfg.EffectiveRules...)
+	}
+	if strings.TrimSpace(excludeCSV) != "" {
+		combined = append(combined, agentproto.ParseNoiseRulesText(excludeCSV)...)
+	}
+	effectiveRules := agentproto.NormalizeNoiseRules(combined)
+	return hideNoise, agentproto.NewNoiseMatcher(effectiveRules), effectiveRules
 }
 
 // ListTrafficRecords 标准分页检索往返流量记录 (GET /api/traffic-records)
@@ -127,6 +153,18 @@ func ListTrafficRecords(c *gin.Context) {
 		}
 	}
 
+	hideNoise, noiseMatcher, effectiveRules := resolveTrafficNoiseConfig(c.Request.Context(), db, query.HideNoise, query.ExcludeServices)
+	var hiddenNoiseCount int64
+	if hideNoise && !noiseMatcher.Empty() {
+		if noiseClause, noiseArgs := noise.BuildNoiseSQLFilter(effectiveRules); noiseClause != "" {
+			hideCond := "(" + noiseClause + " AND status_code = 0 AND exchange_type <> ? AND ((headers_json->'meta'->>'biz_error') IS DISTINCT FROM 'true'))"
+			hideArgs := append(append([]interface{}{}, noiseArgs...), models.ExchangeReqOnly)
+			if cntErr := tx.Session(&gorm.Session{}).Where(hideCond, hideArgs...).Count(&hiddenNoiseCount).Error; cntErr == nil && hiddenNoiseCount > 0 {
+				tx = tx.Where("NOT "+hideCond, hideArgs...)
+			}
+		}
+	}
+
 	var total int64
 	if err := tx.Count(&total).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "统计流量总数失败: " + err.Error()})
@@ -165,12 +203,19 @@ func ListTrafficRecords(c *gin.Context) {
 		}
 	}
 	hydratedItems := callgraph.HydrateRecords(db, session, items)
+	if !noiseMatcher.Empty() {
+		for i := range hydratedItems {
+			hydratedItems[i].IsNoise = noiseMatcher.Match(hydratedItems[i].ServiceName, hydratedItems[i].Operation)
+		}
+	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"items":     hydratedItems,
-		"total":     total,
-		"page":      page,
-		"page_size": pageSize,
+		"items":                 hydratedItems,
+		"total":                 total,
+		"page":                  page,
+		"page_size":             pageSize,
+		"hidden_noise_count":    hiddenNoiseCount,
+		"effective_noise_rules": effectiveRules,
 	})
 }
 
@@ -287,21 +332,23 @@ func RedecodeTrafficRecord(c *gin.Context) {
 
 // TransactionListQuery 事务调用树查询参数
 type TransactionListQuery struct {
-	ProcessID    uint64 `form:"process_id"`
-	SubsystemID  uint64 `form:"subsystem_id"`
-	ModuleID     uint64 `form:"module_id"`
-	Direction    string `form:"direction"`
-	ExchangeType string `form:"exchange_type"`
-	ServiceName  string `form:"service_name"`
-	Operation    string `form:"operation"`
-	SNO          uint64 `form:"sno"`
-	TraceID      string `form:"trace_id"`
-	EntityKey    string `form:"entity_key"`
-	HasError     *bool  `form:"has_error"`
-	IsReplayable *bool  `form:"is_replayable"`
-	Keyword      string `form:"keyword"`
-	Page         int    `form:"page"`
-	PageSize     int    `form:"page_size"`
+	ProcessID       uint64 `form:"process_id"`
+	SubsystemID     uint64 `form:"subsystem_id"`
+	ModuleID        uint64 `form:"module_id"`
+	Direction       string `form:"direction"`
+	ExchangeType    string `form:"exchange_type"`
+	ServiceName     string `form:"service_name"`
+	Operation       string `form:"operation"`
+	SNO             uint64 `form:"sno"`
+	TraceID         string `form:"trace_id"`
+	EntityKey       string `form:"entity_key"`
+	HasError        *bool  `form:"has_error"`
+	IsReplayable    *bool  `form:"is_replayable"`
+	Keyword         string `form:"keyword"`
+	HideNoise       *bool  `form:"hide_noise"`
+	ExcludeServices string `form:"exclude_services"`
+	Page            int    `form:"page"`
+	PageSize        int    `form:"page_size"`
 }
 
 // GetRecordingSessionTransactions 获取录制批次的事务调用树列表 (GET /api/recording-sessions/:id/transactions)
@@ -357,7 +404,8 @@ func GetRecordingSessionTransactions(c *gin.Context) {
 		return
 	}
 
-	// 3. 构建调用树
+	// 3. 构建调用树与降噪折叠
+	hideNoise, noiseMatcher, effectiveRules := resolveTrafficNoiseConfig(c.Request.Context(), db, query.HideNoise, query.ExcludeServices)
 	filter := &callgraph.TreeFilterOptions{
 		ProcessID:    query.ProcessID,
 		SubsystemID:  query.SubsystemID,
@@ -372,10 +420,22 @@ func GetRecordingSessionTransactions(c *gin.Context) {
 		HasError:     query.HasError,
 		IsReplayable: query.IsReplayable,
 		Keyword:      query.Keyword,
+		HideNoise:    hideNoise,
+		NoiseMatcher: noiseMatcher,
 	}
 
-	trees := callgraph.BuildTransactionTrees(db.WithContext(c.Request.Context()), records, &session, filter)
-	entityChains := callgraph.BuildEntityChains(records)
+	treeRes := callgraph.BuildTransactionTreesWithStats(db.WithContext(c.Request.Context()), records, &session, filter)
+	trees := treeRes.Groups
+	chainSource := records
+	if hideNoise && !noiseMatcher.Empty() {
+		chainSource = make([]models.TrafficRecord, 0, len(treeRes.VisibleRecordIDs))
+		for _, r := range records {
+			if treeRes.VisibleRecordIDs[r.ID] {
+				chainSource = append(chainSource, r)
+			}
+		}
+	}
+	entityChains := callgraph.BuildEntityChains(chainSource)
 	if entityChains == nil {
 		entityChains = []callgraph.EntityLifecycleChainDTO{}
 	}
@@ -406,11 +466,15 @@ func GetRecordingSessionTransactions(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"items":         pagedItems,
-		"total":         total,
-		"page":          page,
-		"page_size":     pageSize,
-		"entity_chains": entityChains,
+		"items":                    pagedItems,
+		"total":                    total,
+		"page":                     page,
+		"page_size":                pageSize,
+		"entity_chains":            entityChains,
+		"hidden_noise_root_count":  treeRes.HiddenNoiseRootCount,
+		"folded_noise_child_count": treeRes.FoldedNoiseChildCount,
+		"hidden_noise_count":       treeRes.HiddenNoiseCount,
+		"effective_noise_rules":    effectiveRules,
 	})
 }
 
@@ -479,7 +543,24 @@ func GetRecordingSessionTransactionSequence(c *gin.Context) {
 		replayTaskID = parsedTaskID
 	}
 
-	dto, err := callgraph.BuildTransactionSequence(db.WithContext(c.Request.Context()), sessionID, rootRecordID, replayTaskID)
+	var hideNoisePtr *bool
+	if hnStr := strings.TrimSpace(c.Query("hide_noise")); hnStr != "" {
+		if parsed, bErr := strconv.ParseBool(hnStr); bErr == nil {
+			hideNoisePtr = &parsed
+		}
+	}
+	hideNoise, noiseMatcher, _ := resolveTrafficNoiseConfig(c.Request.Context(), db, hideNoisePtr, c.Query("exclude_services"))
+
+	dto, err := callgraph.BuildTransactionSequenceWithOptions(
+		db.WithContext(c.Request.Context()),
+		sessionID,
+		rootRecordID,
+		replayTaskID,
+		callgraph.SequenceOptions{
+			HideNoise:    hideNoise,
+			NoiseMatcher: noiseMatcher,
+		},
+	)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return

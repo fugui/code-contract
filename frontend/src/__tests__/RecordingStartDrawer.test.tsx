@@ -408,4 +408,22 @@ describe('RecordingStartDrawer TDD Test Suite', () => {
     expect(html).not.toContain('svc-env1');
     expect(html).toContain('宿主: <strong>env-agent-02</strong>');
   });
+
+  it('TC-REC-DRAWER-NOISE-01: 默认渲染 DROP_AT_AGENT 噪音服务源头过滤选项与规则展开入口', () => {
+    const html = renderToString(
+      <RecordingStartContent
+        onClose={vi.fn()}
+        onSuccess={vi.fn()}
+        allProcesses={mockProcesses}
+        allAgents={mockAgents}
+        isAdmin={false}
+      />
+    );
+
+    expect(html).toContain('recording-noise-filter-section');
+    expect(html).toContain('toggle-recording-noise-filter');
+    expect(html).toContain('DROP_AT_AGENT');
+    expect(html).toContain('checked=""');
+    expect(html).toContain('btn-expand-noise-rules');
+  });
 });

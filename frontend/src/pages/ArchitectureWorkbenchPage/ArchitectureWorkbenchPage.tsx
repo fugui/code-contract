@@ -994,6 +994,7 @@ export const ArchitectureWorkbenchPage: React.FC = () => {
     contract_id?: string | number | null;
     impl_key?: string | null;
     diff_ignore_paths?: string[];
+    is_noise_service?: boolean;
     description?: string;
   }) => {
     if (!selectedModuleId) return;
@@ -1003,6 +1004,27 @@ export const ArchitectureWorkbenchPage: React.FC = () => {
       await refreshCurrentModule(selectedModuleId);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '声明服务失败');
+      throw err;
+    }
+  };
+
+  const handleToggleServiceNoise = async (svc: ModuleService) => {
+    if (!selectedModuleId) return;
+    const nextNoise = !svc.is_noise_service;
+    try {
+      await archApi.updateModuleService(svc.id, {
+        diff_ignore_paths: svc.diff_ignore_paths ?? [],
+        description: svc.description ?? '',
+        is_noise_service: nextNoise,
+      });
+      toast.success(
+        nextNoise
+          ? `已将 [${svc.service_name}] 标记为低关注/噪音服务`
+          : `已取消 [${svc.service_name}] 的噪音服务标记`
+      );
+      await refreshCurrentModule(selectedModuleId);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '更新服务噪音标记失败');
       throw err;
     }
   };
@@ -1492,6 +1514,7 @@ export const ArchitectureWorkbenchPage: React.FC = () => {
                 }}
                 onCreateService={handleCreateService}
                 onUpdateServiceIgnorePaths={handleUpdateServiceIgnorePaths}
+                onToggleServiceNoise={handleToggleServiceNoise}
                 onDeleteService={handleDeleteService}
                 onCreateDependency={handleCreateDependency}
                 onDeleteDependency={handleDeleteDependency}

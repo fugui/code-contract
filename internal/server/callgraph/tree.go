@@ -6,20 +6,35 @@ import (
 	"strconv"
 
 	"code-contract/models"
+	"code-contract/pkg/agentproto"
 	"gorm.io/gorm"
 )
 
 var compensationRegex = regexp.MustCompile(`(?i)^(Cancel|Release|Rollback|Refund|Unlock|Compensate|Revert)`)
 
-// BuildTransactionTrees 构建调用树全流程
+// BuildTransactionTrees 构建调用树全流程（向后兼容旧签名）
 func BuildTransactionTrees(
 	db *gorm.DB,
 	records []models.TrafficRecord,
 	session *models.RecordingSession,
 	filter *TreeFilterOptions,
 ) []TransactionTreeGroupDTO {
+	return BuildTransactionTreesWithStats(db, records, session, filter).Groups
+}
+
+// BuildTransactionTreesWithStats 构建调用树并执行噪音标记、先算账后折叠及统计
+func BuildTransactionTreesWithStats(
+	db *gorm.DB,
+	records []models.TrafficRecord,
+	session *models.RecordingSession,
+	filter *TreeFilterOptions,
+) TransactionTreesResult {
+	res := TransactionTreesResult{
+		Groups:           []TransactionTreeGroupDTO{},
+		VisibleRecordIDs: make(map[uint64]bool),
+	}
 	if len(records) == 0 {
-		return []TransactionTreeGroupDTO{}
+		return res
 	}
 
 	// 1. 批量水合
@@ -165,14 +180,29 @@ func BuildTransactionTrees(
 		// 标记关键路径
 		markCriticalPath(&rootNode)
 
-		// 统计节点信息
+		// 标注噪音属性并在需要时隐藏纯噪音根 / 折叠树内噪音子调用
+		if filter != nil && filter.NoiseMatcher != nil && !filter.NoiseMatcher.Empty() {
+			annotateNoiseFlags(&rootNode, filter.NoiseMatcher)
+			if filter.HideNoise {
+				if isPureHideableNoiseSubtree(&rootNode) {
+					res.HiddenNoiseRootCount++
+					res.HiddenNoiseCount += countNodes(&rootNode)
+					continue
+				}
+				foldedCount := foldNoiseChildren(&rootNode)
+				res.FoldedNoiseChildCount += foldedCount
+				res.HiddenNoiseCount += foldedCount
+			}
+		}
+
+		// 统计节点信息（基于折叠后可见子树）
 		nodeCount := countNodes(&rootNode)
 		hasProtoErr := false
 		hasBizErr := false
 		hasComp := false
 		checkTreeFlags(&rootNode, &hasProtoErr, &hasBizErr, &hasComp)
 
-		// 提取实体标签
+		// 提取实体标签（基于折叠后可见节点，避免噪音污染胶囊条）
 		entityTags := extractEntityTagsFromTree(&rootNode, recByID)
 
 		// 过滤高亮与保留祖先链
@@ -180,6 +210,8 @@ func BuildTransactionTrees(
 		if filter != nil && !hasMatch {
 			continue
 		}
+
+		collectVisibleNodeIDs(&rootNode, res.VisibleRecordIDs)
 
 		group := TransactionTreeGroupDTO{
 			RootRecordID:           rootNode.Record.ID,
@@ -199,7 +231,8 @@ func BuildTransactionTrees(
 	if groups == nil {
 		groups = []TransactionTreeGroupDTO{}
 	}
-	return groups
+	res.Groups = groups
+	return res
 }
 
 func buildSubtree(
@@ -566,4 +599,157 @@ func applyFilterAndHighlight(node *TransactionTreeNodeDTO, filter *TreeFilterOpt
 	}
 
 	return matched || anyChildMatched
+}
+
+func isRecordAbnormal(r *TrafficRecordSummary) bool {
+	if r == nil {
+		return false
+	}
+	return (r.StatusCode != "" && r.StatusCode != "0") || r.ExchangeType == "REQ_ONLY" || r.BizError
+}
+
+func isNodeNoise(node *TransactionTreeNodeDTO) bool {
+	if node == nil {
+		return false
+	}
+	if node.Record.IsNoise {
+		return true
+	}
+	return node.StitchedIngressRecord != nil && node.StitchedIngressRecord.IsNoise
+}
+
+func isNodeAbnormal(node *TransactionTreeNodeDTO) bool {
+	if node == nil {
+		return false
+	}
+	if isRecordAbnormal(&node.Record) {
+		return true
+	}
+	return node.StitchedIngressRecord != nil && isRecordAbnormal(node.StitchedIngressRecord)
+}
+
+func annotateNoiseFlags(node *TransactionTreeNodeDTO, matcher *agentproto.NoiseMatcher) {
+	if node == nil || matcher == nil {
+		return
+	}
+	node.Record.IsNoise = matcher.Match(node.Record.ServiceName, node.Record.Operation)
+	if node.StitchedIngressRecord != nil {
+		node.StitchedIngressRecord.IsNoise = matcher.Match(node.StitchedIngressRecord.ServiceName, node.StitchedIngressRecord.Operation)
+	}
+	for i := range node.Children {
+		annotateNoiseFlags(&node.Children[i], matcher)
+	}
+}
+
+func isPureHideableNoiseSubtree(node *TransactionTreeNodeDTO) bool {
+	if node == nil || !isNodeNoise(node) || isNodeAbnormal(node) {
+		return false
+	}
+	for i := range node.Children {
+		if !isPureHideableNoiseSubtree(&node.Children[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func foldNoiseChildren(node *TransactionTreeNodeDTO) int {
+	if node == nil || len(node.Children) == 0 {
+		return 0
+	}
+	totalFolded := 0
+	kept := make([]TransactionTreeNodeDTO, 0, len(node.Children))
+	folded := make([]TransactionTreeNodeDTO, 0)
+
+	for i := range node.Children {
+		child := &node.Children[i]
+		if isPureHideableNoiseSubtree(child) {
+			folded = append(folded, *child)
+			totalFolded += countNodes(child)
+		} else {
+			totalFolded += foldNoiseChildren(child)
+			kept = append(kept, *child)
+		}
+	}
+
+	node.Children = kept
+	if len(folded) > 0 {
+		node.FoldedNoiseChildren = folded
+		node.FoldedNoiseSummary = summarizeFoldedNoise(folded)
+	}
+	return totalFolded
+}
+
+func summarizeFoldedNoise(folded []TransactionTreeNodeDTO) *FoldedNoiseSummaryDTO {
+	type breakdownKey struct {
+		service string
+		op      string
+	}
+	agg := make(map[breakdownKey]*FoldedNoiseBreakdownItem)
+	totalCount := 0
+	var totalDurationUs int64
+
+	var walk func(n *TransactionTreeNodeDTO)
+	walk = func(n *TransactionTreeNodeDTO) {
+		totalCount++
+		var dur int64
+		if n.Record.LatencyUs != nil {
+			dur = *n.Record.LatencyUs
+		}
+		totalDurationUs += dur
+		k := breakdownKey{service: n.Record.ServiceName, op: n.Record.Operation}
+		item, ok := agg[k]
+		if !ok {
+			item = &FoldedNoiseBreakdownItem{
+				ServiceName: n.Record.ServiceName,
+				Operation:   n.Record.Operation,
+			}
+			agg[k] = item
+		}
+		item.Count++
+		item.TotalDurationUs += dur
+		for i := range n.Children {
+			walk(&n.Children[i])
+		}
+	}
+	for i := range folded {
+		walk(&folded[i])
+	}
+
+	breakdown := make([]FoldedNoiseBreakdownItem, 0, len(agg))
+	for _, item := range agg {
+		breakdown = append(breakdown, *item)
+	}
+	sort.Slice(breakdown, func(i, j int) bool {
+		if breakdown[i].Count != breakdown[j].Count {
+			return breakdown[i].Count > breakdown[j].Count
+		}
+		if breakdown[i].ServiceName != breakdown[j].ServiceName {
+			return breakdown[i].ServiceName < breakdown[j].ServiceName
+		}
+		return breakdown[i].Operation < breakdown[j].Operation
+	})
+
+	return &FoldedNoiseSummaryDTO{
+		TotalCount:      totalCount,
+		TotalDurationUs: totalDurationUs,
+		Breakdown:       breakdown,
+	}
+}
+
+func collectVisibleNodeIDs(node *TransactionTreeNodeDTO, out map[uint64]bool) {
+	if node == nil || out == nil {
+		return
+	}
+	if id, err := strconv.ParseUint(node.Record.ID, 10, 64); err == nil && id > 0 {
+		out[id] = true
+	}
+	if node.StitchedIngressRecord != nil {
+		if sid, err := strconv.ParseUint(node.StitchedIngressRecord.ID, 10, 64); err == nil && sid > 0 {
+			out[sid] = true
+		}
+	}
+	for i := range node.Children {
+		collectVisibleNodeIDs(&node.Children[i], out)
+	}
 }

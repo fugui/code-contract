@@ -79,6 +79,8 @@ type AgentServer struct {
 	activeCSGSim      *csg.SimController
 	activeDone        chan struct{}
 	transportRegistry *transport.Registry
+	noiseFilterMu     sync.RWMutex
+	noiseFilter       *sessionNoiseFilter
 }
 
 // NewAgentServer 构造 Agent 服务端实例
@@ -172,8 +174,7 @@ func NewAgentServer(cfg AgentServerConfig) (*AgentServer, error) {
 		Verbose:           cfg.Verbose,
 		CapabilityChecker: cfg.CapabilityChecker,
 		FrameSink: func(env []byte) {
-			s.recordFrameEnvelope(env)
-			s.buffer.Push(env)
+			s.pushIncomingEnvelope(env)
 		},
 		LifecycleEventSink: func(eventType uint8, eventData []byte) {
 			// 封装为 WebSocket 信封帧直接入缓冲
@@ -341,6 +342,7 @@ func (s *AgentServer) PurgeAll() {
 	s.buffer.Reset()
 	s.mu.Unlock()
 
+	s.setNoiseFilter(nil)
 	s.finishCSGSim(sim, 0)
 }
 
@@ -609,7 +611,7 @@ func (s *AgentServer) handleSyncMonitors(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	log.Printf("[Agent] [HTTP] 收到录制/重放监控下发请求: SessionID=%d, 进程数=%d (RemoteAddr: %s)", req.SessionID, len(req.Processes), r.RemoteAddr)
+	log.Printf("[Agent] [HTTP] 收到录制/重放监控下发请求: SessionID=%d, 进程数=%d, 源头排除规则数=%d (RemoteAddr: %s)", req.SessionID, len(req.Processes), len(req.ExcludeRules), r.RemoteAddr)
 
 	s.mu.Lock()
 	// SingleTenantGuard: 租约互斥检查
@@ -622,6 +624,8 @@ func (s *AgentServer) handleSyncMonitors(w http.ResponseWriter, r *http.Request)
 	s.activeLeaseType = "RECORDING"
 	s.activeRefID = req.SessionID
 	s.mu.Unlock()
+
+	s.setNoiseFilter(req.ExcludeRules)
 
 	enrichedSpecs := s.enrichSpecsWithCSGAddr(req.Processes)
 	diags, err := s.ebpfMgr.SyncMonitors(req.SessionID, enrichedSpecs)
@@ -660,8 +664,7 @@ func (s *AgentServer) handleSyncMonitors(w http.ResponseWriter, r *http.Request)
 			})
 		}
 		sink := transport.FrameSinkFunc(func(h agentproto.EnvelopeHeader, payload []byte) error {
-			s.recordFramePayload(h, payload)
-			s.buffer.Push(agentproto.MarshalEnvelope(h, payload))
+			s.pushIncomingPayload(h, payload)
 			return nil
 		})
 		if capErr := s.transportRegistry.StartCapture(r.Context(), transport.CaptureSpec{
@@ -804,19 +807,22 @@ func (s *AgentServer) handleStopMonitor(w http.ResponseWriter, r *http.Request) 
 	s.mu.Unlock()
 
 	_, dropped, total := s.buffer.Stats()
+	filteredNoise := s.currentFilteredNoiseFrames()
+	s.setNoiseFilter(nil)
 	var bypassed int64
 	if s.ebpfMgr != nil {
 		bypassed, _, _ = s.ebpfMgr.GetStats()
 	}
 	finalSnap := s.captureStatsSnapshot()
-	s.logf("[Agent] [✓ 停录完成]: SessionID=%d, 捕获总帧数=%d, 丢帧=%d, TCP-In=%d, TCP-Out=%d(dlink=%d), Mesh=%d(截断=%d,丢弃=%d), WS已发=%d, 恢复 ARMED 待命状态",
-		oldRefID, total, dropped, finalSnap.ingress.CapturedFrames, finalSnap.egress.CapturedFrames, finalSnap.egress.DlinkEvents,
+	s.logf("[Agent] [✓ 停录完成]: SessionID=%d, 捕获总帧数=%d, 丢帧=%d, 过滤噪音帧=%d, TCP-In=%d, TCP-Out=%d(dlink=%d), Mesh=%d(截断=%d,丢弃=%d), WS已发=%d, 恢复 ARMED 待命状态",
+		oldRefID, total, dropped, filteredNoise, finalSnap.ingress.CapturedFrames, finalSnap.egress.CapturedFrames, finalSnap.egress.DlinkEvents,
 		finalSnap.drt.ValidFrames, finalSnap.drt.TruncatedFrames, finalSnap.drt.DroppedEvents, finalSnap.wsSent)
 
 	resp := agentproto.StopMonitorResp{
-		CapturedFrames:    total,
-		DroppedFrames:     dropped,
-		BypassedSelfCount: bypassed,
+		CapturedFrames:      total,
+		DroppedFrames:       dropped,
+		BypassedSelfCount:   bypassed,
+		FilteredNoiseFrames: filteredNoise,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1150,6 +1156,54 @@ func (s *AgentServer) logDiagDetails(stage string, diags []agentproto.ProcessDia
 				stage, d.ProcessID, d.Status, sp.ListenPort, d.NeedReconnect, d.Message)
 		}
 	}
+}
+
+func (s *AgentServer) pushIncomingEnvelope(env []byte) {
+	if h, payload, err := agentproto.UnmarshalEnvelope(env); err == nil {
+		if s.shouldDropNoiseFrame(h, payload) {
+			return
+		}
+	}
+	s.recordFrameEnvelope(env)
+	s.buffer.Push(env)
+}
+
+func (s *AgentServer) pushIncomingPayload(h agentproto.EnvelopeHeader, payload []byte) {
+	if s.shouldDropNoiseFrame(h, payload) {
+		return
+	}
+	s.recordFramePayload(h, payload)
+	s.buffer.Push(agentproto.MarshalEnvelope(h, payload))
+}
+
+func (s *AgentServer) setNoiseFilter(rules []string) {
+	s.noiseFilterMu.Lock()
+	if len(rules) == 0 {
+		s.noiseFilter = nil
+	} else {
+		s.noiseFilter = newSessionNoiseFilter(rules)
+	}
+	s.noiseFilterMu.Unlock()
+}
+
+func (s *AgentServer) shouldDropNoiseFrame(h agentproto.EnvelopeHeader, payload []byte) bool {
+	s.noiseFilterMu.RLock()
+	nf := s.noiseFilter
+	s.noiseFilterMu.RUnlock()
+	if nf == nil {
+		return false
+	}
+	return nf.ShouldDrop(h, payload)
+}
+
+func (s *AgentServer) currentFilteredNoiseFrames() int64 {
+	s.noiseFilterMu.RLock()
+	nf := s.noiseFilter
+	s.noiseFilterMu.RUnlock()
+	if nf == nil {
+		return 0
+	}
+	return nf.FilteredCount()
 }
 
 // Ensure unused check

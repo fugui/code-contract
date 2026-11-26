@@ -61,6 +61,7 @@ type ModuleServiceReq struct {
 	ContractID       *FlexUint64 `json:"contract_id"`
 	ImplKey          string      `json:"impl_key"`
 	DiffIgnorePaths  []string    `json:"diff_ignore_paths"`
+	IsNoiseService   bool        `json:"is_noise_service"`
 	Description      string      `json:"description"`
 }
 
@@ -70,6 +71,7 @@ type UpdateModuleServiceReq struct {
 	ProtoServiceName *string  `json:"proto_service_name"`
 	ImplKey          *string  `json:"impl_key"`
 	DiffIgnorePaths  []string `json:"diff_ignore_paths"`
+	IsNoiseService   *bool    `json:"is_noise_service"`
 	Description      string   `json:"description"`
 }
 
@@ -893,6 +895,7 @@ func CreateModuleService(c *gin.Context) {
 		ContractID:       contractID,
 		ImplKey:          req.ImplKey,
 		DiffIgnorePaths:  req.DiffIgnorePaths,
+		IsNoiseService:   req.IsNoiseService,
 		Description:      req.Description,
 		OperatorID:       uc.UserID,
 	})
@@ -954,6 +957,7 @@ func UpdateModuleService(c *gin.Context) {
 		ProtoServiceName: req.ProtoServiceName,
 		ImplKey:          req.ImplKey,
 		DiffIgnorePaths:  req.DiffIgnorePaths,
+		IsNoiseService:   req.IsNoiseService,
 		Description:      req.Description,
 	})
 	if err != nil {

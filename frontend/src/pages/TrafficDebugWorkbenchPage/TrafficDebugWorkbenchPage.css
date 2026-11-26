@@ -329,3 +329,78 @@
 .code-sequence-anatomy-compact .code-protocol-accordion-body {
   padding: 0.75rem 0.85rem;
 }
+
+/* ADR-25 事务分析降噪折叠与临时屏蔽样式 */
+.code-noise-inline-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  font-size: 11px;
+  font-weight: 500;
+  background-color: var(--color-warning-subtle);
+  color: var(--color-warning);
+  border: 1px solid var(--color-warning-border);
+}
+
+.code-folded-noise-row td {
+  padding-top: 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  background-color: var(--color-bg-muted);
+}
+
+.code-folded-noise-capsule {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--color-border-primary);
+  background-color: var(--color-bg-surface);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.code-folded-noise-breakdown {
+  color: var(--color-text-primary);
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+}
+
+.code-temp-muted-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-primary);
+  background-color: var(--color-bg-muted);
+}
+
+.code-temp-muted-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--color-border-primary);
+  background-color: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  font-size: 12px;
+}
+
+.code-temp-muted-chip__close {
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+}
+
+.code-temp-muted-chip__close:hover {
+  color: var(--color-danger);
+}

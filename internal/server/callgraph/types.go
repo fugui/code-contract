@@ -2,6 +2,8 @@ package callgraph
 
 import (
 	"time"
+
+	"code-contract/pkg/agentproto"
 )
 
 const (
@@ -56,7 +58,23 @@ type TrafficRecordSummary struct {
 	DecodeStatus     string  `json:"decode_status"`
 	IsTruncated      bool    `json:"is_truncated"`
 	IsReplayable     bool    `json:"is_replayable"`
+	IsNoise          bool    `json:"is_noise,omitempty"`
 	CreatedAt        string  `json:"created_at"`
+}
+
+// FoldedNoiseBreakdownItem 树内折叠噪音服务分组统计项
+type FoldedNoiseBreakdownItem struct {
+	ServiceName     string `json:"service_name"`
+	Operation       string `json:"operation"`
+	Count           int    `json:"count"`
+	TotalDurationUs int64  `json:"total_duration_us"`
+}
+
+// FoldedNoiseSummaryDTO 父节点下折叠的非异常噪音子调用摘要
+type FoldedNoiseSummaryDTO struct {
+	TotalCount      int                        `json:"total_count"`
+	TotalDurationUs int64                      `json:"total_duration_us"`
+	Breakdown       []FoldedNoiseBreakdownItem `json:"breakdown"`
 }
 
 // TransactionTreeNodeDTO 事务调用树递归节点
@@ -73,6 +91,8 @@ type TransactionTreeNodeDTO struct {
 	IsCriticalPath        bool                     `json:"is_critical_path"`
 	MatchedFilter         bool                     `json:"matched_filter"`
 	Children              []TransactionTreeNodeDTO `json:"children"`
+	FoldedNoiseChildren   []TransactionTreeNodeDTO `json:"folded_noise_children,omitempty"`
+	FoldedNoiseSummary    *FoldedNoiseSummaryDTO   `json:"folded_noise_summary,omitempty"`
 }
 
 // EntityLifecycleStepDTO 业务实体生命周期单步
@@ -155,13 +175,14 @@ type SequenceStepDTO struct {
 
 // TransactionSequenceDTO 全链路时序泳道图响应 DTO
 type TransactionSequenceDTO struct {
-	RootRecordID      string                    `json:"root_record_id"`
-	TraceID           string                    `json:"trace_id"`
-	TotalDurationUs   int64                     `json:"total_duration_us"`
-	Participants      []SequenceParticipantDTO  `json:"participants"`
-	Steps             []SequenceStepDTO         `json:"steps"`
-	ParameterLineages []ParameterLineageEdgeDTO `json:"parameter_lineages"`
-	EntityChains      []EntityLifecycleChainDTO `json:"entity_chains"`
+	RootRecordID         string                    `json:"root_record_id"`
+	TraceID              string                    `json:"trace_id"`
+	TotalDurationUs      int64                     `json:"total_duration_us"`
+	HiddenNoiseStepCount int                       `json:"hidden_noise_step_count,omitempty"`
+	Participants         []SequenceParticipantDTO  `json:"participants"`
+	Steps                []SequenceStepDTO         `json:"steps"`
+	ParameterLineages    []ParameterLineageEdgeDTO `json:"parameter_lineages"`
+	EntityChains         []EntityLifecycleChainDTO `json:"entity_chains"`
 }
 
 // ReplayClosureMockItemDTO 下游 Mock 项
@@ -210,6 +231,17 @@ type TreeFilterOptions struct {
 	HasError     *bool
 	IsReplayable *bool
 	Keyword      string
+	HideNoise    bool
+	NoiseMatcher *agentproto.NoiseMatcher
+}
+
+// TransactionTreesResult 调用树构建与降噪统计结果
+type TransactionTreesResult struct {
+	Groups                []TransactionTreeGroupDTO
+	HiddenNoiseRootCount  int
+	FoldedNoiseChildCount int
+	HiddenNoiseCount      int
+	VisibleRecordIDs      map[uint64]bool
 }
 
 // RecordFilterMatches 判断单条记录是否命中过滤条件

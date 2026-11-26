@@ -219,13 +219,15 @@ type SyncMonitorReq struct {
 	MaxFrameBytes  int                  `json:"max_frame_bytes"`
 	MaxBufferBytes int                  `json:"max_buffer_bytes"`
 	Processes      []ProcessMonitorSpec `json:"processes"`
+	ExcludeRules   []string             `json:"exclude_rules,omitempty"`
 }
 
 // StopMonitorResp 停止会话累计统计
 type StopMonitorResp struct {
-	CapturedFrames    int64 `json:"captured_frames"`
-	DroppedFrames     int64 `json:"dropped_frames"`
-	BypassedSelfCount int64 `json:"bypassed_self_count"`
+	CapturedFrames      int64 `json:"captured_frames"`
+	DroppedFrames       int64 `json:"dropped_frames"`
+	BypassedSelfCount   int64 `json:"bypassed_self_count"`
+	FilteredNoiseFrames int64 `json:"filtered_noise_frames,omitempty"`
 }
 
 // ReplayIngressItem 带原始 RecordID 的入站重放请求项

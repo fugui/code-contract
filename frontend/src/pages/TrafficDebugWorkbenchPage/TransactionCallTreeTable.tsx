@@ -11,6 +11,9 @@ interface TransactionCallTreeTableProps {
   onSinglePacketReplay?: (record: TrafficRecordSummary) => void;
   onCurateRecord?: (record: TrafficRecordSummary, relatedIds: number[]) => void;
   forceExpandAll?: boolean;
+  isAdmin?: boolean;
+  onMuteServiceInView?: (serviceName: string) => void;
+  onAddGlobalNoiseRule?: (serviceName: string) => void;
 }
 
 export const TransactionCallTreeTable: React.FC<TransactionCallTreeTableProps> = ({
@@ -21,7 +24,22 @@ export const TransactionCallTreeTable: React.FC<TransactionCallTreeTableProps> =
   onSinglePacketReplay,
   onCurateRecord,
   forceExpandAll,
+  isAdmin = false,
+  onMuteServiceInView,
+  onAddGlobalNoiseRule,
 }) => {
+  const [expandedFoldedNoiseParents, setExpandedFoldedNoiseParents] = useState<Set<string>>(() => new Set());
+  const toggleFoldedNoise = (parentId: string) => {
+    setExpandedFoldedNoiseParents((prev) => {
+      const next = new Set(prev);
+      if (next.has(parentId)) {
+        next.delete(parentId);
+      } else {
+        next.add(parentId);
+      }
+      return next;
+    });
+  };
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(() => {
     const allIds = new Set<string>();
     const collect = (n: TransactionTreeNodeDTO) => {
@@ -266,8 +284,17 @@ export const TransactionCallTreeTable: React.FC<TransactionCallTreeTableProps> =
           {/* 3. 服务契约与接口方法 */}
           <td style={{ padding: '8px 12px', fontSize: '13px' }}>
             <div style={{ display: 'flex', flexDirection: 'column' }}>
-              <span style={{ fontWeight: 600, color: 'var(--color-text-primary, #1e293b)' }}>
-                {node.record.operation}
+              <span style={{ fontWeight: 600, color: 'var(--color-text-primary, #1e293b)', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                <span>{node.record.operation}</span>
+                {node.record.is_noise && (
+                  <span
+                    className="code-noise-inline-badge"
+                    data-testid={`badge-noise-node-${node.record.id}`}
+                    title="命中低关注/噪音服务规则"
+                  >
+                    🔇 噪音
+                  </span>
+                )}
               </span>
               <span style={{ fontSize: '11px', color: 'var(--color-text-secondary, #64748b)' }}>
                 {node.record.service_name}
@@ -397,12 +424,77 @@ export const TransactionCallTreeTable: React.FC<TransactionCallTreeTableProps> =
                   🌟 沉淀为黄金契约
                 </button>
               )}
+              {onMuteServiceInView && node.record.service_name && (
+                <button
+                  type="button"
+                  onClick={() => onMuteServiceInView(node.record.service_name)}
+                  className="code-btn code-btn--secondary code-btn--xs"
+                  title={`本次视图屏蔽服务 [${node.record.service_name}]`}
+                  data-testid={`btn-mute-service-${node.record.id}`}
+                >
+                  🔇 屏蔽
+                </button>
+              )}
+              {isAdmin && onAddGlobalNoiseRule && node.record.service_name && !node.record.is_noise && (
+                <button
+                  type="button"
+                  onClick={() => onAddGlobalNoiseRule(node.record.service_name)}
+                  className="code-btn code-btn--secondary code-btn--xs"
+                  title={`将 [${node.record.service_name}] 加入全局噪音名单`}
+                  data-testid={`btn-add-global-noise-${node.record.id}`}
+                >
+                  + 全局噪音
+                </button>
+              )}
             </div>
           </td>
         </tr>
 
         {/* 递归渲染已展开的子节点 */}
         {hasChildren && isExpanded && node.children.map((child) => renderNodeRows(child, rootRecordId))}
+
+        {/* 树内已折叠的噪音子调用聚合胶囊 */}
+        {isExpanded && node.folded_noise_summary && node.folded_noise_summary.total_count > 0 && (
+          <React.Fragment>
+            <tr
+              className="code-folded-noise-row"
+              data-testid={`folded-noise-row-${node.record.id}`}
+            >
+              <td
+                colSpan={7}
+                style={{ paddingLeft: `${(node.depth + 1) * 20 + 12}px` }}
+              >
+                <div className="code-folded-noise-capsule">
+                  <span>
+                    🔇 已折叠 <strong>{node.folded_noise_summary.total_count}</strong> 次基础设施/噪音调用：
+                  </span>
+                  <span className="code-folded-noise-breakdown">
+                    {node.folded_noise_summary.breakdown
+                      .slice(0, 4)
+                      .map((b) => `${b.service_name}.${b.operation} (×${b.count})`)
+                      .join(' · ')}
+                    {node.folded_noise_summary.breakdown.length > 4
+                      ? ` 等 ${node.folded_noise_summary.breakdown.length} 类`
+                      : ''}
+                  </span>
+                  <span className="code-font-mono code-text-xs code-text-secondary">
+                    合计 {node.folded_noise_summary.total_duration_us}µs
+                  </span>
+                  <button
+                    type="button"
+                    className="code-btn code-btn--secondary code-btn--xs"
+                    data-testid={`btn-expand-folded-noise-${node.record.id}`}
+                    onClick={() => toggleFoldedNoise(node.record.id)}
+                  >
+                    {expandedFoldedNoiseParents.has(node.record.id) ? '收起明细' : '展开明细'}
+                  </button>
+                </div>
+              </td>
+            </tr>
+            {expandedFoldedNoiseParents.has(node.record.id) &&
+              node.folded_noise_children?.map((foldedChild) => renderNodeRows(foldedChild, rootRecordId))}
+          </React.Fragment>
+        )}
       </React.Fragment>
     );
   };
