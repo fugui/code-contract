@@ -690,3 +690,136 @@ func TestPacketAnatomy_MapsTransportProto4ToMesh(t *testing.T) {
 		t.Errorf("expected segment 0 DisplayValue %s, got %s", expectedSegmentDisplay, dto.CommHead.Segments[0].DisplayValue)
 	}
 }
+
+func TestAssembler_UpdatesSessionCapturedFramesOnFlush(t *testing.T) {
+	db := setupIsolatedRecorderDB(t)
+
+	sess := models.RecordingSession{
+		SessionNo:        "REC_LIVE_FLUSH_01",
+		Name:             "实时帧数同步落盘测试",
+		Scope:            models.ScopeShared,
+		OwnerID:          1,
+		Status:           models.SessionStatusRecording,
+		TargetProcessIDs: datatypes.JSON([]byte(`[1]`)),
+	}
+	if err := db.Create(&sess).Error; err != nil {
+		t.Fatalf("创建会话失败: %v", err)
+	}
+
+	asm := NewExchangeAssembler(db, nil, nil, nil, nil, &AssemblerConfig{
+		WorkerShards:  2,
+		BatchSize:     10,
+		FlushInterval: 50 * time.Millisecond,
+	})
+	defer asm.Close()
+
+	reqFrame := buildCrosReqFrame(9001, crosrpc.ReqTypeSync, "com.test.OrderService", "CreateOrder", []byte("req"))
+	rspFrame := buildCrosRspFrame(9001, crosrpc.MsgTypeRsp, 0, 0, "com.test.OrderService", "CreateOrder", []byte("rsp"))
+
+	envReq := agentproto.EnvelopeHeader{
+		SessionOrTaskID: sess.ID,
+		ProcessID:       1,
+		Direction:       1,
+		ConnSeq:         1,
+		SrcIPv4:         [4]byte{127, 0, 0, 1},
+		DstIPv4:         [4]byte{127, 0, 0, 1},
+		SrcPort:         50001,
+		DstPort:         9000,
+		CapturedAtNs:    1000000,
+		EventType:       agentproto.EventTrafficFrame,
+	}
+	envRsp := envReq
+	envRsp.Direction = 2
+	envRsp.CapturedAtNs = 2000000
+
+	asm.Feed(1, envReq, reqFrame)
+	asm.Feed(1, envRsp, rspFrame)
+	asm.Flush()
+
+	var updated models.RecordingSession
+	if err := db.Where("id = ?", sess.ID).First(&updated).Error; err != nil {
+		t.Fatalf("查询会话失败: %v", err)
+	}
+	if updated.CapturedFrames != 1 {
+		t.Fatalf("预期录制中实时落盘后 captured_frames=1，实际为 %d", updated.CapturedFrames)
+	}
+}
+
+func TestOrchestrator_LiveCapturedFrames_ListAndGet(t *testing.T) {
+	db := setupIsolatedRecorderDB(t)
+
+	recSess := models.RecordingSession{
+		SessionNo:        "REC_LIVE_QUERY_01",
+		Name:             "进行中动态统计会话",
+		Scope:            models.ScopeShared,
+		OwnerID:          1,
+		Status:           models.SessionStatusRecording,
+		CapturedFrames:   0,
+		TargetProcessIDs: datatypes.JSON([]byte(`[1]`)),
+	}
+	doneSess := models.RecordingSession{
+		SessionNo:        "REC_DONE_QUERY_01",
+		Name:             "已完成静态保留会话",
+		Scope:            models.ScopeShared,
+		OwnerID:          1,
+		Status:           models.SessionStatusCompleted,
+		CapturedFrames:   5,
+		TargetProcessIDs: datatypes.JSON([]byte(`[1]`)),
+	}
+	if err := db.Create(&recSess).Error; err != nil {
+		t.Fatalf("创建进行中会话失败: %v", err)
+	}
+	if err := db.Create(&doneSess).Error; err != nil {
+		t.Fatalf("创建已完成会话失败: %v", err)
+	}
+
+	for i := 1; i <= 3; i++ {
+		tr := models.TrafficRecord{
+			CreatedAt:       time.Now(),
+			SessionID:       recSess.ID,
+			SeqNo:           int64(i),
+			AgentID:         1,
+			ProcessID:       1,
+			CapturedPID:     1000,
+			ConnKey:         fmt.Sprintf("127.0.0.1:1000<->127.0.0.1:9000#%d", i),
+			Direction:       models.TrafficDirIngress,
+			ExchangeType:    models.ExchangeUnary,
+			SrcAddr:         "127.0.0.1:1000",
+			DstAddr:         "127.0.0.1:9000",
+			ReqCapturedAtNs: int64(i * 1000),
+			SNO:             models.U64Numeric(i),
+		}
+		if err := db.Create(&tr).Error; err != nil {
+			t.Fatalf("写入流量记录失败: %v", err)
+		}
+	}
+
+	orch := NewOrchestrator(db, nil)
+
+	got, err := orch.GetSession(context.Background(), recSess.ID, 1, true)
+	if err != nil {
+		t.Fatalf("GetSession 失败: %v", err)
+	}
+	if got.CapturedFrames != 3 {
+		t.Fatalf("GetSession 预期实时 captured_frames=3，实际为 %d", got.CapturedFrames)
+	}
+
+	items, total, err := orch.ListSessions(context.Background(), SessionListQuery{Page: 1, PageSize: 25}, 1, true)
+	if err != nil {
+		t.Fatalf("ListSessions 失败: %v", err)
+	}
+	if total != 2 || len(items) != 2 {
+		t.Fatalf("预期返回 2 条会话，实际 total=%d len=%d", total, len(items))
+	}
+
+	byID := make(map[uint64]models.RecordingSession, len(items))
+	for _, item := range items {
+		byID[item.ID] = item
+	}
+	if byID[recSess.ID].CapturedFrames != 3 {
+		t.Errorf("ListSessions 对进行中会话预期 captured_frames=3，实际 %d", byID[recSess.ID].CapturedFrames)
+	}
+	if byID[doneSess.ID].CapturedFrames != 5 {
+		t.Errorf("ListSessions 对已完成会话预期保留 captured_frames=5，实际 %d", byID[doneSess.ID].CapturedFrames)
+	}
+}

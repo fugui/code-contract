@@ -587,6 +587,7 @@ func (o *Orchestrator) GetSession(
 	if session.Scope == models.ScopePrivate && session.OwnerID != userID && !isAdmin {
 		return nil, ErrForbiddenPrivateSession
 	}
+	o.hydrateLiveCapturedFrames(ctx, []*models.RecordingSession{&session})
 	return &session, nil
 }
 
@@ -636,7 +637,54 @@ func (o *Orchestrator) ListSessions(
 	if err := db.Order("id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&items).Error; err != nil {
 		return nil, 0, err
 	}
+	ptrs := make([]*models.RecordingSession, len(items))
+	for i := range items {
+		ptrs[i] = &items[i]
+	}
+	o.hydrateLiveCapturedFrames(ctx, ptrs)
 	return items, total, nil
+}
+
+func (o *Orchestrator) hydrateLiveCapturedFrames(ctx context.Context, sessions []*models.RecordingSession) {
+	if o.db == nil || len(sessions) == 0 {
+		return
+	}
+	var recordingIDs []uint64
+	for _, s := range sessions {
+		if s != nil && s.Status == models.SessionStatusRecording {
+			recordingIDs = append(recordingIDs, s.ID)
+		}
+	}
+	if len(recordingIDs) == 0 {
+		return
+	}
+
+	type sessionCountRow struct {
+		SessionID uint64 `gorm:"column:session_id"`
+		Cnt       int64  `gorm:"column:cnt"`
+	}
+	var rows []sessionCountRow
+	if err := o.db.WithContext(ctx).
+		Model(&models.TrafficRecord{}).
+		Select("session_id, COUNT(*) AS cnt").
+		Where("session_id IN ?", recordingIDs).
+		Group("session_id").
+		Scan(&rows).Error; err != nil {
+		log.Printf("[Orchestrator] 实时统计活跃录制会话帧数失败: %v", err)
+		return
+	}
+
+	cntMap := make(map[uint64]int64, len(rows))
+	for _, r := range rows {
+		cntMap[r.SessionID] = r.Cnt
+	}
+	for _, s := range sessions {
+		if s != nil && s.Status == models.SessionStatusRecording {
+			if liveCnt := cntMap[s.ID]; liveCnt > s.CapturedFrames {
+				s.CapturedFrames = liveCnt
+			}
+		}
+	}
 }
 
 func (o *Orchestrator) callAgentSync(ctx context.Context, agt *models.Agent, req agentproto.SyncMonitorReq) ([]agentproto.ProcessDiagStatus, error) {

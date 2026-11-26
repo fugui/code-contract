@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import type { RecordingSession } from '../types';
 import { ActiveRecordingBanner } from '../pages/RecordingWorkbenchPage/ActiveRecordingBanner';
 import { RecordingSessionTable } from '../pages/RecordingWorkbenchPage/RecordingSessionTable';
+import { DebugSessionContextBar } from '../pages/TrafficDebugWorkbenchPage/DebugSessionContextBar';
 import { ModuleUserProvider } from '../context/ModuleUserContext';
 import { resolveModulePath } from '../hooks/useModulePath';
 
@@ -201,5 +202,62 @@ describe('RecordingWorkbench Test Suite', () => {
   it('TC-RECORD-03: resolveModulePath 按运行模式解析模块内路径', () => {
     expect(resolveModulePath('/debug?session_id=s1', true)).toBe('/contract/debug?session_id=s1');
     expect(resolveModulePath('/debug?session_id=s1', false)).toBe('/debug?session_id=s1');
+  });
+
+  it('TC-RECORD-04: 进行中批次表格帧数与调试栏数值/字符串 ID 匹配渲染总帧数', () => {
+    const recordingSession: RecordingSession = {
+      id: '42',
+      session_no: 'QREC_20261126025119_5720',
+      name: '直录-local-025119',
+      scope: 'SHARED',
+      status: 'RECORDING',
+      target_process_ids: ['1'],
+      max_duration_sec: 300,
+      max_frames: 10000,
+      captured_frames: 128,
+    };
+    const noop = () => {};
+    const asyncNoop = async () => {};
+
+    const tableHtml = renderToString(
+      <MemoryRouter>
+        <RecordingSessionTable
+          sessions={[recordingSession]}
+          total={1}
+          page={1}
+          pageSize={25}
+          onPageChange={noop}
+          onPageSizeChange={noop}
+          scopeFilter=""
+          onScopeFilterChange={noop}
+          search=""
+          onSearchChange={noop}
+          currentUserId={1}
+          isAdmin={true}
+          onPublish={asyncNoop}
+          onDelete={asyncNoop}
+        />
+      </MemoryRouter>
+    );
+    expect(tableHtml.replace(/<!-- -->/g, '')).toContain('128 帧');
+
+    // 模拟后端 JSON 数值 id 与 URL 字符串 currentSessionId 混用
+    const numericIdSession = {
+      ...recordingSession,
+      id: 42 as unknown as string,
+    };
+    const debugBarHtml = renderToString(
+      <DebugSessionContextBar
+        currentSessionId="42"
+        sessions={[numericIdSession]}
+        onSelectSession={noop}
+        liveStreamActive={true}
+        onToggleLiveStream={noop}
+        isPaused={false}
+        onTogglePause={noop}
+      />
+    );
+    expect(debugBarHtml.replace(/<!-- -->/g, '')).toContain('总帧数: 128');
+    expect(debugBarHtml).toContain('录制中实时流');
   });
 });

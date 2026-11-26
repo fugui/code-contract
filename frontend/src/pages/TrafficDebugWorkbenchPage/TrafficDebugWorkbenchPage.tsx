@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Pagination, usePaginationState } from '@code/common';
 import { useToast } from '../../utils/toast';
@@ -169,6 +169,38 @@ export const TrafficDebugWorkbenchPage: React.FC = () => {
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  const currentSessionIsRecording = sessions.some(
+    (s) => String(s.id) === String(selectedSessionId) && s.status === 'RECORDING'
+  );
+  const sessionRefreshInFlightRef = useRef(false);
+
+  const refreshSelectedSession = useCallback(async () => {
+    if (!selectedSessionId || sessionRefreshInFlightRef.current) return;
+    sessionRefreshInFlightRef.current = true;
+    try {
+      const fresh = await trafficApi.getRecordingSession(selectedSessionId);
+      setSessions((prev) => {
+        const idx = prev.findIndex((s) => String(s.id) === String(fresh.id));
+        if (idx < 0) return prev;
+        const next = [...prev];
+        next[idx] = fresh;
+        return next;
+      });
+    } catch {
+      // 静默
+    } finally {
+      sessionRefreshInFlightRef.current = false;
+    }
+  }, [selectedSessionId]);
+
+  useEffect(() => {
+    if (!currentSessionIsRecording || isPaused) return;
+    const timer = setInterval(() => {
+      void refreshSelectedSession();
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [currentSessionIsRecording, isPaused, refreshSelectedSession]);
 
   // 4. 定时跟流
   useEffect(() => {

@@ -980,6 +980,20 @@ func (a *ExchangeAssembler) batchWriterLoop() {
 		if a.db != nil {
 			if err := a.db.CreateInBatches(toWrite, len(toWrite)).Error; err != nil {
 				log.Printf("[ExchangeAssembler] 批量写入流量记录失败: %v", err)
+			} else {
+				countsBySession := make(map[uint64]int64)
+				for _, rec := range toWrite {
+					if rec != nil && rec.SessionID > 0 {
+						countsBySession[rec.SessionID]++
+					}
+				}
+				for sid, delta := range countsBySession {
+					if err := a.db.Model(&models.RecordingSession{}).
+						Where("id = ?", sid).
+						UpdateColumn("captured_frames", gorm.Expr("captured_frames + ?", delta)).Error; err != nil {
+						log.Printf("[ExchangeAssembler] 更新录制会话 #%d captured_frames 失败: %v", sid, err)
+					}
+				}
 			}
 		}
 

@@ -26,7 +26,7 @@ export const DebugSessionContextBar: React.FC<DebugSessionContextBarProps> = ({
   onChangeViewMode,
   onToggleExpandAll,
 }) => {
-  const currentSession = sessions.find((s) => s.id === currentSessionId);
+  const currentSession = sessions.find((s) => String(s.id) === String(currentSessionId));
   const isRecording = currentSession?.status === 'RECORDING';
 
   return (

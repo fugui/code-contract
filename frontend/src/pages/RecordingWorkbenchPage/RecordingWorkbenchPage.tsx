@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { usePaginationState } from '@code/common';
 import { useToast } from '../../utils/toast';
@@ -47,8 +47,11 @@ export const RecordingWorkbenchPage: React.FC = () => {
     }
   }, [searchParams, setSearchParams]);
 
-  const loadSessions = useCallback(async () => {
-    setLoading(true);
+  const loadSessions = useCallback(async (options?: { silent?: boolean }) => {
+    const silent = options?.silent ?? false;
+    if (!silent) {
+      setLoading(true);
+    }
     try {
       const res = await trafficApi.listRecordingSessions({
         scope: urlScope ? (urlScope as 'SHARED' | 'PRIVATE') : undefined,
@@ -56,15 +59,16 @@ export const RecordingWorkbenchPage: React.FC = () => {
         page,
         page_size: pageSize,
       });
-      setSessions(res.items ?? []);
+      const items = res.items ?? [];
+      setSessions(items);
       setTotalSessions(res.total ?? 0);
 
       // 检索当前是否有处于 RECORDING 态的活跃批次
-      const rec = (res.items ?? []).find((s) => s.status === 'RECORDING');
+      const rec = items.find((s) => s.status === 'RECORDING');
       if (rec) {
         setActiveSession(rec);
-      } else if (!urlScope && !urlSearch) {
-        // 如果当前页没有，但在全量无过滤时查一次 RECORDING 批次
+      } else {
+        // 如果当前页或当前筛选条件下未命中，查一次全量 RECORDING 批次同步横幅状态与帧数
         const activeRes = await trafficApi.listRecordingSessions({
           status: 'RECORDING',
           page_size: 1,
@@ -76,15 +80,38 @@ export const RecordingWorkbenchPage: React.FC = () => {
         }
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '加载录制素材列表失败');
+      if (!silent) {
+        toast.error(err instanceof Error ? err.message : '加载录制素材列表失败');
+      }
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   }, [urlScope, urlSearch, page, pageSize, toast]);
 
   useEffect(() => {
     void loadSessions();
   }, [loadSessions]);
+
+  const hasActiveRecording =
+    activeSession?.status === 'RECORDING' ||
+    sessions.some((s) => s.status === 'RECORDING');
+  const pollingInFlightRef = useRef(false);
+
+  useEffect(() => {
+    if (!hasActiveRecording) {
+      return;
+    }
+    const timer = setInterval(() => {
+      if (pollingInFlightRef.current) return;
+      pollingInFlightRef.current = true;
+      void loadSessions({ silent: true }).finally(() => {
+        pollingInFlightRef.current = false;
+      });
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [hasActiveRecording, loadSessions]);
 
   // 加载进程与 Agent 基础元数据
   const loadMeta = useCallback(async () => {
