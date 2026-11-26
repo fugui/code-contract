@@ -646,14 +646,25 @@ func AggregateProcessCentricForUser(db *gorm.DB, agentID uint64, report *agentpr
 	}
 
 	// Build final DTO lists
+	discoveryMode := firstNonEmpty(cleanReport.DiscoveryMode, "PROC_ONLY")
+	isProcOnly := strings.EqualFold(discoveryMode, "PROC_ONLY")
+
 	localDTOs := make([]DiscoveryProcessGroupDTO, 0, len(groups))
 	remoteDTOs := make([]DiscoveryProcessGroupDTO, 0)
 	var summary DiscoverySummaryDTO
 
 	for _, g := range groups {
+		// Match process against SSOT ArchProcess & mounted Process
+		matchResult := matchByGroupKey[g.processKey]
+
+		// 在非 PROC_ONLY（已成功连通 CSG rpcmon）模式下，过滤掉既无发布服务、也无下游订阅、
+		// 且尚未在平台纳管的宿主机无关监听进程（如 systemd/sshd/postgres/agent 自身等）。
+		if !isProcOnly && !g.isRemoteLDC && len(g.services) == 0 && len(g.subs) == 0 && matchResult.processID == nil {
+			continue
+		}
+
 		pids := sortedUint32Set(g.pids)
 		ports := sortedUint16Set(g.listenPorts)
-		transports := sortedStringSet(g.transports)
 
 		role := "CLIENT_ONLY"
 		if len(g.services) > 0 && len(g.subs) > 0 {
@@ -661,9 +672,6 @@ func AggregateProcessCentricForUser(db *gorm.DB, agentID uint64, report *agentpr
 		} else if len(g.services) > 0 {
 			role = "SERVER"
 		}
-
-		// Match process against SSOT ArchProcess & mounted Process
-		matchResult := matchByGroupKey[g.processKey]
 
 		svcDTOs := make([]DiscoveryLiveServiceDTO, 0, len(g.services))
 		claimedCnt := 0
@@ -786,6 +794,24 @@ func AggregateProcessCentricForUser(db *gorm.DB, agentID uint64, report *agentpr
 			return subDTOs[i].ServiceName < subDTOs[j].ServiceName
 		})
 
+		transports := sortedStringSet(g.transports)
+		if len(transports) == 0 && len(subDTOs) > 0 {
+			inferredTransports := make(map[string]struct{})
+			for _, sub := range subDTOs {
+				tr := normalizeTransportLabel(sub.Transport)
+				switch tr {
+				case "":
+					continue
+				case "MIXED":
+					inferredTransports["TCP"] = struct{}{}
+					inferredTransports["MESH"] = struct{}{}
+				default:
+					inferredTransports[tr] = struct{}{}
+				}
+			}
+			transports = sortedStringSet(inferredTransports)
+		}
+
 		dto := DiscoveryProcessGroupDTO{
 			ProcessKey:            g.processKey,
 			ProcName:              g.procName,
@@ -862,7 +888,7 @@ func AggregateProcessCentricForUser(db *gorm.DB, agentID uint64, report *agentpr
 		CSGEndpoints:       endpoints,
 		Stale:              false,
 		CapturedAt:         capturedAt,
-		DiscoveryMode:      firstNonEmpty(cleanReport.DiscoveryMode, "PROC_ONLY"),
+		DiscoveryMode:      discoveryMode,
 		Ports:              ports,
 		Processes:          localDTOs,
 		RemoteLDCProcesses: remoteDTOs,

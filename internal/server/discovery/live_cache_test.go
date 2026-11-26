@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"code-contract/internal/server/hub"
 	"code-contract/models"
 	"code-contract/pkg/agentproto"
+	"gorm.io/datatypes"
 )
 
 type mockDiscoveryFetcher struct {
@@ -154,6 +156,9 @@ func TestAggregateProcessCentric_MultiPIDFold_PureClient_AndRemoteLDCSeparation(
 	if cliGrp.ObservedRole != "CLIENT_ONLY" || len(cliGrp.Services) != 0 {
 		t.Fatalf("expected pure client CLIENT_ONLY with 0 services, got role=%s services=%d", cliGrp.ObservedRole, len(cliGrp.Services))
 	}
+	if !reflect.DeepEqual(cliGrp.ObservedTransports, []string{"TCP"}) {
+		t.Fatalf("expected pure client observed_transports [TCP] inferred from subscription, got %v", cliGrp.ObservedTransports)
+	}
 	if len(cliGrp.Subscriptions) != 1 || cliGrp.Subscriptions[0].ProviderKind != "LOCAL_UNENROLLED" {
 		t.Fatalf("expected pure client subscription resolved as LOCAL_UNENROLLED, got %+v", cliGrp.Subscriptions)
 	}
@@ -278,6 +283,172 @@ func TestLiveDiscovery_SingleflightTTLCache_RefreshRateLimit_AndOfflineFallbackS
 	}
 	if !fallback.Stale || fallback.SnapshotID == nil || *fallback.SnapshotID != saveRes.Snapshot.ID {
 		t.Fatalf("expected stale=true fallback to snapshot #%d, got stale=%v snapshot_id=%v", saveRes.Snapshot.ID, fallback.Stale, fallback.SnapshotID)
+	}
+}
+
+func TestAggregateProcessCentric_FiltersUnrelatedHostProcessesAndInfersClientTransports(t *testing.T) {
+	discovered := []agentproto.DiscoveredProcess{
+		// 宿主机无关监听进程（0 服务、0 订阅、未纳管）
+		{PID: 1, ListenPort: 111, ExeName: "systemd", Cmdline: "/usr/lib/systemd/systemd --switched-root"},
+		{PID: 1287, ListenPort: 22, ExeName: "sshd", Cmdline: "sshd: /usr/sbin/sshd -D"},
+		{PID: 1320, ListenPort: 5432, ExeName: "postgres", Cmdline: "/usr/lib/postgresql/16/bin/postgres -D /var/lib/postgresql/16/main"},
+		{PID: 23000, ListenPort: 18090, ExeName: "code-contract-agent", Cmdline: "/opt/code-contract/code-contract-agent --listen=:18090"},
+		{PID: 23010, ListenPort: 31806, ExeName: "csgserver", Cmdline: "/opt/bin/csgserver --addr=127.0.0.1:31806"},
+		// CSG 业务进程
+		{PID: 24002, ListenPort: 25002, ExeName: "tcp_svr", Cmdline: "/opt/bin/tcp_svr --port=25002"},
+		{PID: 24003, ListenPort: 0, ExeName: "mesh_svr", Cmdline: "/opt/bin/mesh_svr --mesh"},
+		{PID: 24004, ListenPort: 0, ExeName: "cli_tcp", Cmdline: "/opt/bin/cli_tcp", IsPureClient: true},
+		{PID: 24005, ListenPort: 0, ExeName: "cli_mesh", Cmdline: "/opt/bin/cli_mesh", IsPureClient: true},
+		{PID: 24006, ListenPort: 0, ExeName: "cli_offline", Cmdline: "/opt/bin/cli_offline", IsPureClient: true},
+	}
+
+	baseServices := []agentproto.CSGServiceInfo{
+		{ServiceName: "biz.v1.TcpSvc", Addr: "tcp://ipv4:127.0.0.1:25002", Transport: "TCP", Port: 25002, ServerPID: 24002, ServerProc: "tcp_svr", IsLocal: true},
+		{ServiceName: "biz.v1.MeshSvc", Addr: "dophi_mesh://ipv4:127.0.0.1:25003", Transport: "MESH", Port: 25003, ServerPID: 24003, ServerProc: "mesh_svr", IsLocal: true},
+	}
+	baseSubs := []agentproto.CSGSubscription{
+		{ClientPID: 24004, ClientProc: "cli_tcp", ServiceName: "biz.v1.TcpSvc", IsLocal: true},
+		{ClientPID: 24005, ClientProc: "cli_mesh", ServiceName: "biz.v1.MeshSvc", IsLocal: true},
+		{ClientPID: 24006, ClientProc: "cli_offline", ServiceName: "biz.v1.MissingSvc", IsLocal: true},
+	}
+
+	// 1. CROSTCP_RPCMON / CROSMESH_RPCMON 模式：过滤无关宿主机进程，保留业务进程并推导纯客户端制式
+	for _, mode := range []string{"CROSTCP_RPCMON", "CROSMESH_RPCMON"} {
+		report := &agentproto.CSGTopologyReport{
+			DiscoveryMode: mode,
+			Services:      baseServices,
+			Subscriptions: baseSubs,
+		}
+		resp, err := AggregateProcessCentric(nil, 1, report, discovered)
+		if err != nil {
+			t.Fatalf("mode=%s AggregateProcessCentric failed: %v", mode, err)
+		}
+		if len(resp.Processes) != 5 {
+			t.Fatalf("mode=%s expected 5 processes (2 servers + 3 pure clients), got %d", mode, len(resp.Processes))
+		}
+		if resp.Summary.ProcessCount != 5 {
+			t.Fatalf("mode=%s expected summary.process_count=5, got %d", mode, resp.Summary.ProcessCount)
+		}
+		if resp.Summary.ClientOnlyCount != 3 {
+			t.Fatalf("mode=%s expected summary.client_only_count=3, got %d", mode, resp.Summary.ClientOnlyCount)
+		}
+
+		byName := make(map[string]DiscoveryProcessGroupDTO, len(resp.Processes))
+		for _, p := range resp.Processes {
+			byName[p.ProcName] = p
+		}
+		for _, noise := range []string{"systemd", "sshd", "postgres", "code-contract-agent", "csgserver"} {
+			if _, exists := byName[noise]; exists {
+				t.Fatalf("mode=%s expected host noise process %q to be filtered out", mode, noise)
+			}
+		}
+		cliTCP, ok := byName["cli_tcp"]
+		if !ok {
+			t.Fatalf("mode=%s expected cli_tcp to be present, got keys=%v", mode, byName)
+		}
+		if !reflect.DeepEqual(cliTCP.ObservedTransports, []string{"TCP"}) {
+			t.Fatalf("mode=%s expected cli_tcp observed_transports [TCP], got %v", mode, cliTCP.ObservedTransports)
+		}
+		cliMesh, ok := byName["cli_mesh"]
+		if !ok {
+			t.Fatalf("mode=%s expected cli_mesh to be present", mode)
+		}
+		if !reflect.DeepEqual(cliMesh.ObservedTransports, []string{"MESH"}) {
+			t.Fatalf("mode=%s expected cli_mesh observed_transports [MESH], got %v", mode, cliMesh.ObservedTransports)
+		}
+		cliOffline, ok := byName["cli_offline"]
+		if !ok {
+			t.Fatalf("mode=%s expected cli_offline to be present", mode)
+		}
+		if cliOffline.ObservedTransports == nil || len(cliOffline.ObservedTransports) != 0 {
+			t.Fatalf("mode=%s expected cli_offline observed_transports empty non-nil slice, got %#v", mode, cliOffline.ObservedTransports)
+		}
+	}
+
+	// 2. PROC_ONLY 及空 DiscoveryMode 降级模式：完整保留 /proc 扫描进程作为兜底
+	for _, mode := range []string{"PROC_ONLY", ""} {
+		report := &agentproto.CSGTopologyReport{
+			DiscoveryMode: mode,
+		}
+		resp, err := AggregateProcessCentric(nil, 1, report, discovered)
+		if err != nil {
+			t.Fatalf("fallback mode=%q failed: %v", mode, err)
+		}
+		if len(resp.Processes) != len(discovered) {
+			t.Fatalf("fallback mode=%q expected all %d /proc processes retained, got %d", mode, len(discovered), len(resp.Processes))
+		}
+		if resp.Summary.ProcessCount != len(discovered) {
+			t.Fatalf("fallback mode=%q expected summary.process_count=%d, got %d", mode, len(discovered), resp.Summary.ProcessCount)
+		}
+	}
+}
+
+func TestAggregateProcessCentric_RetainsEnrolledProcessWithoutCSGActivity(t *testing.T) {
+	db := testdb.SetupIsolatedDB(t, config.ServiceName)
+	if err := models.SetupWithDB(db); err != nil {
+		t.Fatalf("SetupWithDB failed: %v", err)
+	}
+
+	agent := models.Agent{
+		Name:     "filter-test-agent",
+		Endpoint: "http://127.0.0.1:19099",
+		Scope:    models.ScopeShared,
+		Status:   models.AgentStatusOnline,
+	}
+	if err := db.Create(&agent).Error; err != nil {
+		t.Fatalf("create agent failed: %v", err)
+	}
+
+	pgrp := models.ArchProcessGroup{Code: "PGRP_FILTER", Name: "过滤测试进程组"}
+	if err := db.Create(&pgrp).Error; err != nil {
+		t.Fatalf("create arch process group failed: %v", err)
+	}
+
+	fpEnrolled, _, _ := ComputeIdentityFingerprint("/opt/bin/enrolled_idle", "/opt/bin/enrolled_idle --daemon", "enrolled_idle")
+	apEnrolled := models.ArchProcess{
+		GroupID:             pgrp.ID,
+		Code:                "enrolled-idle",
+		Name:                "已纳管无CSG进程",
+		DefaultCmdPattern:   "enrolled_idle --daemon",
+		IdentityFingerprint: fpEnrolled,
+		FingerprintVersion:  CurrentFingerprintVersion,
+		Lifecycle:           models.ArchProcLifecycleConfirmed,
+	}
+	if err := db.Create(&apEnrolled).Error; err != nil {
+		t.Fatalf("create arch process failed: %v", err)
+	}
+
+	procEnrolled := models.Process{
+		AgentID:             agent.ID,
+		ArchProcessID:       apEnrolled.ID,
+		EffectiveListenPort: 25001,
+		OverrideCmdPattern:  "enrolled_idle --daemon",
+		ExtraDownstreams:    datatypes.JSON("[]"),
+		EnrollSource:        models.EnrollSourceDiscovery,
+		ProbeDesiredState:   models.ProbeDesiredStateDisarmed,
+		ProbeStatus:         models.ProbeStatusDisarmed,
+	}
+	if err := db.Create(&procEnrolled).Error; err != nil {
+		t.Fatalf("create enrolled process failed: %v", err)
+	}
+
+	discovered := []agentproto.DiscoveredProcess{
+		{PID: 1, ListenPort: 111, ExeName: "systemd", Cmdline: "/usr/lib/systemd/systemd --switched-root"},
+		{PID: 24001, ListenPort: 25001, ExeName: "enrolled_idle", Cmdline: "/opt/bin/enrolled_idle --daemon"},
+	}
+	report := &agentproto.CSGTopologyReport{
+		DiscoveryMode: "CROSTCP_RPCMON",
+	}
+
+	resp, err := AggregateProcessCentricForUser(db, agent.ID, report, discovered, 1, true)
+	if err != nil {
+		t.Fatalf("AggregateProcessCentricForUser failed: %v", err)
+	}
+	if len(resp.Processes) != 1 || resp.Processes[0].ProcName != "enrolled_idle" {
+		t.Fatalf("expected enrolled_idle to be retained and systemd filtered, got %+v", resp.Processes)
+	}
+	if resp.Summary.ProcessCount != 1 || resp.Summary.ClientOnlyCount != 1 {
+		t.Fatalf("expected summary process_count=1 client_only_count=1, got %+v", resp.Summary)
 	}
 }
 
