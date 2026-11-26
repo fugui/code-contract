@@ -35,7 +35,6 @@ type AgentServerConfig struct {
 	AllowIPs              []string
 	MaxSessionBufferBytes int64
 	GracePeriod           time.Duration
-	StatsInterval         time.Duration
 	ClaimCode             string
 	ClaimCodeFile         string
 	AgentVersion          string
@@ -68,9 +67,6 @@ type AgentServer struct {
 	httpServer        *http.Server
 	listener          net.Listener
 	watchdogStop      chan struct{}
-	statsStop         chan struct{}
-	windowMu          sync.Mutex
-	windowBreakdown   map[frameBreakdownKey]int64
 	upgrader          websocket.Upgrader
 	armedRevision     uint64
 	armedDigest       string
@@ -90,9 +86,6 @@ func NewAgentServer(cfg AgentServerConfig) (*AgentServer, error) {
 	}
 	if cfg.GracePeriod <= 0 {
 		cfg.GracePeriod = 5 * time.Minute
-	}
-	if cfg.StatsInterval <= 0 {
-		cfg.StatsInterval = 5 * time.Second
 	}
 	if cfg.MaxSessionBufferBytes <= 0 {
 		cfg.MaxSessionBufferBytes = DefaultMaxSessionBufferBytes
@@ -148,18 +141,16 @@ func NewAgentServer(cfg AgentServerConfig) (*AgentServer, error) {
 	buf := NewBoundedSessionBuffer(cfg.MaxSessionBufferBytes)
 
 	s := &AgentServer{
-		cfg:             cfg,
-		allowPrefixes:   prefixes,
-		claimCode:       claimCode,
-		bootID:          bootID,
-		startedAt:       time.Now(),
-		buffer:          buf,
-		procScanner:     ebpf.NewProcScanner(cfg.ProcRoot),
-		replayExec:      replay.NewReplayExecutor(),
-		lastContactAt:   time.Now(),
-		watchdogStop:    make(chan struct{}),
-		statsStop:       make(chan struct{}),
-		windowBreakdown: make(map[frameBreakdownKey]int64),
+		cfg:           cfg,
+		allowPrefixes: prefixes,
+		claimCode:     claimCode,
+		bootID:        bootID,
+		startedAt:     time.Now(),
+		buffer:        buf,
+		procScanner:   ebpf.NewProcScanner(cfg.ProcRoot),
+		replayExec:    replay.NewReplayExecutor(),
+		lastContactAt: time.Now(),
+		watchdogStop:  make(chan struct{}),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				return true
@@ -270,9 +261,8 @@ func (s *AgentServer) Start() error {
 		WriteTimeout: 30 * time.Second,
 	}
 
-	// 启动失联自洁看门狗与 5 秒滚动统计汇报
+	// 启动失联自洁看门狗
 	go s.watchdogLoop()
-	go s.statsLoop()
 
 	go func() {
 		_ = s.httpServer.Serve(ln)
@@ -298,11 +288,6 @@ func (s *AgentServer) Shutdown(ctx context.Context) error {
 	case <-s.watchdogStop:
 	default:
 		close(s.watchdogStop)
-	}
-	select {
-	case <-s.statsStop:
-	default:
-		close(s.statsStop)
 	}
 	s.mu.Unlock()
 
@@ -1164,7 +1149,6 @@ func (s *AgentServer) pushIncomingEnvelope(env []byte) {
 			return
 		}
 	}
-	s.recordFrameEnvelope(env)
 	s.buffer.Push(env)
 }
 
@@ -1172,7 +1156,6 @@ func (s *AgentServer) pushIncomingPayload(h agentproto.EnvelopeHeader, payload [
 	if s.shouldDropNoiseFrame(h, payload) {
 		return
 	}
-	s.recordFramePayload(h, payload)
 	s.buffer.Push(agentproto.MarshalEnvelope(h, payload))
 }
 
@@ -1204,6 +1187,43 @@ func (s *AgentServer) currentFilteredNoiseFrames() int64 {
 		return 0
 	}
 	return nf.FilteredCount()
+}
+
+type statsSnapshot struct {
+	ingress      ebpf.IngressStats
+	egress       ebpf.EgressStats
+	drt          transport.DRTUprobeStats
+	rbDrops      int64
+	redirected   int64
+	bufUsedBytes int64
+	bufDropped   int64
+	bufTotal     int64
+	wsSent       int64
+}
+
+func (s *AgentServer) logf(format string, args ...interface{}) {
+	if s != nil && s.cfg.LogFunc != nil {
+		s.cfg.LogFunc(format, args...)
+		return
+	}
+	log.Printf(format, args...)
+}
+
+func (s *AgentServer) captureStatsSnapshot() statsSnapshot {
+	var snap statsSnapshot
+	if s.ebpfMgr != nil {
+		snap.ingress = s.ebpfMgr.IngressStats()
+		snap.egress = s.ebpfMgr.EgressStats()
+		_, snap.rbDrops, snap.redirected = s.ebpfMgr.GetStats()
+	}
+	if s.drtDriver != nil {
+		snap.drt = s.drtDriver.Stats()
+	}
+	if s.buffer != nil {
+		snap.bufUsedBytes, snap.bufDropped, snap.bufTotal = s.buffer.Stats()
+	}
+	snap.wsSent = s.wsSentFrames.Load()
+	return snap
 }
 
 // Ensure unused check
