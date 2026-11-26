@@ -48,6 +48,12 @@ func (m ProxyMode) String() string {
 // NatLookupFunc 查找客户端临时端口对应的原始目的地
 type NatLookupFunc func(clientPort uint16) (processID uint64, pid uint32, origIP net.IP, origPort uint16, ok bool)
 
+// NatAddrLookupFunc 按客户端源 IP 与临时端口查找原始目的地（支持多网卡显式 bind 非 127.0.0.1 源 IP）
+type NatAddrLookupFunc func(clientIP net.IP, clientPort uint16) (processID uint64, pid uint32, origIP net.IP, origPort uint16, ok bool)
+
+// NatMissDiagFunc 在 NAT 未命中时返回内核态/Map 诊断摘要（仅用于排障日志，严禁输出业务 payload）
+type NatMissDiagFunc func(clientIP net.IP, clientPort uint16) string
+
 // FrameSinkFunc 接收代理采集到的出站 CROS RPC 信封帧
 type FrameSinkFunc func(envelopeBytes []byte)
 
@@ -75,33 +81,39 @@ type EgressStats struct {
 
 // EgressProxy 透明 TCP 出站代理（三态隔离与零泄漏不断连机制）
 type EgressProxy struct {
-	mu              sync.RWMutex
-	listener        net.Listener
-	proxyPort       uint16
-	natLookup       NatLookupFunc
-	frameSink       FrameSinkFunc
-	activeConns     sync.Map // net.Conn -> bool
-	connSeqGen      uint32
-	closed          chan struct{}
-	statCaptured    int64
-	statDlinkEvents int64
-	statReqFrames   atomic.Int64
-	statRspFrames   atomic.Int64
-	statMngFrames   atomic.Int64
-	statTruncated   atomic.Int64
-	statActiveConns atomic.Int64
-	statNatMiss     atomic.Int64
-	statDialFail    atomic.Int64
-	statMockHit     atomic.Int64
-	statMockMiss    atomic.Int64
-	verbose         atomic.Bool
-	mode            int32 // ProxyMode (atomic)
-	activeSessionID atomic.Uint64
-	mockMatcher     *replay.ScopedMockMatcher
-	mockEndpoints   map[string]bool // "IP:Port" -> true
-	csgMatchFn      func(origIP net.IP, origPort uint16) bool
-	csgServeFn      func(conn net.Conn)
-	draining        int32 // atomic flag: 1 = graceful draining
+	mu                sync.RWMutex
+	listener          net.Listener
+	proxyPort         uint16
+	natLookup         NatLookupFunc
+	natAddrLookup     NatAddrLookupFunc
+	natMissDiag       NatMissDiagFunc
+	frameSink         FrameSinkFunc
+	activeConns       sync.Map // net.Conn -> bool
+	connSeqGen        uint32
+	closed            chan struct{}
+	statCaptured      int64
+	statDlinkEvents   int64
+	statReqFrames     atomic.Int64
+	statRspFrames     atomic.Int64
+	statMngFrames     atomic.Int64
+	statTruncated     atomic.Int64
+	statActiveConns   atomic.Int64
+	statNatMiss       atomic.Int64
+	statDialFail      atomic.Int64
+	statMockHit       atomic.Int64
+	statMockMiss      atomic.Int64
+	verbose           atomic.Bool
+	natMissLogMu      sync.Mutex
+	natMissLogged     int64
+	natMissSuppressed int64
+	lastNatMissLogAt  time.Time
+	mode              int32 // ProxyMode (atomic)
+	activeSessionID   atomic.Uint64
+	mockMatcher       *replay.ScopedMockMatcher
+	mockEndpoints     map[string]bool // "IP:Port" -> true
+	csgMatchFn        func(origIP net.IP, origPort uint16) bool
+	csgServeFn        func(conn net.Conn)
+	draining          int32 // atomic flag: 1 = graceful draining
 }
 
 // NewEgressProxy 创建出站代理，默认为 ModePassthrough 模式
@@ -136,6 +148,51 @@ func (p *EgressProxy) SetVerbose(v bool) {
 		return
 	}
 	p.verbose.Store(v)
+}
+
+// SetNatAddrLookup 注入带客户端源 IP 的 NAT 反查回调（优先于旧版仅端口回调）
+func (p *EgressProxy) SetNatAddrLookup(fn NatAddrLookupFunc) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.natAddrLookup = fn
+}
+
+// SetNatMissDiag 注入 NAT 未命中时的内核 Map 诊断摘要回调
+func (p *EgressProxy) SetNatMissDiag(fn NatMissDiagFunc) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.natMissDiag = fn
+}
+
+func (p *EgressProxy) shouldLogNatMiss() (bool, int64) {
+	p.natMissLogMu.Lock()
+	defer p.natMissLogMu.Unlock()
+
+	if p.natMissLogged < 5 {
+		p.natMissLogged++
+		p.lastNatMissLogAt = time.Now()
+		return true, 0
+	}
+	minInterval := 5 * time.Second
+	if p.verbose.Load() {
+		minInterval = 1 * time.Second
+	}
+	now := time.Now()
+	if now.Sub(p.lastNatMissLogAt) < minInterval {
+		p.natMissSuppressed++
+		return false, 0
+	}
+	suppressed := p.natMissSuppressed
+	p.natMissSuppressed = 0
+	p.natMissLogged++
+	p.lastNatMissLogAt = now
+	return true, suppressed
 }
 
 // Stats 返回出站代理累计统计快照
@@ -315,6 +372,7 @@ func (p *EgressProxy) handleConnection(clientConn net.Conn) {
 	if !ok {
 		return
 	}
+	clientIP := clientAddr.IP
 	clientPort := uint16(clientAddr.Port)
 
 	// 查 NAT 还原原始目的地址
@@ -325,13 +383,39 @@ func (p *EgressProxy) handleConnection(clientConn net.Conn) {
 		origPort  uint16
 	)
 
-	if p.natLookup != nil {
-		processID, pid, origIP, origPort, ok = p.natLookup(clientPort)
+	p.mu.RLock()
+	addrLookup := p.natAddrLookup
+	legacyLookup := p.natLookup
+	missDiag := p.natMissDiag
+	p.mu.RUnlock()
+
+	if addrLookup != nil {
+		processID, pid, origIP, origPort, ok = addrLookup(clientIP, clientPort)
+	} else if legacyLookup != nil {
+		processID, pid, origIP, origPort, ok = legacyLookup(clientPort)
 	}
 	if !ok || origPort == 0 {
-		p.statNatMiss.Add(1)
-		if p.verbose.Load() {
-			log.Printf("[EgressProxy] NAT 未命中，关闭连接 (clientPort=%d)", clientPort)
+		totalMiss := p.statNatMiss.Add(1)
+		if shouldLog, suppressed := p.shouldLogNatMiss(); shouldLog {
+			var diagStr string
+			if missDiag != nil {
+				diagStr = missDiag(clientIP, clientPort)
+			}
+			localAddrStr := ""
+			if clientConn.LocalAddr() != nil {
+				localAddrStr = clientConn.LocalAddr().String()
+			}
+			reason := "lookup_miss"
+			if ok && origPort == 0 {
+				reason = "orig_port_zero"
+			}
+			if diagStr != "" {
+				log.Printf("[EgressProxy] NAT 未命中，关闭连接 (client=%s:%d local=%s mode=%s reason=%s total=%d suppressed=%d) %s",
+					clientIP.String(), clientPort, localAddrStr, p.Mode().String(), reason, totalMiss, suppressed, diagStr)
+			} else {
+				log.Printf("[EgressProxy] NAT 未命中，关闭连接 (client=%s:%d local=%s mode=%s reason=%s total=%d suppressed=%d)",
+					clientIP.String(), clientPort, localAddrStr, p.Mode().String(), reason, totalMiss, suppressed)
+			}
 		}
 		return // 未在 NAT 表找到合法条目，静默关闭
 	}

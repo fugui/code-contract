@@ -11,6 +11,7 @@ import (
 
 	"code-contract/pkg/agentproto"
 	"code-contract/pkg/crosrpc"
+	"code-contract/pkg/ebpf"
 	"code-contract/pkg/transport"
 )
 
@@ -121,5 +122,33 @@ func TestStatsReporter_5sRollingAndVerboseDetailNoPayload(t *testing.T) {
 	mu.Unlock()
 	if countLater != countAfterStop {
 		t.Fatalf("expected no stats logs after Shutdown, before=%d after=%d", countAfterStop, countLater)
+	}
+}
+
+func TestStatsReporter_IncludesRedirNatMissDialFail(t *testing.T) {
+	prev := statsSnapshot{
+		redirected: 10,
+		egress: ebpf.EgressStats{
+			NatMiss:  1,
+			DialFail: 2,
+		},
+	}
+	cur := statsSnapshot{
+		redirected: 15,
+		egress: ebpf.EgressStats{
+			NatMiss:  3,
+			DialFail: 3,
+		},
+	}
+
+	if !hasWindowActivity(statsSnapshot{redirected: 1}, statsSnapshot{}) {
+		t.Fatalf("expected hasWindowActivity=true when redirected delta > 0")
+	}
+
+	line := formatStats5sLine(77, cur, prev, true)
+	for _, want := range []string{"redir:+5", "natMiss:+2", "dialFail:+1"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("expected stats line to contain %q, got:\n%s", want, line)
+		}
 	}
 }

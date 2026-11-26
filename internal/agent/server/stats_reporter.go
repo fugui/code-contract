@@ -27,6 +27,7 @@ type statsSnapshot struct {
 	egress       ebpf.EgressStats
 	drt          transport.DRTUprobeStats
 	rbDrops      int64
+	redirected   int64
 	bufUsedBytes int64
 	bufDropped   int64
 	bufTotal     int64
@@ -119,7 +120,7 @@ func (s *AgentServer) captureStatsSnapshot() statsSnapshot {
 	if s.ebpfMgr != nil {
 		snap.ingress = s.ebpfMgr.IngressStats()
 		snap.egress = s.ebpfMgr.EgressStats()
-		_, snap.rbDrops, _ = s.ebpfMgr.GetStats()
+		_, snap.rbDrops, snap.redirected = s.ebpfMgr.GetStats()
 	}
 	if s.drtDriver != nil {
 		snap.drt = s.drtDriver.Stats()
@@ -145,6 +146,7 @@ func hasWindowActivity(cur, prev statsSnapshot) bool {
 		deltaNonNeg(cur.egress.DlinkEvents, prev.egress.DlinkEvents) > 0 ||
 		deltaNonNeg(cur.egress.NatMiss, prev.egress.NatMiss) > 0 ||
 		deltaNonNeg(cur.egress.DialFail, prev.egress.DialFail) > 0 ||
+		deltaNonNeg(cur.redirected, prev.redirected) > 0 ||
 		deltaNonNeg(cur.drt.RawEvents, prev.drt.RawEvents) > 0 ||
 		deltaNonNeg(cur.drt.ValidFrames, prev.drt.ValidFrames) > 0 ||
 		deltaNonNeg(cur.drt.DroppedEvents, prev.drt.DroppedEvents) > 0 ||
@@ -159,7 +161,7 @@ func formatStats5sLine(sessionID uint64, cur, prev statsSnapshot, wsConnected bo
 		wsState = "已连接"
 	}
 	return fmt.Sprintf(
-		"[Agent][Stats 5s] Session=%d | TCP-In: +%d帧(累计%d, REQ:+%d RSP:+%d gap:+%d) | TCP-Out: +%d帧(累计%d, REQ:+%d RSP:+%d conns:%d dlink:+%d) | Mesh: +%d事件/+%d帧(累计%d, REQ:+%d RSP配对:+%d 孤立:+%d 截断:+%d 丢弃:+%d links:%d) | Buffer: 积压%dKB 丢帧+%d | WS(%s): +%d帧(累计%d) | RingBuf丢包:+%d",
+		"[Agent][Stats 5s] Session=%d | TCP-In: +%d帧(累计%d, REQ:+%d RSP:+%d gap:+%d) | TCP-Out: +%d帧(累计%d, REQ:+%d RSP:+%d conns:%d redir:+%d natMiss:+%d dialFail:+%d dlink:+%d) | Mesh: +%d事件/+%d帧(累计%d, REQ:+%d RSP配对:+%d 孤立:+%d 截断:+%d 丢弃:+%d links:%d) | Buffer: 积压%dKB 丢帧+%d | WS(%s): +%d帧(累计%d) | RingBuf丢包:+%d",
 		sessionID,
 		deltaNonNeg(cur.ingress.CapturedFrames, prev.ingress.CapturedFrames),
 		cur.ingress.CapturedFrames,
@@ -171,6 +173,9 @@ func formatStats5sLine(sessionID uint64, cur, prev statsSnapshot, wsConnected bo
 		deltaNonNeg(cur.egress.ReqFrames, prev.egress.ReqFrames),
 		deltaNonNeg(cur.egress.RspFrames, prev.egress.RspFrames),
 		cur.egress.ActiveConns,
+		deltaNonNeg(cur.redirected, prev.redirected),
+		deltaNonNeg(cur.egress.NatMiss, prev.egress.NatMiss),
+		deltaNonNeg(cur.egress.DialFail, prev.egress.DialFail),
 		deltaNonNeg(cur.egress.DlinkEvents, prev.egress.DlinkEvents),
 		deltaNonNeg(cur.drt.RawEvents, prev.drt.RawEvents),
 		deltaNonNeg(cur.drt.ValidFrames, prev.drt.ValidFrames),

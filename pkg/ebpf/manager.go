@@ -197,12 +197,163 @@ type Manager struct {
 	stopChan      chan struct{}
 	sessionID     uint64
 
-	monitoredProcs map[uint64]*MonitoredProc // processID -> MonitoredProc
-	statBypassed   int64
-	statDrops      int64
-	statRedirected int64
-	connSeqGen     uint32
-	mockPort       uint16
+	monitoredProcs      map[uint64]*MonitoredProc // processID -> MonitoredProc
+	statBypassed        int64
+	statDrops           int64
+	statRedirected      int64
+	connSeqGen          uint32
+	mockPort            uint16
+	connect4Attached    bool
+	sockopsAttached     bool
+	effectiveCgroupPath string
+	cgroupFSType        string
+	kernelRelease       string
+	natRetryDelays      []time.Duration
+}
+
+var defaultNatRetryDelays = []time.Duration{
+	200 * time.Microsecond,
+	500 * time.Microsecond,
+	1 * time.Millisecond,
+}
+
+func parseCgroupV2Mount(mountsContent string, configured string) (string, string) {
+	type mountEntry struct {
+		mountPoint string
+		fsType     string
+	}
+	var entries []mountEntry
+	scanner := bufio.NewScanner(strings.NewReader(mountsContent))
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) < 3 {
+			continue
+		}
+		entries = append(entries, mountEntry{
+			mountPoint: fields[1],
+			fsType:     fields[2],
+		})
+	}
+
+	if configured != "" {
+		cleanCfg := strings.TrimRight(configured, "/")
+		if cleanCfg == "" {
+			cleanCfg = "/"
+		}
+		bestLen := -1
+		bestFS := "unknown"
+		for _, e := range entries {
+			mp := strings.TrimRight(e.mountPoint, "/")
+			if mp == "" {
+				mp = "/"
+			}
+			matched := false
+			if cleanCfg == mp {
+				matched = true
+			} else if mp == "/" {
+				matched = strings.HasPrefix(cleanCfg, "/")
+			} else if strings.HasPrefix(cleanCfg, mp+"/") {
+				matched = true
+			}
+			if matched && len(mp) > bestLen {
+				bestLen = len(mp)
+				bestFS = e.fsType
+			}
+		}
+		return configured, bestFS
+	}
+
+	firstCgroup2 := ""
+	rootFS := ""
+	for _, e := range entries {
+		if e.mountPoint == "/sys/fs/cgroup" {
+			if e.fsType == "cgroup2" {
+				return "/sys/fs/cgroup", "cgroup2"
+			}
+			if rootFS == "" {
+				rootFS = e.fsType
+			}
+		}
+		if e.fsType == "cgroup2" && firstCgroup2 == "" {
+			firstCgroup2 = e.mountPoint
+		}
+	}
+	if firstCgroup2 != "" {
+		return firstCgroup2, "cgroup2"
+	}
+	if rootFS != "" {
+		return "/sys/fs/cgroup", rootFS
+	}
+	return "/sys/fs/cgroup", "unknown"
+}
+
+func resolveCgroupV2Path(configured string) (string, string) {
+	data, err := os.ReadFile("/proc/mounts")
+	if err != nil {
+		if configured != "" {
+			return configured, "unknown"
+		}
+		return "/sys/fs/cgroup", "unknown"
+	}
+	return parseCgroupV2Mount(string(data), configured)
+}
+
+func detectKernelRelease() string {
+	data, err := os.ReadFile("/proc/sys/kernel/osrelease")
+	if err != nil {
+		return "unknown"
+	}
+	rel := strings.TrimSpace(string(data))
+	if rel == "" {
+		return "unknown"
+	}
+	return rel
+}
+
+func natLookupCandidateIPs(clientIP net.IP) []net.IP {
+	loopback := net.IPv4(127, 0, 0, 1)
+	if ip4 := clientIP.To4(); ip4 != nil {
+		cp := make(net.IP, net.IPv4len)
+		copy(cp, ip4)
+		if ip4.Equal(loopback) {
+			return []net.IP{cp}
+		}
+		return []net.IP{cp, loopback}
+	}
+	return []net.IP{loopback}
+}
+
+func lookupNatWithRetry(
+	clientIP net.IP,
+	clientPort uint16,
+	delays []time.Duration,
+	tryOnce func(ip net.IP, port uint16) (uint64, uint32, net.IP, uint16, bool),
+) (uint64, uint32, net.IP, uint16, bool) {
+	if tryOnce == nil {
+		return 0, 0, nil, 0, false
+	}
+	candidates := natLookupCandidateIPs(clientIP)
+	tryCandidates := func() (uint64, uint32, net.IP, uint16, bool) {
+		for _, ip := range candidates {
+			processID, pid, origIP, origPort, ok := tryOnce(ip, clientPort)
+			if ok && origPort != 0 {
+				return processID, pid, origIP, origPort, true
+			}
+		}
+		return 0, 0, nil, 0, false
+	}
+	if processID, pid, origIP, origPort, ok := tryCandidates(); ok {
+		return processID, pid, origIP, origPort, true
+	}
+	for _, d := range delays {
+		if d > 0 {
+			time.Sleep(d)
+		}
+		if processID, pid, origIP, origPort, ok := tryCandidates(); ok {
+			return processID, pid, origIP, origPort, true
+		}
+	}
+	return 0, 0, nil, 0, false
 }
 
 // NewManager 实例化 eBPF 管理器
@@ -210,9 +361,9 @@ func NewManager(cfg ManagerConfig) *Manager {
 	if cfg.AgentPID == 0 {
 		cfg.AgentPID = uint32(os.Getpid())
 	}
-	if cfg.CgroupPath == "" {
-		cfg.CgroupPath = "/sys/fs/cgroup"
-	}
+	effectiveCgroup, cgroupFS := resolveCgroupV2Path(cfg.CgroupPath)
+	cfg.CgroupPath = effectiveCgroup
+	kernelRel := detectKernelRelease()
 	if cfg.MaxCaptureBytes <= 0 {
 		cfg.MaxCaptureBytes = crosrpc.DefaultMaxCaptureBytes
 	}
@@ -225,12 +376,15 @@ func NewManager(cfg ManagerConfig) *Manager {
 	reader := NewGapAwareIngressReader(pool, cfg.MaxCaptureBytes)
 
 	return &Manager{
-		cfg:            cfg,
-		capChecker:     capChecker,
-		scanner:        NewProcScanner(cfg.ProcRoot),
-		ingressReader:  reader,
-		monitoredProcs: make(map[uint64]*MonitoredProc),
-		stopChan:       make(chan struct{}),
+		cfg:                 cfg,
+		capChecker:          capChecker,
+		scanner:             NewProcScanner(cfg.ProcRoot),
+		ingressReader:       reader,
+		monitoredProcs:      make(map[uint64]*MonitoredProc),
+		stopChan:            make(chan struct{}),
+		effectiveCgroupPath: effectiveCgroup,
+		cgroupFSType:        cgroupFS,
+		kernelRelease:       kernelRel,
 	}
 }
 
@@ -808,33 +962,160 @@ func (m *Manager) purgeLocked() {
 
 	m.monitoredProcs = make(map[uint64]*MonitoredProc)
 	m.attached = false
+	m.connect4Attached = false
+	m.sockopsAttached = false
 	m.sessionID = 0
+}
+
+func (m *Manager) lookupNatTuple(clientIP net.IP, clientPort uint16) (uint64, uint32, net.IP, uint16, bool) {
+	m.mu.Lock()
+	objs := m.objs
+	delays := m.natRetryDelays
+	m.mu.Unlock()
+
+	if objs == nil {
+		return 0, 0, nil, 0, false
+	}
+	if delays == nil {
+		delays = defaultNatRetryDelays
+	}
+
+	return lookupNatWithRetry(clientIP, clientPort, delays, func(ip net.IP, port uint16) (uint64, uint32, net.IP, uint16, bool) {
+		addr := cros_probeClientAddr{
+			Ip:   ipv4ToBPFBe32(ip),
+			Port: port,
+		}
+		var od cros_probeOrigDst
+		if err := objs.NatTupleMap.Lookup(addr, &od); err == nil {
+			origIP := bpfBe32ToIPv4(od.OrigIp)
+			origPort := ntohs(od.OrigPort)
+			return od.ProcessId, od.Pid, origIP, origPort, true
+		}
+		return 0, 0, nil, 0, false
+	})
+}
+
+func (m *Manager) diagnoseNatMiss(clientIP net.IP, clientPort uint16) string {
+	m.mu.Lock()
+	objs := m.objs
+	connect4OK := m.connect4Attached
+	sockopsOK := m.sockopsAttached
+	cgroupPath := m.effectiveCgroupPath
+	if cgroupPath == "" {
+		cgroupPath = m.cfg.CgroupPath
+	}
+	cgroupFS := m.cgroupFSType
+	kernelRel := m.kernelRelease
+	targetProcs := len(m.monitoredProcs)
+	m.mu.Unlock()
+
+	if objs == nil {
+		return fmt.Sprintf("diag[reason=ebpf_objs_nil connect4=%v sockops=%v cgroup=%s(%s) kernel=%s targetProcs=%d]",
+			connect4OK, sockopsOK, cgroupPath, cgroupFS, kernelRel, targetProcs)
+	}
+
+	var bypassedSelf, redirected int64
+	var values []uint64
+	if err := objs.EbpfStatsMap.Lookup(uint32(0), &values); err == nil {
+		for _, v := range values {
+			bypassedSelf += int64(v)
+		}
+	}
+	values = nil
+	if err := objs.EbpfStatsMap.Lookup(uint32(2), &values); err == nil {
+		for _, v := range values {
+			redirected += int64(v)
+		}
+	}
+
+	primaryIP := natLookupCandidateIPs(clientIP)[0]
+	var odCheck cros_probeOrigDst
+	lookupErrStr := "nil"
+	if err := objs.NatTupleMap.Lookup(cros_probeClientAddr{
+		Ip:   ipv4ToBPFBe32(primaryIP),
+		Port: clientPort,
+	}, &odCheck); err != nil {
+		lookupErrStr = err.Error()
+	}
+
+	const maxScan = 512
+	natCount := 0
+	natCapped := false
+	swappedClientPort := htons(clientPort)
+	var samePortDiffIP []string
+	var swappedPort []string
+	var natSamples []string
+
+	var natKey cros_probeClientAddr
+	var natVal cros_probeOrigDst
+	natIter := objs.NatTupleMap.Iterate()
+	for natIter.Next(&natKey, &natVal) {
+		natCount++
+		kIP := bpfBe32ToIPv4(natKey.Ip)
+		dIP := bpfBe32ToIPv4(natVal.OrigIp)
+		dPort := ntohs(natVal.OrigPort)
+		if natKey.Port == clientPort && !kIP.Equal(primaryIP) && len(samePortDiffIP) < 3 {
+			samePortDiffIP = append(samePortDiffIP, fmt.Sprintf("%s:%d->pid=%d dst=%s:%d", kIP, natKey.Port, natVal.Pid, dIP, dPort))
+		}
+		if natKey.Port == swappedClientPort && swappedClientPort != clientPort && len(swappedPort) < 3 {
+			swappedPort = append(swappedPort, fmt.Sprintf("%s:%d(be)->pid=%d dst=%s:%d", kIP, natKey.Port, natVal.Pid, dIP, dPort))
+		}
+		if len(natSamples) < 2 {
+			natSamples = append(natSamples, fmt.Sprintf("%s:%d->pid=%d dst=%s:%d", kIP, natKey.Port, natVal.Pid, dIP, dPort))
+		}
+		if natCount >= maxScan {
+			natCapped = true
+			break
+		}
+	}
+	natCountStr := strconv.Itoa(natCount)
+	if natCapped {
+		natCountStr = fmt.Sprintf("%d+", maxScan)
+	}
+
+	cookieCount := 0
+	cookieCapped := false
+	var cookieSamples []string
+	var ck uint64
+	var cv cros_probeOrigDst
+	cookieIter := objs.CookieOrigDstMap.Iterate()
+	for cookieIter.Next(&ck, &cv) {
+		cookieCount++
+		if len(cookieSamples) < 2 {
+			cookieSamples = append(cookieSamples, fmt.Sprintf("pid=%d->%s:%d", cv.Pid, bpfBe32ToIPv4(cv.OrigIp), ntohs(cv.OrigPort)))
+		}
+		if cookieCount >= maxScan {
+			cookieCapped = true
+			break
+		}
+	}
+	cookieCountStr := strconv.Itoa(cookieCount)
+	if cookieCapped {
+		cookieCountStr = fmt.Sprintf("%d+", maxScan)
+	}
+
+	return fmt.Sprintf(
+		"diag[kernel=%s cgroup=%s(%s) connect4=%v sockops=%v targetProcs=%d redirected=%d bypassedSelf=%d lookupErr=%q natMap=%s cookieMap=%s samePortDiffIP=%q swappedPort=%q natSamples=[%s] cookieSamples=[%s]]",
+		kernelRel, cgroupPath, cgroupFS, connect4OK, sockopsOK, targetProcs, redirected, bypassedSelf,
+		lookupErrStr, natCountStr, cookieCountStr,
+		strings.Join(samePortDiffIP, ";"), strings.Join(swappedPort, ";"),
+		strings.Join(natSamples, ";"), strings.Join(cookieSamples, ";"),
+	)
 }
 
 func (m *Manager) attachLocked() error {
 	// 启动出站透明代理
 	proxy, err := NewEgressProxy(
 		func(clientPort uint16) (uint64, uint32, net.IP, uint16, bool) {
-			if m.objs == nil {
-				return 0, 0, nil, 0, false
-			}
-			addr := cros_probeClientAddr{
-				Ip:   ipv4ToBPFBe32(net.IPv4(127, 0, 0, 1)),
-				Port: clientPort,
-			}
-			var od cros_probeOrigDst
-			if err := m.objs.NatTupleMap.Lookup(addr, &od); err == nil {
-				origIP := bpfBe32ToIPv4(od.OrigIp)
-				origPort := ntohs(od.OrigPort)
-				return od.ProcessId, od.Pid, origIP, origPort, true
-			}
-			return 0, 0, nil, 0, false
+			return m.lookupNatTuple(net.IPv4(127, 0, 0, 1), clientPort)
 		},
 		m.cfg.FrameSink,
 	)
 	if err != nil {
 		return fmt.Errorf("启动 EgressProxy 失败: %w", err)
 	}
+	proxy.SetNatAddrLookup(m.lookupNatTuple)
+	proxy.SetNatMissDiag(m.diagnoseNatMiss)
 	proxy.SetVerbose(m.cfg.Verbose)
 	m.egressProxy = proxy
 
@@ -842,6 +1123,7 @@ func (m *Manager) attachLocked() error {
 	objs := &cros_probeObjects{}
 	if err := loadCros_probeObjects(objs, nil); err != nil {
 		_ = proxy.Close()
+		m.egressProxy = nil
 		return fmt.Errorf("loadCros_probeObjects 失败: %w", err)
 	}
 	m.objs = objs
@@ -854,32 +1136,52 @@ func (m *Manager) attachLocked() error {
 	}
 	if err := objs.AgentCfgMap.Put(uint32(0), cfg); err != nil {
 		_ = proxy.Close()
+		m.egressProxy = nil
+		_ = objs.Close()
+		m.objs = nil
 		return fmt.Errorf("配置 agent_cfg_map 失败: %w", err)
+	}
+
+	cgroupPath := m.effectiveCgroupPath
+	if cgroupPath == "" {
+		cgroupPath = m.cfg.CgroupPath
 	}
 
 	// 挂载 ARMED 待命常驻钩子 (connect4, sock_ops, sched_process_exec)，零读写 tracepoint 损耗
 	var links []link.Link
 	cgroupLink, err := link.AttachCgroup(link.CgroupOptions{
-		Path:    m.cfg.CgroupPath,
+		Path:    cgroupPath,
 		Attach:  ebpf.AttachCGroupInet4Connect,
 		Program: objs.CrosConnect4,
 	})
-	if err == nil {
-		links = append(links, cgroupLink)
-	} else {
-		log.Printf("[eBPF] AttachCgroup connect4 警告: %v", err)
+	if err != nil {
+		log.Printf("[eBPF] AttachCgroup connect4 警告: %v (cgroup=%s, fstype=%s)", err, cgroupPath, m.cgroupFSType)
 	}
 
 	sockopsLink, err := link.AttachCgroup(link.CgroupOptions{
-		Path:    m.cfg.CgroupPath,
+		Path:    cgroupPath,
 		Attach:  ebpf.AttachCGroupSockOps,
 		Program: objs.CrosSockOps,
 	})
-	if err == nil {
-		links = append(links, sockopsLink)
-	} else {
-		log.Printf("[eBPF] AttachCgroup sock_ops 警告: %v", err)
+	if err != nil {
+		log.Printf("[eBPF] AttachCgroup sock_ops 警告: %v (cgroup=%s, fstype=%s)", err, cgroupPath, m.cgroupFSType)
 	}
+
+	// 安全回滚：严禁在 sock_ops 失败时保留 connect4，否则出站连接将被劫持但无 NAT 记录导致业务断连
+	if cgroupLink != nil && sockopsLink == nil {
+		_ = cgroupLink.Close()
+		cgroupLink = nil
+		log.Printf("[eBPF] [⚠️ 安全回滚] cros_sock_ops 挂载失败，已同步撤销 cros_connect4 防止出站 TCP 连接因 NAT 失配被中断 (Cgroup: %s, fstype: %s, kernel: %s)",
+			cgroupPath, m.cgroupFSType, m.kernelRelease)
+	}
+	if cgroupLink != nil {
+		links = append(links, cgroupLink)
+	}
+	if sockopsLink != nil {
+		links = append(links, sockopsLink)
+	}
+	m.connect4Attached = cgroupLink != nil
+	m.sockopsAttached = sockopsLink != nil
 
 	// 挂载 sched_process_exec
 	tpSchedExec, err := link.Tracepoint("sched", "sched_process_exec", objs.CrosSchedExec, nil)
@@ -890,7 +1192,8 @@ func (m *Manager) attachLocked() error {
 	}
 
 	m.links = links
-	log.Printf("[eBPF] 探针待命状态就绪 (ARMED)，已挂载 %d/3 个常驻内核钩子 (Cgroup: %s):", len(links), m.cfg.CgroupPath)
+	log.Printf("[eBPF] 探针待命状态就绪 (ARMED)，已挂载 %d/3 个常驻内核钩子 (Cgroup: %s, fstype: %s, kernel: %s):",
+		len(links), cgroupPath, m.cgroupFSType, m.kernelRelease)
 	if cgroupLink != nil {
 		log.Printf("[eBPF]   ├── [✓] [cgroup/connect4] cros_connect4 -> 出站连接劫持与 NAT 转发 (EgressProxy 端口: %d)", proxy.ProxyPort())
 	} else {
