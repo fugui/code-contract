@@ -2457,3 +2457,348 @@
   font-weight: 600;
   color: var(--color-text-secondary);
 }
+
+/* ============================================================================
+ * 契约源码工作台：左侧 clean/ 目录树 + 右侧紧凑合并代码视图
+ * ============================================================================ */
+
+.pgit-split-shell {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 1024px) {
+  .pgit-split-shell {
+    grid-template-columns: 1fr;
+  }
+}
+
+.pgit-tree-panel {
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--radius-lg, 12px);
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 16px;
+  max-height: calc(100vh - 148px);
+  overflow: hidden;
+}
+
+.pgit-tree-header {
+  padding: 12px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pgit-tree-mode-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.pgit-filter-details {
+  position: relative;
+}
+
+.pgit-filter-summary {
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border-primary);
+  background: var(--color-bg-muted);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.pgit-filter-summary::-webkit-details-marker {
+  display: none;
+}
+
+.pgit-filter-summary:hover {
+  color: var(--color-text-primary);
+  background: var(--color-bg-hover);
+}
+
+.pgit-filter-body {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border-primary);
+  background: var(--color-bg-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pgit-tree-scroll {
+  flex: 1;
+  min-height: 220px;
+  overflow-y: auto;
+  padding: 8px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pgit-tree-branch {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.pgit-tree-row {
+  width: 100%;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 6px;
+  padding: 5px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  cursor: pointer;
+  color: var(--color-text-primary);
+  font-size: 12.5px;
+  text-align: left;
+  transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+
+.pgit-tree-row:hover {
+  background: var(--color-bg-hover);
+}
+
+.pgit-tree-row--subsystem {
+  font-weight: 600;
+  color: var(--color-text-primary);
+  padding-left: 6px;
+}
+
+.pgit-tree-row--repo {
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  padding-left: 16px;
+}
+
+.pgit-tree-row--folder {
+  color: var(--color-text-secondary);
+}
+
+.pgit-tree-row--file {
+  color: var(--color-text-primary);
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+}
+
+.pgit-tree-row--active {
+  background: var(--color-bg-selected);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.pgit-tree-row__main {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  flex: 1;
+}
+
+.pgit-tree-row__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pgit-tree-count {
+  font-size: 11px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--color-bg-muted);
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+.pgit-tree-loading {
+  padding: 6px 12px 6px 34px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.pgit-tree-footer {
+  padding: 8px 12px;
+  border-top: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.pdoc-empty {
+  padding: 20px 14px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--color-text-muted);
+}
+
+.pdoc-main-panel {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pgit-code-card {
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--radius-lg, 12px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.pgit-file-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  background: var(--color-bg-muted);
+  border-bottom: 1px solid var(--color-border-primary);
+}
+
+.pgit-file-header__left {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.pgit-file-header__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pgit-breadcrumb {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-family: var(--font-mono, monospace);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.pgit-breadcrumb__seg {
+  color: var(--color-text-secondary);
+}
+
+.pgit-breadcrumb__sep {
+  color: var(--color-text-muted);
+}
+
+.pgit-breadcrumb__file {
+  color: var(--color-text-primary);
+  font-weight: 700;
+}
+
+.pgit-file-submeta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pgit-file-pkg {
+  font-family: var(--font-mono, monospace);
+  font-size: 11.5px;
+  color: var(--color-text-muted);
+}
+
+.pgit-file-info-panel {
+  padding: 10px 14px;
+  background: var(--color-bg-subtle);
+  border-bottom: 1px solid var(--color-border-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pgit-file-info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px 14px;
+}
+
+.pgit-file-info-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.pgit-file-info-label {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.pgit-file-info-val {
+  font-size: 12px;
+  color: var(--color-text-primary);
+  word-break: break-all;
+}
+
+.pgit-file-info-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.pdoc-code-viewer--embedded {
+  border: none;
+  border-radius: 0;
+}
+
+.pdoc-code-viewer--embedded .pdoc-code-scroll {
+  max-height: calc(100vh - 260px);
+  min-height: 400px;
+}
+
+.pgit-diff-wrap {
+  display: flex;
+  flex-direction: column;
+}
+
+.pgit-diff-selectors {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  background: var(--color-bg-subtle);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.pgit-diff-wrap .pdoc-diff-viewer {
+  border: none;
+  border-radius: 0;
+}

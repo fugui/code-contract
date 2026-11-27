@@ -169,6 +169,11 @@ export interface ProtoReadOnlyCodeViewerProps {
   versionLabel?: string;
   hasSourceInfo?: boolean;
   sourceOrigin?: string;
+  hideToolbar?: boolean;
+  hidePathBanner?: boolean;
+  stageMode?: 'clean' | 'raw' | 'split';
+  onStageModeChange?: (mode: 'clean' | 'raw' | 'split') => void;
+  className?: string;
   onSelectLine?: (line: number) => void;
 }
 
@@ -192,9 +197,22 @@ export const ProtoReadOnlyCodeViewer: React.FC<ProtoReadOnlyCodeViewerProps> = (
   versionLabel,
   hasSourceInfo = true,
   sourceOrigin,
+  hideToolbar = false,
+  hidePathBanner = false,
+  stageMode,
+  onStageModeChange,
+  className,
   onSelectLine,
 }) => {
-  const [sourceStageMode, setSourceStageMode] = useState<'clean' | 'raw' | 'split'>('clean');
+  const [internalStageMode, setInternalStageMode] = useState<'clean' | 'raw' | 'split'>('clean');
+  const sourceStageMode = stageMode ?? internalStageMode;
+  const updateStageMode = (nextMode: 'clean' | 'raw' | 'split') => {
+    if (onStageModeChange) {
+      onStageModeChange(nextMode);
+    } else {
+      setInternalStageMode(nextMode);
+    }
+  };
   const [rawJumpLine, setRawJumpLine] = useState<number | null>(null);
   const hasRawVariant = Boolean(rawContent && rawContent.length > 0);
   const displayedContent =
@@ -249,88 +267,93 @@ export const ProtoReadOnlyCodeViewer: React.FC<ProtoReadOnlyCodeViewerProps> = (
 
   const handleJumpRawLine = (origLine: number) => {
     setRawJumpLine(origLine);
-    setSourceStageMode('raw');
+    updateStageMode('raw');
     if (onSelectLine) {
       onSelectLine(origLine);
     }
   };
 
+  const rootClassName = ['pdoc-code-viewer', className].filter(Boolean).join(' ');
+  const showPathDiff = Boolean(cleanRelPath && repoFilePath && cleanRelPath !== repoFilePath);
+
   return (
-    <div className="pdoc-code-viewer" data-testid="proto-readonly-code-viewer">
-      <div className="pdoc-code-viewer__toolbar">
-        <div className="pdoc-meta-row">
-          <Code2 size={15} />
-          <span className="pdoc-code-viewer__filepath">{filePath}</span>
-          {versionLabel && <span className="pdoc-pill">{versionLabel}</span>}
-          {pipelineStatus && (
-            <span
-              className={`code-badge ${
-                pipelineStatus === 'QUARANTINED'
-                  ? 'code-badge-danger'
-                  : pipelineStatus === 'NORMALIZED'
-                    ? 'code-badge-success'
-                    : 'code-badge-info'
-              }`}
-              title={statusReason || pipelineStatus}
-            >
-              {pipelineStatus}
+    <div className={rootClassName} data-testid="proto-readonly-code-viewer">
+      {!hideToolbar && (
+        <div className="pdoc-code-viewer__toolbar">
+          <div className="pdoc-meta-row">
+            <Code2 size={15} />
+            <span className="pdoc-code-viewer__filepath">{filePath}</span>
+            {versionLabel && <span className="pdoc-pill">{versionLabel}</span>}
+            {pipelineStatus && (
+              <span
+                className={`code-badge ${
+                  pipelineStatus === 'QUARANTINED'
+                    ? 'code-badge-danger'
+                    : pipelineStatus === 'NORMALIZED'
+                      ? 'code-badge-success'
+                      : 'code-badge-info'
+                }`}
+                title={statusReason || pipelineStatus}
+              >
+                {pipelineStatus}
+              </span>
+            )}
+            {normalizerVersion && <span className="pdoc-pill">{normalizerVersion}</span>}
+            {isUServiceSource && (
+              <span className="code-badge code-badge-info" data-testid="badge-uservice-converted">
+                uService 已转换
+              </span>
+            )}
+            {autoFixCount > 0 && (
+              <span className="code-badge code-badge-success" data-testid="badge-r7-autofix">
+                R7 自动修复 ({autoFixCount})
+              </span>
+            )}
+            {isHarvestedBase && (
+              <span className="code-badge code-badge-neutral" data-testid="badge-r4-harvested">
+                R4 收割基座
+              </span>
+            )}
+            {isExternalCopy && <span className="code-badge code-badge-warning">外部副本</span>}
+            {activeHighlightLine && activeHighlightLine > 1 && (
+              <span className="code-badge code-badge-warning">锚点 #L{activeHighlightLine}</span>
+            )}
+          </div>
+          <div className="pdoc-meta-row">
+            {hasRawVariant && (
+              <div className="code-tab-pills" role="group" aria-label="源码视图切换">
+                <button
+                  type="button"
+                  className={`code-pill-btn ${sourceStageMode === 'clean' ? 'code-pill-btn--active' : ''}`}
+                  onClick={() => updateStageMode('clean')}
+                >
+                  Clean
+                </button>
+                <button
+                  type="button"
+                  className={`code-pill-btn ${sourceStageMode === 'raw' ? 'code-pill-btn--active' : ''}`}
+                  onClick={() => updateStageMode('raw')}
+                >
+                  Raw
+                </button>
+                <button
+                  type="button"
+                  className={`code-pill-btn ${sourceStageMode === 'split' ? 'code-pill-btn--active' : ''}`}
+                  onClick={() => updateStageMode('split')}
+                >
+                  并排对比
+                </button>
+              </div>
+            )}
+            {sourceOrigin === 'DESCRIPTOR_RECONSTRUCTED' && (
+              <span className="pdoc-pill">M23 描述集重构只读视图</span>
+            )}
+            <span className="pdoc-pill">
+              <Lock size={12} /> 只读 · Git-Only SSOT
             </span>
-          )}
-          {normalizerVersion && <span className="pdoc-pill">{normalizerVersion}</span>}
-          {isUServiceSource && (
-            <span className="code-badge code-badge-info" data-testid="badge-uservice-converted">
-              uService 已转换
-            </span>
-          )}
-          {autoFixCount > 0 && (
-            <span className="code-badge code-badge-success" data-testid="badge-r7-autofix">
-              R7 自动修复 ({autoFixCount})
-            </span>
-          )}
-          {isHarvestedBase && (
-            <span className="code-badge code-badge-neutral" data-testid="badge-r4-harvested">
-              R4 收割基座
-            </span>
-          )}
-          {isExternalCopy && <span className="code-badge code-badge-warning">外部副本</span>}
-          {activeHighlightLine && activeHighlightLine > 0 && (
-            <span className="code-badge code-badge-warning">锚点 #L{activeHighlightLine}</span>
-          )}
+          </div>
         </div>
-        <div className="pdoc-meta-row">
-          {hasRawVariant && (
-            <div className="code-tab-pills" role="group" aria-label="源码视图切换">
-              <button
-                type="button"
-                className={`code-pill-btn ${sourceStageMode === 'clean' ? 'code-pill-btn-active' : ''}`}
-                onClick={() => setSourceStageMode('clean')}
-              >
-                Clean
-              </button>
-              <button
-                type="button"
-                className={`code-pill-btn ${sourceStageMode === 'raw' ? 'code-pill-btn-active' : ''}`}
-                onClick={() => setSourceStageMode('raw')}
-              >
-                Raw
-              </button>
-              <button
-                type="button"
-                className={`code-pill-btn ${sourceStageMode === 'split' ? 'code-pill-btn-active' : ''}`}
-                onClick={() => setSourceStageMode('split')}
-              >
-                并排对比
-              </button>
-            </div>
-          )}
-          {sourceOrigin === 'DESCRIPTOR_RECONSTRUCTED' && (
-            <span className="pdoc-pill">M23 描述集重构只读视图</span>
-          )}
-          <span className="pdoc-pill">
-            <Lock size={12} /> 只读 · Git-Only SSOT
-          </span>
-        </div>
-      </div>
+      )}
 
       {pipelineStatus === 'QUARANTINED' && statusReason && (
         <div className="pdoc-banner pdoc-banner--warning">
@@ -339,7 +362,7 @@ export const ProtoReadOnlyCodeViewer: React.FC<ProtoReadOnlyCodeViewerProps> = (
         </div>
       )}
 
-      {cleanRelPath && repoFilePath && cleanRelPath !== repoFilePath && (
+      {!hidePathBanner && showPathDiff && (
         <div className="pdoc-banner" data-testid="pg-flatten-path-banner">
           <span>
             raw/ 原路径: <code>{repoFilePath}</code> → clean/ 去 /pg 扁平路径:{' '}
@@ -382,11 +405,17 @@ export const ProtoReadOnlyCodeViewer: React.FC<ProtoReadOnlyCodeViewerProps> = (
       {sourceStageMode === 'split' && hasRawVariant ? (
         <div className="pgit-dual-code-grid" data-testid="proto-split-compare">
           <div className="pgit-dual-code-pane">
-            <div className="pgit-dual-code-pane__title">Raw 原始快照</div>
+            <div className="pgit-dual-code-pane__title">
+              {showPathDiff && repoFilePath ? `Raw 原始快照 · ${repoFilePath}` : 'Raw 原始快照'}
+            </div>
             <pre className="pgit-dual-code-pre">{rawContent}</pre>
           </div>
           <div className="pgit-dual-code-pane">
-            <div className="pgit-dual-code-pane__title">Clean 规范化源码 ({normalizerVersion || 'clean'})</div>
+            <div className="pgit-dual-code-pane__title">
+              {showPathDiff
+                ? `Clean 规范化源码 (${normalizerVersion || 'clean'}) · ${cleanRelPath || filePath}`
+                : `Clean 规范化源码 (${normalizerVersion || 'clean'})`}
+            </div>
             <pre className="pgit-dual-code-pre">{content}</pre>
           </div>
         </div>

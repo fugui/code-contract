@@ -166,8 +166,8 @@ describe('ADR-26 Platform Shared Repo, Dual View, Raw/Clean LineMap & Conflict A
     expect(html).toContain('PLATFORM_SHARED');
     expect(html).toContain('LOCAL_CACHE_ONLY');
     expect(html).toContain('陈旧待同步');
-    expect(html).toContain('按子系统/仓库');
-    expect(html).toContain('按 Proto 包路径');
+    expect(html).toContain('目录树 (clean/)');
+    expect(html).toContain('按包名');
     expect(html).toContain('冲突仲裁');
     expect(html).toContain('重跑清洗');
     expect(html).not.toContain('平台仓导入');
