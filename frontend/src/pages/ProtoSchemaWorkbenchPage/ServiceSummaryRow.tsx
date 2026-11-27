@@ -118,13 +118,18 @@ export const ServiceSummaryRow: React.FC<ServiceSummaryRowProps> = ({
             </span>
           </Link>
         ) : (
-          <span className="code-badge code-badge--warning">未认领孤儿契约</span>
+          <span
+            className="code-badge code-badge--warning"
+            title="该 .pb 服务契约尚未被架构中心任何逻辑模块认领"
+          >
+            未认领孤儿契约
+          </span>
         )}
       </td>
 
       <td>
         <span className="code-badge code-badge--secondary">
-          {totalOps} 方法 (Unary {unaryOps} / Stream {streamOps})
+          {totalOps} 个方法（普通 {unaryOps} / 流式 {streamOps}）
         </span>
       </td>
 

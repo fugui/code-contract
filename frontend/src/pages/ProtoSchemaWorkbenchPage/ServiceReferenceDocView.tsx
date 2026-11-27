@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { MODULE_BASE_PATH } from '../../constants';
 import { exportProtoDocsMarkdown } from '../../api/schema';
+import { formatLineageClaimStatus, formatStreamMode } from '../../utils/catalogTerms';
 import { useToast } from '../../utils/toast';
 import type {
   FieldDocNodeDTO,
@@ -171,12 +172,11 @@ const MethodReferenceCard: React.FC<{
           <div className="pdoc-meta-row">
             <h4 className="pdoc-card__title">rpc {method.operation}</h4>
             {method.is_deprecated && (
-              <span className="code-badge code-badge-danger">DEPRECATED</span>
+              <span className="code-badge code-badge-danger">已废弃</span>
             )}
             {(method.client_streaming || method.server_streaming) && (
               <span className="code-badge code-badge-purple">
-                {method.client_streaming ? 'ClientStream ' : ''}
-                {method.server_streaming ? 'ServerStream' : ''}
+                {formatStreamMode(method.client_streaming, method.server_streaming)}
               </span>
             )}
             {method.owner_tag && (
@@ -443,14 +443,16 @@ export const ServiceReferenceDocView: React.FC<ServiceReferenceDocViewProps> = (
           <span className="pdoc-section-title">
             <GitBranch size={15} /> ADR-16 架构血缘、公共契约定义与多实现矩阵
           </span>
-          <span className="code-badge code-badge-info">状态：{detail.lineage.claim_status}</span>
+          <span className="code-badge code-badge-info">
+            状态：{formatLineageClaimStatus(detail.lineage.claim_status)}
+          </span>
         </div>
 
         {detail.lineage.definer && (
           <div className="pdoc-banner pdoc-banner--info">
             <Layers size={15} />
             <div>
-              <strong>公共契约库定义方 (CONTRACT_LIB)</strong>：
+              <strong>公共契约库定义方</strong>：
               <code>{detail.lineage.definer.module_code}</code>（{detail.lineage.definer.module_name} / {detail.lineage.definer.subsystem_name}，模式 {detail.lineage.definer.provide_mode}）
             </div>
           </div>
@@ -460,7 +462,7 @@ export const ServiceReferenceDocView: React.FC<ServiceReferenceDocViewProps> = (
           <table className="code-table">
             <thead>
               <tr>
-                <th>实现 Key</th>
+                <th>实现标识</th>
                 <th>实现模块</th>
                 <th>所属子系统 / 进程</th>
                 <th>负责人</th>
@@ -470,7 +472,7 @@ export const ServiceReferenceDocView: React.FC<ServiceReferenceDocViewProps> = (
             <tbody>
               {detail.lineage.implementations.map((impl) => (
                 <tr key={impl.service_id}>
-                  <td><span className="code-badge code-badge-purple">{impl.impl_key || 'DEFAULT'}</span></td>
+                  <td><span className="code-badge code-badge-purple">{impl.impl_key || '默认实现'}</span></td>
                   <td>
                     <code>{impl.module_code}</code> · {impl.module_name}
                   </td>
@@ -499,7 +501,7 @@ export const ServiceReferenceDocView: React.FC<ServiceReferenceDocViewProps> = (
             </tbody>
           </table>
         ) : (
-          <p className="pdoc-card__subtitle">当前契约尚未被架构逻辑模块认领实现（UNCLAIMED）。</p>
+          <p className="pdoc-card__subtitle">当前契约尚未被架构逻辑模块认领实现（未认领）。</p>
         )}
 
         {detail.lineage.consumers.length > 0 && (

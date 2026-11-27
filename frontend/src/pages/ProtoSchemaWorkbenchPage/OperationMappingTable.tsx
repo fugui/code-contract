@@ -1,5 +1,6 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { Pagination } from '@code/common';
+import { formatStreamMode } from '../../utils/catalogTerms';
 import type { ProtoOperation } from '../../types';
 import type { ServiceContractGroupDTO } from '../../types/schema_tree';
 import { ServiceSummaryRow } from './ServiceSummaryRow';
@@ -273,8 +274,8 @@ export const OperationMappingTable: React.FC<OperationMappingTableProps> = ({
         <table className="code-table code-nested-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ background: 'var(--color-bg-muted)', borderBottom: '1px solid var(--color-border-primary)', textAlign: 'left' }}>
-              <th style={{ padding: '10px 12px' }}>服务定义名称 (service_name) / 来源描述集</th>
-              <th style={{ padding: '10px 12px' }}>Proto Package</th>
+              <th style={{ padding: '10px 12px' }}>服务定义名称 / 来源描述集</th>
+              <th style={{ padding: '10px 12px' }}>Proto 包名</th>
               <th style={{ padding: '10px 12px' }}>架构认领模块</th>
               <th style={{ padding: '10px 12px' }}>RPC 方法统计</th>
               <th style={{ padding: '10px 12px' }}>生效状态</th>
@@ -303,11 +304,11 @@ export const OperationMappingTable: React.FC<OperationMappingTableProps> = ({
                           <table className="code-table code-table--compact code-subtable" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', background: 'var(--color-bg-surface)', borderRadius: '6px', overflow: 'hidden', border: '1px solid var(--color-border-primary)' }}>
                             <thead>
                               <tr style={{ background: 'var(--color-bg-muted)', borderBottom: '1px solid var(--color-border-primary)', textAlign: 'left' }}>
-                                <th style={{ padding: '8px 12px' }}>调用方法 (operation)</th>
-                                <th style={{ padding: '8px 12px' }}>请求消息体 (req_message)</th>
-                                <th style={{ padding: '8px 12px' }}>应答消息体 (rsp_message)</th>
-                                <th style={{ padding: '8px 12px' }}>流式模式</th>
-                                <th style={{ padding: '8px 12px' }}>Diff 忽略字段</th>
+                                <th style={{ padding: '8px 12px' }}>调用方法</th>
+                                <th style={{ padding: '8px 12px' }}>请求消息体</th>
+                                <th style={{ padding: '8px 12px' }}>应答消息体</th>
+                                <th style={{ padding: '8px 12px' }}>调用模式</th>
+                                <th style={{ padding: '8px 12px' }}>比对忽略字段</th>
                                 <th style={{ padding: '8px 12px' }}>状态</th>
                                 <th style={{ padding: '8px 12px', textAlign: 'right' }}>操作</th>
                               </tr>
@@ -325,14 +326,15 @@ export const OperationMappingTable: React.FC<OperationMappingTableProps> = ({
                                     {op.rsp_message_full_name || '-'}
                                   </td>
                                   <td style={{ padding: '8px 12px' }}>
-                                    {op.client_streaming || op.server_streaming ? (
-                                      <span className="code-badge code-badge--info">
-                                        {op.client_streaming ? 'ClientStream ' : ''}
-                                        {op.server_streaming ? 'ServerStream' : ''}
-                                      </span>
-                                    ) : (
-                                      <span className="code-badge code-badge--secondary">Unary</span>
-                                    )}
+                                    <span
+                                      className={`code-badge ${
+                                        op.client_streaming || op.server_streaming
+                                          ? 'code-badge--info'
+                                          : 'code-badge--secondary'
+                                      }`}
+                                    >
+                                      {formatStreamMode(op.client_streaming, op.server_streaming)}
+                                    </span>
                                   </td>
                                   <td style={{ padding: '8px 12px' }}>
                                     {op.diff_ignore_paths && op.diff_ignore_paths.length > 0 ? (

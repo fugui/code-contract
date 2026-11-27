@@ -1,8 +1,17 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Check, RefreshCw, Sparkles } from 'lucide-react';
+import { Check, HelpCircle, Info, RefreshCw, Sparkles, X } from 'lucide-react';
 import { Pagination, usePaginationState } from '@code/common';
 import * as catalogApi from '../../api/catalog';
 import { useToast } from '../../utils/toast';
+import {
+  RADAR_ALL_ORDER,
+  RADAR_STATE_META,
+  formatMatchConfidence,
+  formatTransport,
+  getClaimStatusMeta,
+  getProtoStatusMeta,
+  getRadarStateMeta,
+} from '../../utils/catalogTerms';
 import type {
   CatalogServicesResponseDTO,
   FiveStateRadarDTO,
@@ -17,21 +26,14 @@ export interface UnifiedCatalogPaneProps {
   onStateChange?: (nextState: string) => void;
 }
 
-const STATE_FILTER_TABS: Array<{ key: '' | RadarState; label: string }> = [
-  { key: '', label: '全部目录契约' },
-  { key: 'SHADOW_LIVE', label: '阴影在线 (SHADOW_LIVE)' },
-  { key: 'UNCLAIMED_ORPHAN', label: '未认领孤儿 (UNCLAIMED_ORPHAN)' },
-  { key: 'PHANTOM_PROTO', label: '幻影订阅 (PHANTOM_PROTO)' },
-  { key: 'VANISHED_CLAIMED', label: '已认领失联 (VANISHED_CLAIMED)' },
-  { key: 'PLACEMENT_DRIFT', label: '部署漂移 (PLACEMENT_DRIFT)' },
-  { key: 'HEALTHY', label: '健康 (HEALTHY)' },
+const STATE_FILTER_TABS: Array<{ key: '' | RadarState; label: string; title: string }> = [
+  { key: '', label: '全部目录契约', title: '展示全部契约与现网服务' },
+  ...RADAR_ALL_ORDER.map((key) => ({
+    key,
+    label: RADAR_STATE_META[key].label,
+    title: RADAR_STATE_META[key].summary,
+  })),
 ];
-
-const PROTO_STATUS_LABEL: Record<string, string> = {
-  CONFIRMED: '已确认',
-  SUGGESTED: '待确认建议',
-  UNMATCHED: '未匹配 .pb',
-};
 
 function radarCountForKey(radar: FiveStateRadarDTO | undefined, key: '' | RadarState): number | null {
   if (!radar) return null;
@@ -67,6 +69,7 @@ export const UnifiedCatalogPane: React.FC<UnifiedCatalogPaneProps> = ({
   const [loading, setLoading] = useState<boolean>(false);
   const [correlating, setCorrelating] = useState<boolean>(false);
   const [confirmingId, setConfirmingId] = useState<number | null>(null);
+  const [showGlossary, setShowGlossary] = useState<boolean>(false);
   const [data, setData] = useState<CatalogServicesResponseDTO | null>(initialData);
 
   useEffect(() => {
@@ -101,10 +104,10 @@ export const UnifiedCatalogPane: React.FC<UnifiedCatalogPaneProps> = ({
     setCorrelating(true);
     try {
       const res = await catalogApi.correlateCatalogServices();
-      toast.success(`三级撮合完成：EXACT 自动绑定 ${res.exact_matched} 条，候选建议 ${res.suggested_count} 条`);
+      toast.success(`匹配完成：精确自动绑定 ${res.exact_matched} 条，待确认建议 ${res.suggested_count} 条`);
       await loadCatalog();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '执行 .pb 撮合失败');
+      toast.error(err instanceof Error ? err.message : '执行 .pb 匹配失败');
     } finally {
       setCorrelating(false);
     }
@@ -128,11 +131,12 @@ export const UnifiedCatalogPane: React.FC<UnifiedCatalogPaneProps> = ({
   const items = data?.items ?? [];
   const total = data?.total ?? 0;
   const radar = data?.radar;
+  const activeStateMeta = stateFilter ? getRadarStateMeta(stateFilter) : null;
 
   return (
     <div className="ucat-pane" data-testid="unified-catalog-pane">
       <div className="ucat-toolbar">
-        <div className="ucat-state-pills" role="group" aria-label="五态雷达状态筛选">
+        <div className="ucat-state-pills" role="group" aria-label="契约健康状态筛选">
           {STATE_FILTER_TABS.map((tab) => {
             const active = stateFilter === tab.key;
             const cnt = radarCountForKey(radar, tab.key);
@@ -140,6 +144,7 @@ export const UnifiedCatalogPane: React.FC<UnifiedCatalogPaneProps> = ({
               <button
                 key={tab.key || 'ALL'}
                 type="button"
+                title={tab.title}
                 data-testid={`catalog-state-filter-${tab.key || 'ALL'}`}
                 className={`code-pill-btn ${active ? 'code-pill-btn--active' : ''}`}
                 onClick={() => {
@@ -164,8 +169,19 @@ export const UnifiedCatalogPane: React.FC<UnifiedCatalogPaneProps> = ({
               setSearchKeyword(e.target.value);
               setPage(1);
             }}
-            placeholder="搜索 CSG 服务名 / Proto / 模块..."
+            placeholder="搜索现网服务名 / Proto / 模块..."
           />
+          <button
+            type="button"
+            className={`code-btn code-btn--sm ${showGlossary ? 'code-btn--primary' : 'code-btn--secondary'}`}
+            data-testid="catalog-glossary-toggle"
+            aria-expanded={showGlossary}
+            onClick={() => setShowGlossary((prev) => !prev)}
+            title="查看各健康状态含义与排查建议"
+          >
+            <HelpCircle size={13} />
+            <span>状态说明</span>
+          </button>
           <button
             type="button"
             className="code-btn code-btn--secondary code-btn--sm"
@@ -179,24 +195,79 @@ export const UnifiedCatalogPane: React.FC<UnifiedCatalogPaneProps> = ({
             type="button"
             className="code-btn code-btn--primary code-btn--sm"
             data-testid="catalog-correlate-btn"
+            title="按精确名称、命名规则、流量方法指纹三级自动匹配 .pb 契约"
             onClick={() => void handleCorrelate()}
             disabled={correlating}
           >
             <Sparkles size={13} />
-            <span>{correlating ? '撮合计算中...' : '一键三级撮合 .pb'}</span>
+            <span>{correlating ? '匹配计算中...' : '一键匹配 .pb 契约'}</span>
           </button>
         </div>
       </div>
+
+      {activeStateMeta && (
+        <div
+          className={`ucat-state-callout ucat-state-callout--${activeStateMeta.badgeTone}`}
+          data-testid="catalog-active-state-callout"
+        >
+          <Info size={15} className="ucat-state-callout__icon" />
+          <div className="ucat-state-callout__body">
+            <strong>{activeStateMeta.label}：</strong>
+            <span>{activeStateMeta.detail || activeStateMeta.summary}</span>
+          </div>
+        </div>
+      )}
+
+      {showGlossary && (
+        <div className="ucat-glossary-panel" data-testid="catalog-glossary-panel">
+          <div className="ucat-glossary-header">
+            <div className="ucat-glossary-title">
+              <HelpCircle size={14} />
+              <span>契约健康状态说明（基于共享权威环境实时判定）</span>
+            </div>
+            <button
+              type="button"
+              className="code-btn code-btn--secondary code-btn--xs"
+              onClick={() => setShowGlossary(false)}
+            >
+              <X size={12} />
+              <span>收起</span>
+            </button>
+          </div>
+          <div className="ucat-glossary-grid">
+            {RADAR_ALL_ORDER.map((stateKey) => {
+              const meta = RADAR_STATE_META[stateKey];
+              return (
+                <div key={stateKey} className="ucat-glossary-item">
+                  <div className="ucat-glossary-item__head">
+                    <span className={`ucat-badge ucat-badge--${meta.badgeTone}`}>
+                      {meta.label}
+                    </span>
+                    <span className="ucat-glossary-item__summary">{meta.summary}</span>
+                  </div>
+                  <div className="ucat-glossary-item__detail">{meta.detail}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="ucat-table-card">
         <table className="code-table ucat-table" data-testid="unified-catalog-table">
           <thead>
             <tr>
-              <th>CSG 64B 服务名</th>
+              <th>
+                <span title="现网 CSG 注册的 64 字节服务名">现网服务名</span>
+              </th>
               <th>逻辑认领</th>
-              <th>.pb 契约撮合状态</th>
-              <th>权威放置 (SHARED)</th>
-              <th>雷达状态</th>
+              <th>.pb 契约匹配状态</th>
+              <th>
+                <span title="团队共享（SHARED）权威环境中的活跃运行实例数及传输协议">
+                  共享环境运行实例
+                </span>
+              </th>
+              <th>健康状态</th>
               <th style={{ textAlign: 'right' }}>操作</th>
             </tr>
           </thead>
@@ -219,6 +290,12 @@ export const UnifiedCatalogPane: React.FC<UnifiedCatalogPaneProps> = ({
                   item.proto_status === 'SUGGESTED' &&
                   Boolean(item.proto_suggested_name) &&
                   (item.claim_status !== 'CLAIMED' || isAdmin);
+                const claimMeta = getClaimStatusMeta(item.claim_status);
+                const protoMeta = getProtoStatusMeta(item.proto_status);
+                const radarMeta = getRadarStateMeta(item.radar_state);
+                const extraStates = (item.radar_states ?? []).filter(
+                  (st, idx, arr) => Boolean(st) && st !== item.radar_state && arr.indexOf(st) === idx
+                );
                 return (
                   <tr
                     key={`${item.id}-${item.service_name}`}
@@ -232,60 +309,61 @@ export const UnifiedCatalogPane: React.FC<UnifiedCatalogPaneProps> = ({
                     </td>
                     <td>
                       <span
-                        className={`ucat-badge ${
-                          item.claim_status === 'CLAIMED'
-                            ? 'ucat-badge--success'
-                            : 'ucat-badge--warning'
-                        }`}
+                        className={`ucat-badge ucat-badge--${claimMeta.tone}`}
+                        title={claimMeta.desc}
                       >
-                        {item.claim_status}
+                        {claimMeta.label}
                       </span>
                       {item.module_name && (
                         <div className="ucat-subtext">
-                          {item.module_name} ({item.module_code})
+                          {item.module_name}
+                          {item.module_code ? ` (${item.module_code})` : ''}
                         </div>
                       )}
                     </td>
                     <td>
-                      <span
-                        className={`ucat-badge ${
-                          item.proto_status === 'CONFIRMED'
-                            ? 'ucat-badge--success'
-                            : item.proto_status === 'SUGGESTED'
-                            ? 'ucat-badge--info'
-                            : 'ucat-badge--neutral'
-                        }`}
-                      >
-                        {PROTO_STATUS_LABEL[item.proto_status] || item.proto_status}
+                      <span className={`ucat-badge ucat-badge--${protoMeta.tone}`}>
+                        {protoMeta.label}
                       </span>
                       {item.proto_service_name && (
                         <div className="ucat-mono ucat-subtext">{item.proto_service_name}</div>
                       )}
                       {item.proto_suggested_name && (
                         <div className="ucat-mono ucat-subtext">
-                          建议 ({item.proto_match_confidence}): {item.proto_suggested_name}
+                          建议（{formatMatchConfidence(item.proto_match_confidence)}）：
+                          {item.proto_suggested_name}
                         </div>
                       )}
                     </td>
                     <td>
-                      <span className="ucat-mono">{item.shared_placement_count}</span>
+                      <span className="ucat-mono">{`${item.shared_placement_count} 个实例`}</span>
                       {item.transports && item.transports.length > 0 && (
-                        <div className="ucat-subtext">{item.transports.join(' / ')}</div>
+                        <div className="ucat-subtext">
+                          {item.transports.map(formatTransport).join(' / ')}
+                        </div>
                       )}
                     </td>
                     <td>
-                      <span
-                        className={`ucat-badge ${
-                          item.radar_state === 'HEALTHY'
-                            ? 'ucat-badge--success'
-                            : item.radar_state === 'PHANTOM_PROTO' ||
-                              item.radar_state === 'PLACEMENT_DRIFT'
-                            ? 'ucat-badge--danger'
-                            : 'ucat-badge--warning'
-                        }`}
-                      >
-                        {item.radar_state}
-                      </span>
+                      <div className="ucat-badge-group">
+                        <span
+                          className={`ucat-badge ucat-badge--${radarMeta.badgeTone}`}
+                          title={radarMeta.summary}
+                        >
+                          {radarMeta.label}
+                        </span>
+                        {extraStates.map((st) => {
+                          const extraMeta = getRadarStateMeta(st);
+                          return (
+                            <span
+                              key={st}
+                              className={`ucat-badge ucat-badge--${extraMeta.badgeTone}`}
+                              title={extraMeta.summary}
+                            >
+                              {extraMeta.label}
+                            </span>
+                          );
+                        })}
+                      </div>
                     </td>
                     <td style={{ textAlign: 'right' }}>
                       {canConfirm ? (

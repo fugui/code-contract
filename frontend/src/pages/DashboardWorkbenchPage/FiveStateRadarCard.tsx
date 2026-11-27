@@ -1,5 +1,6 @@
 import React from 'react';
 import { Radar, ArrowUpRight, Shield } from 'lucide-react';
+import { RADAR_ABNORMAL_ORDER, RADAR_STATE_META } from '../../utils/catalogTerms';
 import type { FiveStateRadarDTO, RadarState } from '../../types/catalog';
 
 export interface FiveStateRadarCardProps {
@@ -11,6 +12,7 @@ interface RadarTileDef {
   state: Exclude<RadarState, 'HEALTHY'>;
   label: string;
   desc: string;
+  title: string;
   countKey: keyof Pick<
     FiveStateRadarDTO,
     | 'shadow_live_count'
@@ -22,43 +24,25 @@ interface RadarTileDef {
   tone: 'warning' | 'info' | 'danger';
 }
 
-const RADAR_TILES: RadarTileDef[] = [
-  {
-    state: 'SHADOW_LIVE',
-    label: '阴影在线 (SHADOW_LIVE)',
-    desc: '现网已活跃但无 .pb / 无认领模块',
-    countKey: 'shadow_live_count',
-    tone: 'warning',
-  },
-  {
-    state: 'UNCLAIMED_ORPHAN',
-    label: '未认领孤儿 (UNCLAIMED_ORPHAN)',
-    desc: '有 .pb 定义但尚无逻辑模块认领',
-    countKey: 'unclaimed_orphan_count',
-    tone: 'info',
-  },
-  {
-    state: 'PHANTOM_PROTO',
-    label: '幻影订阅 (PHANTOM_PROTO)',
-    desc: '存在活跃依赖订阅但缺失 .pb 定义',
-    countKey: 'phantom_proto_count',
-    tone: 'danger',
-  },
-  {
-    state: 'VANISHED_CLAIMED',
-    label: '已认领失联 (VANISHED_CLAIMED)',
-    desc: 'L2 已认领但权威环境未见现网发布',
-    countKey: 'vanished_claimed_count',
-    tone: 'warning',
-  },
-  {
-    state: 'PLACEMENT_DRIFT',
-    label: '部署漂移 (PLACEMENT_DRIFT)',
-    desc: '同一服务跨越多个确定态架构进程',
-    countKey: 'placement_drift_count',
-    tone: 'danger',
-  },
-];
+const RADAR_COUNT_KEY: Record<Exclude<RadarState, 'HEALTHY'>, RadarTileDef['countKey']> = {
+  SHADOW_LIVE: 'shadow_live_count',
+  UNCLAIMED_ORPHAN: 'unclaimed_orphan_count',
+  PHANTOM_PROTO: 'phantom_proto_count',
+  VANISHED_CLAIMED: 'vanished_claimed_count',
+  PLACEMENT_DRIFT: 'placement_drift_count',
+};
+
+const RADAR_TILES: RadarTileDef[] = RADAR_ABNORMAL_ORDER.map((state) => {
+  const meta = RADAR_STATE_META[state];
+  return {
+    state,
+    label: meta.label,
+    desc: meta.summary,
+    title: meta.detail,
+    countKey: RADAR_COUNT_KEY[state],
+    tone: meta.radarTileTone,
+  };
+});
 
 export const FiveStateRadarCard: React.FC<FiveStateRadarCardProps> = ({
   radar,
@@ -76,9 +60,10 @@ export const FiveStateRadarCard: React.FC<FiveStateRadarCardProps> = ({
           <span
             className="dashboard-radar-scope-pill"
             data-testid="five-state-radar-shared-badge"
+            title="仅统计团队共享（SHARED）权威环境中已确认架构进程的服务，排除个人私有环境"
           >
             <Shield size={12} />
-            仅统计 SHARED 权威环境
+            仅统计共享权威环境
           </span>
         </h2>
         <div className="dashboard-radar-header-right">
@@ -102,6 +87,7 @@ export const FiveStateRadarCard: React.FC<FiveStateRadarCardProps> = ({
             <button
               key={tile.state}
               type="button"
+              title={tile.title}
               className={`dashboard-radar-tile dashboard-radar-tile--${tile.tone}`}
               data-testid={`radar-tile-${tile.state}`}
               onClick={() => onNavigateCatalog(tile.state)}

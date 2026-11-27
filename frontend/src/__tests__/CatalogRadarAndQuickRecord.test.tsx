@@ -96,14 +96,22 @@ describe('CatalogRadarAndQuickRecord (M31)', () => {
       <FiveStateRadarCard radar={radarData} onNavigateCatalog={() => {}} />
     );
     expect(radarHtml).toContain('five-state-radar-card');
-    expect(radarHtml).toContain('仅统计 SHARED 权威环境');
+    expect(radarHtml).toContain('仅统计共享权威环境');
     expect(radarHtml).toContain('radar-tile-SHADOW_LIVE');
     expect(radarHtml).toContain('radar-tile-UNCLAIMED_ORPHAN');
     expect(radarHtml).toContain('radar-tile-PHANTOM_PROTO');
     expect(radarHtml).toContain('radar-tile-VANISHED_CLAIMED');
     expect(radarHtml).toContain('radar-tile-PLACEMENT_DRIFT');
+    expect(radarHtml).toContain('无契约在线');
+    expect(radarHtml).toContain('已上线未认领');
+    expect(radarHtml).toContain('纸面未上线');
+    expect(radarHtml).toContain('已认领但下线');
+    expect(radarHtml).toContain('实际部署漂移');
+    expect(radarHtml).toContain('已有 .pb 契约定义，但权威现网既无运行实例也无调用订阅');
+    expect(radarHtml).not.toContain('幻影订阅');
+    expect(radarHtml).not.toContain('(PHANTOM_PROTO)');
 
-    // 4. UnifiedCatalogPane 渲染五态筛选、[一键三级撮合 .pb] 与 SUGGESTED 行 [确认采用建议]
+    // 4. UnifiedCatalogPane 渲染五态筛选、[一键匹配 .pb 契约] 与 SUGGESTED 行 [确认采用建议]
     const catalogData: CatalogServicesResponseDTO = {
       radar: radarData,
       total: 1,
@@ -136,14 +144,26 @@ describe('CatalogRadarAndQuickRecord (M31)', () => {
             reloadUser: async () => {},
           }}
         >
-          <UnifiedCatalogPane initialData={catalogData} isAdmin={true} />
+          <UnifiedCatalogPane initialData={catalogData} initialState="PHANTOM_PROTO" isAdmin={true} />
         </ModuleUserProvider>
       </MemoryRouter>
     );
     expect(catalogHtml).toContain('catalog-correlate-btn');
-    expect(catalogHtml).toContain('一键三级撮合 .pb');
+    expect(catalogHtml).toContain('一键匹配 .pb 契约');
+    expect(catalogHtml).toContain('catalog-glossary-toggle');
+    expect(catalogHtml).toContain('状态说明');
+    expect(catalogHtml).toContain('catalog-active-state-callout');
+    expect(catalogHtml).toContain('契约库中已激活该服务的 .pb 定义');
     expect(catalogHtml).toContain('confirm-proto-btn-901');
     expect(catalogHtml).toContain('确认采用建议');
     expect(catalogHtml).toContain('billing.v1.BillingService');
+    expect(catalogHtml).toContain('未认领');
+    expect(catalogHtml).toContain('无契约在线');
+    expect(catalogHtml).toContain('名称推断');
+    expect(catalogHtml).toContain('1 个实例');
+    expect(catalogHtml).toContain('Mesh 网格');
+    expect(catalogHtml).not.toContain('>UNCLAIMED<');
+    expect(catalogHtml).not.toContain('>SHADOW_LIVE<');
+    expect(catalogHtml).not.toContain('(HEURISTIC)');
   });
 });

@@ -1932,6 +1932,131 @@
   justify-content: flex-end;
 }
 
+.ucat-badge-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.ucat-state-callout {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border-primary);
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.ucat-state-callout__icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.ucat-state-callout__body {
+  flex: 1;
+}
+
+.ucat-state-callout--warning {
+  background: var(--color-warning-subtle);
+  border-color: var(--color-warning-border);
+}
+
+.ucat-state-callout--warning .ucat-state-callout__icon {
+  color: var(--color-warning);
+}
+
+.ucat-state-callout--danger {
+  background: var(--color-danger-subtle);
+  border-color: var(--color-danger-border);
+}
+
+.ucat-state-callout--danger .ucat-state-callout__icon {
+  color: var(--color-danger);
+}
+
+.ucat-state-callout--info {
+  background: var(--color-primary-subtle);
+  border-color: var(--color-primary-border);
+}
+
+.ucat-state-callout--info .ucat-state-callout__icon {
+  color: var(--color-primary);
+}
+
+.ucat-state-callout--success {
+  background: var(--color-success-subtle);
+  border-color: var(--color-success-border);
+}
+
+.ucat-state-callout--success .ucat-state-callout__icon {
+  color: var(--color-success);
+}
+
+.ucat-glossary-panel {
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-primary);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ucat-glossary-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ucat-glossary-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.ucat-glossary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 10px;
+}
+
+.ucat-glossary-item {
+  background: var(--color-bg-muted);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ucat-glossary-item__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ucat-glossary-item__summary {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.ucat-glossary-item__detail {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
 /* ============================================================================
  * ADR-26: 双视图树分面、Raw/Clean 源码对比与平台仓共享导入样式
  * ============================================================================ */
