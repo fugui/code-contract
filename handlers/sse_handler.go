@@ -216,6 +216,17 @@ func (b *SSEBroker) BroadcastProtoSyncJobProgress(data interface{}) {
 	})
 }
 
+// BroadcastProtoPoolReconcileProgress 广播 ADR-28 全池 Stage C+ 协调与 R7/R8 收敛进度
+func (b *SSEBroker) BroadcastProtoPoolReconcileProgress(data interface{}) {
+	if b == nil {
+		return
+	}
+	b.BroadcastEvent(SSEEvent{
+		Event: "proto_pool_reconcile.progress",
+		Data:  data,
+	})
+}
+
 // BroadcastReplayItemDone 广播单条重放请求执行断言完成
 func (b *SSEBroker) BroadcastReplayItemDone(taskID, itemID, recordID uint64, resultStatus string, latencyUs int64) {
 	b.BroadcastEvent(SSEEvent{

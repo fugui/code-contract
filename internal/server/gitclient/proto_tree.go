@@ -22,8 +22,9 @@ import (
 )
 
 const (
-	TreeKindRaw   = "raw"
-	TreeKindClean = "clean"
+	TreeKindRaw       = "raw"
+	TreeKindClean     = "clean"
+	TreeKindWorkspace = "workspace"
 
 	UnassignedSubsystemSlug = "_unassigned"
 	retainedVersionsPerRepo = 2
@@ -135,6 +136,7 @@ func (m *ProtoTreeManager) ensureBaseDirs() error {
 		filepath.Join(m.ProtosDir, TreeKindClean),
 		filepath.Join(m.ProtosDir, ".versions", TreeKindRaw),
 		filepath.Join(m.ProtosDir, ".versions", TreeKindClean),
+		filepath.Join(m.ProtosDir, ".versions", TreeKindWorkspace),
 		filepath.Join(m.ProtosDir, ".tmp"),
 	} {
 		if err := os.MkdirAll(sub, 0755); err != nil {
@@ -767,6 +769,90 @@ func (m *ProtoTreeManager) rebuildRepoTreesFromDB(
 		return err
 	}
 	return nil
+}
+
+// WriteAndSwitchWorkspace 将 Stage C+ 全池协调后的有效逻辑路径树与 .clean-report.json 原子落盘至
+// <protos_dir>/.versions/workspace/<ver> 并原子切换 <protos_dir>/workspace 符号链接，保留最近 2 个版本。
+func (m *ProtoTreeManager) WriteAndSwitchWorkspace(
+	runID uint64,
+	files map[string][]byte,
+	report *PoolReconcileReport,
+) (versionName string, linkPath string, err error) {
+	if m == nil {
+		return "", "", fmt.Errorf("ProtoTreeManager 不能为空")
+	}
+	if err := m.ensureBaseDirs(); err != nil {
+		return "", "", err
+	}
+
+	ts := time.Now().UTC().Format("20060102T150405.000000000")
+	versionName = fmt.Sprintf("run-%d-%s", runID, ts)
+	tmpDir := filepath.Join(m.ProtosDir, ".tmp", fmt.Sprintf("workspace-%s-%d", versionName, time.Now().UnixNano()))
+	if err := os.MkdirAll(tmpDir, 0755); err != nil {
+		return "", "", err
+	}
+	cleanupOnErr := true
+	defer func() {
+		if cleanupOnErr {
+			_ = os.RemoveAll(tmpDir)
+		}
+	}()
+
+	relPaths := make([]string, 0, len(files))
+	for p := range files {
+		relPaths = append(relPaths, p)
+	}
+	sort.Strings(relPaths)
+
+	for _, relPath := range relPaths {
+		cleaned, sErr := decoder.SanitizeProtoRelPath(relPath, true)
+		if sErr != nil {
+			return "", "", fmt.Errorf("非法 workspace 逻辑路径 %q: %w", relPath, sErr)
+		}
+		dest := filepath.Join(tmpDir, filepath.FromSlash(cleaned))
+		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+			return "", "", err
+		}
+		if err := os.WriteFile(dest, files[relPath], 0444); err != nil {
+			return "", "", err
+		}
+	}
+
+	if report != nil {
+		repBytes, jErr := json.MarshalIndent(report, "", "  ")
+		if jErr != nil {
+			return "", "", jErr
+		}
+		if err := os.WriteFile(filepath.Join(tmpDir, ".clean-report.json"), repBytes, 0444); err != nil {
+			return "", "", err
+		}
+	}
+
+	verRoot := filepath.Join(m.ProtosDir, ".versions", TreeKindWorkspace)
+	finalVerDir := filepath.Join(verRoot, versionName)
+	if err := os.Rename(tmpDir, finalVerDir); err != nil {
+		return "", "", fmt.Errorf("迁移 workspace 版本目录失败: %w", err)
+	}
+	cleanupOnErr = false
+
+	finalLink := filepath.Join(m.ProtosDir, TreeKindWorkspace)
+	// 清理历史误建空目录（若非 symlink 则仅当空目录才移除）
+	if info, lErr := os.Lstat(finalLink); lErr == nil && info.Mode()&os.ModeSymlink == 0 && info.IsDir() {
+		_ = os.Remove(finalLink)
+	}
+	relTarget := filepath.ToSlash(filepath.Join(".versions", TreeKindWorkspace, versionName))
+	tmpLink := filepath.Join(m.ProtosDir, fmt.Sprintf(".tmp-workspace-%d", time.Now().UnixNano()))
+	_ = os.Remove(tmpLink)
+	if err := os.Symlink(relTarget, tmpLink); err != nil {
+		return "", "", fmt.Errorf("创建 workspace 临时符号链接失败: %w", err)
+	}
+	if err := os.Rename(tmpLink, finalLink); err != nil {
+		_ = os.Remove(tmpLink)
+		return "", "", fmt.Errorf("原子替换 workspace 符号链接失败: %w", err)
+	}
+
+	m.pruneRepoVersions(verRoot, versionName, retainedVersionsPerRepo)
+	return versionName, finalLink, nil
 }
 
 func loadPlatformRepoMetaMap(db *gorm.DB, repos []models.GitRepo) map[uint64]models.Repository {

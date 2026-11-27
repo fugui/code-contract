@@ -1,0 +1,6 @@
+syntax = "proto2";
+package track.ths;
+import "sw/BasicTypeMsg.proto";
+service TrackService {
+  rpc Ping(sw.basic.VoidType) returns (sw.basic.VoidType);
+}

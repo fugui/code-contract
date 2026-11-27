@@ -53,6 +53,10 @@ import type {
   ProtoImportOwnerListResponse,
   ProtoConflictsReportDTO,
   ResolveProtoConflictInput,
+  PoolReconcileResponse,
+  TriggerPoolReconcilePayload,
+  PromoteAutoFixesRequest,
+  PromoteAutoFixesResponse,
 } from '../types';
 
 export async function listProtoSchemas(params?: {
@@ -384,6 +388,9 @@ export async function listProtoFiles(params?: {
   bundle_id?: number;
   target_schema_name?: string;
   package_name?: string;
+  in_service_closure?: boolean;
+  is_uservice_source?: boolean;
+  is_harvested_base?: boolean;
   include_deleted?: boolean;
   search?: string;
   page?: number;
@@ -394,6 +401,15 @@ export async function listProtoFiles(params?: {
   if (params?.bundle_id) qs.set('bundle_id', String(params.bundle_id));
   if (params?.target_schema_name) qs.set('target_schema_name', params.target_schema_name);
   if (params?.package_name) qs.set('package_name', params.package_name);
+  if (params?.in_service_closure !== undefined) {
+    qs.set('in_service_closure', params.in_service_closure ? 'true' : 'false');
+  }
+  if (params?.is_uservice_source !== undefined) {
+    qs.set('is_uservice_source', params.is_uservice_source ? 'true' : 'false');
+  }
+  if (params?.is_harvested_base !== undefined) {
+    qs.set('is_harvested_base', params.is_harvested_base ? 'true' : 'false');
+  }
   if (params?.include_deleted !== undefined) {
     qs.set('include_deleted', params.include_deleted ? 'true' : 'false');
   }
@@ -794,6 +810,8 @@ export async function getProtoFilesTree(params?: {
   subsystem?: string;
   git_repo_id?: number;
   pipeline_status?: string;
+  in_service_closure?: boolean;
+  is_uservice_source?: boolean;
   include_external_copy?: boolean;
   include_deleted?: boolean;
   search?: string;
@@ -806,6 +824,12 @@ export async function getProtoFilesTree(params?: {
   if (params?.subsystem) qs.set('subsystem', params.subsystem);
   if (params?.git_repo_id) qs.set('git_repo_id', String(params.git_repo_id));
   if (params?.pipeline_status) qs.set('pipeline_status', params.pipeline_status);
+  if (params?.in_service_closure !== undefined) {
+    qs.set('in_service_closure', String(params.in_service_closure));
+  }
+  if (params?.is_uservice_source !== undefined) {
+    qs.set('is_uservice_source', String(params.is_uservice_source));
+  }
   if (params?.include_external_copy !== undefined) {
     qs.set('include_external_copy', String(params.include_external_copy));
   }
@@ -853,6 +877,35 @@ export async function listProtoConflicts() {
 
 export async function resolveProtoConflict(payload: ResolveProtoConflictInput) {
   return apiRequest<{ resolved: boolean; owners: ProtoImportOwnerDTO[] }>('/proto-conflicts/resolve', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+// =====================================================================
+// ADR-28: 全池 Stage C+ 协调、R7/R8 运行查询与自动修复规则固化 API
+// =====================================================================
+
+export async function triggerPoolReconcile(payload?: TriggerPoolReconcilePayload) {
+  return apiRequest<PoolReconcileResponse | { status: string; message: string }>(
+    '/proto-governance/reconcile-pool',
+    {
+      method: 'POST',
+      body: JSON.stringify(payload ?? {}),
+    }
+  );
+}
+
+export async function getLatestPoolReconcileRun() {
+  return apiRequest<PoolReconcileResponse>('/proto-governance/reconcile-runs/latest');
+}
+
+export async function getPoolReconcileRun(id: number | string) {
+  return apiRequest<PoolReconcileResponse>(`/proto-governance/reconcile-runs/${id}`);
+}
+
+export async function promotePoolAutoFixes(payload: PromoteAutoFixesRequest) {
+  return apiRequest<PromoteAutoFixesResponse>('/proto-governance/auto-fixes/promote', {
     method: 'POST',
     body: JSON.stringify(payload),
   });

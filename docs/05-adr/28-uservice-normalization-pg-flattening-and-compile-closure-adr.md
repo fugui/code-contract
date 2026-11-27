@@ -1,7 +1,7 @@
 # ADR-28：现网 uService 清洗转换、clean 目录去 /pg 扁平化与全池编译收敛架构决策
 
 - **文档编号**：`28-uservice-normalization-pg-flattening-and-compile-closure-adr.md`
-- **状态**：Proposed（r2，待进入 M40~M42 实施）
+- **状态**：已实施 (Implemented，M40~M42 全量交付)
 - **日期**：2026-11-27
 - **关联与演进关系**：
   - 承接并演进 [`ADR-26 (r4)`](./26-shared-git-cache-and-subsystem-proto-tree-adr.md)（四段式跨仓 Proto 流水线与聚合目录树）与 [`ADR-27 (r1)`](./27-proto-export-directory-and-normalization-governance-adr.md)（500+ 平台仓全量同步、方案 A 目录治理与 Stage B 清洗框架）；

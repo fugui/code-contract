@@ -458,6 +458,11 @@ export interface ProtoFileDTO {
   pipeline_status?: 'COLLECTED' | 'NORMALIZED' | 'QUARANTINED' | string;
   status_reason?: string;
   normalizer_version?: string;
+  clean_rel_path?: string;
+  is_uservice_source?: boolean;
+  in_service_closure?: boolean;
+  is_harvested_base?: boolean;
+  auto_fix_count?: number;
   is_external_copy?: boolean;
   raw_blob_sha?: string;
   source_origin: string;
@@ -1086,13 +1091,41 @@ export interface BuiltinRuleMetaDTO {
   default_enabled: boolean;
 }
 
+export interface SharedBaseSourceSpecDTO {
+  path_hint: string;
+  priority: number;
+  include_globs?: string[];
+  description?: string;
+}
+
+export interface PoolReconcileConfigDTO {
+  closure_only?: boolean;
+  enable_r7_auto_fix?: boolean;
+  max_r7_rounds?: number;
+  enable_r8_quarantine?: boolean;
+  max_r8_rounds?: number;
+}
+
+export interface PoolStripCollisionDTO {
+  post_strip_path: string;
+  pre_strip_paths: string[];
+  repo_ids: number[];
+  repo_names: string[];
+}
+
 export interface GlobalGovernanceSectionDTO {
   collect_globs?: string[];
   exclude_globs?: string[];
+  exclude_subsystems?: string[];
+  exclude_repo_patterns?: string[];
   enabled_rules?: string[];
-  default_syntax?: string;
+  default_syntax?: 'auto' | 'proto2' | 'proto3' | string;
+  strip_pg_segment?: boolean;
   import_rewrites?: Record<string, string>;
+  implicit_symbol_imports?: Record<string, string>;
   regex_rewrites?: RegexRewriteRuleDTO[];
+  shared_base_sources?: SharedBaseSourceSpecDTO[];
+  pool_reconcile?: PoolReconcileConfigDTO;
 }
 
 export interface RepoGovernanceSpecDTO {
@@ -1171,6 +1204,7 @@ export interface GlobalGovernanceDryRunResultDTO {
   schema_valid: boolean;
   validation_error?: string;
   global_collisions?: ExportTargetCollisionDTO[];
+  pool_strip_collisions?: PoolStripCollisionDTO[];
   affected_repos: RepoGovernanceDryRunResultDTO[];
 }
 
@@ -1353,4 +1387,157 @@ export interface ResolveProtoConflictInput {
   symbol_full_name?: string;
   owner_git_repo_id: number;
   owner_bundle_id: number;
+}
+
+// =====================================================================
+// ADR-28: 全池 Stage C+ 协调、R7 自愈、R8 根因隔离与 Workspace 导出
+// =====================================================================
+
+export interface PoolConflictCandidateDTO {
+  proto_file_id: number;
+  git_repo_id: number;
+  repo_name: string;
+  bundle_id: number;
+  subsystem_slug: string;
+  repo_file_path: string;
+  clean_rel_path: string;
+  content_sha256: string;
+  unique_symbols?: string[];
+  is_winner: boolean;
+}
+
+export interface PoolConflictEntryDTO {
+  logical_path: string;
+  reason: string;
+  winner_repo_name: string;
+  winner_file_id: number;
+  content_identical: boolean;
+  symbol_diff?: Record<string, string[]>;
+  candidates: PoolConflictCandidateDTO[];
+}
+
+export interface PoolHarvestedEntryDTO {
+  logical_path: string;
+  source_abs_path: string;
+  source_priority: number;
+  triggered_by: 'CHANNEL_A' | 'IMPORT' | 'SYMBOL' | string;
+}
+
+export interface PoolAutoFixEntryDTO {
+  file_path: string;
+  repo_name: string;
+  fix_kind: 'fix(a)' | 'fix(b)' | 'fix(c)' | 'variant_swap' | string;
+  old_import?: string;
+  new_import: string;
+  symbol?: string;
+  round: number;
+  repo_id?: number;
+  bundle_id?: number;
+}
+
+export interface PoolQuarantinedEntryDTO {
+  logical_path: string;
+  repo_name: string;
+  repo_file_path: string;
+  reason: string;
+  error_count: number;
+  is_root_cause: boolean;
+}
+
+export interface PoolReconcileStatsDTO {
+  total_files: number;
+  service_count: number;
+  closure_file_count: number;
+  harvested_base_count: number;
+  logical_path_count: number;
+  conflict_count: number;
+  auto_fix_count: number;
+  quarantined_count: number;
+  bare_import_expanded_count: number;
+  post_strip_collision_count: number;
+  r7_rounds: number;
+  r8_rounds: number;
+  compile_error_count: number;
+}
+
+export interface PoolReconcileReportDTO {
+  logical_map: Record<string, string>;
+  conflicts: PoolConflictEntryDTO[];
+  auto_fixes: PoolAutoFixEntryDTO[];
+  quarantined: PoolQuarantinedEntryDTO[];
+  harvested: PoolHarvestedEntryDTO[];
+  post_strip_collisions?: PoolStripCollisionDTO[];
+  stats: PoolReconcileStatsDTO;
+}
+
+export interface PoolReconcileRunDTO {
+  id: number;
+  status: 'RUNNING' | 'COMPLETED' | 'FAILED' | string;
+  triggered_by: string;
+  config_revision: number;
+  config_sha256: string;
+  strip_pg_segment: boolean;
+  closure_only: boolean;
+  total_files: number;
+  service_count: number;
+  closure_file_count: number;
+  harvested_base_count: number;
+  logical_path_count: number;
+  conflict_count: number;
+  auto_fix_count: number;
+  quarantined_count: number;
+  bare_import_expanded_count: number;
+  post_strip_collision_count: number;
+  workspace_version: string;
+  error_message?: string;
+  duration_ms: number;
+  started_at: string;
+  finished_at?: string | null;
+}
+
+export interface PoolReconcileResponse {
+  run: PoolReconcileRunDTO | null;
+  report: PoolReconcileReportDTO | null;
+}
+
+export interface PoolReconcileProgressEventPayload {
+  run_id: number;
+  stage: string;
+  status: string;
+  message: string;
+  service_count: number;
+  closure_count: number;
+  auto_fix_count: number;
+  conflict_count: number;
+  quarantined_count: number;
+}
+
+export interface TriggerPoolReconcilePayload {
+  closure_only?: boolean;
+  enable_r7_auto_fix?: boolean;
+  max_r7_rounds?: number;
+  enable_r8_quarantine?: boolean;
+  max_r8_rounds?: number;
+  codes_dir?: string;
+  sync?: boolean;
+}
+
+export interface PromoteAutoFixItem {
+  file_path: string;
+  fix_kind: string;
+  old_import?: string;
+  new_import: string;
+  repo_id?: number;
+  bundle_id?: number;
+}
+
+export interface PromoteAutoFixesRequest {
+  run_id?: number;
+  fixes: PromoteAutoFixItem[];
+}
+
+export interface PromoteAutoFixesResponse {
+  promoted_import_rewrites: number;
+  promoted_manual_owners: number;
+  governance_revision: number;
 }

@@ -49,11 +49,12 @@ type PoolFileInput struct {
 // PoolFileState 为 Stage C+ 处理过程中的可变文件状态（最终写回 DB 与 workspace/）。
 type PoolFileState struct {
 	PoolFileInput
-	PhysDirKey       string
-	IsExternalCopy   bool
-	InServiceClosure bool
-	AutoFixCount     int
-	Diagnostics      []NormalizeDiagnostic
+	PhysDirKey          string
+	IsExternalCopy      bool
+	InServiceClosure    bool
+	ForcedVariantWinner bool
+	AutoFixCount        int
+	Diagnostics         []NormalizeDiagnostic
 }
 
 // PoolReconcileOptions 控制 Stage C+ 全池协调运行参数。
@@ -176,7 +177,7 @@ type PoolReconcileOutput struct {
 }
 
 // poolR7R8Hook 允许 M42 注入纯 Go protocompile R7/R8 执行器（M41 阶段为 nil）。
-var poolR7R8Hook func(ctx context.Context, states []*PoolFileState, report *PoolReconcileReport, opts PoolReconcileOptions) error
+var poolR7R8Hook func(ctx context.Context, states *[]*PoolFileState, report *PoolReconcileReport, opts PoolReconcileOptions) error
 
 // ReconcilePoolInMemory 执行 ADR-28 Stage C+ 全池协调：
 // R2 统一坐标系投票 & 裸文件名展开 -> 全池剥离碰撞检测 -> R1/R3/R4 协同迭代闭包与消歧 -> (可选 M42) R7/R8。
@@ -600,7 +601,7 @@ func ReconcilePoolInMemory(ctx context.Context, inputs []PoolFileInput, opts Poo
 
 	// 7. 预留 M42 R7/R8 编译自愈与根因隔离扩展钩子
 	if poolR7R8Hook != nil && (opts.EnableR7AutoFix || opts.EnableR8Quarantine) {
-		if err := poolR7R8Hook(ctx, states, &report, opts); err != nil {
+		if err := poolR7R8Hook(ctx, &states, &report, opts); err != nil {
 			return nil, err
 		}
 		recomputeConflictsAndExternalCopies()
@@ -677,6 +678,10 @@ func selectR3Winner(
 	}
 
 	score := func(c *PoolFileState) (tier int, repoCount int) {
+		// 0. R7 Variant Swap 临时赢家覆盖
+		if c.ForcedVariantWinner {
+			return 0, repoFileCounts[c.GitRepoID]
+		}
 		// 1. MANUAL
 		if c.ManualOwnerBundleID > 0 && c.BundleID == c.ManualOwnerBundleID {
 			return 1, repoFileCounts[c.GitRepoID]

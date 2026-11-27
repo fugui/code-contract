@@ -7,6 +7,7 @@ import {
   Play,
   RefreshCw,
   Save,
+  Sparkles,
   Upload,
 } from 'lucide-react';
 import { Drawer } from '@code/common';
@@ -15,9 +16,45 @@ import { useToast } from '../../utils/toast';
 import type {
   BuiltinRuleMetaDTO,
   GlobalGovernanceDryRunResultDTO,
+  GlobalGovernanceSectionDTO,
   GovernanceConfigDocDTO,
 } from '../../types';
 import './ProtoDocsAndCodeViewer.css';
+
+export const PRODUCTION_USERVICE_PRESET_GLOBAL: GlobalGovernanceSectionDTO = {
+  collect_globs: ['pg/**/*.proto', '**/pg/**/*.proto'],
+  exclude_globs: ['build/**', 'test/**', 'doc/**', '**/*_test.proto', '**/mock/**'],
+  exclude_subsystems: ['build', 'test', 'doc', 'tools'],
+  exclude_repo_patterns: ['-doc$', '-test$'],
+  enabled_rules: [
+    'NORM-001',
+    'NORM-002',
+    'NORM-003',
+    'NORM-004',
+    'NORM-005',
+    'NORM-006',
+    'NORM-007',
+  ],
+  default_syntax: 'auto',
+  strip_pg_segment: true,
+  implicit_symbol_imports: {
+    'google.protobuf.Empty': 'google/protobuf/empty.proto',
+    'google.protobuf.Any': 'google/protobuf/any.proto',
+    'google.protobuf.Timestamp': 'google/protobuf/timestamp.proto',
+  },
+  shared_base_sources: [
+    { path_hint: 'il/pg', priority: 1, description: 'IL 基础接口层（免疫 R0 排除）' },
+    { path_hint: 'sw/pg', priority: 2, description: 'SW 公共底座层' },
+    { path_hint: 'public/pg', priority: 3, description: 'Public 公共契约模型' },
+  ],
+  pool_reconcile: {
+    closure_only: true,
+    enable_r7_auto_fix: true,
+    max_r7_rounds: 10,
+    enable_r8_quarantine: true,
+    max_r8_rounds: 150,
+  },
+};
 
 export interface GlobalGovernanceConfigDrawerProps {
   open: boolean;
@@ -99,7 +136,7 @@ export const GlobalGovernanceConfigDrawer: React.FC<GlobalGovernanceConfigDrawer
     setJsonText(JSON.stringify(next, null, 2));
   };
 
-  const handleDefaultSyntaxChange = (syn: 'proto2' | 'proto3') => {
+  const handleDefaultSyntaxChange = (syn: 'auto' | 'proto2' | 'proto3') => {
     const doc = parseCurrentDoc();
     if (!doc) return;
     const next: GovernanceConfigDocDTO = {
@@ -110,6 +147,85 @@ export const GlobalGovernanceConfigDrawer: React.FC<GlobalGovernanceConfigDrawer
       },
     };
     setJsonText(JSON.stringify(next, null, 2));
+  };
+
+  const handleStripPGChange = (checked: boolean) => {
+    const doc = parseCurrentDoc();
+    if (!doc) return;
+    const next: GovernanceConfigDocDTO = {
+      ...doc,
+      global: {
+        ...doc.global,
+        strip_pg_segment: checked,
+      },
+    };
+    setJsonText(JSON.stringify(next, null, 2));
+  };
+
+  const handleExcludeSubsystemsChange = (raw: string) => {
+    const doc = parseCurrentDoc();
+    if (!doc) return;
+    const list = raw
+      .split(/[,，\n]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const next: GovernanceConfigDocDTO = {
+      ...doc,
+      global: {
+        ...doc.global,
+        exclude_subsystems: list,
+      },
+    };
+    setJsonText(JSON.stringify(next, null, 2));
+  };
+
+  const handleSharedBaseHintsChange = (raw: string) => {
+    const doc = parseCurrentDoc();
+    if (!doc) return;
+    const items = raw
+      .split(/[,，\n]/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map((hint, idx) => ({
+        path_hint: hint,
+        priority: idx + 1,
+      }));
+    const next: GovernanceConfigDocDTO = {
+      ...doc,
+      global: {
+        ...doc.global,
+        shared_base_sources: items,
+      },
+    };
+    setJsonText(JSON.stringify(next, null, 2));
+  };
+
+  const handleLoadProductionPreset = () => {
+    let baseDoc: GovernanceConfigDocDTO = {
+      schema_version: 'proto-governance/v1',
+      revision,
+      global: {},
+      repos: {},
+    };
+    try {
+      const existing = JSON.parse(jsonText) as GovernanceConfigDocDTO;
+      if (existing && existing.schema_version === 'proto-governance/v1') {
+        baseDoc = existing;
+      }
+    } catch {
+      // 使用默认骨架
+    }
+    const next: GovernanceConfigDocDTO = {
+      ...baseDoc,
+      global: {
+        ...baseDoc.global,
+        ...PRODUCTION_USERVICE_PRESET_GLOBAL,
+      },
+    };
+    setJsonText(JSON.stringify(next, null, 2));
+    setParseError('');
+    setDryRunResult(null);
+    toast.info('已载入现网 uService + 去 /pg 治理预设，建议执行全局 Dry-Run 后应用');
   };
 
   const handleExportJson = () => {
@@ -208,11 +324,22 @@ export const GlobalGovernanceConfigDrawer: React.FC<GlobalGovernanceConfigDrawer
   };
 
   let parsedEnabledRules: string[] = [];
-  let parsedDefaultSyntax = 'proto3';
+  let parsedDefaultSyntax = 'auto';
+  let parsedStripPG = true;
+  let parsedExcludeSubsystems = '';
+  let parsedSharedBaseHints = '';
+  let parsedImplicitImportCount = 0;
   try {
     const cur = JSON.parse(jsonText) as GovernanceConfigDocDTO;
     parsedEnabledRules = cur.global?.enabled_rules || [];
-    parsedDefaultSyntax = cur.global?.default_syntax || 'proto3';
+    parsedDefaultSyntax = cur.global?.default_syntax || 'auto';
+    parsedStripPG = cur.global?.strip_pg_segment !== false;
+    parsedExcludeSubsystems = (cur.global?.exclude_subsystems || []).join(', ');
+    parsedSharedBaseHints = (cur.global?.shared_base_sources || [])
+      .map((s) => s.path_hint)
+      .filter(Boolean)
+      .join(', ');
+    parsedImplicitImportCount = Object.keys(cur.global?.implicit_symbol_imports || {}).length;
   } catch {
     // JSON 编辑态暂未合法时忽略快捷控件回显
   }
@@ -237,6 +364,17 @@ export const GlobalGovernanceConfigDrawer: React.FC<GlobalGovernanceConfigDrawer
               )}
             </div>
             <div className="pgit-toolbar-actions">
+              {isAdmin && (
+                <button
+                  type="button"
+                  className="btn-secondary btn-sm"
+                  data-testid="load-uservice-preset-btn"
+                  onClick={handleLoadProductionPreset}
+                  disabled={loading || busy}
+                >
+                  <Sparkles size={13} /> 载入现网 uService + 去 /pg 治理预设
+                </button>
+              )}
               <button
                 type="button"
                 className="btn-secondary btn-sm"
@@ -269,7 +407,7 @@ export const GlobalGovernanceConfigDrawer: React.FC<GlobalGovernanceConfigDrawer
 
           <div className="pgit-rules-grid">
             <div className="pgit-field pgit-field--wide">
-              <span className="pgit-field__label">Stage B 全局内置规则库（NORM-001 ~ NORM-005）</span>
+              <span className="pgit-field__label">Stage B 全局内置规则库（NORM-001 ~ NORM-007）</span>
               <div className="pgit-rule-chips">
                 {builtinRules.map((rule) => {
                   const checked = parsedEnabledRules.includes(rule.id);
@@ -294,15 +432,62 @@ export const GlobalGovernanceConfigDrawer: React.FC<GlobalGovernanceConfigDrawer
               <span className="pgit-field__label">缺省 syntax 补齐头（NORM-002）</span>
               <select
                 className="pgit-input"
+                aria-label="缺省 syntax 补齐头"
                 value={parsedDefaultSyntax}
                 disabled={!isAdmin || busy}
                 onChange={(e) =>
-                  handleDefaultSyntaxChange(e.target.value === 'proto2' ? 'proto2' : 'proto3')
+                  handleDefaultSyntaxChange(
+                    e.target.value === 'proto2'
+                      ? 'proto2'
+                      : e.target.value === 'proto3'
+                        ? 'proto3'
+                        : 'auto'
+                  )
                 }
               >
+                <option value="auto">auto (proto2/proto3 自动探测)</option>
                 <option value="proto3">proto3</option>
                 <option value="proto2">proto2</option>
               </select>
+            </label>
+
+            <label className="pgit-field">
+              <span className="pgit-field__label">clean/ 目录去 /pg 扁平化（NORM-007）</span>
+              <span className="pgit-check">
+                <input
+                  type="checkbox"
+                  checked={parsedStripPG}
+                  disabled={!isAdmin || busy}
+                  onChange={(e) => handleStripPGChange(e.target.checked)}
+                />
+                <span>剥离路径中 standalone /pg 段（保留 raw/ 不变）</span>
+              </span>
+            </label>
+
+            <label className="pgit-field">
+              <span className="pgit-field__label">R0 子系统目录排除清单 (exclude_subsystems)</span>
+              <input
+                type="text"
+                className="pgit-input"
+                placeholder="build, test, doc"
+                value={parsedExcludeSubsystems}
+                readOnly={!isAdmin || busy}
+                onChange={(e) => handleExcludeSubsystemsChange(e.target.value)}
+              />
+            </label>
+
+            <label className="pgit-field">
+              <span className="pgit-field__label">
+                R4 共享基座收割源路径 (shared_base_sources · 隐式映射 {parsedImplicitImportCount} 条)
+              </span>
+              <input
+                type="text"
+                className="pgit-input"
+                placeholder="il/pg, sw/pg, public/pg"
+                value={parsedSharedBaseHints}
+                readOnly={!isAdmin || busy}
+                onChange={(e) => handleSharedBaseHintsChange(e.target.value)}
+              />
             </label>
           </div>
         </div>

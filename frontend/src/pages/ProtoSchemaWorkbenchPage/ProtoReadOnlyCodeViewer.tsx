@@ -151,6 +151,8 @@ export function tokenizeProtoLine(line: string): ProtoLexToken[] {
 
 export interface ProtoReadOnlyCodeViewerProps {
   filePath: string;
+  cleanRelPath?: string;
+  repoFilePath?: string;
   content: string;
   rawContent?: string;
   lineMap?: Record<string, number> | null;
@@ -158,6 +160,9 @@ export interface ProtoReadOnlyCodeViewerProps {
   statusReason?: string;
   normalizerVersion?: string;
   isExternalCopy?: boolean;
+  isUServiceSource?: boolean;
+  isHarvestedBase?: boolean;
+  autoFixCount?: number;
   highlightLine?: number;
   violations?: ProtoSourceViolationDTO[];
   symbolAnchors?: ProtoSymbolAnchorDTO[];
@@ -169,6 +174,8 @@ export interface ProtoReadOnlyCodeViewerProps {
 
 export const ProtoReadOnlyCodeViewer: React.FC<ProtoReadOnlyCodeViewerProps> = ({
   filePath,
+  cleanRelPath,
+  repoFilePath,
   content,
   rawContent,
   lineMap,
@@ -176,6 +183,9 @@ export const ProtoReadOnlyCodeViewer: React.FC<ProtoReadOnlyCodeViewerProps> = (
   statusReason,
   normalizerVersion,
   isExternalCopy = false,
+  isUServiceSource = false,
+  isHarvestedBase = false,
+  autoFixCount = 0,
   highlightLine,
   violations = [],
   symbolAnchors = [],
@@ -267,6 +277,21 @@ export const ProtoReadOnlyCodeViewer: React.FC<ProtoReadOnlyCodeViewerProps> = (
             </span>
           )}
           {normalizerVersion && <span className="pdoc-pill">{normalizerVersion}</span>}
+          {isUServiceSource && (
+            <span className="code-badge code-badge-info" data-testid="badge-uservice-converted">
+              uService 已转换
+            </span>
+          )}
+          {autoFixCount > 0 && (
+            <span className="code-badge code-badge-success" data-testid="badge-r7-autofix">
+              R7 自动修复 ({autoFixCount})
+            </span>
+          )}
+          {isHarvestedBase && (
+            <span className="code-badge code-badge-neutral" data-testid="badge-r4-harvested">
+              R4 收割基座
+            </span>
+          )}
           {isExternalCopy && <span className="code-badge code-badge-warning">外部副本</span>}
           {activeHighlightLine && activeHighlightLine > 0 && (
             <span className="code-badge code-badge-warning">锚点 #L{activeHighlightLine}</span>
@@ -311,6 +336,15 @@ export const ProtoReadOnlyCodeViewer: React.FC<ProtoReadOnlyCodeViewerProps> = (
         <div className="pdoc-banner pdoc-banner--warning">
           <AlertTriangle size={15} />
           <span>隔离原因：{statusReason}</span>
+        </div>
+      )}
+
+      {cleanRelPath && repoFilePath && cleanRelPath !== repoFilePath && (
+        <div className="pdoc-banner" data-testid="pg-flatten-path-banner">
+          <span>
+            raw/ 原路径: <code>{repoFilePath}</code> → clean/ 去 /pg 扁平路径:{' '}
+            <code>{cleanRelPath}</code>
+          </span>
         </div>
       )}
 

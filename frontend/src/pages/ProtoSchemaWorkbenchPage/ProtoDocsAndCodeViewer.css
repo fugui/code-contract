@@ -2283,3 +2283,34 @@
   padding: 3px 8px;
   font-size: 12px;
 }
+
+.pgit-reconcile-banner {
+  margin-top: 10px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border-primary);
+  background: var(--color-bg-muted);
+  color: var(--color-text-primary);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.pgit-autofix-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pgit-path-compare {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border-primary);
+  background: var(--color-bg-surface);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}

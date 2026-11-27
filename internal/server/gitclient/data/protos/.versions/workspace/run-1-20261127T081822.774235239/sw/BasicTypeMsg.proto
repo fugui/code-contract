@@ -1,0 +1,3 @@
+syntax = "proto2";
+package sw.basic;
+message VoidType { optional int32 ok = 1; }

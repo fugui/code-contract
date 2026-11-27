@@ -71,7 +71,7 @@ docs/
 │   ├── 41-m39-dual-subtab-ia-and-governance-ledger.md                 # 【M39 作战卡 | ✅ 已交付】双子标签 IA、树懒加载与 500+ 仓前端治理台账 (ADR-26 r4 / ADR-27)
 │   ├── 42-m40-uservice-normalizer-v2-and-pg-flattening.md             # 【M40 作战卡 | ✅ 已交付】Stage B rule-normalizer/v2、uService 转换与 clean 去 /pg 扁平化 (ADR-28)
 │   ├── 43-m41-shared-base-harvest-and-pool-stage-c-plus.md            # 【M41 作战卡 | ✅ 已交付】R4 共享基座入池与全池 Stage C+ 协调 R1/R2/R3 (ADR-28)
-│   └── 44-m42-protocompile-r7-r8-workspace-and-console-closure.md     # 【M42 作战卡 | 🔄 进行中】纯 Go protocompile R7 自愈、R8 隔离、workspace 导出与治理台闭环 (ADR-28)
+│   └── 44-m42-protocompile-r7-r8-workspace-and-console-closure.md     # 【M42 作战卡 | ✅ 已交付】纯 Go protocompile R7 自愈、R8 隔离、workspace 导出与治理台闭环 (ADR-28)
 ├── 05-adr/          # 架构决策记录 (ADR)：重大技术选型与权衡记录 (Architecture Decision Records)
 │   ├── 01-microfrontend-and-table-prefix-isolation.md                  # ADR-01：微前端集成、共享库表前缀隔离与 TDD 测试策略
 │   ├── 02-ebpf-hook-and-dual-subsystem-adr.md                          # ADR-02：eBPF 入站旁路钩子、Cookie 原目的还原与无 Schema 数据面解耦

@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   DownloadCloud,
   FolderGit2,
+  Layers,
   Play,
   RefreshCw,
   Search,
@@ -20,6 +21,9 @@ import type {
   GitRepoDTO,
   GitRepoProtoStatus,
   GitReposSyncSummaryDTO,
+  PoolReconcileProgressEventPayload,
+  PoolReconcileReportDTO,
+  PoolReconcileRunDTO,
   ProtoSyncJobDTO,
   SyncCachePolicy,
   SyncJobProgressEventPayload,
@@ -27,6 +31,7 @@ import type {
 } from '../../types';
 import { GitRepoConfigDrawer } from './GitRepoConfigDrawer';
 import { GlobalGovernanceConfigDrawer } from './GlobalGovernanceConfigDrawer';
+import { PoolReconcileReportDrawer } from './PoolReconcileReportDrawer';
 import './ProtoDocsAndCodeViewer.css';
 
 export interface ProtoExportGovernancePaneProps {
@@ -100,6 +105,13 @@ export const ProtoExportGovernancePane: React.FC<ProtoExportGovernancePaneProps>
   const [baselineReport, setBaselineReport] = useState<BaselineReportDTO | null>(null);
   const [baselineLoading, setBaselineLoading] = useState(false);
 
+  const [poolDrawerOpen, setPoolDrawerOpen] = useState(false);
+  const [poolLoading, setPoolLoading] = useState(false);
+  const [poolStarting, setPoolStarting] = useState(false);
+  const [latestPoolRun, setLatestPoolRun] = useState<PoolReconcileRunDTO | null>(null);
+  const [latestPoolReport, setLatestPoolReport] = useState<PoolReconcileReportDTO | null>(null);
+  const [poolProgress, setPoolProgress] = useState<PoolReconcileProgressEventPayload | null>(null);
+
   const loadSummary = useCallback(async () => {
     try {
       const s = await schemaApi.getGitReposSyncSummary(true);
@@ -148,13 +160,32 @@ export const ProtoExportGovernancePane: React.FC<ProtoExportGovernancePaneProps>
     }
   }, [initialRepos, loadRepos]);
 
-  // 订阅 SSE proto_sync_job.progress
+  // 订阅 SSE proto_sync_job.progress & proto_pool_reconcile.progress
   useEffect(() => {
     if (typeof window === 'undefined' || typeof fetch === 'undefined') {
       return;
     }
     const unsubscribe = subscribeServerEvents({
       onMessage: (evt) => {
+        if (evt.event === 'proto_pool_reconcile.progress') {
+          const pp = evt.data as PoolReconcileProgressEventPayload | undefined;
+          if (!pp) return;
+          setPoolProgress(pp);
+          if (pp.stage === 'COMPLETED' || pp.status === 'COMPLETED' || pp.status === 'FAILED') {
+            void schemaApi
+              .getLatestPoolReconcileRun()
+              .then((res) => {
+                setLatestPoolRun(res.run);
+                setLatestPoolReport(res.report);
+              })
+              .catch(() => {
+                // ignore
+              });
+            void loadSummary();
+            void loadRepos();
+          }
+          return;
+        }
         if (evt.event !== 'proto_sync_job.progress') {
           return;
         }
@@ -289,6 +320,59 @@ export const ProtoExportGovernancePane: React.FC<ProtoExportGovernancePaneProps>
     }
   };
 
+  const handleLoadLatestPoolReport = async () => {
+    setPoolDrawerOpen(true);
+    setPoolLoading(true);
+    try {
+      const res = await schemaApi.getLatestPoolReconcileRun();
+      setLatestPoolRun(res.run);
+      setLatestPoolReport(res.report);
+    } catch (err) {
+      toast.error((err as Error).message || '获取全池协调报告失败');
+    } finally {
+      setPoolLoading(false);
+    }
+  };
+
+  const handleTriggerPoolReconcile = async () => {
+    if (!isAdmin) return;
+    const confirmed = await confirmDialog({
+      title: '确认执行全池编译收敛与 Workspace 导出',
+      content:
+        '将按 ADR-28 Stage C+ 执行全池 R2 投票路径映射、R4 共享基座按需收割、R7 编译自愈与 R8 根因隔离，并原子切换 <protos_dir>/workspace/。确认立即执行？',
+      confirmText: '开始全池收敛',
+      cancelText: '取消',
+      type: 'info',
+    });
+    if (!confirmed) return;
+
+    setPoolStarting(true);
+    try {
+      const res = await schemaApi.triggerPoolReconcile({
+        closure_only: true,
+        enable_r7_auto_fix: true,
+        enable_r8_quarantine: true,
+        sync: true,
+      });
+      if ('run' in res && res.run) {
+        setLatestPoolRun(res.run);
+        setLatestPoolReport(res.report);
+        toast.success(
+          `全池协调完成 #${res.run.id}：闭包 ${res.run.closure_file_count} 文件，R7 修复 ${res.run.auto_fix_count} 处，余错 ${res.report?.stats.compile_error_count ?? 0}`
+        );
+        setPoolDrawerOpen(true);
+        await loadSummary();
+        await loadRepos();
+      } else if ('message' in res) {
+        toast.info(res.message);
+      }
+    } catch (err) {
+      toast.error((err as Error).message || '触发全池编译收敛失败');
+    } finally {
+      setPoolStarting(false);
+    }
+  };
+
   const progressPct =
     activeJob && activeJob.total_repos > 0
       ? Math.min(100, Math.round((activeJob.processed_repos / activeJob.total_repos) * 100))
@@ -368,6 +452,23 @@ export const ProtoExportGovernancePane: React.FC<ProtoExportGovernancePaneProps>
           <div className="pgit-toolbar-actions">
             <button
               type="button"
+              className="btn-primary btn-sm"
+              data-testid="trigger-pool-reconcile-btn"
+              disabled={!isAdmin || poolStarting}
+              onClick={() => void handleTriggerPoolReconcile()}
+            >
+              <Layers size={14} /> {poolStarting ? '全池收敛中...' : '全池编译收敛与工作区导出'}
+            </button>
+            <button
+              type="button"
+              className="btn-secondary"
+              data-testid="open-pool-report-btn"
+              onClick={() => void handleLoadLatestPoolReport()}
+            >
+              <CheckCircle2 size={14} /> 查看最近协调报告
+            </button>
+            <button
+              type="button"
               className="btn-secondary"
               data-testid="open-global-governance-btn"
               onClick={() => setGlobalDrawerOpen(true)}
@@ -384,6 +485,20 @@ export const ProtoExportGovernancePane: React.FC<ProtoExportGovernancePaneProps>
             </button>
           </div>
         </div>
+
+        {poolProgress && (
+          <div className="pgit-reconcile-banner" data-testid="pool-reconcile-progress-banner">
+            <span>
+              全池协调 #{poolProgress.run_id} · <strong>{poolProgress.stage}</strong>：{poolProgress.message}
+            </span>
+            <span className="pdoc-meta-row">
+              <span>闭包: {poolProgress.closure_count}</span>
+              <span>自愈: {poolProgress.auto_fix_count}</span>
+              <span>冲突: {poolProgress.conflict_count}</span>
+              <span>隔离: {poolProgress.quarantined_count}</span>
+            </span>
+          </div>
+        )}
 
         {/* 作业进度条与异常明细 */}
         {activeJob && (
@@ -657,6 +772,20 @@ export const ProtoExportGovernancePane: React.FC<ProtoExportGovernancePaneProps>
         isAdmin={isAdmin}
         onClose={() => setGlobalDrawerOpen(false)}
         onApplied={() => {
+          void loadSummary();
+          void loadRepos();
+        }}
+      />
+
+      {/* ADR-28 全池 Stage C+ 协调报告抽屉 */}
+      <PoolReconcileReportDrawer
+        open={poolDrawerOpen}
+        isAdmin={isAdmin}
+        run={latestPoolRun}
+        report={latestPoolReport}
+        loading={poolLoading}
+        onClose={() => setPoolDrawerOpen(false)}
+        onPromoted={() => {
           void loadSummary();
           void loadRepos();
         }}

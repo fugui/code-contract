@@ -133,6 +133,7 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
   const [filesLoading, setFilesLoading] = useState<boolean>(initialFiles === undefined);
   const [searchText, setSearchText] = useState<string>(initialSchemaName);
   const [includeDeleted, setIncludeDeleted] = useState<boolean>(false);
+  const [closureOnly, setClosureOnly] = useState<boolean>(false);
 
   // 3. 选中文件、版本、高亮行与 Diff 视图状态
   const resolvedInitialFileId = urlFileId ?? initialSelectedFileId ?? initialFileId ?? (initialFiles?.[0]?.id ?? null);
@@ -236,6 +237,7 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
       const resp = await schemaApi.listProtoFiles({
         git_repo_id: selectedRepoId ?? undefined,
         bundle_id: selectedBundleId ?? undefined,
+        in_service_closure: closureOnly ? true : undefined,
         include_deleted: includeDeleted,
         search: searchText.trim() || undefined,
         page,
@@ -263,7 +265,7 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
     } finally {
       setFilesLoading(false);
     }
-  }, [selectedRepoId, selectedBundleId, includeDeleted, searchText, page, pageSize, urlFileId, toast]);
+  }, [selectedRepoId, selectedBundleId, closureOnly, includeDeleted, searchText, page, pageSize, urlFileId, toast]);
 
   const loadFileDetail = useCallback(
     async (fileId: number, versionOverride?: number) => {
@@ -451,6 +453,7 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
           expand_package: expandOpts?.expandPackage,
           subsystem: subsystemFilter || undefined,
           git_repo_id: selectedRepoId ?? undefined,
+          in_service_closure: closureOnly ? true : undefined,
           include_deleted: includeDeleted,
           search: searchText.trim() || undefined,
         });
@@ -496,7 +499,7 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
         setTreeLoading(false);
       }
     },
-    [selectedRepoId, subsystemFilter, includeDeleted, searchText, toast]
+    [selectedRepoId, subsystemFilter, closureOnly, includeDeleted, searchText, toast]
   );
 
   const toggleExpandRepoGroup = async (repoId: number, hasFilesLoaded: boolean) => {
@@ -765,6 +768,19 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
             <label className="pgit-check">
               <input
                 type="checkbox"
+                checked={closureOnly}
+                data-testid="filter-closure-only-checkbox"
+                onChange={(e) => {
+                  skipInitialFilesFetchRef.current = false;
+                  setClosureOnly(e.target.checked);
+                  setPage(1);
+                }}
+              />
+              仅看服务闭包
+            </label>
+            <label className="pgit-check">
+              <input
+                type="checkbox"
                 checked={includeDeleted}
                 onChange={(e) => {
                   skipInitialFilesFetchRef.current = false;
@@ -931,6 +947,17 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
                       </span>
                     </div>
                     <div className="pgit-file-meta">
+                      {file.is_uservice_source && (
+                        <span className="code-badge code-badge-info">uService 已转换</span>
+                      )}
+                      {(file.auto_fix_count ?? 0) > 0 && (
+                        <span className="code-badge code-badge-success">
+                          R7 自动修复 ({file.auto_fix_count})
+                        </span>
+                      )}
+                      {file.is_harvested_base && (
+                        <span className="code-badge code-badge-neutral">R4 收割基座</span>
+                      )}
                       {file.pipeline_status === 'QUARANTINED' && (
                         <span className="code-badge code-badge-danger">QUARANTINED</span>
                       )}
@@ -1068,6 +1095,8 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
               {viewMode === 'code' && contentData && (
                 <ProtoReadOnlyCodeViewer
                   filePath={contentData.file.file_path}
+                  cleanRelPath={contentData.file.clean_rel_path}
+                  repoFilePath={contentData.file.repo_file_path}
                   content={contentData.content}
                   rawContent={contentData.raw_content}
                   lineMap={contentData.line_map}
@@ -1075,6 +1104,9 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
                   statusReason={contentData.file.status_reason}
                   normalizerVersion={contentData.file.normalizer_version}
                   isExternalCopy={contentData.file.is_external_copy}
+                  isUServiceSource={contentData.file.is_uservice_source}
+                  isHarvestedBase={contentData.file.is_harvested_base}
+                  autoFixCount={contentData.file.auto_fix_count}
                   highlightLine={highlightLine}
                   violations={normalizedViolations}
                   symbolAnchors={contentData.symbol_anchors}
