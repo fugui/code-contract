@@ -1,12 +1,13 @@
 # ADR-29：「Proto 契约治理」四阶段可视化流水线闭环与四菜单信息架构重构决策
 
 - **文档编号**：`29-proto-contract-pipeline-closure-and-ia-redesign-adr.md`
-- **状态**：Proposed（r3，已吸收首轮代码对照评审意见，待架构师终审）
+- **状态**：Accepted（r4，2026-11-27 评审确认，第 6 节 5 项边界决策均按提案采纳）
 - **日期**：`2026-11-27`
 - **修订记录**：
   - r1：初稿，确立「接口文档与目录 / Proto 源码库 / 契约同步与发布 / 规范与 MR 门禁」四菜单与四阶段可视化流水线，提出阶段 ④ 单仓拓扑编译发布引擎。
   - r2：增补「完全自封闭」裁决，下线外部 `.pb` 上传与在线 `.proto` 直编入池入口。
   - r3：依据代码对照评审修订——① 补齐 **R3 胜出方持久化**，使阶段 ④ 编译解析与阶段 ③ 收敛结果同源（原方案在内容不等价冲突下必然 `ImportAmbiguousError`）；② 新增**破坏性挂起下游传播（`PENDING_UPSTREAM`）**，堵住下游内嵌新版依赖描述符绕过挂起的漏洞；③ 新增**收敛输入指纹校验与全局流水线互斥锁**；④ 收口单仓同步 / Webhook / MR 合入等**绕过阶段 ④ 的激活入口**；⑤ 编译指纹改存 `ProtoSchema`；⑥ 激活入口增加**来源守卫**，禁止历史外部来源再入池；⑦ 删除冗余的 SCC 联合编译分支，修正「基座先行激活」的理由；⑧ 新接口统一收拢至 `/api/proto-pipeline/*`；⑨ 补全 `docs_view` 旧值兼容、嵌入/独立双路由注册、测试夹具迁移与若干表述勘误。
+  - r4：架构评审确认，状态转为 Accepted。第 6 节 5 项待确认议题全部按提案采纳并改写为「已确认决策」；正文同步落地 `publish_mode`（默认 `AUTO`）、`block_on_unresolved_conflict` 严格模式开关（默认关闭）、MR 合入 5 分钟去抖增量流水线与历史归档资产 30 天提醒（不强制停用）。
 - **关联与演进关系**：
   - 演进 [`ADR-19`](./19-proto-contract-ia-unbundling-and-four-workbenches-adr.md)（「Proto 契约治理」四工作台信息架构）；
   - 承接并闭环 [`ADR-26 (r4)`](./26-shared-git-cache-and-subsystem-proto-tree-adr.md)（共享缓存四段式流水线）、[`ADR-27 (r1)`](./27-proto-export-directory-and-normalization-governance-adr.md)（500+ 平台仓全量同步与导出目录治理）及 [`ADR-28`](./28-uservice-normalization-pg-flattening-and-compile-closure-adr.md)（`uService` 清洗转换、去 `/pg` 扁平化与 Stage C+ 全池编译收敛）；
@@ -196,11 +197,14 @@ flowchart TD
 关键工程规则如下：
 1. **编译解析来自源码而非生效池**：现有编译经 `DBProtoSourceProvider` 读取全池规范化源码并将传递依赖内嵌入各单仓 `.pb`，因此编译成功**不依赖**上游是否已激活。按拓扑层（`BASE_LIB` 层最先，含 `SystemSharedBasePlatformRepoID` 下 R4 收割的共享基座）推进的真实目的是：① 先确定上游的发布结论，以便决定下游是否需要等待；② 保证生效池按依赖顺序原子切换，避免下游先于上游生效。
 2. **保留单仓粒度，SCC 仅用于批次一致性**：每个含有效服务/消息文件的 `GitProtoBundle` 独立产出一个 `ProtoSchema`（`Name = bundle.TargetSchemaName`），保持既有 `ProtoOperation` 归属与 `ServiceContractGroup` 血缘。跨仓 Bundle 互引在**文件级无环**时由全局 Provider 天然可编（文件级成环为 protobuf 非法定义，直接按编译失败处理），故**不设 SCC 联合编译分支**；`ComputeBundleSCCs` 识别出的多仓强连通分量（`len(scc) > 1`）作为同一激活单元——同进同退、同挂起。
-3. **破坏性挂起向下游传播（`PENDING_UPSTREAM`）**：由于下游 `.pb` 内嵌上游描述符，上游 Bundle 一旦为 `BLOCKED_BREAKING` 或 `FAILED`，其在文件级 DAG 上的全部传递下游**本轮不编译、不激活**，标记为 `PENDING_UPSTREAM` 并保留各自旧生效版本，杜绝新版上游定义经下游绕过门禁进入生效池；管理员放行或修复上游后，`approve-breaking` 自动为这些下游补发一次增量发布。
+3. **破坏性挂起向下游传播（`PENDING_UPSTREAM`）**：由于下游 `.pb` 内嵌上游描述符，上游 Bundle 一旦为 `BLOCKED_BREAKING`、`BLOCKED_CONFLICT` 或 `FAILED`，其在文件级 DAG 上的全部传递下游**本轮不编译、不激活**，标记为 `PENDING_UPSTREAM` 并保留各自旧生效版本，杜绝新版上游定义经下游绕过门禁进入生效池；管理员放行或修复上游后，`approve-breaking` 自动为这些下游补发一次增量发布。
 4. **输入指纹增量跳过（`compile_input_sha256`）**：对每个 Bundle 计算确定性指纹 `SHA-256(normalizer_version + compiler_version + entry_points + include_dirs + 排序后的 (file_path, content_sha256)（含直接与传递依赖文件）)`，**写入产出的 `ProtoSchema.compile_input_sha256`**；发布时与该 Bundle 当前**生效** Schema 的指纹比对，一致且未传 `force_recompile=true` 则跳过编译与文档重建。指纹随生效版本走，回滚、停用或人工放行后比较对象自动正确。
 5. **破坏性变更局部隔离（Partial Publish）**：单仓若存在 `SchemaBreakingError`（如删接口、改字段类型/Tag），**仅挂起该单仓（及其 SCC 组与传递下游）的激活动作**（以未激活版本保留在台账中，原已生效版本继续服务现网解码与文档），将其记录到本次发布报告的 `breaking_items`（含 `breaking_rules` 与 `affected_dependents`），**其余无关仓库正常发布生效并立即更新「接口参考文档」**。管理员在阶段 ④ 工作区核验后，填写 `breaking_reason` 一键放行（沿用 `allow_breaking=true` 与 P1 审计）。
 6. **批量激活与文档联动**：每个拓扑层的待激活批次复用 `Registry.BatchActivate` 在单事务内切换；`ProtoSchema` 激活成功后调用 `protodoc.RebuildForSchema(db, schema)` 重建接口文档符号与黄金样本；整次发布收尾时仅触发**一次** `Registry.Reload` 与一次异步统一目录 `.pb` 撮合刷新。
 7. **扇出与限流**：日常无基座变更时，绝大多数 Bundle 命中 `SKIPPED_UNCHANGED`，发布耗时与“变更仓数 × 单仓编译耗时”成正比；共享基座变更会使全部传递下游指纹失效并全量重编，因此同一拓扑层内以有界并发（默认 4，可配置）编译，发布报告给出本次扇出规模与耗时，阶段 ④ 卡片在扇出超过阈值（默认 100 仓）时提示预计耗时。
+8. **发布模式与冲突严格模式（r4 确认）**：
+   - **`publish_mode = AUTO | PREVIEW`**（环境级配置 `config.yaml` → `proto_pipeline.publish_mode`，默认 `AUTO`）：`AUTO` 下无破坏性变更的 Bundle 编译后自动激活并刷新文档；`PREVIEW` 下阶段 ④ 仅产出未激活待发布版本（`last_publish_status = PENDING`），由管理员在阶段 ④ 工作区点击「确认生效」后按同一拓扑分层与挂起传播规则批量激活。生产环境可按需切换为 `PREVIEW`。
+   - **`block_on_unresolved_conflict`**（`proto-governance/v1` 规则配置项，默认 `false`）：关闭时，存在未人工裁决且 `content_identical = false` 的冲突组，按 `R3_AUTO` 胜出方继续发布，阶段 ④ 顶部黄色提示并在发布报告中为涉及仓打「自动裁决风险」标记；开启时，涉及仓挂起为 `BLOCKED_CONFLICT`（视同挂起，向下游传播 `PENDING_UPSTREAM`），待人工指定权威提供方并重新收敛后再发布。
 
 #### 4. 一键全流程编排（`RunFullProtoPipeline`）
 当管理员点击「一键同步并发布」时，服务端创建一条持久化编排任务（`contract_proto_pipeline_runs`），持有流水线锁按序异步驱动：
@@ -228,7 +232,7 @@ flowchart TD
 | `全池编译收敛与工作区导出` | **全池依赖收敛** |
 | `R3 冲突与 symbol_diff` / `R7 自动修复` / `R8 根因隔离` / `R4 基座收割` | **同名冲突仲裁** / **自动修复补丁** / **编译隔离诊断** / **共享基座收割** |
 | `Stage C+` / `Monorepo Bundles` | **全池依赖收敛** / **契约包 (Bundles)** |
-| `SKIPPED_UNCHANGED` / `BLOCKED_BREAKING` / `PENDING_UPSTREAM` | **未变更跳过** / **破坏性变更待审** / **等待上游** |
+| `SKIPPED_UNCHANGED` / `BLOCKED_BREAKING` / `BLOCKED_CONFLICT` / `PENDING_UPSTREAM` | **未变更跳过** / **破坏性变更待审** / **冲突待裁决** / **等待上游** |
 | `UPLOAD_PB` / `ONLINE_COMPILE` | **历史归档（手工上传）** / **历史归档（在线直编）** |
 
 ---
@@ -241,7 +245,7 @@ flowchart TD
 2. **前端全面下线手工录入入口**：彻底移除 [SchemaUploadModal.tsx](file:///home/fugui/codes/code-contract/frontend/src/pages/ProtoSchemaWorkbenchPage/SchemaUploadModal.tsx) 及界面中所有「上传描述集 (`.pb`)」「在线源码直编 (`.proto`)」「上传新版本」操作按钮，同步删除 `schemaApi.uploadProtoSchema` / `compileProtoSchema` 客户端方法；生效台账仅保留版本检视、同源历史回滚、停用与 `.pb` 只读下载导出能力。
 3. **后端写入口收口与清理**：下线外部手工入池路由 `POST /api/proto-schemas`（`UploadProtoSchema`）与 `POST /api/proto-schemas/compile`（`CompileProtoSchema`），仅保留由 `gitclient` 流水线与 MR 门禁内部调用的 `Registry.CompileAndSaveSchema` 路径；`ProtoSourceType` 新增 `GIT_PIPELINE` 标识阶段 ④ 产物，与 `GIT_SYNC`（单仓预览/存量）、`GIT_MR_AUTO` 共同构成合法来源集合。
 4. **激活入口来源守卫**：`Registry.ActivateSchemaVersion`、`Registry.BatchActivate` 及回滚路径对目标 Schema 校验 `SourceType ∈ {GIT_SYNC, GIT_MR_AUTO, GIT_PIPELINE}`，历史 `UPLOAD_PB` / `ONLINE_COMPILE` 版本一律拒绝激活（HTTP `422`，错误码 `SCHEMA_SOURCE_ARCHIVED`），防止外部来源经“回滚 / 再激活”重新入池。
-5. **存量外部来源退场（自然替换 + 对账）**：存量 `UPLOAD_PB` / `ONLINE_COMPILE` 记录转为只读「历史归档」，**当前已生效者保持生效**以避免解码空窗；阶段 ④ 激活某 Git 来源 Schema 时，若其服务全名集合覆盖了某归档生效 Schema 的全部服务，则自动停用该归档 Schema 并记 P2 审计。阶段 ④ 工作区提供「历史归档对账」清单，列出仍在生效且未被 Git 来源覆盖的归档资产及其服务覆盖率，由管理员手动停用。
+5. **存量外部来源退场（自然替换 + 对账）**：存量 `UPLOAD_PB` / `ONLINE_COMPILE` 记录转为只读「历史归档」，**当前已生效者保持生效**以避免解码空窗；阶段 ④ 激活某 Git 来源 Schema 时，若其服务全名集合覆盖了某归档生效 Schema 的全部服务，则自动停用该归档 Schema 并记 P2 审计。阶段 ④ 工作区提供「历史归档对账」清单，列出仍在生效且未被 Git 来源覆盖的归档资产及其服务覆盖率，由管理员手动停用。**不设强制停用截止期**（避免解码空窗）；上线满 30 天后，系统对仍生效且未被 Git 来源完全覆盖的归档资产，向 `contract_admin` 及关联模块负责人发送一次站内信提醒（此后每 30 天重复，直至停用或被覆盖）。
 6. **测试夹具迁移**：现有 5 个测试文件约 25 处依赖 `/api/proto-schemas/compile` 构造数据（`proto_compile_test.go` 13、`arch_proto_agent_test.go` 5、`proto_doc_handler_test.go` 4、`proto_breaking_test.go` 2、`lint_vocab_handler_test.go` 1）。M43 提供测试辅助函数（直接调用 `Registry.CompileAndSaveSchema`，`SourceType = GIT_SYNC`）完成迁移；`proto_compile_test.go` 中路径穿越、语法错误等安全用例下沉至 Registry 层保留覆盖，路由层仅断言 `404`。
 
 ---
@@ -271,13 +275,13 @@ flowchart TD
    - `publish_run_id`（`*uint64`）：产出该版本的阶段 ④ 发布批次；
    - `ProtoSourceType` 枚举新增 `GIT_PIPELINE`。
 2. **`contract_git_proto_bundles`（`models/git_repo.go`）扩展字段**：
-   - `last_publish_status`（`varchar(32)`）：`PENDING | PUBLISHED | SKIPPED_UNCHANGED | BLOCKED_BREAKING | PENDING_UPSTREAM | FAILED`；
+   - `last_publish_status`（`varchar(32)`）：`PENDING | PUBLISHED | SKIPPED_UNCHANGED | BLOCKED_BREAKING | BLOCKED_CONFLICT | PENDING_UPSTREAM | FAILED`；
    - `last_publish_run_id`（`*uint64`）：最近一次参与的发布批次；
    - `pending_breaking_schema_id`（`*uint64`）：检出破坏性变更而被局部挂起的待放行草稿 `ProtoSchema` ID。
 3. **`contract_proto_import_owners`**：`source` 取值扩展为 `MANUAL | BASE_LIB | AUTO | R3_AUTO`。
 4. **`contract_proto_pool_reconcile_runs`**：新增 `input_fingerprint`（`varchar(64)`）收敛输入快照指纹。
 5. **新增 `contract_proto_publish_runs`**：
-   - 记录每次阶段 ④ 批量编译发布结果：`id`、`pool_reconcile_run_id`、`status`（`RUNNING | COMPLETED | PARTIAL_BLOCKED | FAILED | REJECTED_STALE`）、`total_bundles`、`published_count`、`skipped_count`、`breaking_blocked_count`、`pending_upstream_count`、`failed_count`、`details_json`（JSONB：逐仓编译结果、破坏性违规、受影响下游与等待上游原因）、`triggered_by`、`duration_ms`、`started_at`、`finished_at`。
+   - 记录每次阶段 ④ 批量编译发布结果：`id`、`pool_reconcile_run_id`、`publish_mode`（`AUTO | PREVIEW`）、`status`（`RUNNING | COMPLETED | PREVIEW_READY | PARTIAL_BLOCKED | FAILED | REJECTED_STALE`）、`total_bundles`、`published_count`、`skipped_count`、`breaking_blocked_count`、`conflict_blocked_count`、`pending_upstream_count`、`failed_count`、`details_json`（JSONB：逐仓编译结果、破坏性违规、受影响下游与等待上游原因）、`triggered_by`、`duration_ms`、`started_at`、`finished_at`。
 6. **新增 `contract_proto_pipeline_runs`**：
    - 记录一键四阶段流水线端到端编排状态：`id`、`from_stage`（`COLLECT_NORMALIZE | RECONCILE | PUBLISH`）、`current_stage`、`status`、`trigger_source`（`MANUAL | MR_MERGE | SCHEDULE`）、`sync_job_id`、`reconcile_run_id`、`publish_run_id`、`error_message`、`triggered_by`、`started_at`、`finished_at`。
 
@@ -290,6 +294,7 @@ flowchart TD
 - **`POST /api/proto-pipeline/publish`**（`requireAdmin`，记录 P1/P2 审计）：单独触发阶段 ④ 单仓拓扑编译发布（支持指定 `bundle_ids`、`subsystem`、`force_recompile`、`sync` 同步/异步模式），通过 SSE `proto_publish.progress` 推送进度；收敛输入指纹失效时返回 `409 RECONCILE_STALE`。
 - **`GET /api/proto-pipeline/publish-runs/latest`** & **`GET /api/proto-pipeline/publish-runs/:id`**：查询阶段 ④ 发布报告与逐仓破坏性阻断 / 等待上游明细。
 - **`POST /api/proto-pipeline/publish-runs/:id/approve-breaking`**（`requireAdmin`，强制校验非空 `breaking_reason` 并写入 P1 审计）：对发布报告中被 `BLOCKED_BREAKING` 挂起的指定 `schema_ids` 执行人工放行激活与 `protodoc` 重建，并自动为其 `PENDING_UPSTREAM` 下游补发增量发布。
+- **`POST /api/proto-pipeline/publish-runs/:id/confirm-preview`**（`requireAdmin`，记录 P2 审计）：在 `publish_mode = PREVIEW` 模式下，对 `PREVIEW_READY` 发布批次的待发布版本执行二次确认生效，按同一拓扑分层与挂起传播规则批量激活并重建 `protodoc` 索引。
 - **既有接口增强与下线**：
   - `POST /api/git-repos/sync-all` 新增布尔字段 `skip_compile`（默认 `true`，向后兼容显式传 `false`）；
   - `POST /api/git-repos/:id/sync` 编译产物强制不激活；
@@ -319,22 +324,17 @@ flowchart TD
 
 ---
 
-## 6. 架构师评审讨论议题 (Open Questions for Architecture Review)
+## 6. 已确认的边界决策 (Resolved Decisions)
 
-r3 已对首轮评审中的技术缺陷给出裁决（§2.3.0、§2.3.2、§2.3.3、§2.5），以下 **5 个产品与运维边界决策**仍提请架构师团队确认，确认后即可进入 `01-features` / `02-design` / `03-api` 文档同步与 M43~M45 实施：
+r3 第 6 节提请确认的 5 项产品与运维边界决策，已于 `2026-11-27` 评审中**全部按提案采纳**，作为 `01-features` / `02-design` / `03-api` / `04-tasks` 同步与 M43~M45 实施的约束基线：
 
-1. **`sync-all` 默认跳过编译（`skip_compile=true`）**：
-   - **提案**：全量同步只做采集与清洗，编译统一收口到阶段 ④；单仓「立即同步」/ Webhook 的编译产物仅作预览、不激活。
-   - **待确认**：是否接受批量同步不再逐仓产出未激活草稿，且单仓同步不再具备直接上线能力？
-2. **阶段 ④ 对无破坏性变更仓的自动激活策略**：
-   - **提案**：新增环境级配置 `publish_mode = AUTO | PREVIEW`，默认 `AUTO`（无破坏性变更即自动激活并刷新文档）；生产环境可设为 `PREVIEW`，阶段 ④ 仅生成待发布版本，由管理员二次确认生效。
-   - **待确认**：现网生产默认取值。
-3. **未人工裁决的内容不等价冲突（R3 `content_identical=false`）**：
-   - **提案**：在 `R3_AUTO` 持久化保证可编译的前提下，默认采纳 R3 胜出方继续发布，阶段 ④ 顶部黄色提示并在发布报告中为涉及仓打「自动裁决风险」标记；提供严格模式开关「存在未裁决内容冲突时，涉及仓挂起等待人工拍板」。
-   - **待确认**：默认采用“告警 + 自动裁决放行”还是严格模式？
-4. **MR 合入 `AUTO_ACTIVATE` 语义变更**：
-   - **提案**：由“合入后单仓直接激活”改为“合入后入队增量流水线（5 分钟去抖）”，生效时延从秒级变为分钟级，但获得全池坐标系一致性、破坏性挂起传播与指纹台账。
-   - **待确认**：现网依赖 MR 合入即时生效的业务是否接受分钟级时延？是否需要为个别 Bundle 提供“合入后立即触发、不去抖”的选项？
-5. **存量 `UPLOAD_PB` / `ONLINE_COMPILE` 资产退场**：
-   - **提案**：只读归档、禁止再激活；当前生效者保持生效，Git 来源 Schema 服务全集覆盖后自动停用；其余通过「历史归档对账」清单人工停用。
-   - **待确认**：是否需要设定退场截止期（如上线后 30 天），到期仍未被覆盖的归档资产强制停用并通知相关模块负责人？
+| # | 议题 | 确认结论 | 落地位置 |
+| :---: | :--- | :--- | :--- |
+| 1 | `sync-all` 默认跳过编译 | **采纳**：全量同步只做采集与清洗（`skip_compile` 默认 `true`），编译统一收口到阶段 ④；单仓「立即同步」/ Webhook 编译产物仅作预览、强制不激活，单仓同步不再具备直接上线能力。 | §2.3.1、§2.3.2、§4.2 |
+| 2 | 无破坏性变更仓的自动激活 | **采纳**：环境级配置 `proto_pipeline.publish_mode = AUTO \| PREVIEW`，默认 `AUTO`；生产环境可按需切换为 `PREVIEW`，由管理员在阶段 ④ 二次确认生效。 | §2.3.3 规则 8 |
+| 3 | 未人工裁决的内容不等价冲突 | **采纳**：默认「告警 + 按 `R3_AUTO` 胜出方放行」，阶段 ④ 黄色提示并在发布报告标记「自动裁决风险」；提供 `block_on_unresolved_conflict` 严格模式开关（默认关闭），开启后涉及仓挂起为 `BLOCKED_CONFLICT` 并向下游传播。 | §2.3.0、§2.3.3 规则 8 |
+| 4 | MR 合入 `AUTO_ACTIVATE` 语义变更 | **采纳**：改为合入落库后入队 `from_stage = RECONCILE` 的增量流水线，同仓 5 分钟去抖合并，接受分钟级生效时延；**不提供**单 Bundle 免去抖的即时触发选项（如后续出现明确诉求另行评估）。 | §2.3.2 |
+| 5 | 存量 `UPLOAD_PB` / `ONLINE_COMPILE` 资产退场 | **采纳**：只读归档、禁止再激活；当前生效者保持生效，被 Git 来源服务全集覆盖后自动停用；其余经「历史归档对账」清单人工停用。**不设强制停用截止期**，上线满 30 天起每 30 天对未覆盖的生效归档资产发送站内信提醒。 | §2.5.4、§2.5.5 |
+
+> [!IMPORTANT]
+> 后续实施若需偏离上表任一结论，须以本 ADR 新修订版本（r5+）记录变更理由后方可执行。
