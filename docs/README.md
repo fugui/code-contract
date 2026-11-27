@@ -72,6 +72,9 @@ docs/
 │   ├── 42-m40-uservice-normalizer-v2-and-pg-flattening.md             # 【M40 作战卡 | ✅ 已交付】Stage B rule-normalizer/v2、uService 转换与 clean 去 /pg 扁平化 (ADR-28)
 │   ├── 43-m41-shared-base-harvest-and-pool-stage-c-plus.md            # 【M41 作战卡 | ✅ 已交付】R4 共享基座入池与全池 Stage C+ 协调 R1/R2/R3 (ADR-28)
 │   └── 44-m42-protocompile-r7-r8-workspace-and-console-closure.md     # 【M42 作战卡 | ✅ 已交付】纯 Go protocompile R7 自愈、R8 隔离、workspace 导出与治理台闭环 (ADR-28)
+│   ├── 45-m43-workspace-topology-publish-and-pipeline-closure.md      # 【M43 作战卡 | 🔄 进行中】阶段 ④ 单仓拓扑发布引擎、同源解析与一键流水线闭环 (ADR-29 r4)
+│   ├── 46-m44-proto-pipeline-four-stage-workbench.md                  # 【M44 作战卡 | 📋 待实施】/proto-pipeline 四阶段可视化流水线工作台与完全自封闭改造 (ADR-29 r4)
+│   └── 47-m45-four-menu-ia-consumer-consolidation-and-e2e.md          # 【M45 作战卡 | 📋 待实施】四菜单 IA 切换、消费端聚合与全量旧深链无损重定向 (ADR-29 r4)
 ├── 05-adr/          # 架构决策记录 (ADR)：重大技术选型与权衡记录 (Architecture Decision Records)
 │   ├── 01-microfrontend-and-table-prefix-isolation.md                  # ADR-01：微前端集成、共享库表前缀隔离与 TDD 测试策略
 │   ├── 02-ebpf-hook-and-dual-subsystem-adr.md                          # ADR-02：eBPF 入站旁路钩子、Cookie 原目的还原与无 Schema 数据面解耦

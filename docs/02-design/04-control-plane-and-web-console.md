@@ -1727,3 +1727,24 @@ export interface DiscoveryProcessGroupDTO {
 | 审计子模块 (`module`) | 动作标识 (`action`) | 风险等级 | `before` / `after` 快照策略 |
 | :--- | :--- | :---: | :--- |
 | `contract_git` | `pool_reconcile` / `promote_auto_fixes` | `P2` (`pool_reconcile`) / `P1` (`promote_auto_fixes`) | 记录协调运行 ID/统计摘要，以及被固化的修复规则、`import_rewrites` 或 `MANUAL` 归属变更前后快照 |
+
+---
+
+### 4.18 「Proto 契约治理」四阶段可视化流水线、自封闭边界与四菜单 IA (`ADR-29` / `M43 ~ M45`)
+
+1. **四菜单信息架构与全量无损重定向**：
+   - 将 `menu.ts` 中 `Proto 契约治理` 调整为「消费端 (`接口文档与目录` `/proto-docs`) → 源码库 (`Proto 源码库` `/proto-sources`) → 生产流水线 (`契约同步与发布` `/proto-pipeline`) → 看护门禁 (`规范与 MR 门禁` `/proto-governance`)」。
+   - `/proto-docs` 收拢为 `reference`（全注释参考文档）、`catalog`（服务目录与认领：合并原方法目录与统一五态雷达单表行内展开）与 `graph`（服务依赖图，自 `/schemas` 提升至此）三视图，旧 `docs_view=catalog-ops|unified-catalog` 页面内 `replace` 归一化为 `catalog`。
+   - `/proto-sources` 剥离 `?view=governance` 与冲突仲裁抽屉，仅保留只读源码浏览、对比与「前往流水线治理此仓 ↗」跳链。
+   - `App.tsx` 在嵌入与独立双模式及 `${MODULE_BASE_PATH}` 变体注册 `/proto-pipeline`、`ProtoSourcesRouteWrapper`（`?view=governance` → `/proto-pipeline`）及升级后的 `SchemasRouteWrapper`（`tab=assets`/无 `tab` → `/proto-pipeline?stage=publish`、`tab=graph` → `/proto-docs?docs_view=graph`、`tab=docs` → `/proto-docs?docs_view=reference`、`tab=catalog` → `/proto-docs?docs_view=catalog`、`tab=sources` → `/proto-sources`、`tab=mr-gates|lint-*` → `/proto-governance?gov_tab=*`），统一经 `resolveModulePath` 计算目标并保留 Query 与 `#L<n>`；后端 MR 站内信与前端大盘链接同步更新。
+2. **阶段 ④ 单仓拓扑发布引擎与同源自封闭闭环**：
+   - **同源解析与互斥锁**：`selectR3Winner` 将 `MANUAL` 设为 tier 0 最高优先级，`variant_swap` 不得覆盖 `MANUAL`；`RunPoolReconcile` 同事务持久化多候选 R3 胜出方至 `contract_proto_import_owners`（`source = 'R3_AUTO'`，不覆盖 `MANUAL`/`BASE_LIB`，并清理过期 `R3_AUTO`），写入 `input_fingerprint`；全流水线写路径统一由 PostgreSQL 会话级 advisory lock（`hashtext('contract_proto_pipeline')`，独占物理 `*sql.Conn`）保护。
+   - **单仓拓扑编译发布 (`PublishWorkspaceBundles`)**：校验实时 `input_fingerprint`（不匹配返 `409 RECONCILE_STALE`）；按 `ComputeBundleSCCs` 拓扑层序推进（`BASE_LIB` 先行，SCC 作为同进同退激活单元）；支持 `compile_input_sha256` 增量跳过；上游存在 `BLOCKED_BREAKING | BLOCKED_CONFLICT | FAILED` 时下游传递标记 `PENDING_UPSTREAM` 不编译不激活；`proto_pipeline.publish_mode` 支持 `AUTO`（默认自动原子激活 + `protodoc.RebuildForSchema`）与 `PREVIEW`（待确认生效）；`block_on_unresolved_conflict` 默认关闭（告警放行），开启后未人工裁决的内容不等价冲突挂起为 `BLOCKED_CONFLICT` 并向下游传播。
+   - **激活入口收口与完全自封闭**：`sync-all` 默认 `skip_compile=true`；单仓同步与 Webhook 强制不激活；MR `AUTO_ACTIVATE` 合入落库后入队 `from_stage=RECONCILE` 的去抖增量流水线（默认 5 分钟）；下线 `POST /api/proto-schemas`、`POST /api/proto-schemas/compile` 与前端 `SchemaUploadModal`；激活/回滚来源守卫拦截历史 `UPLOAD_PB`/`ONLINE_COMPILE`（`422 SCHEMA_SOURCE_ARCHIVED`）；归档生效资产被 Git 服务全集覆盖时自动停用，未覆盖者上线满 30 天每 30 天发送站内信提醒。
+3. **Stale 漂移感知与去黑话界面**：
+   - `GET /api/proto-pipeline/overview` 基于最近同步/规则变更/人工仲裁/输入指纹/最近发布计算 `normalize_stale`、`reconcile_stale`、`publish_stale` 与原因文案，驱动 Stepper 四卡红黄绿状态与引导；界面全面替换底层算法枚举为业务化文案。
+
+| 审计子模块 (`module`) | 动作标识 (`action`) | 风险等级 | `before` / `after` 快照策略 |
+| :--- | :--- | :---: | :--- |
+| `contract_proto_pipeline` | `run` / `publish` / `confirm_preview` / `archive_auto_deactivate` | `P2` | 记录流水线/发布运行 ID、触发来源、模式与汇总计数 |
+| `contract_proto_pipeline` | `approve_breaking` | `P1` | 记录放行 Schema IDs、非空 `breaking_reason`、受影响下游与补发结果 |

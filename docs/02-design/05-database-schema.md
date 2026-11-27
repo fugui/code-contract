@@ -1664,10 +1664,40 @@ func (MigrationBackup) TableName() string { return config.TablePrefix + "mig_bac
      - `closure_only` (`boolean NOT NULL DEFAULT true`)
      - `total_files` / `service_count` / `closure_file_count` / `harvested_base_count` / `logical_path_count` / `conflict_count` / `auto_fix_count` / `quarantined_count` / `bare_import_expanded_count` / `post_strip_collision_count` (`int NOT NULL DEFAULT 0`)
      - `workspace_version` (`varchar(128) NOT NULL DEFAULT ''`)
-     - `report_json` (`jsonb NOT NULL DEFAULT '{}'`)：持久化 `.clean-report.json` 完整结构（`logical_map`、`conflicts` 含 `content_sha256`/`content_identical`/`symbol_diff`、`auto_fixes`、`quarantined`、`harvested`、`post_strip_collisions`、`stats`）
+    - `report_json` (`jsonb NOT NULL DEFAULT '{}'`)：持久化 `.clean-report.json` 完整结构（`logical_map`、`conflicts` 含 `content_sha256`/`content_identical`/`symbol_diff`、`auto_fixes`、`quarantined`、`harvested`、`post_strip_collisions`、`stats`）
      - `error_message` (`text NOT NULL DEFAULT ''`)
      - `duration_ms` (`bigint NOT NULL DEFAULT 0`)
      - `started_at` (`timestamptz NOT NULL`)、`finished_at` (`timestamptz`)、`created_at`、`updated_at`。
    - 写操作（全池触发与自动修复固化）均接入 `code-common/backend/audit` 记录审计。
+
+---
+
+## 10. ADR-29 阶段 ④ 单仓拓扑编译发布与一键四阶段流水线编排演进 (M43~M45)
+
+在现有 40 张核心表 + `contract_settings` 基础上，扩展 4 张既有表并新增表 #41 ~ #42（累计 **42 张核心表 + `contract_settings`**）：
+
+1. **`contract_proto_schemas`（表 #11）扩展字段**：
+   - `compile_input_sha256` (`varchar(64) NOT NULL DEFAULT ''`)：产出该版本时的拓扑编译输入指纹，作为阶段 ④ 增量跳过比对基线（随生效版本持久化）。
+   - `publish_run_id` (`bigint`, 可空索引 `idx_contract_proto_publish_run`)：产出该版本的阶段 ④ 发布批次 ID。
+   - `source_type` 扩展 `chk_contract_proto_source_type` 枚举为 `'UPLOAD_PB' | 'ONLINE_COMPILE' | 'GIT_SYNC' | 'GIT_MR_AUTO' | 'GIT_PIPELINE'`；其中 `UPLOAD_PB`/`ONLINE_COMPILE` 仅作历史只读归档，激活/回滚路径禁止再激活。
+
+2. **`contract_git_proto_bundles`（表 #21）扩展字段**：
+   - `last_publish_status` (`varchar(32) NOT NULL DEFAULT 'PENDING' CHECK IN ('PENDING','PUBLISHED','SKIPPED_UNCHANGED','BLOCKED_BREAKING','BLOCKED_CONFLICT','PENDING_UPSTREAM','FAILED')`)。
+   - `last_publish_run_id` (`bigint`)。
+   - `pending_breaking_schema_id` (`bigint`)：检出破坏性变更而局部挂起的待人工放行草稿 `ProtoSchema` ID。
+
+3. **`contract_proto_import_owners`（表 #37）与 `contract_proto_pool_reconcile_runs`（表 #40）扩展**：
+   - `contract_proto_import_owners.source` 扩展 `chk_contract_import_owner_source` 枚举为 `'MANUAL' | 'BASE_LIB' | 'AUTO' | 'R3_AUTO'`（R3 自动裁决胜出方与编译解析同源）。
+   - `contract_proto_pool_reconcile_runs` 新增 `input_fingerprint` (`varchar(64) NOT NULL DEFAULT ''`) 收敛输入快照指纹。
+
+4. **新增表 #41：`contract_proto_publish_runs`（阶段 ④ 拓扑编译发布批次表）**：
+   - 字段：`id` (`bigserial PK`)、`pool_reconcile_run_id` (`bigint NOT NULL`)、`publish_mode` (`varchar(16) NOT NULL DEFAULT 'AUTO' CHECK IN ('AUTO','PREVIEW')`)、`status` (`varchar(24) NOT NULL DEFAULT 'RUNNING' CHECK IN ('RUNNING','COMPLETED','PREVIEW_READY','PARTIAL_BLOCKED','FAILED','REJECTED_STALE')`)；
+   - 统计字段：`total_bundles`、`published_count`、`skipped_count`、`breaking_blocked_count`、`conflict_blocked_count`、`pending_upstream_count`、`failed_count`、`fanout_count` (`int NOT NULL DEFAULT 0`)；
+   - 明细与元信息：`details_json` (`jsonb NOT NULL DEFAULT '{}'`)、`error_message` (`text NOT NULL DEFAULT ''`)、`triggered_by` (`varchar(128) NOT NULL DEFAULT ''`)、`duration_ms` (`bigint NOT NULL DEFAULT 0`)、`started_at` (`timestamptz NOT NULL`)、`finished_at` (`timestamptz`)、`created_at`、`updated_at`。
+
+5. **新增表 #42：`contract_proto_pipeline_runs`（一键四阶段流水线编排任务表）**：
+   - 字段：`id` (`bigserial PK`)、`from_stage` (`varchar(24) NOT NULL DEFAULT 'COLLECT_NORMALIZE' CHECK IN ('COLLECT_NORMALIZE','RECONCILE','PUBLISH')`)、`current_stage` (`varchar(24) NOT NULL DEFAULT 'COLLECT_NORMALIZE'`)、`status` (`varchar(24) NOT NULL DEFAULT 'RUNNING' CHECK IN ('RUNNING','COMPLETED','PARTIAL_BLOCKED','FAILED')`)、`trigger_source` (`varchar(24) NOT NULL DEFAULT 'MANUAL' CHECK IN ('MANUAL','MR_MERGE','SCHEDULE')`)；
+   - 关联子作业：`sync_job_id` (`bigint`)、`reconcile_run_id` (`bigint`)、`publish_run_id` (`bigint`)、`error_message` (`text NOT NULL DEFAULT ''`)、`triggered_by` (`varchar(128) NOT NULL DEFAULT ''`)、`started_at` (`timestamptz NOT NULL`)、`finished_at` (`timestamptz`)、`created_at`、`updated_at`。
+
 
 

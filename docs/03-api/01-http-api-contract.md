@@ -483,3 +483,26 @@
 | `GET` | `/api/proto-files` | `Auth` | *(M40~M42 增强)* 新增 Query: `in_service_closure`, `is_uservice_source`, `is_harvested_base` | `200`: 列表与 DTO 同步返回 `clean_rel_path`、`is_uservice_source`、`in_service_closure`、`is_harvested_base`、`auto_fix_count` |
 | `GET` | `/api/proto-files/tree` | `Auth` | *(M40~M42 增强)* 新增 Query: `in_service_closure`, `is_uservice_source` | `200`: 双视图树支持仅展示服务依赖闭包节点，节点 DTO 同步返回 `clean_rel_path` 与 ADR-28 状态徽标字段 |
 | `POST` | `/api/proto-governance/dry-run` & `/api/git-repos/:id/governance/dry-run` | `Auth` | *(M40 增强)* 同原试算参数 | `200`: 新增返回 `logical_path`、去 `/pg` 前后对比、`pool_strip_collisions`（全池剥离碰撞检测）、`is_uservice_source`、`line_map` 及 `NORM-006` Diff 预览 |
+
+---
+
+## 15. 四阶段可视化流水线闭环与完全自封闭发布 API (`ADR-29` / `M43 ~ M45`)
+
+> **M43 / ADR-29 完全自封闭路由下线与增强清单**：
+> - ~~`POST /api/proto-schemas`~~（已下线，返回 `404`，严禁外部 `.pb` 手工上传入池）
+> - ~~`POST /api/proto-schemas/compile`~~（已下线，返回 `404`，严禁外部 `.proto` 在线直编入池）
+> - `POST /api/proto-schemas/:id/activate` & `POST /api/proto-schemas/batch-activate`：新增来源守卫，目标版本为 `UPLOAD_PB` 或 `ONLINE_COMPILE` 时返回 **`422 SCHEMA_SOURCE_ARCHIVED`**。
+> - `POST /api/git-repos/sync-all`：新增布尔参数 `skip_compile`（默认 `true`），仅执行 Stage A+B 采集清洗；`POST /api/git-repos/:id/sync` 与 Git Sync Webhook 编译产物强制 `auto_activate = false`。
+> - **新增 SSE 事件**（复用 `GET /api/events`）：`proto_pipeline.progress`（一键四阶段编排进度）与 `proto_publish.progress`（阶段 ④ 单仓拓扑发布进度）。
+
+| 方法 | 路径 | 权限 | 请求参数 / 载荷 | 响应与错误码 |
+| :--- | :--- | :---: | :--- | :--- |
+| `GET` | `/api/proto-pipeline/overview` | `Auth` | 无 | `200`: 聚合返回 4 阶段实时统计摘要、各阶段水位时间戳/配置版本、全局流水线锁持有状态（`lock_holder`）与 Stale 漂移标记（`normalize_stale`、`reconcile_stale`、`publish_stale` 及具体原因列表）、当前 `publish_mode` 与未确认冲突数 |
+| `POST` | `/api/proto-pipeline/run` | `Admin` | Body: `{ from_stage?: "COLLECT_NORMALIZE"\|"RECONCILE"\|"PUBLISH", cache_policy?: "CACHE_ONLY"\|"FETCH_MISSING", force_recompile?: boolean, sync?: boolean }` | `202`（`sync=true` 等待完成返 `200`）: 获取全局流水线锁后按序执行编排任务并持久化 `contract_proto_pipeline_runs`，推送 `proto_pipeline.progress` + `P2` 审计；锁被占用返 `409 PIPELINE_LOCKED`（含当前持锁作业 ID） |
+| `GET` | `/api/proto-pipeline/runs/:id` | `Auth` | Path: `id` | `200`: 返回流水线编排任务及关联 `sync_job` / `reconcile_run` / `publish_run` 摘要；不存在返 `404` |
+| `POST` | `/api/proto-pipeline/publish` | `Admin` | Body: `{ bundle_ids?: number[], subsystem?: string, force_recompile?: boolean, sync?: boolean }` | `202`（`sync=true` 返 `200` 含 `run`）: 校验 `input_fingerprint` 后执行阶段 ④ 单仓拓扑编译发布并推送 `proto_publish.progress` + `P2` 审计；收敛输入过期返 `409 RECONCILE_STALE`；锁占用返 `409 PIPELINE_LOCKED` |
+| `GET` | `/api/proto-pipeline/publish-runs/latest` | `Auth` | 无 | `200`: 返回最近一次 `contract_proto_publish_runs` 详情（含 `breaking_items`、`pending_upstream_items`、`auto_resolved_risks`、`bundle_results`）；无记录返回 `{"run": null}` |
+| `GET` | `/api/proto-pipeline/publish-runs/:id` | `Auth` | Path: `id` | `200`: 返回指定发布批次完整报告；不存在返 `404` |
+| `POST` | `/api/proto-pipeline/publish-runs/:id/approve-breaking` | `Admin` | Body: `{ schema_ids: number[], breaking_reason: string }`（`breaking_reason` 去空白后不少于 `8` 字符） | `200`: `P1` 审计并强制激活指定 `BLOCKED_BREAKING` 草稿、重建 `protodoc`、触发被覆盖归档资产停用，并自动为其 `PENDING_UPSTREAM` 下游补发增量发布（返回 `approved_schemas` 与 `downstream_publish_run`）；参数不合法返 `400` |
+| `POST` | `/api/proto-pipeline/publish-runs/:id/confirm-preview` | `Admin` | Path: `id` | `200`: 在 `PREVIEW` 模式下对 `PREVIEW_READY` 发布批次按同一拓扑分层与挂起传播规则批量确认激活并重建 `protodoc` + `P2` 审计；非 `PREVIEW_READY` 返 `409` |
+| `GET` | `/api/proto-pipeline/archived-schemas` | `Auth` | 无 | `200`: 返回历史归档外部来源（`UPLOAD_PB` / `ONLINE_COMPILE`）对账清单，含 `is_active`、总服务数、已被生效 Git 来源覆盖的服务数、覆盖率与未覆盖服务名列表 |
