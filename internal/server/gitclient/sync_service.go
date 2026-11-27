@@ -469,12 +469,17 @@ func (s *SyncService) SyncRepo(ctx context.Context, repoID uint64, opts SyncOpti
 		status = models.GitSyncStatusFailed
 		errText = strings.Join(partialErrs, "; ")
 	}
-	if err := s.db.Model(&repo).Updates(map[string]any{
+	repoUpdates := map[string]any{
 		"last_sync_at":     &now,
 		"last_sync_commit": snap.CommitSHA,
 		"last_sync_status": status,
 		"last_sync_error":  errText,
-	}).Error; err != nil {
+	}
+	if !snap.CommittedAt.IsZero() {
+		ct := snap.CommittedAt
+		repoUpdates["ref_commit_time"] = &ct
+	}
+	if err := s.db.Model(&repo).Updates(repoUpdates).Error; err != nil {
 		return nil, err
 	}
 
@@ -535,20 +540,34 @@ func (s *SyncService) SyncBundle(ctx context.Context, bundleID uint64, opts Sync
 	res, applyErr := s.applyBundleSnapshot(ctx, &repo, &bundle, branch, snap, opts)
 	now := time.Now().UTC()
 	if applyErr != nil {
-		_ = s.db.Model(&repo).Updates(map[string]any{
+		failUpdates := map[string]any{
 			"last_sync_at":     &now,
 			"last_sync_commit": snap.CommitSHA,
 			"last_sync_status": models.GitSyncStatusFailed,
 			"last_sync_error":  applyErr.Error(),
-		}).Error
+		}
+		if !snap.CommittedAt.IsZero() {
+			ct := snap.CommittedAt
+			failUpdates["ref_commit_time"] = &ct
+		}
+		if updErr := s.db.Model(&repo).Updates(failUpdates).Error; updErr != nil {
+			log.Printf("[gitclient] SyncBundle 更新失败状态警告 (repo#%d): %v", repo.ID, updErr)
+		}
 		return res, applyErr
 	}
-	_ = s.db.Model(&repo).Updates(map[string]any{
+	okUpdates := map[string]any{
 		"last_sync_at":     &now,
 		"last_sync_commit": snap.CommitSHA,
 		"last_sync_status": models.GitSyncStatusSuccess,
 		"last_sync_error":  "",
-	}).Error
+	}
+	if !snap.CommittedAt.IsZero() {
+		ct := snap.CommittedAt
+		okUpdates["ref_commit_time"] = &ct
+	}
+	if updErr := s.db.Model(&repo).Updates(okUpdates).Error; updErr != nil {
+		log.Printf("[gitclient] SyncBundle 更新成功状态警告 (repo#%d): %v", repo.ID, updErr)
+	}
 	return res, nil
 }
 

@@ -413,6 +413,12 @@ func RunFourStagePipeline(
 		commitSHA := ""
 		if collectRes.CommitMeta != nil {
 			commitSHA = collectRes.CommitMeta.CommitSHA
+			if repo.RefCommitTime == nil && !collectRes.CommitMeta.CommittedAt.IsZero() {
+				ct := collectRes.CommitMeta.CommittedAt
+				if updErr := db.Model(&repo).Update("ref_commit_time", &ct).Error; updErr != nil {
+					log.Printf("[ProtoPipeline] 回填 ref_commit_time 警告 (repo#%d): %v", repo.ID, updErr)
+				}
+			}
 		}
 		return &PipelineRunResult{
 			RepoID:           repo.ID,
@@ -600,11 +606,15 @@ func ReNormalizeRepo(
 	if branch == "" {
 		branch = repo.DefaultBranch
 	}
+	var commitTime time.Time
+	if repo.RefCommitTime != nil && !repo.RefCommitTime.IsZero() {
+		commitTime = *repo.RefCommitTime
+	}
 	collectRes := &CollectResult{
 		RepoID:                repo.ID,
 		EffectiveSyncStrategy: repo.SyncStrategy,
 		ResolvedBranch:        branch,
-		CommitMeta:            &gitsync.CommitMeta{CommitSHA: commitSHA, CommittedAt: time.Now().UTC()},
+		CommitMeta:            &gitsync.CommitMeta{CommitSHA: commitSHA, CommittedAt: commitTime},
 		Files:                 collectedFiles,
 	}
 
@@ -658,9 +668,11 @@ func executeStagesBToD(
 
 	commitSHA := ""
 	var commitMeta gitsync.CommitMeta
+	var realCommitTime time.Time
 	if collectRes.CommitMeta != nil {
 		commitMeta = *collectRes.CommitMeta
 		commitSHA = commitMeta.CommitSHA
+		realCommitTime = commitMeta.CommittedAt
 	}
 	if commitMeta.CommittedAt.IsZero() {
 		commitMeta.CommittedAt = time.Now().UTC()
@@ -1299,8 +1311,8 @@ func executeStagesBToD(
 		if collectRes.EffectiveSyncStrategy != models.GitSyncStrategyLocalCacheOnly {
 			repoUpdates["last_fetched_at"] = &now
 		}
-		if !commitMeta.CommittedAt.IsZero() {
-			ct := commitMeta.CommittedAt
+		if !realCommitTime.IsZero() {
+			ct := realCommitTime
 			repoUpdates["ref_commit_time"] = &ct
 		}
 		return tx.Model(repo).Updates(repoUpdates).Error

@@ -11,6 +11,7 @@ import {
   StageReconcilePane,
   StagePublishPane,
 } from '../index';
+import { formatCommitDate } from '../StageCollectPane';
 import { GlobalGovernanceConfigDrawer } from '../../ProtoSchemaWorkbenchPage/GlobalGovernanceConfigDrawer';
 import type {
   ArchivedExternalSchemaDTO,
@@ -337,6 +338,7 @@ describe('ProtoPipelineWorkbenchPage Suite (ADR-29 M44)', () => {
         service_group: 'trade-core',
         sync_enabled: true,
         last_sync_commit: '1122334455',
+        ref_commit_time: '2026-11-20T08:30:00Z',
         whitelist_count: 3,
         normalized_count: 3,
         quarantined_count: 0,
@@ -410,6 +412,12 @@ describe('ProtoPipelineWorkbenchPage Suite (ADR-29 M44)', () => {
     expect(collectHtml).toContain('broken-repo');
     expect(collectHtml).toContain('/proto-docs?docs_view=sources&amp;repo_id=1');
     expect(collectHtml).toContain('单仓拉取');
+    expect(collectHtml).toContain('role="tab" aria-selected="true" class="code-pill-btn code-pill-btn--active">含 Proto</button>');
+    expect(collectHtml).toContain('role="tab" aria-selected="false" class="code-pill-btn ">全部仓库</button>');
+    expect(collectHtml).toContain('1122334');
+    expect(collectHtml).toContain('repo-commit-date-1');
+    expect(collectHtml).toContain(formatCommitDate('2026-11-20T08:30:00Z'));
+    expect(collectHtml).not.toContain('repo-commit-date-2');
 
     const normalizeHtml = renderToString(
       <MemoryRouter>
@@ -605,5 +613,14 @@ describe('ProtoPipelineWorkbenchPage Suite (ADR-29 M44)', () => {
     expect(html).toContain('order-proto');
     expect(html).not.toContain('上传描述集 (.pb)');
     expect(html).not.toContain('⬆️ 新版');
+  });
+
+  it('formats ref_commit_time safely with formatCommitDate', () => {
+    const formatted = formatCommitDate('2026-11-20T08:30:00Z');
+    expect(formatted).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+    expect(formatCommitDate(null)).toBe('');
+    expect(formatCommitDate(undefined)).toBe('');
+    expect(formatCommitDate('')).toBe('');
+    expect(formatCommitDate('not-a-valid-date')).toBe('');
   });
 });

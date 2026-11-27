@@ -318,6 +318,14 @@ message ExtraNote {
 		t.Fatalf("预期每个 Bundle 同步均广播 git_sync.completed SSE 事件，实际=%d", len(sseEvents))
 	}
 
+	var updatedRepo models.GitRepo
+	if err := db.First(&updatedRepo, repo.ID).Error; err != nil {
+		t.Fatalf("查询同步后 GitRepo 失败: %v", err)
+	}
+	if updatedRepo.LastSyncCommit != c1SHA || updatedRepo.RefCommitTime == nil {
+		t.Fatalf("预期同步后持久化 LastSyncCommit=%s 且 RefCommitTime 非空，实际 commit=%s time=%v", c1SHA, updatedRepo.LastSyncCommit, updatedRepo.RefCommitTime)
+	}
+
 	// 校验 Schema 与 Lint Report 与 ProtoFile 入库 (ADR-29 §2.3.2: 单仓同步仅保存预览稿 is_active = false)
 	var orderSchema models.ProtoSchema
 	if err := db.Where("name = ? AND is_active = false", orderBundle.TargetSchemaName).First(&orderSchema).Error; err != nil {

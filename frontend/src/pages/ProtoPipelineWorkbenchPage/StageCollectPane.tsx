@@ -52,6 +52,16 @@ function renderCollectStatusBadge(status?: string) {
   }
 }
 
+export function formatCommitDate(iso?: string | null): string {
+  if (!iso) return '';
+  const dt = new Date(iso);
+  if (Number.isNaN(dt.getTime())) return '';
+  const pad2 = (n: number) => String(n).padStart(2, '0');
+  return `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())} ${pad2(
+    dt.getHours()
+  )}:${pad2(dt.getMinutes())}`;
+}
+
 export const StageCollectPane: React.FC<StageCollectPaneProps> = ({
   overview,
   isAdmin,
@@ -74,7 +84,7 @@ export const StageCollectPane: React.FC<StageCollectPaneProps> = ({
   const [repos, setRepos] = useState<GitRepoDTO[]>(initialRepos ?? []);
   const [total, setTotal] = useState<number>(initialTotal ?? (initialRepos?.length ?? 0));
   const [loadingRepos, setLoadingRepos] = useState<boolean>(initialRepos === undefined);
-  const [statusFilter, setStatusFilter] = useState<'' | GitRepoProtoStatus>('');
+  const [statusFilter, setStatusFilter] = useState<'' | GitRepoProtoStatus>('HAS_PROTO');
   const [serviceGroupFilter, setServiceGroupFilter] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [searchText, setSearchText] = useState('');
@@ -251,6 +261,8 @@ export const StageCollectPane: React.FC<StageCollectPaneProps> = ({
               <button
                 key={tab.key || 'ALL'}
                 type="button"
+                role="tab"
+                aria-selected={statusFilter === tab.key}
                 className={`code-pill-btn ${statusFilter === tab.key ? 'code-pill-btn--active' : ''}`}
                 onClick={() => {
                   setStatusFilter(tab.key);
@@ -325,6 +337,7 @@ export const StageCollectPane: React.FC<StageCollectPaneProps> = ({
               ) : (
                 repos.map((repo) => {
                   const busy = operatingRepoId === repo.id || locked;
+                  const commitDateText = formatCommitDate(repo.ref_commit_time);
                   return (
                     <tr key={repo.id}>
                       <td>
@@ -346,7 +359,18 @@ export const StageCollectPane: React.FC<StageCollectPaneProps> = ({
                       </td>
                       <td>
                         {repo.last_sync_commit ? (
-                          <code>{repo.last_sync_commit.slice(0, 7)}</code>
+                          <div className="ppipe-commit-cell">
+                            <code title={repo.last_sync_commit}>{repo.last_sync_commit.slice(0, 7)}</code>
+                            {commitDateText && (
+                              <span
+                                className="ppipe-commit-date"
+                                title={repo.ref_commit_time || undefined}
+                                data-testid={`repo-commit-date-${repo.id}`}
+                              >
+                                {commitDateText}
+                              </span>
+                            )}
+                          </div>
                         ) : (
                           <span>-</span>
                         )}
