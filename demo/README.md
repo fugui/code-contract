@@ -128,3 +128,34 @@ make stop
    - **`CLIENT_INJECT`**：经 CSG 动态解析 `sut-order` 在线端点注入重放，即使进程重启换端口亦无需修改 SSOT 静态端口。
    - **`PUB_STUB`**：当下游在线时触发前置 `409 CSG_SERVICE_ALREADY_PUBLISHED` 防抢占拦截；停止下游 (`kill -9 $(pgrep -f 'backend-')`) 后发起 `PUB_STUB` 重放，Agent 向 `csgserver` 注册本地 Mock Stub 端点并执行 `ullSNO` 自愈，`sut-order` 自动重解析完成全流程；重放结束后自动 `UNPUB` 零残留。
    - **`MOCK_SERVER`**：由 Agent 内置 `MockCSGServer` 沙箱全隔离接管 `dlink` 订阅并输出 `CSGSandboxReport`，真实 `csgserver` 零连接泄漏。
+
+---
+
+## 5. Proto 与契约治理全链路沙箱 (`proto-sandbox`)
+
+在缺乏现网代码仓与真实 `.proto` 的开发环境下，可通过 `proto-sandbox` 一键在本地构建与 `ADR-26 / ADR-27 / ADR-28` 完全同构的多仓缓存与平台数据（复用本地 `config.yaml` 数据库与 `data/codes` 缓存，`CACHE_ONLY` 模式无远端网络依赖）。
+
+### 5.1 沙箱仓库矩阵
+- **A 组（电商联动 6 仓）**：`sandbox-common-base` (`BASE_LIB`)、`sandbox-order-gateway` (`GATEWAY`)、`sandbox-account-svc`、`sandbox-inventory-svc`（`server/pg/proto/` + `strip_prefixes`）、`sandbox-payment-alipay`、`sandbox-payment-wechat`。编译激活后可直接替代静态 `demo.pb`，打通「Git 源码 → 活体文档 → 架构认领/多实现契约 → 实时流量解码」。
+- **B 组（现网病灶复刻 8 仓）**：`sandbox-fab-motion`（BOM/CRLF/C宏/缺 `syntax`/重复 `package`/`uService` DSL/块内裸 `import`/隐式 `VoidType`/`*TC` 非闭包）、`sandbox-fab-optics`（`extpg` & `pg.proto` 去 `/pg` 边界保护、`alpha/m1` 排除与 R3 主副本）、`sandbox-fab-sensor-copy`（等价与不等价 `symbol_diff` 冲突副本）、`sandbox-fab-broken`（Stage B `QUARANTINED`）、`sandbox-3m-legacy`（R0 `SBX-3M` 子系统排除）、`sandbox-no-proto-app`（大写 `PG/` 忽略、`NO_PROTO`）、`sandbox-unassigned-svc`（`_unassigned` 重定位）、`sandbox-missing-cache`（`NO_LOCAL_CACHE`）+ 共享基座 `sandbox-demo/shared-base/include`。
+
+### 5.2 常用命令（在 `demo/` 目录执行）
+```bash
+# 1. 一键初始化本地 14 仓缓存、播种架构/词库、执行同步协调并激活 Group A 描述集
+make sandbox-up
+# （可选）额外生成 500 个规模压测仓：
+./bin/proto-sandbox up --scale 500
+
+# 2. 查看当前沙箱状态
+make sandbox-status
+
+# 3. 触发 Group C 动态演进剧本
+make sandbox-mutate SCENARIO=breaking          # 破坏性字段变更 -> MR 门禁阻断与影响面
+make sandbox-mutate SCENARIO=lint-and-dup      # 命名违规 + AST 重复簇检测
+make sandbox-mutate SCENARIO=promote-no-proto  # 新增小写 pg/ -> NO_PROTO 晋升 HAS_PROTO
+make sandbox-mutate SCENARIO=doc-update        # 新增 RPC 与 @error_code -> 刷新活体文档
+make sandbox-mutate SCENARIO=rollback          # 回滚至 sandbox-v1 标签
+
+# 4. 一键彻底清理所有沙箱数据库记录 (sandbox-* / SBX_* / sbx-* / SANDBOX_DEMO) 与本地缓存
+make sandbox-down
+```

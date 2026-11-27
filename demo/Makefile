@@ -2,7 +2,7 @@ export PATH := $(HOME)/go/bin:$(PATH)
 
 BIN_DIR := bin
 
-.PHONY: all build test clean start stop run-client csg-status proto tmux
+.PHONY: all build test clean start stop run-client csg-status proto tmux sandbox-build sandbox-up sandbox-down sandbox-reset sandbox-status sandbox-mutate
 
 all: build
 
@@ -29,7 +29,33 @@ build: proto
 	go build -o $(BIN_DIR)/client ./cmd/client
 	$(MAKE) -C .. agent
 	cp --remove-destination ../code-contract-agent $(BIN_DIR)/code-contract-agent
+	go build -o $(BIN_DIR)/proto-sandbox ./cmd/proto-sandbox
 	@echo "Build complete."
+
+# 编译 Proto & 契约治理全链路沙箱 CLI
+sandbox-build:
+	@mkdir -p $(BIN_DIR)
+	go build -o $(BIN_DIR)/proto-sandbox ./cmd/proto-sandbox
+
+# 一键初始化本地多仓 Proto 沙箱（含同步、全池协调与 Group A 描述集激活）
+sandbox-up: sandbox-build
+	@./$(BIN_DIR)/proto-sandbox up
+
+# 一键彻底清理本地沙箱数据与本地沙箱缓存
+sandbox-down: sandbox-build
+	@./$(BIN_DIR)/proto-sandbox down
+
+# 一键重置沙箱
+sandbox-reset: sandbox-build
+	@./$(BIN_DIR)/proto-sandbox reset
+
+# 查看沙箱状态
+sandbox-status: sandbox-build
+	@./$(BIN_DIR)/proto-sandbox status
+
+# 触发动态演进剧本 (示例: make sandbox-mutate SCENARIO=breaking)
+sandbox-mutate: sandbox-build
+	@./$(BIN_DIR)/proto-sandbox mutate $(SCENARIO)
 
 # 运行单元测试与集成测试
 test:
