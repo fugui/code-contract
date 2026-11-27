@@ -192,8 +192,11 @@ func AlignPlatformRepositories(ctx context.Context, db *gorm.DB) (created int, u
 		}
 	}
 
-	// 若平台表中记录已被物理移除，则自动停用对应契约仓
+	// 若平台表中记录已被物理移除，则自动停用对应契约仓（豁免 R4 系统共享基座虚拟仓）
 	for _, gr := range existingRepos {
+		if gr.PlatformRepoID == SystemSharedBasePlatformRepoID {
+			continue
+		}
 		if _, ok := platByID[gr.PlatformRepoID]; !ok {
 			if gr.SyncEnabled || gr.ProtoStatus != models.GitRepoProtoStatusExcluded {
 				_ = db.WithContext(ctx).Model(&gr).Updates(map[string]any{
@@ -291,6 +294,10 @@ func RunSyncAllJob(
 		}
 		treeMgr := NewProtoTreeManager(cfg.Storage.GetProtosDir())
 		for _, r := range targets {
+			if r.PlatformRepoID == SystemSharedBasePlatformRepoID {
+				filteredTargets = append(filteredTargets, r)
+				continue
+			}
 			sub := platSub[r.PlatformRepoID]
 			if sub == "" {
 				sub = r.SubsystemSlug

@@ -764,7 +764,7 @@ func CheckPoolStripPGCollisions(candidates []PoolPathCandidate) []PoolStripColli
 		for _, item := range group {
 			distinctPre[item.PreStripPath] = struct{}{}
 		}
-		if len(distinctPre) <= 1 && len(preBuckets[post]) > 1 {
+		if len(distinctPre) <= 1 {
 			continue
 		}
 		sort.Slice(group, func(i, j int) bool {
