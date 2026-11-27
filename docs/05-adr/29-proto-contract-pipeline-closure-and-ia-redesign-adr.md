@@ -6,7 +6,8 @@
 - **关联与演进关系**：
   - 演进 [`ADR-19`](./19-proto-contract-ia-unbundling-and-four-workbenches-adr.md)（「Proto 契约治理」四工作台信息架构）；
   - 承接并闭环 [`ADR-26 (r4)`](./26-shared-git-cache-and-subsystem-proto-tree-adr.md)（共享缓存四段式流水线）、[`ADR-27 (r1)`](./27-proto-export-directory-and-normalization-governance-adr.md)（500+ 平台仓全量同步与导出目录治理）及 [`ADR-28`](./28-uservice-normalization-pg-flattening-and-compile-closure-adr.md)（`uService` 清洗转换、去 `/pg` 扁平化与 Stage C+ 全池编译收敛）；
-  - 关联 [`ADR-10`](./10-enhanced-proto-schema-file-management-adr.md)（单一生效 `.pb` 池）、[`ADR-16`](./16-multi-implementation-service-contract-adr.md)（接口库与多实现契约）与 [`ADR-24`](./24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md)（统一契约目录与五态雷达）。
+  - 关联 [`ADR-10`](./10-enhanced-proto-schema-file-management-adr.md)（单一生效 `.pb` 池）、[`ADR-16`](./16-multi-implementation-service-contract-adr.md)（接口库与多实现契约）与 [`ADR-24`](./24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md)（统一契约目录与五态雷达）；
+  - **正式废止**历史手工上传 `.pb` 描述集与在线文本框直编 `.proto` 录入入口，确立「所有契约 100% 源自平台 Git 代码仓缓存」的完全自封闭系统边界。
 
 ---
 
@@ -98,7 +99,7 @@ flowchart LR
 
 ```text
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
-│ [ ▶ 一键同步并发布（仅读缓存） ]    [ ⚙ 清洗规则配置 (rev.20) ]    [ 外部 .pb 兜底导入 ▾ ] │
+│ [ ▶ 一键同步并发布（仅读缓存） ]    [ ⚙ 清洗规则配置 (rev.20) ]                          │
 │ 实时任务条：全流程作业 #12 · 阶段 ③/④ 全池收敛中... [查看阶段明细]                         │
 ├──────────────────┬──────────────────┬──────────────────┬───────────────────────────────┤
 │ ① 缓存采集        │ ② 清洗与目录      │ ③ 全池收敛与仲裁  │ ④ 编译发布与生效池             │
@@ -122,7 +123,7 @@ flowchart LR
 | **① 缓存采集** | 掌握平台 500+ 代码仓的本地缓存就绪度与 Proto 探测覆盖率 | • 顶部操作：`扫描本地缓存`（默认 `CACHE_ONLY`）、`补拉缺失缓存`（仅当存在「本地未缓存」且 `shared_write_enabled=true` 时激活，带二次确认）、`重试失败仓`。<br>• 6 态汇总胶囊筛选：全部 / 含 Proto / 无 Proto / 本地未缓存 / 同步失败 / 已停用。<br>• **极简台账列**：代码仓（只读，含子系统与默认分支） \| 缓存与采集状态 \| 最近同步 Commit \| 操作（`启用/排除采集`、`单仓拉取`）。不再混杂清洗统计与导出路径。 |
 | **② 清洗与目录** | 把 `raw/` 原始文件清洗为合规 `.proto` 并规整 `clean/` 目录归属 | • 顶部规则摘要条：直观展示已启用的核心规则状态（如 `uService 自动转换`、`去 /pg 扁平化`、`默认 proto2`、`排除子系统: 3M`、`共享基座源: 2`），提供 `编辑规则与 JSON`、`载入现网预设`、`免网络全量重洗`（支持全局 Dry-Run 预览）。<br>• **异常优先排序**：默认将「含隔离文件 (`quarantined > 0`)」或「未分配子系统 (`_unassigned`)」的仓库置顶。<br>• 台账列：代码仓 \| 清洗后归属目录（标明是否覆写） \| 文件统计（采集 / 通过 / 隔离） \| 操作（`调整目录与规则`（含单仓 Dry-Run Diff）、`免网络重洗`、`查看 Raw/Clean 对比 ↗`）。 |
 | **③ 全池收敛与仲裁** | **收口合一**：将原分散在 3 处的协调报告、冲突仲裁与基线试编译全部内联到本阶段 | • 顶部动作：`重新全池收敛`（纯 Go 内存秒级重跑 R1~R4 + R7 + R8 并导出 `workspace/`）。<br>• **4 个内联子视图**（点击即可在当前页处置）：<br>  1. **同名冲突仲裁（R3 合并仲裁台）**：同屏展示所有冲突路径、`content_identical` 内容等价性标签、各候选独有符号差异（`symbol_diff`），**每组直接提供「设为权威提供方」操作按钮**，写回 `contract_proto_import_owners` 后直接提示「重新全池收敛」验证；<br>  2. **自动修复补丁（R7）**：列出路径重写/补全/切换详情，支持预览源码 Diff 并勾选「固化进清洗规则」；<br>  3. **编译隔离与根因诊断（R8）**：明确区分「根因错误文件」与「受牵连文件」，点击直接侧滑只读源码抽屉定位到 `#L<n>`；<br>  4. **自动收割基座（R4）**：展示从 `include/`、`ltcommon/` 等目录自动收割入池的共享基座清单。 |
-| **④ 编译发布与生效池** | **补齐最后一公里**：将收敛后的单仓编译为 `.pb`、过破坏性门禁、激活并刷新接口文档 | • **待发布变更队列**：展示上次发布后有变更的单仓清单、自动跳过的未变更仓数、以及「破坏性变更待审阻断」单仓（含 `BreakingRuleViolation` 与受影响下游服务清单）。<br>• 顶部操作：`编译并发布生效`（主按钮，支持按全部/指定子系统发布）；右上角折叠收口 `外部 .pb 兜底导入` 与 `在线编译` 入口（继承原 `SchemaUploadModal`）。<br>• **生效契约版本台账**：承接原 `/schemas` 资产表，按单仓/Bundle 展示当前生效版本、接口数、认领率、破坏性审计标记，支持查看详情抽屉、下载 `.pb`、停用或回滚至历史版本。 |
+| **④ 编译发布与生效池** | **补齐最后一公里**：将收敛后的单仓编译为 `.pb`、过破坏性门禁、激活并刷新接口文档 | • **待发布变更队列**：展示上次发布后有变更的单仓清单、自动跳过的未变更仓数、以及「破坏性变更待审阻断」单仓（含 `BreakingRuleViolation` 与受影响下游服务清单）。<br>• 顶部操作：`编译并发布生效`（主按钮，支持按全部/指定子系统发布）；**严格自封闭**，仅承接阶段 ③ 收敛后的平台 Git 仓产物，不提供任何外部 `.pb` 上传或 `.proto` 手工录入入口。<br>• **生效契约版本台账**：承接原 `/schemas` 资产表，按单仓/Bundle 展示当前生效版本、接口数、认领率、破坏性审计标记，支持查看详情抽屉、只读下载 `.pb`、停用或回滚至历史版本。 |
 
 ---
 
@@ -193,6 +194,16 @@ flowchart TD
 
 ---
 
+### 2.5 完全自封闭系统裁决：禁止外部 `.pb` 上传与外部 `.proto` 录入
+
+随着全平台 500+ 代码仓共享缓存与 `shared_base_sources` 共享基座收割机制完备，`code-contract` 已不再需要外部黑盒输入。为保证契约资产的**100% 可追溯性、编译坐标系一致性与零悬空血缘**，正式裁决系统进入**完全自封闭模式**：
+
+1. **契约来源唯一性红线**：所有进入生效池的 `ProtoSchema`、`ProtoOperation` 与接口参考文档，**必须 100% 源自平台 Git 代码仓缓存**（含 `shared_base_sources` 共享基座），经四阶段流水线确定性产出。**严禁**添加任何脱离平台 Git 代码仓的外部 `.pb` 二进制文件或外部 `.proto` 文本源码，从而彻底杜绝无源码锚点（`#L<n>` 悬空）、绕过静态规范与 MR 门禁、以及破坏 Stage C+ 单一坐标系的隐患。
+2. **前端全面下线手工录入入口**：彻底移除 [SchemaUploadModal.tsx](file:///home/fugui/codes/code-contract/frontend/src/pages/ProtoSchemaWorkbenchPage/SchemaUploadModal.tsx) 及界面中所有「上传描述集 (`.pb`)」「在线源码直编 (`.proto`)」「上传新版本」操作按钮；生效台账仅保留版本检视、历史回滚、停用与 `.pb` 只读下载导出能力。
+3. **后端写入口收口与清理**：下线外部手工入池路由 `POST /api/proto-schemas`（`UploadProtoSchema`）与 `POST /api/proto-schemas/compile`（`CompileProtoSchema`），仅保留由 `gitclient` 流水线与 MR 门禁内部调用的 `Registry.CompileAndSaveSchema` 路径（`SourceType` 收口为 Git 同步 / 流水线产物）。
+
+---
+
 ## 3. 关键方案权衡 (Alternatives Considered)
 
 | 决策维度 | 备选方案（未采纳） | 本 ADR 采纳方案 | 裁决理由 |
@@ -201,6 +212,7 @@ flowchart TD
 | **阶段 ④ 编译发布粒度** | 按平台子系统（`service_group`）聚合打包为单一大型 `.pb` 描述集 | **保留单仓 / Bundle 粒度编译与发布** | 完美延续现有 `GitProtoBundle` → `ProtoSchema` → `ServiceContractGroup` → `ModuleService` 血缘映射与破坏性变更按仓精准阻断能力；跨仓复杂依赖通过 Stage C+ 统一坐标系和阶段 ④ `BASE_LIB` 先行 + SCC 拓扑编译彻底解决，无需打破原有单仓资产模型。 |
 | **同步期是否顺带单仓编译** | 保持 `sync-all` 期间每仓同步后立即单仓编译 | **`sync-all` 默认 `skip_compile = true`，统一交由阶段 ④ 拓扑编译** | 未经 Stage C+ 全池对齐和 R4/R7 修复前，单仓盲编必然大面积报错且产生大量无效未激活草稿；解耦后 500+ 仓采集清洗与全池拓扑编译各司其职、速度与确定性大幅提升。 |
 | **冲突仲裁交互载体** | 保留在「源码浏览」右上角独立抽屉，与协调报告抽屉分离 | **收口并内联至流水线阶段 ③「同名冲突仲裁」视图** | 看差异（`content_identical` / `symbol_diff`）与拍板裁决（写入 `contract_proto_import_owners`）本身就是同一个原子决策动作，内联合一消除跨页来回切换。 |
+| **契约来源封闭性** | 保留「外部 `.pb` 上传」或「在线 `.proto` 直编」作为兜底入口 | **完全自封闭：所有 `.pb` 与文档 100% 源自平台 Git 仓，全面禁止外部上传/录入** | 平台已覆盖全部业务仓与共享基座缓存；外部 `.pb`/`.proto` 会导致源码血缘缺失、`#L<n>` 跳转失效、绕过静态门禁与坐标系污染，彻底下线可保证唯一真值源闭环。 |
 
 ---
 
@@ -223,7 +235,9 @@ flowchart TD
 - **`POST /api/proto-governance/publish-workspace`**（需 `contract_admin` 权限，记录 P1/P2 审计）：单独触发阶段 ④ 单仓拓扑编译发布（支持指定 `bundle_ids`、`force_recompile`、`sync` 同步/异步模式），通过 SSE `proto_publish.progress` 推送进度。
 - **`GET /api/proto-governance/publish-runs/latest`** & **`GET /api/proto-governance/publish-runs/:id`**：查询阶段 ④ 发布报告与逐仓破坏性阻断明细。
 - **`POST /api/proto-governance/publish-runs/:id/approve-breaking`**（需 `contract_admin` 权限，强制校验非空 `breaking_reason` 并写入 P1 审计）：对发布报告中被 `BLOCKED_BREAKING` 挂起的指定 `schema_ids` 执行人工放行激活与 `protodoc` 重建。
-- **既有接口增强**：`POST /api/git-repos/sync-all` 新增布尔字段 `skip_compile`（默认 `true`，向后兼容显式传 `false`）。
+- **既有接口增强与下线**：
+  - `POST /api/git-repos/sync-all` 新增布尔字段 `skip_compile`（默认 `true`，向后兼容显式传 `false`）；
+  - **下线外部入池接口**：移除 `POST /api/proto-schemas`（外部 `.pb` 手工上传）与 `POST /api/proto-schemas/compile`（外部 `.proto` 在线直编入池），确保契约写入完全自封闭。
 
 ### 4.3 前端模块重构清单
 - **`menu.ts` & `App.tsx`**：更新 4 菜单项（新增 `/proto-pipeline`），重构 `SchemasRouteWrapper` 与 `ProtoSourcesRouteWrapper` 实现全量旧深链无损重定向。
@@ -232,7 +246,8 @@ flowchart TD
   - `StageCollectPane`（阶段 ① 极简 500+ 仓采集台账）；
   - `StageNormalizePane`（阶段 ② 异常置顶清洗台账 + 规则摘要 + Dry-Run 抽屉复用）；
   - `StageReconcilePane`（阶段 ③ 内联 4 视图：合并 R3 差异与冲突裁决、R7 补丁固化、R8 根因诊断、R4 收割清单）；
-  - `StagePublishPane`（阶段 ④ 待发布队列 + 破坏性阻断人工放行面板 + 生效版本台账 + 外部 `.pb` 兜底导入入口）。
+  - `StagePublishPane`（阶段 ④ 待发布队列 + 破坏性阻断人工放行面板 + 生效版本只读台账/回滚/导出 `.pb`）。
+- **组件退场**：下线并删除 `SchemaUploadModal.tsx` 及各页面中的手工上传 `.pb` / 在线直编 `.proto` 触发按钮。
 - **`ProtoDocsWorkbenchPage` & `ProtoSourcesWorkbenchPage`**：前者整合 `reference / catalog / graph` 三视图；后者移除 `?view=governance` 与冲突仲裁抽屉，专注纯净只读源码与对比体验。
 
 ---
@@ -241,8 +256,8 @@ flowchart TD
 
 | 里程碑 | 核心交付范围 | 关键验收标准 (AC) |
 | :--- | :--- | :--- |
-| **M43：后端单仓拓扑发布引擎与一键流水线闭环** | 1. 新增 `contract_proto_publish_runs` 与 `contract_proto_pipeline_runs` 模型及 Bundle 指纹字段；<br/>2. 实现 `PublishWorkspaceBundles`（`BASE_LIB` 先行 + Tarjan SCC 拓扑序编译 + 输入指纹跳过 + 破坏性局部隔离挂起与 P1 放行 + `protodoc.RebuildForSchema` 联动）；<br/>3. `sync-all` 默认 `skip_compile=true` 解耦，新增 `/api/proto-pipeline/*` 与 `/api/proto-governance/publish-workspace` 系列接口及 SSE 事件。 | 1. 端到端集成测试（`testdb.SetupIsolatedDB`）：从本地 Git 沙箱缓存触发一键流水线，阶段 ①→②→③→④ 自动推进，最终 `contract_proto_schemas` 生效且 `/api/proto-docs/tree` 可立即查到服务与 RPC；<br/>2. 构造含破坏性变更仓 + 合规仓混编：合规仓正常更新文档，破坏性仓被局部挂起且填入 `breaking_reason` 后可独立放行；<br/>3. 未变更 Bundle 二次发布 100% 命中 `SKIPPED_UNCHANGED`。 |
-| **M44：`/proto-pipeline` 四阶段可视化流水线工作台** | 1. 实现顶部一键主路径与 4 阶段 Stepper + Stale 漂移提示；<br/>2. 实现阶段 ①~④ 专属内联工作区，完成 R3 报告与 `contract_proto_import_owners` 人工仲裁合一、阶段 ④ 破坏性放行与生效版本台账；<br/>3. 完成全部界面文案业务化（去黑话）改造。 | 1. 改规则或仲裁冲突后，`/overview` 与 Stepper 正确点亮对应阶段 Stale 提示；<br/>2. 阶段 ③ 内可直接查看 `symbol_diff` 并完成权威提供方指认，无需跳转其他页面或打开双层抽屉；<br/>3. `make lint`、`make test` 全绿，无硬编码色值或 `>= 1000` z-index 违规。 |
+| **M43：后端单仓拓扑发布引擎与一键流水线闭环** | 1. 新增 `contract_proto_publish_runs` 与 `contract_proto_pipeline_runs` 模型及 Bundle 指纹字段；<br/>2. 实现 `PublishWorkspaceBundles`（`BASE_LIB` 先行 + Tarjan SCC 拓扑序编译 + 输入指纹跳过 + 破坏性局部隔离挂起与 P1 放行 + `protodoc.RebuildForSchema` 联动）；<br/>3. `sync-all` 默认 `skip_compile=true` 解耦，新增 `/api/proto-pipeline/*` 与 `/api/proto-governance/publish-workspace` 系列接口及 SSE 事件，并下线外部手工入池路由（`POST /api/proto-schemas` 与 `/compile`）。 | 1. 端到端集成测试（`testdb.SetupIsolatedDB`）：从本地 Git 沙箱缓存触发一键流水线，阶段 ①→②→③→④ 自动推进，最终 `contract_proto_schemas` 生效且 `/api/proto-docs/tree` 可立即查到服务与 RPC；<br/>2. 构造含破坏性变更仓 + 合规仓混编：合规仓正常更新文档，破坏性仓被局部挂起且填入 `breaking_reason` 后可独立放行；<br/>3. 未变更 Bundle 二次发布 100% 命中 `SKIPPED_UNCHANGED`，外部上传与在线编译路由返回 404/已下线。 |
+| **M44：`/proto-pipeline` 四阶段可视化流水线工作台** | 1. 实现顶部一键主路径与 4 阶段 Stepper + Stale 漂移提示；<br/>2. 实现阶段 ①~④ 专属内联工作区，完成 R3 报告与 `contract_proto_import_owners` 人工仲裁合一、阶段 ④ 破坏性放行与生效版本台账；<br/>3. 移除 `SchemaUploadModal` 及全部外部 `.pb`/`.proto` 上传入口，并完成界面文案业务化（去黑话）改造。 | 1. 改规则或仲裁冲突后，`/overview` 与 Stepper 正确点亮对应阶段 Stale 提示；<br/>2. 阶段 ③ 内可直接查看 `symbol_diff` 并完成权威提供方指认，无需跳转其他页面或打开双层抽屉；<br/>3. 全站前端不存在任何外部 `.pb` 上传或 `.proto` 手工录入入口，`make lint`、`make test` 全绿。 |
 | **M45：四菜单 IA 切换、消费端聚合与全链路回归** | 1. 切换 `menu.ts` 为新 4 菜单；<br/>2. `/proto-docs` 合入 `服务依赖图` 并融合方法目录与五态雷达；`/proto-sources` 剥离治理运维杂项；<br/>3. 落地全量旧深链无损重定向及站内信链接更新。 | 1. 所有历史 URL（`/schemas`、`/schemas?tab=graph`、`/proto-sources?view=governance` 等）100% 无损跳转且保留 Query 与 `#L<n>`；<br/>2. 面向测试沙箱执行 E2E 验证，确认「一键同步并发布 → 接口文档可见 → 源码对比定位」全链路畅通。 |
 
 ---
@@ -263,5 +278,6 @@ flowchart TD
 4. **跨仓循环依赖（SCC `len > 1`）的编译落盘方式**：
    - **提案**：编译期合并同一虚拟文件集过 `protocompile`，落盘仍拆分为各单仓独立 `ProtoSchema`（包含其闭包必需描述信息）并作为同一事务批次激活，保持单仓台账与认领归属不变。
    - **待确认**：现网 309 个服务仓中若出现互引闭环，是否接受在多仓各自 `DescriptorBytes` 中携带闭环依赖文件描述符，还是强制要求架构上先拆解依赖环？
-5. **手工上传 `.pb` 与在线 `.proto` 直编的长期定位**：
-   - **提案**：将外部 `.pb` 上传保留在阶段 ④ 右上角「外部 `.pb` 兜底导入」（用于暂未纳入 Git 缓存的第三方黑盒二进制接口）；评估现有 `SchemaUploadModal` 中的「在线文本直编 `.proto`」是否继续保留或逐步收敛为仅 Git 源驱动。
+5. **存量历史手工上传 `.pb`（`MANUAL_UPLOAD`）记录的退场策略**：
+   - **提案**：已确认系统完全自封闭、禁止新增外部 `.pb`/`.proto` 后，对数据库中历史遗留的手工上传记录设为只读归档态（仅允许查看、停用或删除），待对应服务由平台 Git 流水线发布同名版本后平滑替换停用。
+   - **待确认**：升级上线时是否需要一键批量停用所有存量 `MANUAL_UPLOAD` 资产，还是随各仓首次 Git 发布自然覆盖过渡？
