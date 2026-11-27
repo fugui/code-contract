@@ -72,6 +72,10 @@ const (
 	ImportOwnerSourceManual  = "MANUAL"
 	ImportOwnerSourceBaseLib = "BASE_LIB"
 	ImportOwnerSourceAuto    = "AUTO"
+
+	PoolReconcileStatusRunning   = "RUNNING"
+	PoolReconcileStatusCompleted = "COMPLETED"
+	PoolReconcileStatusFailed    = "FAILED"
 )
 
 // GitRepo 实体 #20：公共 repositories 的 1:1 契约治理扩展表（code-bench 为唯一真值源）
@@ -401,9 +405,10 @@ type ProtoFile struct {
 	GitRepoID         uint64         `gorm:"not null;index:idx_contract_pfile_repo" json:"git_repo_id"`
 	BundleID          uint64         `gorm:"not null;index:idx_contract_pfile_bundle" json:"bundle_id"`
 	TargetSchemaName  string         `gorm:"size:128;not null;index:idx_contract_pfile_target_schema" json:"target_schema_name"`
-	Category          string         `gorm:"size:32;not null;default:'BUSINESS'" json:"category"` // BASE_LIB | BUSINESS | GATEWAY
-	FilePath          string         `gorm:"size:512;not null" json:"file_path"`                  // 逻辑导入路径（由 Stage C 填充）
-	RepoFilePath      string         `gorm:"size:768;not null;default:''" json:"repo_file_path"`  // 相对于 Git 仓库根目录的 POSIX 路径
+	Category          string         `gorm:"size:32;not null;default:'BUSINESS'" json:"category"`                      // BASE_LIB | BUSINESS | GATEWAY
+	FilePath          string         `gorm:"size:512;not null" json:"file_path"`                                       // 逻辑导入路径（由 Stage C/C+ 填充，统一去 /pg 坐标系）
+	RepoFilePath      string         `gorm:"size:768;not null;default:''" json:"repo_file_path"`                       // 相对于 Git 仓库根目录的 POSIX 路径（raw/ 保留）
+	CleanRelPath      string         `gorm:"column:clean_rel_path;size:512;not null;default:''" json:"clean_rel_path"` // clean/ 仓级导出相对路径（默认去 /pg）
 	PackageName       string         `gorm:"size:255;not null;default:''" json:"package_name"`
 	RawBlobSHA        string         `gorm:"column:raw_blob_sha;size:64;not null;default:''" json:"raw_blob_sha"`
 	NormalizerVersion string         `gorm:"column:normalizer_version;size:64;not null;default:''" json:"normalizer_version"`
@@ -411,6 +416,10 @@ type ProtoFile struct {
 	StatusReason      string         `gorm:"column:status_reason;type:text;not null;default:''" json:"status_reason"`
 	LineMapJSON       datatypes.JSON `gorm:"column:line_map_json;type:jsonb" json:"line_map_json,omitempty"`
 	IsExternalCopy    bool           `gorm:"column:is_external_copy;not null;default:false" json:"is_external_copy"`
+	IsUServiceSource  bool           `gorm:"column:is_uservice_source;not null;default:false" json:"is_uservice_source"`
+	InServiceClosure  bool           `gorm:"column:in_service_closure;not null;default:false" json:"in_service_closure"`
+	IsHarvestedBase   bool           `gorm:"column:is_harvested_base;not null;default:false" json:"is_harvested_base"`
+	AutoFixCount      int            `gorm:"column:auto_fix_count;not null;default:0" json:"auto_fix_count"`
 	ImportsJSON       datatypes.JSON `gorm:"column:imports_json;type:jsonb;not null;default:'[]'" json:"imports_json"`
 	SymbolsJSON       datatypes.JSON `gorm:"column:symbols_json;type:jsonb;not null;default:'[]'" json:"symbols_json"`
 	ContentSHA256     string         `gorm:"column:content_sha256;size:64;not null;default:''" json:"content_sha256"` // 清理后内容哈希
@@ -507,6 +516,39 @@ type ProtoGovernanceConfig struct {
 
 func (ProtoGovernanceConfig) TableName() string {
 	return config.TablePrefix + "proto_governance_configs"
+}
+
+// ProtoPoolReconcileRun 实体 #40：全池 Stage C+ 编译收敛与 workspace/ 导出运行记录表 (ADR-28 §4)
+type ProtoPoolReconcileRun struct {
+	ID                      uint64         `gorm:"primaryKey;autoIncrement" json:"id"`
+	Status                  string         `gorm:"size:24;not null;default:'RUNNING';index:idx_contract_pool_reconcile_status" json:"status"` // RUNNING | COMPLETED | FAILED
+	TriggeredBy             string         `gorm:"size:128;not null;default:''" json:"triggered_by"`
+	ConfigRevision          int            `gorm:"not null;default:0" json:"config_revision"`
+	ConfigSHA256            string         `gorm:"column:config_sha256;size:64;not null;default:''" json:"config_sha256"`
+	StripPGSegment          bool           `gorm:"column:strip_pg_segment;not null;default:true" json:"strip_pg_segment"`
+	ClosureOnly             bool           `gorm:"column:closure_only;not null;default:true" json:"closure_only"`
+	TotalFiles              int            `gorm:"not null;default:0" json:"total_files"`
+	ServiceCount            int            `gorm:"not null;default:0" json:"service_count"`
+	ClosureFileCount        int            `gorm:"not null;default:0" json:"closure_file_count"`
+	HarvestedBaseCount      int            `gorm:"not null;default:0" json:"harvested_base_count"`
+	LogicalPathCount        int            `gorm:"not null;default:0" json:"logical_path_count"`
+	ConflictCount           int            `gorm:"not null;default:0" json:"conflict_count"`
+	AutoFixCount            int            `gorm:"not null;default:0" json:"auto_fix_count"`
+	QuarantinedCount        int            `gorm:"not null;default:0" json:"quarantined_count"`
+	BareImportExpandedCount int            `gorm:"not null;default:0" json:"bare_import_expanded_count"`
+	PostStripCollisionCount int            `gorm:"not null;default:0" json:"post_strip_collision_count"`
+	WorkspaceVersion        string         `gorm:"size:128;not null;default:''" json:"workspace_version"`
+	ReportJSON              datatypes.JSON `gorm:"column:report_json;type:jsonb;not null;default:'{}'" json:"report_json"`
+	ErrorMessage            string         `gorm:"type:text;not null;default:''" json:"error_message"`
+	DurationMs              int64          `gorm:"not null;default:0" json:"duration_ms"`
+	StartedAt               time.Time      `gorm:"not null" json:"started_at"`
+	FinishedAt              *time.Time     `json:"finished_at,omitempty"`
+	CreatedAt               time.Time      `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt               time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
+}
+
+func (ProtoPoolReconcileRun) TableName() string {
+	return config.TablePrefix + "proto_pool_reconcile_runs"
 }
 
 // PreMigrateADR26R4Orphans 在 AutoMigrate 收口 platform_repo_id NOT NULL 前归并存量手工仓与清理孤儿记录。
@@ -705,7 +747,11 @@ BEGIN
 	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_proto_sync_job_status') THEN
 		ALTER TABLE contract_proto_sync_jobs ADD CONSTRAINT chk_contract_proto_sync_job_status CHECK (status IN ('RUNNING', 'COMPLETED', 'PARTIAL_FAILED', 'FAILED'));
 	END IF;
+	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_pool_reconcile_status') THEN
+		ALTER TABLE contract_proto_pool_reconcile_runs ADD CONSTRAINT chk_contract_pool_reconcile_status CHECK (status IN ('RUNNING', 'COMPLETED', 'FAILED'));
+	END IF;
 END $$;`,
+		`CREATE INDEX IF NOT EXISTS idx_contract_pfile_closure ON contract_proto_files (in_service_closure, is_deleted);`,
 		`UPDATE contract_git_repos SET source_mode = 'PLATFORM_SHARED' WHERE source_mode <> 'PLATFORM_SHARED' OR source_mode = '' OR source_mode IS NULL;`,
 		`UPDATE contract_git_repos SET sync_strategy = 'LOCAL_CACHE_ONLY' WHERE sync_strategy = '' OR sync_strategy IS NULL;`,
 		`UPDATE contract_git_repos SET proto_status = 'HAS_PROTO' WHERE (proto_status = '' OR proto_status IS NULL OR proto_status = 'PENDING') AND EXISTS (SELECT 1 FROM contract_proto_files f WHERE f.git_repo_id = contract_git_repos.id AND f.is_deleted = false);`,

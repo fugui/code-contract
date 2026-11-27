@@ -274,6 +274,40 @@ func RunSyncAllJob(
 		return nil, err
 	}
 
+	var govDoc GovernanceConfigDoc
+	if snap, gErr := LoadActiveGovernanceConfig(ctx, db); gErr == nil && snap != nil {
+		govDoc = snap.Doc
+	} else {
+		govDoc = DefaultGovernanceConfig()
+	}
+
+	var filteredTargets []models.GitRepo
+	if len(govDoc.Global.ExcludeSubsystems) > 0 || len(govDoc.Global.ExcludeRepoPatterns) > 0 {
+		var plats []models.Repository
+		_ = db.WithContext(ctx).Select("id, service_group").Find(&plats).Error
+		platSub := make(map[uint64]string, len(plats))
+		for _, p := range plats {
+			platSub[uint64(p.ID)] = p.ServiceGroup
+		}
+		treeMgr := NewProtoTreeManager(cfg.Storage.GetProtosDir())
+		for _, r := range targets {
+			sub := platSub[r.PlatformRepoID]
+			if sub == "" {
+				sub = r.SubsystemSlug
+			}
+			if ShouldExcludeRepoByR0(sub, r.Name, govDoc.Global) {
+				_ = db.WithContext(ctx).Model(&r).Updates(map[string]any{
+					"sync_enabled": false,
+					"proto_status": models.GitRepoProtoStatusExcluded,
+				}).Error
+				treeMgr.RemoveRepoTree(TreeKindClean, r.ID)
+				continue
+			}
+			filteredTargets = append(filteredTargets, r)
+		}
+		targets = filteredTargets
+	}
+
 	filterBytes, _ := json.Marshal(map[string]any{
 		"department_id":   req.DepartmentID,
 		"service_group":   strings.TrimSpace(req.ServiceGroup),

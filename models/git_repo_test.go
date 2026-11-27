@@ -424,4 +424,25 @@ func TestADR26R4_MigrationAndUniquePlatformRepoID(t *testing.T) {
 	if preservedSchema.GitRepoID != nil {
 		t.Fatalf("expected orphan schema git_repo_id nullified, got %v", *preservedSchema.GitRepoID)
 	}
+
+	// 8. 校验 ADR-28 M40 新增字段 (clean_rel_path/is_uservice_source/in_service_closure/is_harvested_base/auto_fix_count) 与 ProtoPoolReconcileRun 表约束
+	run := ProtoPoolReconcileRun{
+		Status:         PoolReconcileStatusCompleted,
+		TriggeredBy:    "admin",
+		ConfigRevision: 1,
+		StripPGSegment: true,
+		ClosureOnly:    true,
+		TotalFiles:     10,
+		ServiceCount:   3,
+		StartedAt:      time.Now().UTC(),
+	}
+	if err := db.Create(&run).Error; err != nil {
+		t.Fatalf("创建 ProtoPoolReconcileRun 失败: %v", err)
+	}
+	if err := db.Create(&ProtoPoolReconcileRun{
+		Status:    "INVALID_STATUS",
+		StartedAt: time.Now().UTC(),
+	}).Error; err == nil {
+		t.Fatalf("非法 status 应被 chk_contract_pool_reconcile_status 拦截")
+	}
 }

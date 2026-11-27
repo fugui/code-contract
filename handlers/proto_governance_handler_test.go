@@ -65,7 +65,8 @@ func TestProtoExportGovernance_API_Collisions_DryRun_ApplyAndAudit(t *testing.T)
 		"pg/legacy/alpha.proto": "#include \"legacy.h\"\r\npackage alpha-core/v1;\r\nmessage AlphaReq { string id = 1; }\r\n",
 	})
 	bareBeta := initTestBareRepoForHandler(t, map[string]string{
-		"pg/beta.proto": "syntax = \"proto3\";\npackage beta.v1;\nmessage BetaRsp { bool ok = 1; }\n",
+		"pg/beta.proto":     "syntax = \"proto3\";\npackage beta.v1;\nmessage BetaRsp { bool ok = 1; }\n",
+		"pg/beta_svc.proto": "package beta.v1;\nimport \"pg/beta.proto\";\nuService BetaService {\n  interface Check(BetaRsp) return (BetaRsp) (timeout:1000);\n}\n",
 	})
 
 	platAlpha := commonModels.Repository{
@@ -269,6 +270,28 @@ func TestProtoExportGovernance_API_Collisions_DryRun_ApplyAndAudit(t *testing.T)
 		}
 		if !strings.Contains(string(cleanData), `syntax = "proto3";`) || !strings.Contains(string(cleanData), "AlphaCleanReq") {
 			t.Fatalf("expected updated global regex_rewrites & proto3 in clean alpha.proto, got:\n%s", string(cleanData))
+		}
+	}
+
+	// Verify raw/ keeps pg/ while clean/ strips /pg by default for beta
+	if _, err := os.Stat(filepath.Join(protosDir, "raw", "pay-dept", "repo-beta", "pg", "beta_svc.proto")); err != nil {
+		t.Fatalf("expected raw/beta_svc.proto with pg/: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(protosDir, "clean", "pay-dept", "repo-beta", "beta_svc.proto")); err != nil {
+		t.Fatalf("expected clean/beta_svc.proto flattened without /pg: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(protosDir, "clean", "pay-dept", "repo-beta", "pg", "beta_svc.proto")); !os.IsNotExist(err) {
+		t.Fatalf("clean/ must not contain standalone pg/ dir when strip_pg_segment=true")
+	}
+
+	// Verify GET /api/proto-files?is_uservice_source=true returns beta_svc.proto with clean_rel_path
+	{
+		req := httptest.NewRequest(http.MethodGet, "/api/proto-files?is_uservice_source=true", nil)
+		req.Header.Set("Authorization", "Bearer "+viewerJWT)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"clean_rel_path":"beta_svc.proto"`) || !strings.Contains(w.Body.String(), `"is_uservice_source":true`) {
+			t.Fatalf("GET /proto-files?is_uservice_source=true unexpected: %d %s", w.Code, w.Body.String())
 		}
 	}
 

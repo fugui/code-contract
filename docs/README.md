@@ -69,8 +69,8 @@ docs/
 │   ├── 39-m37-ssot-and-bulk-sync-engine.md                            # 【M37 作战卡 | ✅ 已交付】平台唯一真值源收口与 500+ 仓全量异步同步引擎 (ADR-26 r4 / ADR-27)
 │   ├── 40-m38-export-dir-governance-and-stage-b-normalizer.md         # 【M38 作战卡 | ✅ 已交付】方案 A 导出目录治理与 Stage B 清理规则框架 (ADR-26 r4 / ADR-27)
 │   ├── 41-m39-dual-subtab-ia-and-governance-ledger.md                 # 【M39 作战卡 | ✅ 已交付】双子标签 IA、树懒加载与 500+ 仓前端治理台账 (ADR-26 r4 / ADR-27)
-│   ├── 42-m40-uservice-normalizer-v2-and-pg-flattening.md             # 【M40 作战卡 | 🔄 进行中】Stage B rule-normalizer/v2、uService 转换与 clean 去 /pg 扁平化 (ADR-28)
-│   ├── 43-m41-shared-base-harvest-and-pool-stage-c-plus.md            # 【M41 作战卡 | 📋 待实施】R4 共享基座入池与全池 Stage C+ 协调 R1/R2/R3 (ADR-28)
+│   ├── 42-m40-uservice-normalizer-v2-and-pg-flattening.md             # 【M40 作战卡 | ✅ 已交付】Stage B rule-normalizer/v2、uService 转换与 clean 去 /pg 扁平化 (ADR-28)
+│   ├── 43-m41-shared-base-harvest-and-pool-stage-c-plus.md            # 【M41 作战卡 | 🔄 进行中】R4 共享基座入池与全池 Stage C+ 协调 R1/R2/R3 (ADR-28)
 │   └── 44-m42-protocompile-r7-r8-workspace-and-console-closure.md     # 【M42 作战卡 | 📋 待实施】纯 Go protocompile R7 自愈、R8 隔离、workspace 导出与治理台闭环 (ADR-28)
 ├── 05-adr/          # 架构决策记录 (ADR)：重大技术选型与权衡记录 (Architecture Decision Records)
 │   ├── 01-microfrontend-and-table-prefix-isolation.md                  # ADR-01：微前端集成、共享库表前缀隔离与 TDD 测试策略

@@ -32,6 +32,7 @@ type ProtoFileDTO struct {
 	Category          string    `json:"category"`
 	FilePath          string    `json:"file_path"`
 	RepoFilePath      string    `json:"repo_file_path,omitempty"`
+	CleanRelPath      string    `json:"clean_rel_path,omitempty"`
 	PackageName       string    `json:"package_name"`
 	LatestVersion     int       `json:"latest_version"`
 	LatestCommitSHA   string    `json:"latest_commit_sha,omitempty"`
@@ -43,6 +44,10 @@ type ProtoFileDTO struct {
 	StatusReason      string    `json:"status_reason,omitempty"`
 	NormalizerVersion string    `json:"normalizer_version,omitempty"`
 	IsExternalCopy    bool      `json:"is_external_copy,omitempty"`
+	IsUServiceSource  bool      `json:"is_uservice_source,omitempty"`
+	InServiceClosure  bool      `json:"in_service_closure,omitempty"`
+	IsHarvestedBase   bool      `json:"is_harvested_base,omitempty"`
+	AutoFixCount      int       `json:"auto_fix_count,omitempty"`
 	RawBlobSHA        string    `json:"raw_blob_sha,omitempty"`
 	SourceOrigin      string    `json:"source_origin"`
 	LineCount         int       `json:"line_count"`

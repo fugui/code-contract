@@ -52,6 +52,7 @@ func buildGitProtoFileDTO(
 		Category:          pf.Category,
 		FilePath:          pf.FilePath,
 		RepoFilePath:      pf.RepoFilePath,
+		CleanRelPath:      pf.CleanRelPath,
 		PackageName:       pf.PackageName,
 		LatestVersion:     pf.LatestVersionNum,
 		LatestCommitSHA:   pf.LatestCommitSHA,
@@ -63,6 +64,10 @@ func buildGitProtoFileDTO(
 		StatusReason:      pf.StatusReason,
 		NormalizerVersion: pf.NormalizerVersion,
 		IsExternalCopy:    pf.IsExternalCopy,
+		IsUServiceSource:  pf.IsUServiceSource,
+		InServiceClosure:  pf.InServiceClosure,
+		IsHarvestedBase:   pf.IsHarvestedBase,
+		AutoFixCount:      pf.AutoFixCount,
 		RawBlobSHA:        pf.RawBlobSHA,
 		SourceOrigin:      origin,
 		LineCount:         pf.LineCount,
@@ -250,6 +255,21 @@ func ListProtoFiles(c *gin.Context) {
 	}
 	if incExt := strings.TrimSpace(c.Query("include_external_copy")); incExt == "false" {
 		q = q.Where("is_external_copy = false")
+	}
+	if closureRaw := strings.TrimSpace(c.Query("in_service_closure")); closureRaw != "" {
+		if b, bErr := strconv.ParseBool(closureRaw); bErr == nil {
+			q = q.Where("in_service_closure = ?", b)
+		}
+	}
+	if usvcRaw := strings.TrimSpace(c.Query("is_uservice_source")); usvcRaw != "" {
+		if b, bErr := strconv.ParseBool(usvcRaw); bErr == nil {
+			q = q.Where("is_uservice_source = ?", b)
+		}
+	}
+	if baseRaw := strings.TrimSpace(c.Query("is_harvested_base")); baseRaw != "" {
+		if b, bErr := strconv.ParseBool(baseRaw); bErr == nil {
+			q = q.Where("is_harvested_base = ?", b)
+		}
 	}
 	if search != "" {
 		like := "%" + search + "%"

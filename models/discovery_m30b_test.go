@@ -22,10 +22,10 @@ func TestM30bSchema_CheckI1_UnclaimedInvariants_AndPlacementDerivation(t *testin
 		t.Fatalf("二次幂等 SetupWithDB 失败: %v", err)
 	}
 
-	// 2. 验证 39 张核心业务表 + contract_settings = 40 表全部注册且存在
+	// 2. 验证 40 张核心业务表 + contract_settings = 41 表全部注册且存在
 	bizTables := BusinessTableNames()
-	if len(bizTables) != 39 {
-		t.Fatalf("BusinessTableNames 期望 39 张核心业务表，实际为 %d: %v", len(bizTables), bizTables)
+	if len(bizTables) != 40 {
+		t.Fatalf("BusinessTableNames 期望 40 张核心业务表，实际为 %d: %v", len(bizTables), bizTables)
 	}
 
 	allModels := []tabler{
@@ -35,7 +35,7 @@ func TestM30bSchema_CheckI1_UnclaimedInvariants_AndPlacementDerivation(t *testin
 		RecordingSession{}, TrafficRecord{}, ReplayTask{}, ReplayItem{},
 		GoldenSuite{}, GoldenSuiteItem{}, TopologyLayout{},
 		GitRepo{}, GitProtoBundle{}, ProtoFile{}, ProtoFileVersion{}, ProtoDocSymbol{}, ProtoImportOwner{},
-		ProtoSyncJob{}, ProtoGovernanceConfig{},
+		ProtoSyncJob{}, ProtoGovernanceConfig{}, ProtoPoolReconcileRun{},
 		CheckRule{}, VocabularyTerm{}, CheckReport{}, CheckViolation{}, MRCheckRun{}, Notification{},
 		DiscoverySnapshot{}, ServicePlacement{}, ProcessDependency{}, DependencyDecision{}, AttributionJob{}, MigBackup{},
 		ModuleSetting{},

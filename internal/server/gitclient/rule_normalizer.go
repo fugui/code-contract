@@ -17,7 +17,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const ruleNormalizerBaseVersion = "rule-normalizer/v1"
+const ruleNormalizerBaseVersion = "rule-normalizer/v2"
 
 // RuleBasedNormalizer 实现 ADR-27 三层叠加 Stage B 确定性清理整顿器。
 type RuleBasedNormalizer struct {
@@ -59,6 +59,9 @@ type trackedLine struct {
 type effectiveRepoRules struct {
 	enabled          map[string]bool
 	defaultSyntax    string
+	stripPGSegment   bool
+	disableStripPG   bool
+	implicitImports  map[string]string
 	stripPrefixes    []string
 	pathRewrites     map[string]string
 	regexRewrites    []RegexRewriteRule
@@ -73,7 +76,9 @@ var (
 	preprocessorRegex  = regexp.MustCompile(`^\s*#\s*(include|define|undef|ifdef|ifndef|if|else|elif|endif|pragma)\b`)
 	dophiMacroLineRe   = regexp.MustCompile(`^\s*(DOPHI_DECLARE_MESSAGE|DOPHI_EXPORT|DECLARE_MSG|END_DECLARE_MSG)\b.*$`)
 	packageStmtRegex   = regexp.MustCompile(`^(\s*package\s+)([^;]+)(;\s*(?://.*)?)$`)
-	importStmtRegex    = regexp.MustCompile(`^(\s*import\s+(?:public\s+|weak\s+)?)["']([^"']+)["'](\s*;\s*(?://.*)?)$`)
+	importStmtRegex    = regexp.MustCompile(`^(\s*import\s+(?:public\s+|weak\s+)?)["']([^"']+)["'](\s*;?\s*(?://.*)?)$`)
+	proto2RequiredRe   = regexp.MustCompile(`\brequired\s+[A-Za-z_][A-Za-z0-9_.]*\s+[A-Za-z_][A-Za-z0-9_]*\s*=`)
+	proto2DefaultOptRe = regexp.MustCompile(`\[\s*[^\]]*\bdefault\s*=`)
 	invalidPkgCharRe   = regexp.MustCompile(`[^A-Za-z0-9_.]`)
 	collapseDotPkgRe   = regexp.MustCompile(`\.{2,}`)
 	trailingCommaBOMRe = regexp.MustCompile(`\x{FEFF}`)
@@ -97,8 +102,15 @@ func (n *RuleBasedNormalizer) resolveRepoRules(repo models.GitRepo) effectiveRep
 	}
 
 	syn := strings.TrimSpace(doc.Global.DefaultSyntax)
-	if syn != "proto2" && syn != "proto3" {
-		syn = "proto3"
+	if syn != "auto" && syn != "proto2" && syn != "proto3" {
+		syn = "auto"
+	}
+
+	stripPG := doc.Global.EffectiveStripPGSegment() && enabled[NormRulePGSegmentFlatten]
+
+	implicitImports := make(map[string]string, len(doc.Global.ImplicitSymbolImports))
+	for k, v := range doc.Global.ImplicitSymbolImports {
+		implicitImports[k] = v
 	}
 
 	importRewrites := make(map[string]string, len(doc.Global.ImportRewrites))
@@ -110,8 +122,12 @@ func (n *RuleBasedNormalizer) resolveRepoRules(repo models.GitRepo) effectiveRep
 	repoCfg := ParseRepoNormalizeConfig(repo.RepoNormalizeConfigJSON)
 	stripPrefixes := repo.StripPrefixes()
 	pathRewrites := repo.PathRewrites()
+	disableStripPG := repoCfg.DisableStripPGSegment
 
 	if spec, ok := matchRepoSpecInDoc(repo, &doc); ok {
+		if spec.DisableStripPGSegment {
+			disableStripPG = true
+		}
 		for _, d := range spec.DisabledRules {
 			enabled[strings.TrimSpace(d)] = false
 		}
@@ -157,6 +173,9 @@ func (n *RuleBasedNormalizer) resolveRepoRules(repo models.GitRepo) effectiveRep
 	return effectiveRepoRules{
 		enabled:          enabled,
 		defaultSyntax:    syn,
+		stripPGSegment:   stripPG,
+		disableStripPG:   disableStripPG,
+		implicitImports:  implicitImports,
 		stripPrefixes:    stripPrefixes,
 		pathRewrites:     pathRewrites,
 		regexRewrites:    regexRewrites,
@@ -385,28 +404,44 @@ func (n *RuleBasedNormalizer) normalizeSingleFile(rp string, raw []byte, rules e
 		}
 	}
 
-	// NORM-003 & NORM-005: 逐行规范 package 标识符与重写 import 路径
+	cleanRelPath := rp
+	if mapped, mErr := ApplyIntraRepoPathMappingWithPG(rp, rules.stripPrefixes, rules.pathRewrites, rules.stripPGSegment && !rules.disableStripPG); mErr == nil && mapped != "" {
+		cleanRelPath = mapped
+	}
+
+	// NORM-006: 注释感知 uService 状态机转换 + 块内 import 提升 + 隐式依赖补齐
+	var isUService bool
+	var uDiags []NormalizeDiagnostic
+	lines, isUService, uDiags = convertUServiceLines(rp, lines, rules.stripPGSegment, rules.implicitImports, rules.enabled[NormRuleUServiceConvert])
+	if len(uDiags) > 0 {
+		diags = append(diags, uDiags...)
+	}
+
+	// NORM-003, NORM-005 & NORM-007: 逐行规范 package (含去重)、重写 import (含单引号/漏分号) 与去 /pg 路径对齐
 	inBlockComment := false
+	seenPackage := false
 	for i := range lines {
-		trimmed := strings.TrimSpace(lines[i].text)
-		if inBlockComment {
-			if strings.Contains(trimmed, "*/") {
-				inBlockComment = false
-			}
-			continue
-		}
-		if strings.HasPrefix(trimmed, "/*") {
-			if !strings.Contains(trimmed, "*/") {
-				inBlockComment = true
-			}
-			continue
-		}
-		if strings.HasPrefix(trimmed, "//") {
+		code, nextInBlk := stripLineCommentsAndTrackBlock(lines[i].text, inBlockComment)
+		inBlockComment = nextInBlk
+		if strings.TrimSpace(code) == "" {
 			continue
 		}
 
 		if rules.enabled[NormRulePackageNormalize] {
 			if m := packageStmtRegex.FindStringSubmatch(lines[i].text); len(m) == 4 {
+				if seenPackage {
+					lines[i].text = "// " + lines[i].text + " // dedup"
+					diags = append(diags, NormalizeDiagnostic{
+						RepoFilePath: rp,
+						RuleID:       NormRulePackageNormalize,
+						Severity:     "INFO",
+						Line:         i + 1,
+						Column:       1,
+						Message:      "检测到重复 package 声明，已自动注释去重",
+					})
+					continue
+				}
+				seenPackage = true
 				origPkg := strings.TrimSpace(m[2])
 				normPkg := normalizePackageIdent(origPkg)
 				if normPkg != "" && normPkg != origPkg {
@@ -423,30 +458,52 @@ func (n *RuleBasedNormalizer) normalizeSingleFile(rp string, raw []byte, rules e
 			}
 		}
 
-		if rules.enabled[NormRuleImportRewrite] {
+		if rules.enabled[NormRuleImportRewrite] || rules.stripPGSegment {
 			if m := importStmtRegex.FindStringSubmatch(lines[i].text); len(m) == 4 {
 				origImp := m[2]
-				rewrittenImp := n.rewriteImportPath(origImp, rules)
-				if rewrittenImp != "" && rewrittenImp != origImp {
-					lines[i].text = fmt.Sprintf(`%s"%s"%s`, m[1], rewrittenImp, m[3])
+				targetImp := origImp
+				if rules.enabled[NormRuleImportRewrite] {
+					if rw := n.rewriteImportPath(origImp, rules); rw != "" {
+						targetImp = rw
+					}
+				}
+				if rules.stripPGSegment && !IsWellKnownProtoImport(targetImp) {
+					targetImp = StripPGPathSegment(targetImp)
+				}
+				suffix := m[3]
+				if !strings.Contains(suffix, ";") {
+					if commentIdx := strings.Index(suffix, "//"); commentIdx >= 0 {
+						suffix = "; " + strings.TrimSpace(suffix[commentIdx:])
+					} else {
+						suffix = ";" + suffix
+					}
+				}
+				rebuiltLine := fmt.Sprintf(`%s"%s"%s`, m[1], targetImp, suffix)
+				if rebuiltLine != lines[i].text {
+					lines[i].text = rebuiltLine
+					ruleID := NormRuleImportRewrite
+					if targetImp == StripPGPathSegment(origImp) && targetImp != origImp {
+						ruleID = NormRulePGSegmentFlatten
+					}
 					diags = append(diags, NormalizeDiagnostic{
 						RepoFilePath: rp,
-						RuleID:       NormRuleImportRewrite,
+						RuleID:       ruleID,
 						Severity:     "INFO",
 						Line:         i + 1,
 						Column:       1,
-						Message:      fmt.Sprintf("已重写 import 路径: %s -> %s", origImp, rewrittenImp),
+						Message:      fmt.Sprintf("已规范化 import: %s -> %s", origImp, targetImp),
 					})
 				}
 			}
 		}
 	}
 
-	// NORM-002: 缺失 syntax = "proto2/3"; 头则自动补齐（幂等）
+	// NORM-002: 缺失 syntax = "proto2/3"; 头则自动补齐（支持 auto 智能识别，幂等）
 	if rules.enabled[NormRuleSyntaxHeaderFix] && !hasSyntaxDeclaration(lines) {
+		effectiveSyn := resolveEffectiveDefaultSyntax(rules.defaultSyntax, isUService, lines)
 		insertIdx := findHeaderInsertIndex(lines)
 		syntaxTL := trackedLine{
-			text:    fmt.Sprintf(`syntax = "%s";`, rules.defaultSyntax),
+			text:    fmt.Sprintf(`syntax = "%s";`, effectiveSyn),
 			rawLine: 1,
 		}
 		if insertIdx < len(lines) && lines[insertIdx].rawLine > 0 {
@@ -463,7 +520,7 @@ func (n *RuleBasedNormalizer) normalizeSingleFile(rp string, raw []byte, rules e
 			Severity:     "INFO",
 			Line:         insertIdx + 1,
 			Column:       1,
-			Message:      fmt.Sprintf("缺失 syntax 声明，已补齐 syntax = %q", rules.defaultSyntax),
+			Message:      fmt.Sprintf("缺失 syntax 声明，已补齐 syntax = %q", effectiveSyn),
 		})
 	}
 
@@ -490,13 +547,15 @@ func (n *RuleBasedNormalizer) normalizeSingleFile(rp string, raw []byte, rules e
 	}
 
 	return NormalizedFileResult{
-		RepoFilePath:   rp,
-		CleanContent:   cleanBytes,
-		CleanSHA256:    hex.EncodeToString(sum[:]),
-		LineCount:      countNormalizedLines(finalText),
-		LinePreserving: linePreserving,
-		LineMap:        lineMap,
-		Diagnostics:    diags,
+		RepoFilePath:     rp,
+		CleanRelPath:     cleanRelPath,
+		IsUServiceSource: isUService,
+		CleanContent:     cleanBytes,
+		CleanSHA256:      hex.EncodeToString(sum[:]),
+		LineCount:        countNormalizedLines(finalText),
+		LinePreserving:   linePreserving,
+		LineMap:          lineMap,
+		Diagnostics:      diags,
 	}
 }
 
@@ -541,7 +600,7 @@ func (n *RuleBasedNormalizer) rewriteImportPath(orig string, rules effectiveRepo
 	if rep, ok := rules.importRewrites[orig]; ok && strings.TrimSpace(rep) != "" {
 		return rep
 	}
-	if mapped, err := ApplyIntraRepoPathMapping(cur, rules.stripPrefixes, rules.pathRewrites); err == nil && mapped != "" {
+	if mapped, err := ApplyIntraRepoPathMappingWithPG(cur, rules.stripPrefixes, rules.pathRewrites, rules.stripPGSegment); err == nil && mapped != "" {
 		if rep, ok := rules.importRewrites[mapped]; ok && strings.TrimSpace(rep) != "" {
 			return rep
 		}
@@ -553,6 +612,35 @@ func (n *RuleBasedNormalizer) rewriteImportPath(orig string, rules effectiveRepo
 		}
 	}
 	return cur
+}
+
+func resolveEffectiveDefaultSyntax(mode string, isUService bool, lines []trackedLine) string {
+	switch strings.TrimSpace(mode) {
+	case "proto2":
+		return "proto2"
+	case "proto3":
+		return "proto3"
+	default:
+		if isUService || hasProto2SyntaxTokens(lines) {
+			return "proto2"
+		}
+		return "proto3"
+	}
+}
+
+func hasProto2SyntaxTokens(lines []trackedLine) bool {
+	inBlk := false
+	for _, tl := range lines {
+		code, nextBlk := stripLineCommentsAndTrackBlock(tl.text, inBlk)
+		inBlk = nextBlk
+		if strings.TrimSpace(code) == "" {
+			continue
+		}
+		if proto2RequiredRe.MatchString(code) || proto2DefaultOptRe.MatchString(code) {
+			return true
+		}
+	}
+	return false
 }
 
 func hasSyntaxDeclaration(lines []trackedLine) bool {
@@ -610,40 +698,45 @@ func findHeaderInsertIndex(lines []trackedLine) int {
 
 // DryRunPathMapping 展示单文件在工作区导出后的路径重映射。
 type DryRunPathMapping struct {
-	RawPath        string   `json:"raw_path"`
-	CleanPath      string   `json:"clean_path"`
-	RawSyntaxOK    bool     `json:"raw_syntax_ok"`
-	CleanSyntaxOK  bool     `json:"clean_syntax_ok"`
-	Status         string   `json:"status"` // NORMALIZED | QUARANTINED | EXEMPT
-	StatusReason   string   `json:"status_reason,omitempty"`
-	AppliedRules   []string `json:"applied_rules,omitempty"`
-	LinePreserving bool     `json:"line_preserving"`
-	UnifiedDiff    string   `json:"unified_diff,omitempty"`
+	RawPath          string      `json:"raw_path"`
+	CleanPath        string      `json:"clean_path"`
+	LogicalPath      string      `json:"logical_path,omitempty"`
+	IsUServiceSource bool        `json:"is_uservice_source,omitempty"`
+	RawSyntaxOK      bool        `json:"raw_syntax_ok"`
+	CleanSyntaxOK    bool        `json:"clean_syntax_ok"`
+	Status           string      `json:"status"` // NORMALIZED | QUARANTINED | EXEMPT
+	StatusReason     string      `json:"status_reason,omitempty"`
+	AppliedRules     []string    `json:"applied_rules,omitempty"`
+	LinePreserving   bool        `json:"line_preserving"`
+	LineMap          map[int]int `json:"line_map,omitempty"`
+	UnifiedDiff      string      `json:"unified_diff,omitempty"`
 }
 
 // RepoGovernanceDryRunResult 为单仓零网络、零写盘试算结果。
 type RepoGovernanceDryRunResult struct {
-	GitRepoID          uint64                   `json:"git_repo_id"`
-	RepoName           string                   `json:"repo_name"`
-	BeforeTargetDir    string                   `json:"before_target_dir"`
-	AfterTargetDir     string                   `json:"after_target_dir"`
-	GlobalCollisions   []ExportTargetCollision  `json:"global_collisions,omitempty"`
-	PathCollisions     []IntraRepoPathCollision `json:"path_collisions,omitempty"`
-	TotalFiles         int                      `json:"total_files"`
-	RawSyntaxPassCount int                      `json:"raw_syntax_pass_count"`
-	CleanSyntaxPassCnt int                      `json:"clean_syntax_pass_count"`
-	QuarantinedCount   int                      `json:"quarantined_count"`
-	RawSyntaxPassRate  float64                  `json:"raw_syntax_pass_rate"`
-	CleanSyntaxPassRat float64                  `json:"clean_syntax_pass_rate"`
-	Files              []DryRunPathMapping      `json:"files"`
+	GitRepoID           uint64                   `json:"git_repo_id"`
+	RepoName            string                   `json:"repo_name"`
+	BeforeTargetDir     string                   `json:"before_target_dir"`
+	AfterTargetDir      string                   `json:"after_target_dir"`
+	GlobalCollisions    []ExportTargetCollision  `json:"global_collisions,omitempty"`
+	PathCollisions      []IntraRepoPathCollision `json:"path_collisions,omitempty"`
+	PoolStripCollisions []PoolStripCollision     `json:"pool_strip_collisions,omitempty"`
+	TotalFiles          int                      `json:"total_files"`
+	RawSyntaxPassCount  int                      `json:"raw_syntax_pass_count"`
+	CleanSyntaxPassCnt  int                      `json:"clean_syntax_pass_count"`
+	QuarantinedCount    int                      `json:"quarantined_count"`
+	RawSyntaxPassRate   float64                  `json:"raw_syntax_pass_rate"`
+	CleanSyntaxPassRat  float64                  `json:"clean_syntax_pass_rate"`
+	Files               []DryRunPathMapping      `json:"files"`
 }
 
 // GlobalGovernanceDryRunResult 为整份 proto-governance/v1 JSON 的全局预览结果。
 type GlobalGovernanceDryRunResult struct {
-	SchemaValid      bool                         `json:"schema_valid"`
-	ValidationError  string                       `json:"validation_error,omitempty"`
-	GlobalCollisions []ExportTargetCollision      `json:"global_collisions,omitempty"`
-	AffectedRepos    []RepoGovernanceDryRunResult `json:"affected_repos"`
+	SchemaValid         bool                         `json:"schema_valid"`
+	ValidationError     string                       `json:"validation_error,omitempty"`
+	GlobalCollisions    []ExportTargetCollision      `json:"global_collisions,omitempty"`
+	PoolStripCollisions []PoolStripCollision         `json:"pool_strip_collisions,omitempty"`
+	AffectedRepos       []RepoGovernanceDryRunResult `json:"affected_repos"`
 }
 
 // BuildUnifiedDiff 生成紧凑的源码 Unified Diff 片段（无外部 diff 命令依赖）。
@@ -721,11 +814,20 @@ func DryRunRepoGovernance(
 		overrides[repo.ID] = override
 		if override.StripPrefixes != nil {
 			stripPrefixes = override.StripPrefixes
+			if rawSP, mErr := json.Marshal(override.StripPrefixes); mErr == nil {
+				candidateRepo.StripPrefixesJSON = rawSP
+			}
 		}
 		if override.PathRewrites != nil {
 			pathRewrites = override.PathRewrites
+			if rawPR, mErr := json.Marshal(override.PathRewrites); mErr == nil {
+				candidateRepo.PathRewritesJSON = rawPR
+			}
 		}
 		normCfg := ParseRepoNormalizeConfig(repo.RepoNormalizeConfigJSON)
+		if override.DisableStripPGSegment {
+			normCfg.DisableStripPGSegment = true
+		}
 		if override.DisabledRules != nil {
 			normCfg.DisabledRules = override.DisabledRules
 		}
@@ -789,12 +891,15 @@ func DryRunRepoGovernance(
 		rawContents[rp] = []byte(rawText)
 	}
 
-	mappedPaths, pathCols, _ := MapAndValidateIntraRepoPaths(rawPaths, stripPrefixes, pathRewrites)
+	norm := NewRuleBasedNormalizer(globalCfg)
+	rules := norm.resolveRepoRules(candidateRepo)
+	cleanStripPG := rules.stripPGSegment && !rules.disableStripPG
+
+	mappedPaths, pathCols, _ := MapAndValidateIntraRepoPathsWithPG(rawPaths, stripPrefixes, pathRewrites, cleanStripPG)
 	if len(pathCols) > 0 {
 		res.PathCollisions = pathCols
 	}
 
-	norm := NewRuleBasedNormalizer(globalCfg)
 	auxJSON := BuildEffectiveRepoAuxJSON(candidateRepo, globalCfg)
 	normOut, err := norm.Normalize(ctx, NormalizeInput{
 		Repo:          candidateRepo,
@@ -819,6 +924,10 @@ func DryRunRepoGovernance(
 			cleanPath = rp
 		}
 		nf := normOut.Files[rp]
+		if nf.CleanRelPath != "" {
+			cleanPath = nf.CleanRelPath
+		}
+		logicalPath := NormalizeLogicalPath(cleanPath, rules.stripPGSegment)
 		cleanGate := ParseProtoSyntaxOnly(cleanPath, nf.CleanContent)
 
 		status := models.ProtoPipelineNormalized
@@ -847,15 +956,18 @@ func DryRunRepoGovernance(
 		}
 
 		res.Files = append(res.Files, DryRunPathMapping{
-			RawPath:        rp,
-			CleanPath:      cleanPath,
-			RawSyntaxOK:    rawGate.Passed,
-			CleanSyntaxOK:  !hasErrorDiag && cleanGate.Passed,
-			Status:         status,
-			StatusReason:   reason,
-			AppliedRules:   applied,
-			LinePreserving: nf.LinePreserving,
-			UnifiedDiff:    BuildUnifiedDiff(cleanPath, string(rawBytes), string(nf.CleanContent)),
+			RawPath:          rp,
+			CleanPath:        cleanPath,
+			LogicalPath:      logicalPath,
+			IsUServiceSource: nf.IsUServiceSource,
+			RawSyntaxOK:      rawGate.Passed,
+			CleanSyntaxOK:    !hasErrorDiag && cleanGate.Passed,
+			Status:           status,
+			StatusReason:     reason,
+			AppliedRules:     applied,
+			LinePreserving:   nf.LinePreserving,
+			LineMap:          nf.LineMap,
+			UnifiedDiff:      BuildUnifiedDiff(cleanPath, string(rawBytes), string(nf.CleanContent)),
 		})
 	}
 	if res.TotalFiles > 0 {

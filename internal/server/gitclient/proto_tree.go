@@ -45,14 +45,16 @@ type ProtoMetaManifest struct {
 
 // NormalizeReportEntry 描述单个文件在 .normalize-report.json 中的摘要。
 type NormalizeReportEntry struct {
-	RepoFilePath   string                `json:"repo_file_path"`
-	LogicalPath    string                `json:"logical_path,omitempty"`
-	PipelineStatus string                `json:"pipeline_status"`
-	StatusReason   string                `json:"status_reason,omitempty"`
-	IsExternalCopy bool                  `json:"is_external_copy,omitempty"`
-	LinePreserving bool                  `json:"line_preserving"`
-	LineMap        map[int]int           `json:"line_map,omitempty"`
-	Diagnostics    []NormalizeDiagnostic `json:"diagnostics,omitempty"`
+	RepoFilePath     string                `json:"repo_file_path"`
+	CleanRelPath     string                `json:"clean_rel_path,omitempty"`
+	LogicalPath      string                `json:"logical_path,omitempty"`
+	PipelineStatus   string                `json:"pipeline_status"`
+	StatusReason     string                `json:"status_reason,omitempty"`
+	IsExternalCopy   bool                  `json:"is_external_copy,omitempty"`
+	IsUServiceSource bool                  `json:"is_uservice_source,omitempty"`
+	LinePreserving   bool                  `json:"line_preserving"`
+	LineMap          map[int]int           `json:"line_map,omitempty"`
+	Diagnostics      []NormalizeDiagnostic `json:"diagnostics,omitempty"`
 }
 
 // NormalizeReportManifest 写入每个 clean 版本目录的 .normalize-report.json。
@@ -601,7 +603,10 @@ func (m *ProtoTreeManager) isCleanTreeInSync(cleanLink, expectedCommit string, p
 		if pf.PipelineStatus != models.ProtoPipelineNormalized {
 			continue
 		}
-		rel := pf.RepoFilePath
+		rel := pf.CleanRelPath
+		if rel == "" {
+			rel = pf.RepoFilePath
+		}
 		if rel == "" {
 			rel = pf.FilePath
 		}
@@ -675,13 +680,15 @@ func (m *ProtoTreeManager) rebuildRepoTreesFromDB(
 			_ = json.Unmarshal(pf.LineMapJSON, &lm)
 		}
 		reportEntries = append(reportEntries, NormalizeReportEntry{
-			RepoFilePath:   rel,
-			LogicalPath:    pf.FilePath,
-			PipelineStatus: pf.PipelineStatus,
-			StatusReason:   pf.StatusReason,
-			IsExternalCopy: pf.IsExternalCopy,
-			LinePreserving: len(lm) == 0,
-			LineMap:        lm,
+			RepoFilePath:     rel,
+			CleanRelPath:     pf.CleanRelPath,
+			LogicalPath:      pf.FilePath,
+			PipelineStatus:   pf.PipelineStatus,
+			StatusReason:     pf.StatusReason,
+			IsExternalCopy:   pf.IsExternalCopy,
+			IsUServiceSource: pf.IsUServiceSource,
+			LinePreserving:   len(lm) == 0,
+			LineMap:          lm,
 		})
 	}
 
@@ -708,14 +715,35 @@ func (m *ProtoTreeManager) rebuildRepoTreesFromDB(
 	}
 
 	rawPaths := make([]string, 0, len(cleanFiles))
+	cleanRelByRaw := make(map[string]string, len(cleanFiles))
+	for _, pf := range pfiles {
+		if pf.PipelineStatus == models.ProtoPipelineQuarantined {
+			continue
+		}
+		rel := pf.RepoFilePath
+		if rel == "" {
+			rel = pf.FilePath
+		}
+		if pf.CleanRelPath != "" {
+			cleanRelByRaw[rel] = pf.CleanRelPath
+		}
+	}
 	for rp := range cleanFiles {
 		rawPaths = append(rawPaths, rp)
 	}
-	mappedCleanPaths, _, _ := MapAndValidateIntraRepoPaths(rawPaths, repo.StripPrefixes(), repo.PathRewrites())
+	stripPG := true
+	if snap, gErr := LoadActiveGovernanceConfig(ctx, db); gErr == nil && snap != nil {
+		rules := (&RuleBasedNormalizer{Config: &snap.Doc}).resolveRepoRules(repo)
+		stripPG = rules.stripPGSegment && !rules.disableStripPG
+	}
+	mappedCleanPaths, _, _ := MapAndValidateIntraRepoPathsWithPG(rawPaths, repo.StripPrefixes(), repo.PathRewrites(), stripPG)
 	mappedCleanFiles := make(map[string][]byte, len(cleanFiles))
 	mappedCleanHashes := make(map[string]string, len(cleanHashes))
 	for rp, content := range cleanFiles {
-		mp := mappedCleanPaths[rp]
+		mp := cleanRelByRaw[rp]
+		if mp == "" {
+			mp = mappedCleanPaths[rp]
+		}
 		if mp == "" {
 			mp = rp
 		}

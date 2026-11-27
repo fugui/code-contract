@@ -37,13 +37,15 @@ type NormalizeDiagnostic struct {
 
 // NormalizedFileResult 为单文件清理产物及行号映射。
 type NormalizedFileResult struct {
-	RepoFilePath   string                `json:"repo_file_path"`
-	CleanContent   []byte                `json:"-"`
-	CleanSHA256    string                `json:"clean_sha256"`
-	LineCount      int                   `json:"line_count"`
-	LinePreserving bool                  `json:"line_preserving"`
-	LineMap        map[int]int           `json:"line_map,omitempty"` // 清理后行号 -> 原始行号（LinePreserving 为 true 时可为空）
-	Diagnostics    []NormalizeDiagnostic `json:"diagnostics,omitempty"`
+	RepoFilePath     string                `json:"repo_file_path"`
+	CleanRelPath     string                `json:"clean_rel_path,omitempty"`
+	IsUServiceSource bool                  `json:"is_uservice_source,omitempty"`
+	CleanContent     []byte                `json:"-"`
+	CleanSHA256      string                `json:"clean_sha256"`
+	LineCount        int                   `json:"line_count"`
+	LinePreserving   bool                  `json:"line_preserving"`
+	LineMap          map[int]int           `json:"line_map,omitempty"` // 清理后行号 -> 原始行号（LinePreserving 为 true 时可为空）
+	Diagnostics      []NormalizeDiagnostic `json:"diagnostics,omitempty"`
 }
 
 // NormalizeOutput 为 Stage B Normalizer 的确定性输出。

@@ -295,13 +295,13 @@ func RunFourStagePipeline(
 		}
 	}
 
+	var govDoc *GovernanceConfigDoc
+	if snap, gErr := LoadActiveGovernanceConfig(ctx, db); gErr == nil && snap != nil {
+		d := snap.Doc
+		govDoc = &d
+	}
 	norm := opts.Normalizer
 	if norm == nil {
-		var govDoc *GovernanceConfigDoc
-		if snap, gErr := LoadActiveGovernanceConfig(ctx, db); gErr == nil && snap != nil {
-			d := snap.Doc
-			govDoc = &d
-		}
 		if len(opts.AuxConfigJSON) == 0 {
 			opts.AuxConfigJSON = BuildEffectiveRepoAuxJSON(repo, govDoc)
 		}
@@ -353,6 +353,12 @@ func RunFourStagePipeline(
 		repo.ProtoStatus != "" && repo.ProtoStatus != models.GitRepoProtoStatusPending &&
 		repo.ProtoStatus != models.GitRepoProtoStatusNoLocalCache && repo.ProtoStatus != models.GitRepoProtoStatusSyncFailed
 
+	var globalCollectGlobs, globalExcludeGlobs []string
+	if govDoc != nil {
+		globalCollectGlobs = govDoc.Global.CollectGlobs
+		globalExcludeGlobs = govDoc.Global.ExcludeGlobs
+	}
+
 	// Stage A: pg 白名单采集 + 增量 blob 读取
 	collectRes, err := CollectRepoStageA(ctx, &repo, opts.Branch, CollectConfig{
 		CodesDir:              codesDir,
@@ -360,6 +366,8 @@ func RunFourStagePipeline(
 		CachePolicy:           opts.CachePolicy,
 		KnownCommitSHA:        repo.LastCollectedCommit,
 		SkipIfCommitUnchanged: skipIfUnchanged,
+		CollectGlobs:          globalCollectGlobs,
+		ExcludeGlobs:          globalExcludeGlobs,
 		MaxFileBytes:          config.AppConfig.ProtoCollect.MaxFileBytes,
 		MaxFilesPerRepo:       config.AppConfig.ProtoCollect.MaxFilesPerRepo,
 		KnownRawBlobSHAs:      knownSHAs,
@@ -576,13 +584,13 @@ func ReNormalizeRepo(
 		Files:                 collectedFiles,
 	}
 
+	var govDoc *GovernanceConfigDoc
+	if snap, gErr := LoadActiveGovernanceConfig(ctx, db); gErr == nil && snap != nil {
+		d := snap.Doc
+		govDoc = &d
+	}
 	norm := opts.Normalizer
 	if norm == nil {
-		var govDoc *GovernanceConfigDoc
-		if snap, gErr := LoadActiveGovernanceConfig(ctx, db); gErr == nil && snap != nil {
-			d := snap.Doc
-			govDoc = &d
-		}
 		if len(opts.AuxConfigJSON) == 0 {
 			opts.AuxConfigJSON = BuildEffectiveRepoAuxJSON(repo, govDoc)
 		}
@@ -650,6 +658,17 @@ func executeStagesBToD(
 	}()
 
 	// Stage B: 清理整顿 + 增量键 (raw_blob_sha, normalizer_version) + 后置仅解析语法门禁
+	var activeGovDoc *GovernanceConfigDoc
+	if rn, ok := norm.(*RuleBasedNormalizer); ok && rn != nil && rn.Config != nil {
+		activeGovDoc = rn.Config
+	} else if snap, gErr := LoadActiveGovernanceConfig(ctx, db); gErr == nil && snap != nil {
+		d := snap.Doc
+		activeGovDoc = &d
+	}
+	effectiveRules := (&RuleBasedNormalizer{Config: activeGovDoc}).resolveRepoRules(*repo)
+	globalStripPG := effectiveRules.stripPGSegment
+	cleanStripPG := effectiveRules.stripPGSegment && !effectiveRules.disableStripPG
+
 	filesForNorm := make(map[string][]byte)
 	reusedNormFiles := make(map[string]models.ProtoFile)
 	for _, cf := range collectRes.Files {
@@ -683,27 +702,28 @@ func executeStagesBToD(
 
 	type processedFile struct {
 		CollectedFile
-		MappedRelPath  string
-		CleanContent   []byte
-		CleanSHA256    string
-		LineCount      int
-		LineMapJSON    datatypes.JSON
-		PipelineStatus string
-		StatusReason   string
-		PackageName    string
-		Imports        []string
-		Symbols        []ParsedProtoSymbol
-		BundleID       uint64
-		LogicalPath    string
-		Diagnostics    []NormalizeDiagnostic
-		LinePreserving bool
+		MappedRelPath    string
+		IsUServiceSource bool
+		CleanContent     []byte
+		CleanSHA256      string
+		LineCount        int
+		LineMapJSON      datatypes.JSON
+		PipelineStatus   string
+		StatusReason     string
+		PackageName      string
+		Imports          []string
+		Symbols          []ParsedProtoSymbol
+		BundleID         uint64
+		LogicalPath      string
+		Diagnostics      []NormalizeDiagnostic
+		LinePreserving   bool
 	}
 
 	rawPathsForMap := make([]string, 0, len(collectRes.Files))
 	for _, cf := range collectRes.Files {
 		rawPathsForMap = append(rawPathsForMap, cf.RepoFilePath)
 	}
-	mappedPaths, pathCols, _ := MapAndValidateIntraRepoPaths(rawPathsForMap, repo.StripPrefixes(), repo.PathRewrites())
+	mappedPaths, pathCols, _ := MapAndValidateIntraRepoPathsWithPG(rawPathsForMap, repo.StripPrefixes(), repo.PathRewrites(), cleanStripPG)
 	collidingSourcePaths := make(map[string]string)
 	for _, col := range pathCols {
 		for _, src := range col.SourcePaths {
@@ -737,6 +757,10 @@ func executeStagesBToD(
 
 		if reused, ok := reusedNormFiles[cf.RepoFilePath]; ok {
 			ev := existingVerByFile[reused.ID]
+			if reused.CleanRelPath != "" {
+				pf.MappedRelPath = reused.CleanRelPath
+			}
+			pf.IsUServiceSource = reused.IsUServiceSource
 			pf.CleanContent = []byte(ev.ContentText)
 			pf.CleanSHA256 = reused.ContentSHA256
 			pf.LineCount = reused.LineCount
@@ -760,12 +784,17 @@ func executeStagesBToD(
 			sum := sha256.Sum256(cf.Content)
 			nf = NormalizedFileResult{
 				RepoFilePath:   cf.RepoFilePath,
+				CleanRelPath:   pf.MappedRelPath,
 				CleanContent:   cf.Content,
 				CleanSHA256:    hex.EncodeToString(sum[:]),
 				LineCount:      countNormalizedLines(string(cf.Content)),
 				LinePreserving: true,
 			}
 		}
+		if nf.CleanRelPath != "" {
+			pf.MappedRelPath = nf.CleanRelPath
+		}
+		pf.IsUServiceSource = nf.IsUServiceSource
 		pf.CleanContent = nf.CleanContent
 		pf.CleanSHA256 = nf.CleanSHA256
 		pf.LineCount = nf.LineCount
@@ -930,11 +959,11 @@ func executeStagesBToD(
 				lookupKey = pf.MappedRelPath
 			}
 			if lp, ok := logicalMap[lookupKey]; ok && lp != "" {
-				pf.LogicalPath = lp
+				pf.LogicalPath = NormalizeLogicalPath(lp, globalStripPG)
 			} else if useMappedForLogical && pf.MappedRelPath != "" {
-				pf.LogicalPath = pf.MappedRelPath
+				pf.LogicalPath = NormalizeLogicalPath(pf.MappedRelPath, globalStripPG)
 			} else {
-				pf.LogicalPath = pf.RepoFilePath
+				pf.LogicalPath = NormalizeLogicalPath(pf.RepoFilePath, globalStripPG)
 			}
 		}
 	}
@@ -972,13 +1001,15 @@ func executeStagesBToD(
 			_ = json.Unmarshal(pf.LineMapJSON, &lm)
 		}
 		reportEntries = append(reportEntries, NormalizeReportEntry{
-			RepoFilePath:   rp,
-			LogicalPath:    pf.LogicalPath,
-			PipelineStatus: pf.PipelineStatus,
-			StatusReason:   pf.StatusReason,
-			LinePreserving: pf.LinePreserving,
-			LineMap:        lm,
-			Diagnostics:    pf.Diagnostics,
+			RepoFilePath:     rp,
+			CleanRelPath:     cleanKey,
+			LogicalPath:      pf.LogicalPath,
+			PipelineStatus:   pf.PipelineStatus,
+			StatusReason:     pf.StatusReason,
+			IsUServiceSource: pf.IsUServiceSource,
+			LinePreserving:   pf.LinePreserving,
+			LineMap:          lm,
+			Diagnostics:      pf.Diagnostics,
 		})
 	}
 
@@ -1067,6 +1098,7 @@ func executeStagesBToD(
 					Category:          b.Category,
 					FilePath:          pf.LogicalPath,
 					RepoFilePath:      rp,
+					CleanRelPath:      pf.MappedRelPath,
 					PackageName:       pf.PackageName,
 					RawBlobSHA:        pf.RawBlobSHA,
 					NormalizerVersion: normVer,
@@ -1074,6 +1106,7 @@ func executeStagesBToD(
 					StatusReason:      pf.StatusReason,
 					LineMapJSON:       pf.LineMapJSON,
 					IsExternalCopy:    false,
+					IsUServiceSource:  pf.IsUServiceSource,
 					ImportsJSON:       datatypes.JSON(importsJSONBytes),
 					SymbolsJSON:       datatypes.JSON(symbolsJSONBytes),
 					ContentSHA256:     pf.CleanSHA256,
@@ -1117,13 +1150,15 @@ func executeStagesBToD(
 			contentChanged := cur.ContentSHA256 != pf.CleanSHA256 || cur.RawBlobSHA != pf.RawBlobSHA || cur.NormalizerVersion != normVer
 			if !contentChanged {
 				updates := map[string]any{
-					"file_path":       pf.LogicalPath,
-					"package_name":    pf.PackageName,
-					"pipeline_status": pf.PipelineStatus,
-					"status_reason":   pf.StatusReason,
-					"line_map_json":   pf.LineMapJSON,
-					"imports_json":    datatypes.JSON(importsJSONBytes),
-					"symbols_json":    datatypes.JSON(symbolsJSONBytes),
+					"file_path":          pf.LogicalPath,
+					"clean_rel_path":     pf.MappedRelPath,
+					"is_uservice_source": pf.IsUServiceSource,
+					"package_name":       pf.PackageName,
+					"pipeline_status":    pf.PipelineStatus,
+					"status_reason":      pf.StatusReason,
+					"line_map_json":      pf.LineMapJSON,
+					"imports_json":       datatypes.JSON(importsJSONBytes),
+					"symbols_json":       datatypes.JSON(symbolsJSONBytes),
 				}
 				if err := tx.Model(cur).Updates(updates).Error; err != nil {
 					return err
@@ -1166,6 +1201,8 @@ func executeStagesBToD(
 				"category":           b.Category,
 				"file_path":          pf.LogicalPath,
 				"repo_file_path":     rp,
+				"clean_rel_path":     pf.MappedRelPath,
+				"is_uservice_source": pf.IsUServiceSource,
 				"package_name":       pf.PackageName,
 				"raw_blob_sha":       pf.RawBlobSHA,
 				"normalizer_version": normVer,

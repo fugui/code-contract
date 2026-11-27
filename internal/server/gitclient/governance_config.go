@@ -28,6 +28,8 @@ const (
 	NormRulePackageNormalize = "NORM-003"
 	NormRuleDirectiveStrip   = "NORM-004"
 	NormRuleImportRewrite    = "NORM-005"
+	NormRuleUServiceConvert  = "NORM-006"
+	NormRulePGSegmentFlatten = "NORM-007"
 )
 
 var (
@@ -45,6 +47,8 @@ var validBuiltinRuleIDs = map[string]struct{}{
 	NormRulePackageNormalize: {},
 	NormRuleDirectiveStrip:   {},
 	NormRuleImportRewrite:    {},
+	NormRuleUServiceConvert:  {},
+	NormRulePGSegmentFlatten: {},
 }
 
 // BuiltinRuleMeta 描述内置 Stage B 清理规则元数据。
@@ -67,20 +71,6 @@ func BuiltinGovernanceRules() []BuiltinRuleMeta {
 			DefaultEnabled: true,
 		},
 		{
-			ID:             NormRuleSyntaxHeaderFix,
-			Code:           "syntax_header_fix",
-			Name:           "Syntax 声明补齐",
-			Description:    "为缺失 syntax = \"proto2\"/\"proto3\" 的存量文件补齐默认语法头并维护 line_map 偏移",
-			DefaultEnabled: true,
-		},
-		{
-			ID:             NormRulePackageNormalize,
-			Code:           "package_normalize",
-			Name:           "Package 标识符规范化",
-			Description:    "修正 package 声明中的连字符、斜杠或非法空白字符",
-			DefaultEnabled: true,
-		},
-		{
 			ID:             NormRuleDirectiveStrip,
 			Code:           "nonstandard_directive_strip",
 			Name:           "非标指令剥离",
@@ -88,13 +78,112 @@ func BuiltinGovernanceRules() []BuiltinRuleMeta {
 			DefaultEnabled: true,
 		},
 		{
+			ID:             NormRuleUServiceConvert,
+			Code:           "uservice_to_proto_service",
+			Name:           "uService DSL 转换",
+			Description:    "注释感知状态机转换 uService/interface 为标准 proto service/rpc，提升块内 import 并注入隐式依赖",
+			DefaultEnabled: true,
+		},
+		{
+			ID:             NormRulePackageNormalize,
+			Code:           "package_normalize",
+			Name:           "Package 标识符规范化",
+			Description:    "修正 package 声明中的连字符、斜杠或非法空白字符，并对重复 package 声明去重",
+			DefaultEnabled: true,
+		},
+		{
 			ID:             NormRuleImportRewrite,
 			Code:           "import_path_rewrite",
 			Name:           "Import 路径重写",
-			Description:    "规范化 import 反斜杠与前导 ./ 并应用仓/全局 import_rewrites 映射",
+			Description:    "兼容单引号与缺失分号的 import 声明，规范化反斜杠与前导 ./ 并应用重写映射",
+			DefaultEnabled: true,
+		},
+		{
+			ID:             NormRulePGSegmentFlatten,
+			Code:           "pg_segment_flatten",
+			Name:           "clean 去 /pg 目录扁平化",
+			Description:    "在统一坐标系中剥离独立 /pg 目录段（保护 extpg/intpg/pg.proto），使 clean/ 与 workspace/ 对齐",
+			DefaultEnabled: true,
+		},
+		{
+			ID:             NormRuleSyntaxHeaderFix,
+			Code:           "syntax_header_fix",
+			Name:           "Syntax 声明补齐",
+			Description:    "为缺失 syntax = \"proto2\"/\"proto3\" 的存量文件按 auto/proto2/proto3 补齐语法头并维护 line_map",
 			DefaultEnabled: true,
 		},
 	}
+}
+
+// SharedBaseSourceSpec 描述 R4 共享基座采集通道 A 的目录或仓库源声明。
+type SharedBaseSourceSpec struct {
+	PathHint string `json:"path_hint"`
+	Priority int    `json:"priority,omitempty"`
+}
+
+// PoolReconcileConfig 控制 Stage C+ 全池协调与 R7/R8 编译自愈开关及轮数上限。
+type PoolReconcileConfig struct {
+	ClosureOnly        *bool `json:"closure_only,omitempty"`
+	EnableR7AutoFix    *bool `json:"enable_r7_auto_fix,omitempty"`
+	MaxR7Rounds        int   `json:"max_r7_rounds,omitempty"`
+	EnableR8Quarantine *bool `json:"enable_r8_quarantine,omitempty"`
+	MaxR8Rounds        int   `json:"max_r8_rounds,omitempty"`
+}
+
+// EffectiveClosureOnly 返回是否仅导出与编译服务依赖闭包（默认 true）。
+func (p PoolReconcileConfig) EffectiveClosureOnly() bool {
+	if p.ClosureOnly == nil {
+		return true
+	}
+	return *p.ClosureOnly
+}
+
+// EffectiveEnableR7 返回是否启用 R7 protocompile 反馈自愈（默认 true）。
+func (p PoolReconcileConfig) EffectiveEnableR7() bool {
+	if p.EnableR7AutoFix == nil {
+		return true
+	}
+	return *p.EnableR7AutoFix
+}
+
+// EffectiveMaxR7Rounds 返回 R7 最大迭代轮数（默认 12）。
+func (p PoolReconcileConfig) EffectiveMaxR7Rounds() int {
+	if p.MaxR7Rounds <= 0 {
+		return 12
+	}
+	return p.MaxR7Rounds
+}
+
+// EffectiveEnableR8 返回是否启用 R8 根因优先固损隔离（默认 true）。
+func (p PoolReconcileConfig) EffectiveEnableR8() bool {
+	if p.EnableR8Quarantine == nil {
+		return true
+	}
+	return *p.EnableR8Quarantine
+}
+
+// EffectiveMaxR8Rounds 返回 R8 最大隔离轮数（默认 150）。
+func (p PoolReconcileConfig) EffectiveMaxR8Rounds() int {
+	if p.MaxR8Rounds <= 0 {
+		return 150
+	}
+	return p.MaxR8Rounds
+}
+
+// PoolPathCandidate 描述全池去 /pg 碰撞检测的单条路径记录。
+type PoolPathCandidate struct {
+	RepoID        uint64 `json:"repo_id"`
+	RepoName      string `json:"repo_name"`
+	PreStripPath  string `json:"pre_strip_path"`
+	PostStripPath string `json:"post_strip_path"`
+}
+
+// PoolStripCollision 描述去 /pg 剥离动作本身新增的跨仓路径碰撞。
+type PoolStripCollision struct {
+	PostStripPath string   `json:"post_strip_path"`
+	PreStripPaths []string `json:"pre_strip_paths"`
+	RepoIDs       []uint64 `json:"repo_ids"`
+	RepoNames     []string `json:"repo_names"`
 }
 
 // RegexRewriteRule 描述单条正则表达式清洗规则。
@@ -107,21 +196,44 @@ type RegexRewriteRule struct {
 
 // GlobalGovernanceSection 为 proto-governance/v1 的全局规则段。
 type GlobalGovernanceSection struct {
-	CollectGlobs   []string           `json:"collect_globs,omitempty"`
-	ExcludeGlobs   []string           `json:"exclude_globs,omitempty"`
-	EnabledRules   []string           `json:"enabled_rules,omitempty"`
-	DefaultSyntax  string             `json:"default_syntax,omitempty"`
-	ImportRewrites map[string]string  `json:"import_rewrites,omitempty"`
-	RegexRewrites  []RegexRewriteRule `json:"regex_rewrites,omitempty"`
+	CollectGlobs          []string               `json:"collect_globs,omitempty"`
+	ExcludeSubsystems     []string               `json:"exclude_subsystems,omitempty"`
+	ExcludeRepoPatterns   []string               `json:"exclude_repo_patterns,omitempty"`
+	ExcludeGlobs          []string               `json:"exclude_globs,omitempty"`
+	EnabledRules          []string               `json:"enabled_rules,omitempty"`
+	DefaultSyntax         string                 `json:"default_syntax,omitempty"` // auto | proto2 | proto3
+	StripPGSegment        *bool                  `json:"strip_pg_segment,omitempty"`
+	ImplicitSymbolImports map[string]string      `json:"implicit_symbol_imports,omitempty"`
+	SharedBaseSources     []SharedBaseSourceSpec `json:"shared_base_sources,omitempty"`
+	PoolReconcile         *PoolReconcileConfig   `json:"pool_reconcile,omitempty"`
+	ImportRewrites        map[string]string      `json:"import_rewrites,omitempty"`
+	RegexRewrites         []RegexRewriteRule     `json:"regex_rewrites,omitempty"`
+}
+
+// EffectiveStripPGSegment 返回全池逻辑坐标系及 clean/ 默认是否去除独立 /pg 目录段（默认 true）。
+func (g GlobalGovernanceSection) EffectiveStripPGSegment() bool {
+	if g.StripPGSegment == nil {
+		return true
+	}
+	return *g.StripPGSegment
+}
+
+// EffectivePoolReconcile 返回带默认值的全池协调配置。
+func (g GlobalGovernanceSection) EffectivePoolReconcile() PoolReconcileConfig {
+	if g.PoolReconcile == nil {
+		return PoolReconcileConfig{}
+	}
+	return *g.PoolReconcile
 }
 
 // RepoNormalizeConfig 描述单仓级别的 Stage B 清洗规则与文件豁免/隔离清单（持久化在 contract_git_repos.repo_normalize_config_json）。
 type RepoNormalizeConfig struct {
-	DisabledRules    []string           `json:"disabled_rules,omitempty"`
-	RegexRewrites    []RegexRewriteRule `json:"regex_rewrites,omitempty"`
-	ImportRewrites   map[string]string  `json:"import_rewrites,omitempty"`
-	ExemptFiles      []string           `json:"exempt_files,omitempty"`
-	QuarantinedFiles []string           `json:"quarantined_files,omitempty"`
+	DisableStripPGSegment bool               `json:"disable_strip_pg_segment,omitempty"`
+	DisabledRules         []string           `json:"disabled_rules,omitempty"`
+	RegexRewrites         []RegexRewriteRule `json:"regex_rewrites,omitempty"`
+	ImportRewrites        map[string]string  `json:"import_rewrites,omitempty"`
+	ExemptFiles           []string           `json:"exempt_files,omitempty"`
+	QuarantinedFiles      []string           `json:"quarantined_files,omitempty"`
 }
 
 // RepoGovernanceSpec 描述单个仓库在辅助 .json 中的完整导出目录与清洗配置。
@@ -131,6 +243,7 @@ type RepoGovernanceSpec struct {
 	SyncStrategy          string             `json:"sync_strategy,omitempty"`
 	ExportTargetSubsystem string             `json:"export_target_subsystem,omitempty"`
 	ExportTargetRepoDir   string             `json:"export_target_repo_dir,omitempty"`
+	DisableStripPGSegment bool               `json:"disable_strip_pg_segment,omitempty"`
 	StripPrefixes         []string           `json:"strip_prefixes,omitempty"`
 	PathRewrites          map[string]string  `json:"path_rewrites,omitempty"`
 	CollectGlobs          []string           `json:"collect_globs,omitempty"`
@@ -172,8 +285,12 @@ type IntraRepoPathCollision struct {
 	SourcePaths []string `json:"source_paths"`
 }
 
-// DefaultGovernanceConfig 返回内置默认 proto-governance/v1 配置文档。
+// DefaultGovernanceConfig 返回内置默认 proto-governance/v1 配置文档（ADR-28 默认开启 uService 转换与去 /pg 扁平化）。
 func DefaultGovernanceConfig() GovernanceConfigDoc {
+	stripPG := true
+	closureOnly := true
+	enableR7 := true
+	enableR8 := true
 	return GovernanceConfigDoc{
 		SchemaVersion: GovernanceSchemaVersion,
 		Revision:      0,
@@ -182,17 +299,50 @@ func DefaultGovernanceConfig() GovernanceConfigDoc {
 			ExcludeGlobs: config.DefaultExcludeGlobs(),
 			EnabledRules: []string{
 				NormRuleEncodingAndEOL,
-				NormRuleSyntaxHeaderFix,
-				NormRulePackageNormalize,
 				NormRuleDirectiveStrip,
+				NormRuleUServiceConvert,
+				NormRulePackageNormalize,
 				NormRuleImportRewrite,
+				NormRulePGSegmentFlatten,
+				NormRuleSyntaxHeaderFix,
 			},
-			DefaultSyntax:  "proto3",
+			DefaultSyntax:  "auto",
+			StripPGSegment: &stripPG,
+			ImplicitSymbolImports: map[string]string{
+				"google.protobuf.Empty": "google/protobuf/empty.proto",
+				"VoidType":              "sw/pg/BasicTypeMsg.proto",
+			},
+			SharedBaseSources: []SharedBaseSourceSpec{},
+			PoolReconcile: &PoolReconcileConfig{
+				ClosureOnly:        &closureOnly,
+				EnableR7AutoFix:    &enableR7,
+				MaxR7Rounds:        12,
+				EnableR8Quarantine: &enableR8,
+				MaxR8Rounds:        150,
+			},
 			ImportRewrites: map[string]string{},
 			RegexRewrites:  []RegexRewriteRule{},
 		},
 		Repos: map[string]RepoGovernanceSpec{},
 	}
+}
+
+// ProductionUServicePresetConfig 返回现网 uService + R0 分层排除 + 共享基座 + 去 /pg 扁平化推荐治理预设 (ADR-28 §3.1)。
+func ProductionUServicePresetConfig() GovernanceConfigDoc {
+	doc := DefaultGovernanceConfig()
+	doc.Global.DefaultSyntax = "proto2"
+	doc.Global.ExcludeSubsystems = []string{"3M"}
+	doc.Global.ExcludeRepoPatterns = []string{}
+	doc.Global.ExcludeGlobs = []string{
+		"**/test/**", "**/testdata/**", "**/mock/**", "**/examples/**", "**/third_party/**", "**/vendor/**",
+		"**/alpha/**", "**/beta/**", "**/m1/**", "**/m2/**", "**/m3/**",
+		"**/m1_alpha/**", "**/m1_beta1/**", "**/fconst/**",
+	}
+	doc.Global.SharedBaseSources = []SharedBaseSourceSpec{
+		{PathHint: "devbench-hpmc-simulator/include", Priority: 1},
+		{PathHint: "ltcommon/pg", Priority: 2},
+	}
+	return doc
 }
 
 // ParseRepoNormalizeConfig 安全反序列化单仓 repo_normalize_config_json。
@@ -265,9 +415,39 @@ func ValidateGovernanceConfig(doc *GovernanceConfigDoc) error {
 	}
 	syn := strings.TrimSpace(doc.Global.DefaultSyntax)
 	if syn == "" {
-		doc.Global.DefaultSyntax = "proto3"
-	} else if syn != "proto2" && syn != "proto3" {
-		return fmt.Errorf("%w: global.default_syntax 仅支持 proto2 或 proto3", ErrGovernanceValidation)
+		doc.Global.DefaultSyntax = "auto"
+	} else if syn != "auto" && syn != "proto2" && syn != "proto3" {
+		return fmt.Errorf("%w: global.default_syntax 仅支持 auto、proto2 或 proto3", ErrGovernanceValidation)
+	}
+
+	for sym, imp := range doc.Global.ImplicitSymbolImports {
+		if strings.TrimSpace(sym) == "" {
+			return fmt.Errorf("%w: implicit_symbol_imports symbol key 不能为空", ErrGovernanceValidation)
+		}
+		if err := validateRelRewriteToken(imp, false); err != nil {
+			return err
+		}
+	}
+	for _, sb := range doc.Global.SharedBaseSources {
+		if err := validateRelRewriteToken(sb.PathHint, false); err != nil {
+			return err
+		}
+	}
+	for _, pat := range doc.Global.ExcludeRepoPatterns {
+		if strings.TrimSpace(pat) == "" {
+			return fmt.Errorf("%w: exclude_repo_patterns 项不能为空", ErrGovernanceValidation)
+		}
+		if _, err := regexp.Compile(pat); err != nil {
+			return fmt.Errorf("%w: exclude_repo_patterns %q 正则非法: %v", ErrGovernanceValidation, pat, err)
+		}
+	}
+	if doc.Global.PoolReconcile != nil {
+		if doc.Global.PoolReconcile.MaxR7Rounds < 0 || doc.Global.PoolReconcile.MaxR7Rounds > 100 {
+			return fmt.Errorf("%w: pool_reconcile.max_r7_rounds 范围须在 [0, 100]", ErrGovernanceValidation)
+		}
+		if doc.Global.PoolReconcile.MaxR8Rounds < 0 || doc.Global.PoolReconcile.MaxR8Rounds > 1000 {
+			return fmt.Errorf("%w: pool_reconcile.max_r8_rounds 范围须在 [0, 1000]", ErrGovernanceValidation)
+		}
 	}
 
 	for _, id := range doc.Global.EnabledRules {
@@ -349,7 +529,11 @@ func MarshalGovernanceConfigCanonical(doc GovernanceConfigDoc) ([]byte, string, 
 		doc.SchemaVersion = GovernanceSchemaVersion
 	}
 	if doc.Global.DefaultSyntax == "" {
-		doc.Global.DefaultSyntax = "proto3"
+		doc.Global.DefaultSyntax = "auto"
+	}
+	if doc.Global.StripPGSegment == nil {
+		stripPG := true
+		doc.Global.StripPGSegment = &stripPG
 	}
 	if doc.Global.ImportRewrites == nil {
 		doc.Global.ImportRewrites = map[string]string{}
@@ -457,8 +641,163 @@ func CheckGlobalExportTargetCollisions(
 	return nil, nil
 }
 
+// IsWellKnownProtoImport 判断是否为标准 Protobuf Well-Known Types 导入路径（永不改写或剥离）。
+func IsWellKnownProtoImport(relPath string) bool {
+	cleaned := strings.TrimPrefix(strings.ReplaceAll(strings.TrimSpace(relPath), "\\", "/"), "./")
+	return strings.HasPrefix(cleaned, "google/protobuf/")
+}
+
+// StripPGPathSegment 按 POSIX '/' 切分路径段，仅移除严格等于 "pg" 且非最后一段文件名的独立目录段 (ADR-28 §2.1)。
+// 严禁使用子串替换，确保 extpg/intpg/pggen/pg_common/mypg 与文件名 pg.proto 绝对不被误伤。
+func StripPGPathSegment(relPath string) string {
+	trimmed := strings.TrimSpace(strings.ReplaceAll(relPath, "\\", "/"))
+	if trimmed == "" {
+		return ""
+	}
+	for strings.HasPrefix(trimmed, "./") {
+		trimmed = strings.TrimPrefix(trimmed, "./")
+	}
+	if IsWellKnownProtoImport(trimmed) {
+		return trimmed
+	}
+	segs := strings.Split(strings.Trim(trimmed, "/"), "/")
+	if len(segs) <= 1 {
+		return strings.Trim(trimmed, "/")
+	}
+	out := make([]string, 0, len(segs))
+	lastIdx := len(segs) - 1
+	for i, seg := range segs {
+		if seg == "" || seg == "." {
+			continue
+		}
+		if i < lastIdx && seg == "pg" {
+			continue
+		}
+		out = append(out, seg)
+	}
+	if len(out) == 0 {
+		return segs[lastIdx]
+	}
+	return strings.Join(out, "/")
+}
+
+// NormalizeLogicalPath 将任意相对路径或 import 路径归一化至全池唯一逻辑坐标系 (ADR-28 §2.1)。
+func NormalizeLogicalPath(relPath string, stripPG bool) string {
+	cur := strings.TrimSpace(strings.ReplaceAll(relPath, "\\", "/"))
+	for strings.HasPrefix(cur, "./") {
+		cur = strings.TrimPrefix(cur, "./")
+	}
+	cur = strings.TrimLeft(cur, "/")
+	if cur == "" {
+		return ""
+	}
+	if IsWellKnownProtoImport(cur) {
+		return cur
+	}
+	if stripPG {
+		cur = StripPGPathSegment(cur)
+	}
+	if cleaned, err := decoder.SanitizeProtoRelPath(cur, true); err == nil && cleaned != "" {
+		return cleaned
+	}
+	return cur
+}
+
+// ShouldExcludeRepoByR0 判断普通业务仓库是否命中 R0 仓库/子系统级排除规则（严禁用于 R4 shared_base_sources）。
+func ShouldExcludeRepoByR0(subsystem, repoName string, global GlobalGovernanceSection) bool {
+	subTrim := strings.TrimSpace(subsystem)
+	for _, exSub := range global.ExcludeSubsystems {
+		if exSub != "" && strings.EqualFold(strings.TrimSpace(exSub), subTrim) {
+			return true
+		}
+	}
+	nameTrim := strings.TrimSpace(repoName)
+	for _, pat := range global.ExcludeRepoPatterns {
+		if pat == "" {
+			continue
+		}
+		if re, err := regexp.Compile(pat); err == nil && re.MatchString(nameTrim) {
+			return true
+		}
+	}
+	return false
+}
+
+// CheckPoolStripPGCollisions 对全池路径（业务仓 + R4 基座）执行去 /pg 剥离前后碰撞检测。
+// 仅报告「剥离后新产生、而在剥离前未出现」的碰撞组，确保去 /pg 动作本身不新增任何冲突。
+func CheckPoolStripPGCollisions(candidates []PoolPathCandidate) []PoolStripCollision {
+	if len(candidates) == 0 {
+		return nil
+	}
+	preBuckets := make(map[string]map[string]struct{}, len(candidates))
+	postBuckets := make(map[string][]PoolPathCandidate, len(candidates))
+	for _, c := range candidates {
+		pre := strings.TrimSpace(c.PreStripPath)
+		post := strings.TrimSpace(c.PostStripPath)
+		if post == "" {
+			continue
+		}
+		if pre != "" {
+			if preBuckets[pre] == nil {
+				preBuckets[pre] = make(map[string]struct{})
+			}
+			preBuckets[pre][fmt.Sprintf("%d:%s", c.RepoID, c.RepoName)] = struct{}{}
+		}
+		postBuckets[post] = append(postBuckets[post], c)
+	}
+
+	keys := make([]string, 0, len(postBuckets))
+	for k := range postBuckets {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var collisions []PoolStripCollision
+	for _, post := range keys {
+		group := postBuckets[post]
+		if len(group) <= 1 {
+			continue
+		}
+		// 若该组内所有成员原本在 PreStripPath 下就已经指向同一个路径（即原池已有的多仓同名冲突），
+		// 不算由去 /pg 引入的新碰撞。
+		distinctPre := make(map[string]struct{}, len(group))
+		for _, item := range group {
+			distinctPre[item.PreStripPath] = struct{}{}
+		}
+		if len(distinctPre) <= 1 && len(preBuckets[post]) > 1 {
+			continue
+		}
+		sort.Slice(group, func(i, j int) bool {
+			if group[i].RepoID != group[j].RepoID {
+				return group[i].RepoID < group[j].RepoID
+			}
+			return group[i].PreStripPath < group[j].PreStripPath
+		})
+		prePaths := make([]string, 0, len(group))
+		repoIDs := make([]uint64, 0, len(group))
+		repoNames := make([]string, 0, len(group))
+		for _, item := range group {
+			prePaths = append(prePaths, item.PreStripPath)
+			repoIDs = append(repoIDs, item.RepoID)
+			repoNames = append(repoNames, item.RepoName)
+		}
+		collisions = append(collisions, PoolStripCollision{
+			PostStripPath: post,
+			PreStripPaths: prePaths,
+			RepoIDs:       repoIDs,
+			RepoNames:     repoNames,
+		})
+	}
+	return collisions
+}
+
 // ApplyIntraRepoPathMapping 应用单仓 strip_prefixes（按配置顺序首次命中即剥离）与 path_rewrites（最长前缀替换）。
 func ApplyIntraRepoPathMapping(repoRelPath string, stripPrefixes []string, pathRewrites map[string]string) (string, error) {
+	return ApplyIntraRepoPathMappingWithPG(repoRelPath, stripPrefixes, pathRewrites, false)
+}
+
+// ApplyIntraRepoPathMappingWithPG 按 ADR-28 §2.1 确定性顺序执行：strip_prefixes -> path_rewrites -> StripPGPathSegment(若启用) -> SanitizeProtoRelPath。
+func ApplyIntraRepoPathMappingWithPG(repoRelPath string, stripPrefixes []string, pathRewrites map[string]string, stripPG bool) (string, error) {
 	cleaned, err := decoder.SanitizeProtoRelPath(repoRelPath, true)
 	if err != nil {
 		return "", err
@@ -519,6 +858,10 @@ func ApplyIntraRepoPathMapping(repoRelPath string, stripPrefixes []string, pathR
 		}
 	}
 
+	if stripPG {
+		cur = StripPGPathSegment(cur)
+	}
+
 	mapped, err := decoder.SanitizeProtoRelPath(cur, true)
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", ErrIntraRepoPathConflict, err)
@@ -532,13 +875,23 @@ func MapAndValidateIntraRepoPaths(
 	stripPrefixes []string,
 	pathRewrites map[string]string,
 ) (map[string]string, []IntraRepoPathCollision, error) {
+	return MapAndValidateIntraRepoPathsWithPG(paths, stripPrefixes, pathRewrites, false)
+}
+
+// MapAndValidateIntraRepoPathsWithPG 对仓内所有源文件按是否剥离 /pg 执行裁剪重写与仓内碰撞检测。
+func MapAndValidateIntraRepoPathsWithPG(
+	paths []string,
+	stripPrefixes []string,
+	pathRewrites map[string]string,
+	stripPG bool,
+) (map[string]string, []IntraRepoPathCollision, error) {
 	sortedPaths := append([]string(nil), paths...)
 	sort.Strings(sortedPaths)
 
 	mapped := make(map[string]string, len(sortedPaths))
 	reverse := make(map[string][]string, len(sortedPaths))
 	for _, p := range sortedPaths {
-		m, err := ApplyIntraRepoPathMapping(p, stripPrefixes, pathRewrites)
+		m, err := ApplyIntraRepoPathMappingWithPG(p, stripPrefixes, pathRewrites, stripPG)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -591,6 +944,7 @@ func MergeRepoGovernanceSpecFromModel(repo models.GitRepo) (RepoGovernanceSpec, 
 	hasOverride := !repo.SyncEnabled ||
 		strings.TrimSpace(repo.ExportTargetSubsystem) != "" ||
 		strings.TrimSpace(repo.ExportTargetRepoDir) != "" ||
+		normCfg.DisableStripPGSegment ||
 		len(stripPrefixes) > 0 ||
 		len(pathRewrites) > 0 ||
 		len(repo.CollectGlobs()) > 0 ||
@@ -610,6 +964,7 @@ func MergeRepoGovernanceSpecFromModel(repo models.GitRepo) (RepoGovernanceSpec, 
 		SyncStrategy:          repo.SyncStrategy,
 		ExportTargetSubsystem: repo.ExportTargetSubsystem,
 		ExportTargetRepoDir:   repo.ExportTargetRepoDir,
+		DisableStripPGSegment: normCfg.DisableStripPGSegment,
 		StripPrefixes:         stripPrefixes,
 		PathRewrites:          pathRewrites,
 		CollectGlobs:          repo.CollectGlobs(),
@@ -801,11 +1156,12 @@ func SaveGovernanceConfig(
 				}
 			}
 			normCfg := RepoNormalizeConfig{
-				DisabledRules:    nonNilStringsSlice(spec.DisabledRules),
-				RegexRewrites:    spec.RegexRewrites,
-				ImportRewrites:   spec.ImportRewrites,
-				ExemptFiles:      nonNilStringsSlice(spec.ExemptFiles),
-				QuarantinedFiles: nonNilStringsSlice(spec.QuarantinedFiles),
+				DisableStripPGSegment: spec.DisableStripPGSegment,
+				DisabledRules:         nonNilStringsSlice(spec.DisabledRules),
+				RegexRewrites:         spec.RegexRewrites,
+				ImportRewrites:        spec.ImportRewrites,
+				ExemptFiles:           nonNilStringsSlice(spec.ExemptFiles),
+				QuarantinedFiles:      nonNilStringsSlice(spec.QuarantinedFiles),
 			}
 			if b, err := json.Marshal(normCfg); err == nil {
 				updates["repo_normalize_config_json"] = datatypes.JSON(b)

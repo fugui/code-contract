@@ -25,6 +25,7 @@ type repoGovernanceUpdateRequest struct {
 	SyncStrategy          *string                      `json:"sync_strategy"`
 	ExportTargetSubsystem *string                      `json:"export_target_subsystem"`
 	ExportTargetRepoDir   *string                      `json:"export_target_repo_dir"`
+	DisableStripPGSegment *bool                        `json:"disable_strip_pg_segment"`
 	StripPrefixes         []string                     `json:"strip_prefixes"`
 	HasStripPrefixes      bool                         `json:"-"`
 	PathRewrites          map[string]string            `json:"path_rewrites"`
@@ -73,6 +74,7 @@ func buildRepoSpecFromPayload(repo models.GitRepo, req repoGovernanceUpdateReque
 		SyncStrategy:          repo.SyncStrategy,
 		ExportTargetSubsystem: repo.ExportTargetSubsystem,
 		ExportTargetRepoDir:   repo.ExportTargetRepoDir,
+		DisableStripPGSegment: normCfg.DisableStripPGSegment,
 		StripPrefixes:         repo.StripPrefixes(),
 		PathRewrites:          repo.PathRewrites(),
 		CollectGlobs:          repo.CollectGlobs(),
@@ -91,6 +93,9 @@ func buildRepoSpecFromPayload(repo models.GitRepo, req repoGovernanceUpdateReque
 	}
 	if req.ExportTargetRepoDir != nil {
 		spec.ExportTargetRepoDir = strings.TrimSpace(*req.ExportTargetRepoDir)
+	}
+	if req.DisableStripPGSegment != nil {
+		spec.DisableStripPGSegment = *req.DisableStripPGSegment
 	}
 	if _, ok := rawMap["strip_prefixes"]; ok {
 		spec.StripPrefixes = req.StripPrefixes
@@ -290,12 +295,29 @@ func DryRunProtoGovernanceHandler(c *gin.Context) {
 	if cols, _ := gitclient.CheckGlobalExportTargetCollisions(c.Request.Context(), models.DB, overrides); len(cols) > 0 {
 		out.GlobalCollisions = cols
 	}
+	var poolPathCandidates []gitclient.PoolPathCandidate
 	for _, r := range targetRepos {
 		ov := overrides[r.ID]
 		dr, drErr := gitclient.DryRunRepoGovernance(c.Request.Context(), models.DB, r, ov, &doc)
 		if drErr == nil && dr != nil {
 			out.AffectedRepos = append(out.AffectedRepos, *dr)
+			for _, fm := range dr.Files {
+				prePath := gitclient.NormalizeLogicalPath(fm.RawPath, false)
+				postPath := fm.LogicalPath
+				if postPath == "" {
+					postPath = gitclient.NormalizeLogicalPath(fm.CleanPath, doc.Global.EffectiveStripPGSegment())
+				}
+				poolPathCandidates = append(poolPathCandidates, gitclient.PoolPathCandidate{
+					RepoID:        r.ID,
+					RepoName:      r.Name,
+					PreStripPath:  prePath,
+					PostStripPath: postPath,
+				})
+			}
 		}
+	}
+	if doc.Global.EffectiveStripPGSegment() && len(poolPathCandidates) > 0 {
+		out.PoolStripCollisions = gitclient.CheckPoolStripPGCollisions(poolPathCandidates)
 	}
 	c.JSON(http.StatusOK, out)
 }
@@ -445,7 +467,11 @@ func UpdateGitRepoGovernanceHandler(c *gin.Context) {
 		Where("git_repo_id = ? AND is_deleted = false", repo.ID).
 		Pluck("repo_file_path", &existingPaths).Error
 	if len(existingPaths) > 0 {
-		if _, pCols, pErr := gitclient.MapAndValidateIntraRepoPaths(existingPaths, spec.StripPrefixes, spec.PathRewrites); pErr != nil {
+		stripPG := true
+		if snap, gErr := gitclient.LoadActiveGovernanceConfig(c.Request.Context(), models.DB); gErr == nil && snap != nil {
+			stripPG = snap.Doc.Global.EffectiveStripPGSegment()
+		}
+		if _, pCols, pErr := gitclient.MapAndValidateIntraRepoPathsWithPG(existingPaths, spec.StripPrefixes, spec.PathRewrites, stripPG && !spec.DisableStripPGSegment); pErr != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"err_code":   "INTRA_REPO_PATH_CONFLICT",
 				"error":      pErr.Error(),
@@ -487,11 +513,12 @@ func UpdateGitRepoGovernanceHandler(c *gin.Context) {
 		}
 	}
 	normCfg := gitclient.RepoNormalizeConfig{
-		DisabledRules:    spec.DisabledRules,
-		RegexRewrites:    spec.RegexRewrites,
-		ImportRewrites:   spec.ImportRewrites,
-		ExemptFiles:      spec.ExemptFiles,
-		QuarantinedFiles: spec.QuarantinedFiles,
+		DisableStripPGSegment: spec.DisableStripPGSegment,
+		DisabledRules:         spec.DisabledRules,
+		RegexRewrites:         spec.RegexRewrites,
+		ImportRewrites:        spec.ImportRewrites,
+		ExemptFiles:           spec.ExemptFiles,
+		QuarantinedFiles:      spec.QuarantinedFiles,
 	}
 	if b, err := json.Marshal(normCfg); err == nil {
 		repo.RepoNormalizeConfigJSON = datatypes.JSON(b)

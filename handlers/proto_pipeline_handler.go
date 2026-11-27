@@ -381,6 +381,16 @@ func GetProtoFilesTreeHandler(c *gin.Context) {
 	if incExt := strings.TrimSpace(c.Query("include_external_copy")); incExt == "false" {
 		q = q.Where("is_external_copy = false")
 	}
+	if closureRaw := strings.TrimSpace(c.Query("in_service_closure")); closureRaw != "" {
+		if b, bErr := strconv.ParseBool(closureRaw); bErr == nil {
+			q = q.Where("in_service_closure = ?", b)
+		}
+	}
+	if usvcRaw := strings.TrimSpace(c.Query("is_uservice_source")); usvcRaw != "" {
+		if b, bErr := strconv.ParseBool(usvcRaw); bErr == nil {
+			q = q.Where("is_uservice_source = ?", b)
+		}
+	}
 	if repoID, ok := parseOptionalUint64Query(c, "git_repo_id"); !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "非法的 git_repo_id 参数"})
 		return

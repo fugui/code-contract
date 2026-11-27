@@ -47,7 +47,7 @@ func TestRuleBasedNormalizer_All5Rules_Overrides_LineMap_AndIdempotency(t *testi
 	}
 
 	norm := NewRuleBasedNormalizer(&defCfg)
-	if norm.Version() != "rule-normalizer/v1" {
+	if norm.Version() != "rule-normalizer/v2" {
 		t.Fatalf("unexpected normalizer version: %s", norm.Version())
 	}
 
@@ -144,8 +144,8 @@ func TestRuleBasedNormalizer_All5Rules_Overrides_LineMap_AndIdempotency(t *testi
 	defCfg2.Global.DefaultSyntax = "proto2"
 	ver1 := EffectiveNormalizerVersion(norm, BuildEffectiveRepoAuxJSON(repo, &defCfg))
 	ver2 := EffectiveNormalizerVersion(norm, BuildEffectiveRepoAuxJSON(repo, &defCfg2))
-	if ver1 == ver2 || !strings.HasPrefix(ver1, "rule-normalizer/v1+") {
-		t.Fatalf("expected distinct version keys prefixed with rule-normalizer/v1+, got %s vs %s", ver1, ver2)
+	if ver1 == ver2 || !strings.HasPrefix(ver1, "rule-normalizer/v2+") {
+		t.Fatalf("expected distinct version keys prefixed with rule-normalizer/v2+, got %s vs %s", ver1, ver2)
 	}
 }
 
@@ -210,9 +210,9 @@ func TestSchemeAExportRelocation_IntraRepoPathMapping_AndCollisions(t *testing.T
 		t.Fatalf("RunFourStagePipeline repoA: %v", err)
 	}
 
-	// Verify initial raw/ and clean/ symlinks both point to legacy-sub/repo-a
+	// Verify initial raw/ keeps pg/ and clean/ flattens pg/ under legacy-sub/repo-a
 	rawPath := filepath.Join(protosDir, TreeKindRaw, "legacy-sub", "repo-a", "pg", "server", "order.proto")
-	cleanOldPath := filepath.Join(protosDir, TreeKindClean, "legacy-sub", "repo-a", "pg", "server", "order.proto")
+	cleanOldPath := filepath.Join(protosDir, TreeKindClean, "legacy-sub", "repo-a", "server", "order.proto")
 	if _, err := os.Stat(rawPath); err != nil {
 		t.Fatalf("expected raw file at %s: %v", rawPath, err)
 	}
