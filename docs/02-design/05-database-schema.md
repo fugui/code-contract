@@ -1640,4 +1640,34 @@ func (MigrationBackup) TableName() string { return config.TablePrefix + "mig_bac
    - 字段：`id` (`bigserial PK`)、`revision` (`int NOT NULL`)、`config_sha256` (`varchar(64) NOT NULL`)、`config_json` (`jsonb NOT NULL`)、`is_active` (`boolean NOT NULL DEFAULT true`)、`updated_by` (`varchar(128)`)、`created_at`、`updated_at`。
    - 写操作接入 `code-common/backend/audit` 记录字段级 Diff 审计。
 
+---
+
+## 9. ADR-28 现网 `uService` 清洗、去 `/pg` 扁平化与全池编译收敛数据模型演进 (M40~M42)
+
+在现有 39 张核心表 + `contract_settings` 基础上，扩展 `contract_proto_files` 并新增表 #40：
+
+1. **`contract_proto_files` 新增字段**：
+   - `clean_rel_path` (`varchar(512) NOT NULL DEFAULT ''`)：仓级 `clean/` 导出视图相对路径（默认经 `StripPGPathSegment` 去除独立 `/pg` 段；若单仓启用 `disable_strip_pg_segment` 则仅在此列保留 `/pg`）。
+   - `is_uservice_source` (`boolean NOT NULL DEFAULT false`)：Stage B 内容级词法识别是否包含有效 `uService` 声明。
+   - `in_service_closure` (`boolean NOT NULL DEFAULT false`)：Stage C+ R1/R3/R4 协同 BFS 判定是否位于服务依赖闭包内；复合索引 `idx_contract_pfile_closure (in_service_closure, is_deleted)`。
+   - `is_harvested_base` (`boolean NOT NULL DEFAULT false`)：是否由 R4 共享基座采集/按需收割器自动入池的公共基座文件。
+   - `auto_fix_count` (`int NOT NULL DEFAULT 0`)：Stage C+ R7 纯 Go `protocompile` 反馈自愈回路写入的源码级修复次数。
+
+2. **新增表 #40：`contract_proto_pool_reconcile_runs`（全池 Stage C+ 编译收敛运行记录表）**：
+   - 字段：
+     - `id` (`bigserial PK`)
+     - `status` (`varchar(24) NOT NULL DEFAULT 'RUNNING' CHECK IN ('RUNNING','COMPLETED','FAILED')`)
+     - `triggered_by` (`varchar(128) NOT NULL DEFAULT ''`)
+     - `config_revision` (`int NOT NULL DEFAULT 0`)
+     - `config_sha256` (`varchar(64) NOT NULL DEFAULT ''`)
+     - `strip_pg_segment` (`boolean NOT NULL DEFAULT true`)
+     - `closure_only` (`boolean NOT NULL DEFAULT true`)
+     - `total_files` / `service_count` / `closure_file_count` / `harvested_base_count` / `logical_path_count` / `conflict_count` / `auto_fix_count` / `quarantined_count` / `bare_import_expanded_count` / `post_strip_collision_count` (`int NOT NULL DEFAULT 0`)
+     - `workspace_version` (`varchar(128) NOT NULL DEFAULT ''`)
+     - `report_json` (`jsonb NOT NULL DEFAULT '{}'`)：持久化 `.clean-report.json` 完整结构（`logical_map`、`conflicts` 含 `content_sha256`/`content_identical`/`symbol_diff`、`auto_fixes`、`quarantined`、`harvested`、`post_strip_collisions`、`stats`）
+     - `error_message` (`text NOT NULL DEFAULT ''`)
+     - `duration_ms` (`bigint NOT NULL DEFAULT 0`)
+     - `started_at` (`timestamptz NOT NULL`)、`finished_at` (`timestamptz`)、`created_at`、`updated_at`。
+   - 写操作（全池触发与自动修复固化）均接入 `code-common/backend/audit` 记录审计。
+
 

@@ -1706,3 +1706,24 @@ export interface DiscoveryProcessGroupDTO {
 2. **方案 A 导出治理与 Stage B 闭环**：
    - **单仓契约治理抽屉 (`GitRepoConfigDrawer`)**：平台仓名、URL、分支、`service_group`、部门、负责人一律只读展示（移除独立建仓、删仓与凭据表单）；支持配置 `sync_enabled`、`export_target_subsystem`、`export_target_repo_dir`、`strip_prefixes`、`path_rewrites`、`collect_globs`、`exclude_globs` 与仓级规则覆写，并内置 **Dry-Run 对比预览**（零网络、零写盘返回目录对照、碰撞告警、Unified Diff 与语法通过率对比）与「保存并免网络重出树」。
    - **全局治理与辅助 `.json` 抽屉 (`GlobalGovernanceConfigDrawer`)**：支持维护内置规则 `NORM-001`~`NORM-005` 开关与全局 `import_rewrites`，双向导入/导出 `proto-governance/v1` `.json`，执行全局 Dry-Run 校验（含 409 目标目录碰撞拦截）与一键免网络批量重出树。
+
+---
+
+### 4.17 现网 `uService` 清洗、`clean/` 去 `/pg` 扁平化与全池编译收敛控制面 (`ADR-28` / `M40 ~ M42`)
+
+1. **Stage B `rule-normalizer/v2` 与统一坐标系**：
+   - `RuleBasedNormalizer` 升级为 `rule-normalizer/v2`（利用 `(raw_blob_sha, normalizer_version)` 增量键在升级后免 `git fetch` 自动全量重洗），按确定性 8 步执行：`NORM-001` (BOM/LF) → `NORM-004` (C 预处理/非标宏) → `regex_rewrites` → `NORM-006` (`uservice_converter.go` 注释感知状态机转换 + 块内 `import` 提升 + `implicit_symbol_imports` 单一真值源注入) → `NORM-003` (增强重复 `package` 去重) → `NORM-005` (兼容单引号与缺失分号) → `NORM-007` (`StripPGPathSegment` 剥离独立 `"pg"` 段) → `NORM-002` (`default_syntax = "auto" | "proto2" | "proto3"`)。
+   - **单一去 `/pg` 坐标系硬约束**：`raw/` 永久保留原始路径与字节；当 `global.strip_pg_segment = true`（默认）时，`file_path`、`workspace/` 与全部非 WKT `import` 全池强制处于统一去 `/pg` 空间，单仓 `disable_strip_pg_segment: true` 仅作用于该仓磁盘 `clean/` 展示路径（`clean_rel_path`），绝不撕裂逻辑坐标系。仓内与全池剥离双层碰撞门禁确保去 `/pg` 不引入新碰撞（`post_strip_collisions \ pre_strip_collisions == ∅`）。
+2. **Stage C+ 全池协调器（`pool_reconciler.go` + `base_harvester.go` + `pool_r7_r8.go`）**：
+   - **R0 与 R4 隔离**：R0 `exclude_subsystems` / `exclude_repo_patterns` / 变体 `exclude_globs` 仅作用于普通业务仓，严禁作用在 `shared_base_sources`（通道 A）与 `SharedBaseMemoryIndex`（通道 B，单次内存建索引零 `exec("find")`）收割的 `BASE_LIB` 基座（标 `is_harvested_base = true`）。
+   - **R2 投票与 R1/R3/R4 协同迭代**：在统一去 `/pg` 坐标系下，以全池唯一 `basename` 的 `import` 投票映射 65 类非启发式目录（`显式规则 > 最高票[平票字典序] > 归一化启发式`），展开全部裸文件名 `import`；从 `is_uservice_source = true` 种子执行协同 BFS 标记 `in_service_closure`（非闭包 `*TC.proto` 留库可供源码查阅）；多候选触发 7 级确定性 R3 自动消歧，输出带 `content_sha256`、`content_identical` 与 `symbol_diff` 的冲突摘要。
+   - **纯 Go `protocompile` R7 自愈与 R8 隔离**：基于 Stage B 提取的 `Symbols` 构建全池内存符号倒排索引，联合 `protocompile@v0.14.1` 结构化报错驱动 `fix(a)`、`fix(b)`（同目录兄弟优先 + 唯一基座触发 R4）、`fix(c)`（含 `(file, basename, target)` 防震荡集合）与 `variant swap` 四类修复，任一有进展即续轮（上限 `max_r7_rounds` 默认 12）；残余错误进入 R8 按「根因错误高权重 > 受害者错误低权重」隔离（上限 `max_r8_rounds` 默认 150）。全池所有遍历均基于排序切片保证 100% 确定性。
+3. **磁盘三视图与 `/contract/proto-sources` 前端增强**：
+   - `ProtoTreeManager` 新增 `TreeKindWorkspace = "workspace"`，原子切换 `<protos_dir>/workspace/<logical_path_without_pg>` 及 `.clean-report.json`；
+   - `GlobalGovernanceConfigDrawer` 增加 `NORM-006`/`007`、`default_syntax (auto/proto2/proto3)`、`strip_pg_segment`、`exclude_subsystems`、`implicit_symbol_imports`、`shared_base_sources` 与「载入现网 uService + 去 /pg 治理预设」快捷按钮；
+   - `ProtoExportGovernancePane` 增加「全池编译收敛与工作区导出」操作、SSE `proto_pool_reconcile.progress` 进度条与 `PoolReconcileReportDrawer`（分 Tab 展示 `conflicts` 含哈希/`symbol_diff`、`auto_fixes` 勾选固化、`quarantined`、`harvested` 并支持点击跳转源码）；
+   - `GitSourcesWorkbenchPane` 筛选栏增加「仅看服务闭包（排除 `*TC` 等非闭包文件）」开关，展示 `uService 已转换`、`R7 自动修复`、`R4 收割基座` 徽标与去 `/pg` 对照。
+
+| 审计子模块 (`module`) | 动作标识 (`action`) | 风险等级 | `before` / `after` 快照策略 |
+| :--- | :--- | :---: | :--- |
+| `contract_git` | `pool_reconcile` / `promote_auto_fixes` | `P2` (`pool_reconcile`) / `P1` (`promote_auto_fixes`) | 记录协调运行 ID/统计摘要，以及被固化的修复规则、`import_rewrites` 或 `MANUAL` 归属变更前后快照 |
