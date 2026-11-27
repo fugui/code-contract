@@ -513,7 +513,7 @@ func runR7R8Stage(ctx context.Context, statesPtr *[]*PoolFileState, report *Pool
 				// 检查 st 自己是否是多候选赢家，或其引入的某多候选赢家缺少所需符号
 				// 1) st 自身存在多候选且自身编译错误
 				grpSelf := poolByLP[lp]
-				if len(grpSelf) > 1 {
+				if len(grpSelf) > 1 && !groupHasManualOwner(grpSelf) {
 					if triedVariants[lp] == nil {
 						triedVariants[lp] = make(map[string]struct{})
 					}
@@ -557,7 +557,7 @@ func runR7R8Stage(ctx context.Context, statesPtr *[]*PoolFileState, report *Pool
 					var swappedAny bool
 					for _, imp := range st.Imports {
 						grp := poolByLP[imp]
-						if len(grp) <= 1 {
+						if len(grp) <= 1 || groupHasManualOwner(grp) {
 							continue
 						}
 						curWinner := activeByLP[imp]
@@ -639,6 +639,9 @@ func runR7R8Stage(ctx context.Context, statesPtr *[]*PoolFileState, report *Pool
 			}
 			victim.PipelineStatus = models.ProtoPipelineQuarantined
 			victim.InServiceClosure = false
+			if victim.ManualOwnerBundleID > 0 && victim.BundleID == victim.ManualOwnerBundleID {
+				reason = "人工仲裁文件编译失败，请复核仲裁: " + reason
+			}
 			victim.StatusReason = reason
 			report.Quarantined = append(report.Quarantined, PoolQuarantinedEntry{
 				LogicalPath:  victim.LogicalPath,
@@ -671,6 +674,15 @@ func sortedActiveLogicalPaths(m map[string]*PoolFileState) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+func groupHasManualOwner(grp []*PoolFileState) bool {
+	for _, st := range grp {
+		if st != nil && st.ManualOwnerBundleID > 0 && st.BundleID == st.ManualOwnerBundleID {
+			return true
+		}
+	}
+	return false
 }
 
 func variantCandidateKey(st *PoolFileState) string {

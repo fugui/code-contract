@@ -263,12 +263,19 @@ func RegisterRoutesForTest(r *gin.Engine) {
 		protected.POST("/proto-schemas/batch-activate", requireAdmin, handlers.BatchActivateProtoSchemas)
 		protected.GET("/proto-schemas/:id/download", handlers.DownloadProtoSchema)
 		protected.GET("/proto-schemas/:id/summary", handlers.GetProtoSchemaSummary)
-		protected.POST("/proto-schemas/compile", requireAdmin, handlers.CompileProtoSchema)
-		protected.POST("/proto-schemas", requireAdmin, handlers.UploadProtoSchema)
 		protected.PATCH("/proto-schemas/:id", requireAdmin, handlers.UpdateProtoSchema)
 		protected.POST("/proto-schemas/:id/activate", requireAdmin, handlers.ActivateProtoSchema)
 		protected.POST("/proto-schemas/:id/deactivate", requireAdmin, handlers.DeactivateProtoSchema)
 		protected.DELETE("/proto-schemas/:id", requireAdmin, handlers.DeleteProtoSchema)
+		protected.GET("/proto-pipeline/overview", handlers.GetProtoPipelineOverviewHandler)
+		protected.POST("/proto-pipeline/run", requireAdmin, handlers.RunProtoPipelineHandler)
+		protected.GET("/proto-pipeline/runs/:runId", handlers.GetProtoPipelineRunHandler)
+		protected.POST("/proto-pipeline/publish", requireAdmin, handlers.PublishProtoPipelineHandler)
+		protected.GET("/proto-pipeline/publish-runs/latest", handlers.GetLatestProtoPublishRunHandler)
+		protected.GET("/proto-pipeline/publish-runs/:runId", handlers.GetProtoPublishRunHandler)
+		protected.POST("/proto-pipeline/publish-runs/:runId/approve-breaking", requireAdmin, handlers.ApproveBreakingPublishRunHandler)
+		protected.POST("/proto-pipeline/publish-runs/:runId/confirm", requireAdmin, handlers.ConfirmPreviewPublishRunHandler)
+		protected.GET("/proto-pipeline/archived-external-schemas", handlers.ListArchivedExternalSchemasHandler)
 		protected.GET("/proto-services", handlers.ListProtoServices)
 		protected.GET("/catalog/services", handlers.ListCatalogServices)
 		protected.POST("/catalog/correlate", handlers.CorrelateCatalogServicesHandler)
@@ -1032,20 +1039,10 @@ func TestSC02_ArchProtoAndTopologyFlows(t *testing.T) {
 		t.Fatalf("预期返回 2 条依赖，实际返回: %d", len(depsResp.Items))
 	}
 
-	// 6. 上传 Protobuf 描述集
+	// 6. 通过 Git 来源注册描述集 (ADR-29 废止手动 POST /api/proto-schemas 上传，改由测试助手工装并断言原入口 404)
 	pbBytes := buildTestFDS("dophi.risk.v1", "RiskService", "VerifyRisk")
-	upReq, err := createMultipartUploadReq("/api/proto-schemas", map[string]string{
-		"name":          "risk_v1.pb",
-		"auto_activate": "true",
-	}, "file", "risk_v1.pb", pbBytes)
-	if err != nil {
-		t.Fatalf("创建上传请求失败: %v", err)
-	}
-	upReq.Header.Set("Authorization", "Bearer "+adminToken)
-	w = httptest.NewRecorder()
-	r.ServeHTTP(w, upReq)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("上传并激活描述集失败: %d (body: %s)", w.Code, w.Body.String())
+	if _, _, _, uErr := uploadTestProtoBytes(t, db, "risk_v1.pb", "risk_v1.pb", models.ProtoCategoryBusiness, pbBytes, true, false, ""); uErr != nil {
+		t.Fatalf("上传并激活描述集失败: %v", uErr)
 	}
 
 	// 6.1 验证 GET /api/arch/proto-services/claimable 能够查到已激活且已被认领的 dophi.risk.v1.RiskService
@@ -2357,6 +2354,7 @@ func TestProtoSchemaLedgerAPI_LatestOnlyGrouping_BatchActivate_Deactivate_GraphA
 		Name:            "base",
 		Version:         1,
 		Category:        models.ProtoCategoryBaseLib,
+		SourceType:      models.ProtoSourceGitSync,
 		FileName:        "base_v1.pb",
 		FileSHA256:      "sha_base_v1",
 		FileSize:        len(baseV1Bytes),
@@ -2369,6 +2367,7 @@ func TestProtoSchemaLedgerAPI_LatestOnlyGrouping_BatchActivate_Deactivate_GraphA
 		Name:            "base",
 		Version:         2,
 		Category:        models.ProtoCategoryBaseLib,
+		SourceType:      models.ProtoSourceGitSync,
 		FileName:        "base_v2.pb",
 		FileSHA256:      "sha_base_v2",
 		FileSize:        len(baseV2Bytes),
@@ -2381,6 +2380,7 @@ func TestProtoSchemaLedgerAPI_LatestOnlyGrouping_BatchActivate_Deactivate_GraphA
 		Name:            "order",
 		Version:         1,
 		Category:        models.ProtoCategoryBusiness,
+		SourceType:      models.ProtoSourceGitSync,
 		FileName:        "order_v1.pb",
 		FileSHA256:      "sha_order_v1",
 		FileSize:        len(orderV1Bytes),
@@ -2396,6 +2396,7 @@ func TestProtoSchemaLedgerAPI_LatestOnlyGrouping_BatchActivate_Deactivate_GraphA
 		Name:            "order",
 		Version:         2,
 		Category:        models.ProtoCategoryBusiness,
+		SourceType:      models.ProtoSourceGitSync,
 		FileName:        "order_v2.pb",
 		FileSHA256:      "sha_order_v2",
 		FileSize:        len(orderV2Bytes),
@@ -2582,7 +2583,7 @@ func TestProtoSchemaLedgerAPI_LatestOnlyGrouping_BatchActivate_Deactivate_GraphA
 		t.Errorf("依赖图有向边不符合预期: %+v", graphRes.Edges)
 	}
 
-	// (G) 测试扩展名拦截 (非法扩展名返回 400)
+	// (G) ADR-29 废止 POST /api/proto-schemas 手动上传入口 -> 应返回 404 Not Found
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 	_ = writer.WriteField("name", "bad_ext")
@@ -2595,8 +2596,8 @@ func TestProtoSchemaLedgerAPI_LatestOnlyGrouping_BatchActivate_Deactivate_GraphA
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("上传 .exe 期望 400 Bad Request，实际: %d", w.Code)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("已废止的 POST /api/proto-schemas 期望返回 404 Not Found，实际: %d", w.Code)
 	}
 
 	// (H) 测试 GET /api/proto-schemas/:id/download 安全头

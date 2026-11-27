@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +15,7 @@ import (
 	commonAudit "code-common/backend/audit"
 	commonModels "code-common/backend/models"
 	"code-contract/config"
+	"code-contract/handlers"
 	"code-contract/internal/server/decoder"
 	"code-contract/models"
 	"google.golang.org/protobuf/proto"
@@ -76,7 +79,7 @@ func TestProtoCompile_LinksDirectlyIntoBreakingChangeRadar(t *testing.T) {
 	}
 	db.Create(&dep)
 
-	// 1. 普通用户禁止调用在线编译接口 -> 403 Forbidden
+	// 1. ADR-29 废止在线 HTTP POST /api/proto-schemas/compile 入口，管理员与普通用户均应收到 404
 	userReqBody, _ := json.Marshal(map[string]any{
 		"name": "order-compile",
 		"files": []map[string]string{
@@ -88,96 +91,52 @@ func TestProtoCompile_LinksDirectlyIntoBreakingChangeRadar(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+normalToken)
 	resp := httptest.NewRecorder()
 	r.ServeHTTP(resp, req)
-	if resp.Code != http.StatusForbidden {
-		t.Fatalf("非管理员调用 compile 应返回 403，实测 %d: %s", resp.Code, resp.Body.String())
+	if resp.Code != http.StatusNotFound {
+		t.Fatalf("已废止的 compile 路由应返回 404，实测 %d: %s", resp.Code, resp.Body.String())
 	}
 
-	// 2. 路径穿越拦截 -> 400 PATH_TRAVERSAL_DENIED
-	traversalBody, _ := json.Marshal(map[string]any{
-		"name": "order-compile",
-		"files": []map[string]string{
-			{"path": "../escape.proto", "content": `syntax = "proto3"; package p; message M {}`},
-		},
-	})
-	req = httptest.NewRequest(http.MethodPost, "/api/proto-schemas/compile", bytes.NewReader(traversalBody))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+adminToken)
-	resp = httptest.NewRecorder()
-	r.ServeHTTP(resp, req)
-	if resp.Code != http.StatusBadRequest {
-		t.Fatalf("路径穿越应返回 400，实测 %d: %s", resp.Code, resp.Body.String())
-	}
-	var errResp struct {
-		Code        string                         `json:"code"`
-		Diagnostics []decoder.CompileDiagnosticDTO `json:"diagnostics"`
-	}
-	if err := json.Unmarshal(resp.Body.Bytes(), &errResp); err != nil {
-		t.Fatalf("解析路径穿越响应失败: %v", err)
-	}
-	if errResp.Code != "PATH_TRAVERSAL_DENIED" {
-		t.Errorf("路径穿越应返回 PATH_TRAVERSAL_DENIED，实测: %+v", errResp)
-	}
-
-	// 3. 语法错误定位行号/列号 -> 400 COMPILE_SYNTAX_ERROR
-	syntaxErrBody, err := json.Marshal(map[string]any{
-		"name": "order-compile",
-		"files": []map[string]string{
-			{"path": "order/bad.proto", "content": "syntax = \"proto3\";\npackage order.v1;\nmessage BadReq {\n  string missing_tag = ;\n}\n"},
-		},
-	})
+	reg, err := handlers.GetDecoderRegistry()
 	if err != nil {
-		t.Fatalf("序列化请求体失败: %v", err)
-	}
-	req = httptest.NewRequest(http.MethodPost, "/api/proto-schemas/compile", bytes.NewReader(syntaxErrBody))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+adminToken)
-	resp = httptest.NewRecorder()
-	r.ServeHTTP(resp, req)
-	if resp.Code != http.StatusBadRequest {
-		t.Fatalf("语法错误应返回 400，实测 %d: %s", resp.Code, resp.Body.String())
-	}
-	errResp = struct {
-		Code        string                         `json:"code"`
-		Diagnostics []decoder.CompileDiagnosticDTO `json:"diagnostics"`
-	}{}
-	if err := json.Unmarshal(resp.Body.Bytes(), &errResp); err != nil {
-		t.Fatalf("解析语法错误响应失败: %v", err)
-	}
-	if errResp.Code != "COMPILE_SYNTAX_ERROR" || len(errResp.Diagnostics) == 0 || errResp.Diagnostics[0].Line <= 0 {
-		t.Errorf("语法错误应返回 COMPILE_SYNTAX_ERROR 与非零行号诊断，实测: %+v", errResp)
+		t.Fatalf("GetDecoderRegistry 失败: %v", err)
 	}
 
-	// 4. 在线编译并激活 BASE_LIB (0-Service common/base.proto)
-	baseBody, _ := json.Marshal(map[string]any{
-		"name":          "common-base-online",
-		"category":      "BASE_LIB",
-		"auto_activate": true,
-		"files": []map[string]string{
-			{
-				"path":    "common/base.proto",
-				"content": "syntax = \"proto3\";\npackage common.v1;\nmessage Meta {\n  string req_id = 1;\n}\n",
-			},
+	// 2. 路径穿越拦截 -> decoder.ErrPathTraversalDenied
+	if _, _, _, pErr := reg.CompileAndSaveSchema(context.Background(), decoder.CompileProtoBundleInput{
+		Name:       "order-compile",
+		SourceType: models.ProtoSourceGitSync,
+		Files: map[string]string{
+			"../escape.proto": `syntax = "proto3"; package p; message M {}`,
 		},
-	})
-	req = httptest.NewRequest(http.MethodPost, "/api/proto-schemas/compile", bytes.NewReader(baseBody))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+adminToken)
-	resp = httptest.NewRecorder()
-	r.ServeHTTP(resp, req)
-	if resp.Code != http.StatusCreated {
-		t.Fatalf("编译并激活 BASE_LIB v1 失败: code=%d, body=%s", resp.Code, resp.Body.String())
+	}); pErr == nil || !errors.Is(pErr, decoder.ErrPathTraversalDenied) {
+		t.Fatalf("路径穿越应返回 ErrPathTraversalDenied，实测: %v", pErr)
 	}
 
-	// 5. 在线编译并激活业务包 v1（引用 Tier 3 common/base.proto 并保留 SourceCodeInfo）-> 201 Created
-	v1Body, _ := json.Marshal(map[string]any{
-		"name":          "order-compile",
-		"category":      "BUSINESS",
-		"version_tag":   "v1.0.0",
-		"auto_activate": true,
-		"files": []map[string]string{
-			{
-				"path": "order/order.proto",
-				"content": `syntax = "proto3";
+	// 3. 语法错误定位行号/列号 -> SchemaCompileError + 非零行号诊断
+	if _, _, _, sErr := reg.CompileAndSaveSchema(context.Background(), decoder.CompileProtoBundleInput{
+		Name:       "order-compile",
+		SourceType: models.ProtoSourceGitSync,
+		Files: map[string]string{
+			"order/bad.proto": "syntax = \"proto3\";\npackage order.v1;\nmessage BadReq {\n  string missing_tag = ;\n}\n",
+		},
+	}); sErr == nil {
+		t.Fatalf("语法错误应编译失败")
+	} else {
+		var compErr *decoder.CompileError
+		if !errors.As(sErr, &compErr) || len(compErr.Diagnostics) == 0 || compErr.Diagnostics[0].Line <= 0 {
+			t.Errorf("语法错误应返回 CompileError 与非零行号诊断，实测: %v", sErr)
+		}
+	}
+
+	// 4. 编译并激活 BASE_LIB (0-Service common/base.proto)
+	if _, _, _, err := compileTestProtoSchema(t, db, "common-base-online", "BASE_LIB", "", map[string]string{
+		"common/base.proto": "syntax = \"proto3\";\npackage common.v1;\nmessage Meta {\n  string req_id = 1;\n}\n",
+	}, true, false, ""); err != nil {
+		t.Fatalf("编译并激活 BASE_LIB v1 失败: %v", err)
+	}
+
+	// 5. 编译并激活业务包 v1（引用 Tier 3 common/base.proto 并保留 SourceCodeInfo）
+	orderV1Schema, v1Ops, docCnt, err := compileTestProtoSchema(t, db, "order-compile", "BUSINESS", "v1.0.0", map[string]string{
+		"order/order.proto": `syntax = "proto3";
 package order.v1;
 import "common/base.proto";
 message CreateOrderReq {
@@ -192,59 +151,26 @@ service OrderService {
   rpc CreateOrder(CreateOrderReq) returns (CreateOrderRsp);
 }
 `,
-			},
-		},
-	})
-	req = httptest.NewRequest(http.MethodPost, "/api/proto-schemas/compile", bytes.NewReader(v1Body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+adminToken)
-	resp = httptest.NewRecorder()
-	r.ServeHTTP(resp, req)
-	if resp.Code != http.StatusCreated {
-		t.Fatalf("编译并激活 BUSINESS v1 失败: code=%d, body=%s", resp.Code, resp.Body.String())
+	}, true, false, "")
+	if err != nil {
+		t.Fatalf("编译并激活 BUSINESS v1 失败: %v", err)
+	}
+	if orderV1Schema.SourceType != models.ProtoSourceGitSync || len(v1Ops) != 1 || docCnt <= 0 {
+		t.Errorf("v1 编译结果异常: src=%s ops=%d doc=%d", orderV1Schema.SourceType, len(v1Ops), docCnt)
 	}
 
-	var v1Resp struct {
-		Schema               models.ProtoSchema      `json:"schema"`
-		Operations           []models.ProtoOperation `json:"operations"`
-		CompiledFiles        []string                `json:"compiled_files"`
-		ResolvedDependencies []json.RawMessage       `json:"resolved_dependencies"`
-		DocSymbolCount       int                     `json:"doc_symbol_count"`
-	}
-	_ = json.Unmarshal(resp.Body.Bytes(), &v1Resp)
-	if v1Resp.Schema.SourceType != models.ProtoSourceOnlineCompile {
-		t.Errorf("期望 source_type='ONLINE_COMPILE'，实测: %s", v1Resp.Schema.SourceType)
-	}
-	if len(v1Resp.Operations) != 1 || len(v1Resp.CompiledFiles) != 1 {
-		t.Errorf("期望 1 op 与 1 compiled file，实测 ops=%d files=%v", len(v1Resp.Operations), v1Resp.CompiledFiles)
-	}
-
-	// 验证 GET /api/proto-schemas?source_type=ONLINE_COMPILE 过滤与字段返回
-	listReq := httptest.NewRequest(http.MethodGet, "/api/proto-schemas?source_type=ONLINE_COMPILE", nil)
+	// 验证 GET /api/proto-schemas?source_type=GIT_SYNC 过滤与字段返回
+	listReq := httptest.NewRequest(http.MethodGet, "/api/proto-schemas?source_type=GIT_SYNC", nil)
 	listReq.Header.Set("Authorization", "Bearer "+normalToken)
 	listResp := httptest.NewRecorder()
 	r.ServeHTTP(listResp, listReq)
-	if listResp.Code != http.StatusOK || !bytes.Contains(listResp.Body.Bytes(), []byte("ONLINE_COMPILE")) {
-		t.Fatalf("GET /api/proto-schemas?source_type=ONLINE_COMPILE 失败: code=%d body=%s", listResp.Code, listResp.Body.String())
+	if listResp.Code != http.StatusOK || !bytes.Contains(listResp.Body.Bytes(), []byte("GIT_SYNC")) {
+		t.Fatalf("GET /api/proto-schemas?source_type=GIT_SYNC 失败: code=%d body=%s", listResp.Code, listResp.Body.String())
 	}
 
-	// 6. 验证 audit_logs 写入 compile 审计事件
-	_ = commonAudit.Close(context.Background())
-	var compileAudits []commonModels.SysAuditLog
-	_ = db.Where("module = ? AND action = ?", config.ModuleKey, "compile").Find(&compileAudits).Error
-	if len(compileAudits) < 2 {
-		t.Errorf("期望写入不少于 2 条 compile 审计记录，实测: %d", len(compileAudits))
-	}
-
-	// 7. 提交删字段而不保留 reserved 的 v2 且 auto_activate=true -> 触发 F-26 409 BREAKING_CHANGE_DETECTED
-	v2BreakingBody, _ := json.Marshal(map[string]any{
-		"name":          "order-compile",
-		"category":      "BUSINESS",
-		"auto_activate": true,
-		"files": []map[string]string{
-			{
-				"path": "order/order.proto",
-				"content": `syntax = "proto3";
+	// 7. 编译删字段而不保留 reserved 的 v2 草稿并尝试 HTTP 激活 -> 触发 F-26 409 BREAKING_CHANGE_DETECTED
+	orderV2Draft, _, _, err := compileTestProtoSchema(t, db, "order-compile", "BUSINESS", "", map[string]string{
+		"order/order.proto": `syntax = "proto3";
 package order.v1;
 import "common/base.proto";
 message CreateOrderReq {
@@ -258,16 +184,18 @@ service OrderService {
   rpc CreateOrder(CreateOrderReq) returns (CreateOrderRsp);
 }
 `,
-			},
-		},
-	})
-	req = httptest.NewRequest(http.MethodPost, "/api/proto-schemas/compile", bytes.NewReader(v2BreakingBody))
+	}, false, false, "")
+	if err != nil {
+		t.Fatalf("编译 v2 草稿失败: %v", err)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/proto-schemas/%d/activate", orderV2Draft.ID), bytes.NewReader([]byte("{}")))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+adminToken)
 	resp = httptest.NewRecorder()
 	r.ServeHTTP(resp, req)
 	if resp.Code != http.StatusConflict {
-		t.Fatalf("破坏性 v2 auto_activate=true 应被 F-26 拦截返回 409，实测 %d: %s", resp.Code, resp.Body.String())
+		t.Fatalf("破坏性 v2 激活应被 F-26 拦截返回 409，实测 %d: %s", resp.Code, resp.Body.String())
 	}
 	var conflictResp struct {
 		Code               string                          `json:"code"`
@@ -283,63 +211,27 @@ service OrderService {
 	}
 
 	// 8. 同时验证 BASE_LIB 变更 (common/base.proto req_id string -> int64) 触发反向闭包影响 MOD_ORDER & MOD_GATEWAY
-	baseV2BreakingBody, _ := json.Marshal(map[string]any{
-		"name":          "common-base-online",
-		"category":      "BASE_LIB",
-		"auto_activate": true,
-		"files": []map[string]string{
-			{
-				"path":    "common/base.proto",
-				"content": "syntax = \"proto3\";\npackage common.v1;\nmessage Meta {\n  int64 req_id = 1;\n}\n",
-			},
-		},
-	})
-	req = httptest.NewRequest(http.MethodPost, "/api/proto-schemas/compile", bytes.NewReader(baseV2BreakingBody))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+adminToken)
-	resp = httptest.NewRecorder()
-	r.ServeHTTP(resp, req)
-	if resp.Code != http.StatusConflict {
-		t.Fatalf("BASE_LIB 破坏性变更应返回 409，实测 %d: %s", resp.Code, resp.Body.String())
+	_, _, _, baseBreakErr := compileTestProtoSchema(t, db, "common-base-online", "BASE_LIB", "", map[string]string{
+		"common/base.proto": "syntax = \"proto3\";\npackage common.v1;\nmessage Meta {\n  int64 req_id = 1;\n}\n",
+	}, true, false, "")
+	var baseBreakTyped *decoder.SchemaBreakingError
+	if !errors.As(baseBreakErr, &baseBreakTyped) {
+		t.Fatalf("BASE_LIB 破坏性变更应返回 SchemaBreakingError，实测: %v", baseBreakErr)
 	}
-	conflictResp = struct {
-		Code               string                          `json:"code"`
-		BreakingRules      []decoder.BreakingRuleViolation `json:"breaking_rules"`
-		AffectedDependents []decoder.AffectedDependent     `json:"affected_dependents"`
-	}{}
-	_ = json.Unmarshal(resp.Body.Bytes(), &conflictResp)
 	seenMod := make(map[string]bool)
-	for _, ad := range conflictResp.AffectedDependents {
+	for _, ad := range baseBreakTyped.AffectedDependents {
 		seenMod[ad.ModuleCode] = true
 	}
 	if !seenMod["MOD_ORDER"] || !seenMod["MOD_GATEWAY"] {
-		t.Errorf("BASE_LIB 破坏性变更应透过 import 闭包命中 MOD_ORDER 与 MOD_GATEWAY，实测: %+v", conflictResp.AffectedDependents)
+		t.Errorf("BASE_LIB 破坏性变更应透过 import 闭包命中 MOD_ORDER 与 MOD_GATEWAY，实测: %+v", baseBreakTyped.AffectedDependents)
 	}
 
-	// 9. allow_breaking 逃生舱：原因过短 -> 400；原因合法 -> 201 forced_breaking=true + P1 审计
+	// 9. allow_breaking 逃生舱：原因过短 -> 400；原因合法 -> 200 forced_breaking=true + P1 审计
 	shortReasonBody, _ := json.Marshal(map[string]any{
-		"name":            "order-compile",
-		"category":        "BUSINESS",
-		"auto_activate":   true,
 		"allow_breaking":  true,
 		"breaking_reason": "short",
-		"files": []map[string]string{
-			{
-				"path": "order/order.proto",
-				"content": `syntax = "proto3";
-package order.v1;
-import "common/base.proto";
-message CreateOrderReq {
-  common.v1.Meta meta = 1;
-  string sku = 2;
-}
-message CreateOrderRsp { string order_id = 1; }
-service OrderService { rpc CreateOrder(CreateOrderReq) returns (CreateOrderRsp); }
-`,
-			},
-		},
 	})
-	req = httptest.NewRequest(http.MethodPost, "/api/proto-schemas/compile", bytes.NewReader(shortReasonBody))
+	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/proto-schemas/%d/activate", orderV2Draft.ID), bytes.NewReader(shortReasonBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+adminToken)
 	resp = httptest.NewRecorder()
@@ -349,34 +241,16 @@ service OrderService { rpc CreateOrder(CreateOrderReq) returns (CreateOrderRsp);
 	}
 
 	validReasonBody, _ := json.Marshal(map[string]any{
-		"name":            "order-compile",
-		"category":        "BUSINESS",
-		"auto_activate":   true,
 		"allow_breaking":  true,
 		"breaking_reason": "已通知网关调用方协同下线 qty 字段",
-		"files": []map[string]string{
-			{
-				"path": "order/order.proto",
-				"content": `syntax = "proto3";
-package order.v1;
-import "common/base.proto";
-message CreateOrderReq {
-  common.v1.Meta meta = 1;
-  string sku = 2;
-}
-message CreateOrderRsp { string order_id = 1; }
-service OrderService { rpc CreateOrder(CreateOrderReq) returns (CreateOrderRsp); }
-`,
-			},
-		},
 	})
-	req = httptest.NewRequest(http.MethodPost, "/api/proto-schemas/compile", bytes.NewReader(validReasonBody))
+	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/proto-schemas/%d/activate", orderV2Draft.ID), bytes.NewReader(validReasonBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+adminToken)
 	resp = httptest.NewRecorder()
 	r.ServeHTTP(resp, req)
-	if resp.Code != http.StatusCreated {
-		t.Fatalf("合法 reason 逃生舱编译激活应返回 201，实测 %d: %s", resp.Code, resp.Body.String())
+	if resp.Code != http.StatusOK {
+		t.Fatalf("合法 reason 逃生舱激活应返回 200，实测 %d: %s", resp.Code, resp.Body.String())
 	}
 	var escapeResp struct {
 		ForcedBreaking bool `json:"forced_breaking"`
@@ -386,6 +260,12 @@ service OrderService { rpc CreateOrder(CreateOrderReq) returns (CreateOrderRsp);
 	}
 	if !escapeResp.ForcedBreaking {
 		t.Errorf("期望响应 forced_breaking=true，实测: %s", resp.Body.String())
+	}
+	_ = commonAudit.Close(context.Background())
+	var actAudits []commonModels.SysAuditLog
+	_ = db.Where("module = ? AND action = ?", config.ModuleKey, "activate").Find(&actAudits).Error
+	if len(actAudits) == 0 {
+		t.Errorf("期望写入至少 1 条 activate 审计记录")
 	}
 }
 
@@ -512,14 +392,8 @@ func TestSC13_ProtoCompileClosureLayerGuardAndGraphExport(t *testing.T) {
 	}
 
 	// 2. 纯 Go protocompile 多包编译：BASE_LIB -> order-domain -> pay-domain (跨 Bundle 外部依赖跳过与裁剪)
-	if resp := doJSON(http.MethodPost, "/api/proto-schemas/compile", map[string]any{
-		"name":          "sc13-common-base",
-		"category":      "BASE_LIB",
-		"auto_activate": true,
-		"files": []map[string]string{
-			{
-				"path": "common/v1/base.proto",
-				"content": `syntax = "proto3";
+	if _, _, _, cErr := compileTestProtoSchema(t, db, "sc13-common-base", "BASE_LIB", "", map[string]string{
+		"common/v1/base.proto": `syntax = "proto3";
 package common.v1;
 // 公共追踪上下文元数据
 message TraceMeta {
@@ -527,20 +401,12 @@ message TraceMeta {
   string trace_id = 1;
 }
 `,
-			},
-		},
-	}); resp.Code != http.StatusCreated {
-		t.Fatalf("SC13 编译 BASE_LIB 失败: %d %s", resp.Code, resp.Body.String())
+	}, true, false, ""); cErr != nil {
+		t.Fatalf("SC13 编译 BASE_LIB 失败: %v", cErr)
 	}
 
-	if resp := doJSON(http.MethodPost, "/api/proto-schemas/compile", map[string]any{
-		"name":          "sc13-order-domain",
-		"category":      "BUSINESS",
-		"auto_activate": true,
-		"files": []map[string]string{
-			{
-				"path": "order/v1/order.proto",
-				"content": `syntax = "proto3";
+	if _, _, _, cErr := compileTestProtoSchema(t, db, "sc13-order-domain", "BUSINESS", "", map[string]string{
+		"order/v1/order.proto": `syntax = "proto3";
 package order.v1;
 import "common/v1/base.proto";
 message OrderReq { common.v1.TraceMeta meta = 1; string sku = 2; }
@@ -550,20 +416,12 @@ service OrderService {
   rpc PlaceOrder(OrderReq) returns (OrderRsp);
 }
 `,
-			},
-		},
-	}); resp.Code != http.StatusCreated {
-		t.Fatalf("SC13 编译 order-domain 失败: %d %s", resp.Code, resp.Body.String())
+	}, true, false, ""); cErr != nil {
+		t.Fatalf("SC13 编译 order-domain 失败: %v", cErr)
 	}
 
-	payCompileResp := doJSON(http.MethodPost, "/api/proto-schemas/compile", map[string]any{
-		"name":          "sc13-pay-domain",
-		"category":      "GATEWAY",
-		"auto_activate": true,
-		"files": []map[string]string{
-			{
-				"path": "pay/v1/pay.proto",
-				"content": `syntax = "proto3";
+	paySchema, payOps, _, payErr := compileTestProtoSchema(t, db, "sc13-pay-domain", "GATEWAY", "", map[string]string{
+		"pay/v1/pay.proto": `syntax = "proto3";
 package pay.v1;
 import "order/v1/order.proto";
 message PayReq { order.v1.OrderReq order = 1; int64 amount = 2; }
@@ -573,31 +431,23 @@ service PayService {
   rpc PayOrder(PayReq) returns (PayRsp);
 }
 `,
-			},
-		},
-	})
-	if payCompileResp.Code != http.StatusCreated {
-		t.Fatalf("SC13 跨 Bundle 编译 pay-domain 失败: %d %s", payCompileResp.Code, payCompileResp.Body.String())
+	}, true, false, "")
+	if payErr != nil {
+		t.Fatalf("SC13 跨 Bundle 编译 pay-domain 失败: %v", payErr)
 	}
-	var payParsed struct {
-		Schema          models.ProtoSchema      `json:"schema"`
-		Operations      []models.ProtoOperation `json:"operations"`
-		CompiledFiles   []string                `json:"compiled_files"`
-		ExternalImports []string                `json:"external_imports"`
+	var compiledFiles, externalImports []string
+	_ = json.Unmarshal(paySchema.ProtoFiles, &compiledFiles)
+	_ = json.Unmarshal(paySchema.ExternalImports, &externalImports)
+	if len(payOps) != 1 || payOps[0].ServiceName != "pay.v1.PayService" {
+		t.Fatalf("外部 import 中的 order.v1.OrderService 必须跳过，仅抽取 pay.v1.PayService，实测: %+v", payOps)
 	}
-	if err := json.Unmarshal(payCompileResp.Body.Bytes(), &payParsed); err != nil {
-		t.Fatalf("解析 pay 编译响应失败: %v", err)
-	}
-	if len(payParsed.Operations) != 1 || payParsed.Operations[0].ServiceName != "pay.v1.PayService" {
-		t.Fatalf("外部 import 中的 order.v1.OrderService 必须跳过，仅抽取 pay.v1.PayService，实测: %+v", payParsed.Operations)
-	}
-	if len(payParsed.CompiledFiles) != 1 || len(payParsed.ExternalImports) == 0 {
-		t.Fatalf("期望仅 1 个自有文件与非空 external_imports，实测 compiled=%v ext=%v", payParsed.CompiledFiles, payParsed.ExternalImports)
+	if len(compiledFiles) != 1 || len(externalImports) == 0 {
+		t.Fatalf("期望仅 1 个自有文件与非空 external_imports，实测 compiled=%v ext=%v", compiledFiles, externalImports)
 	}
 
 	// 验证 DB 中的 DescriptorBytes：自有 pay/v1/pay.proto 保留 SourceCodeInfo，外部 common/v1/base.proto 已剥离 SourceCodeInfo
 	var payDBSchema models.ProtoSchema
-	if err := db.First(&payDBSchema, payParsed.Schema.ID).Error; err != nil {
+	if err := db.First(&payDBSchema, paySchema.ID).Error; err != nil {
 		t.Fatalf("查询 payDBSchema 失败: %v", err)
 	}
 	var payFDS descriptorpb.FileDescriptorSet
@@ -707,33 +557,20 @@ service PayService {
 		t.Fatalf("成环依赖 INFRA->GW(->BIZ->INFRA) 即使在 layer=0 也必须返回 409 ERR_CYCLIC_DEPENDENCY，实测 %d: %s", resp.Code, resp.Body.String())
 	}
 
-	// 4. F-26 BASE_LIB 递推闭包雷达：破坏 common/v1/base.proto 触发 409 并透出 MOD_SC13_BIZ 与 MOD_SC13_GW
-	baseBreakResp := doJSON(http.MethodPost, "/api/proto-schemas/compile", map[string]any{
-		"name":          "sc13-common-base",
-		"category":      "BASE_LIB",
-		"auto_activate": true,
-		"files": []map[string]string{
-			{
-				"path":    "common/v1/base.proto",
-				"content": "syntax = \"proto3\";\npackage common.v1;\nmessage TraceMeta {\n  int32 trace_id = 1;\n}\n",
-			},
-		},
-	})
-	if baseBreakResp.Code != http.StatusConflict || !bytes.Contains(baseBreakResp.Body.Bytes(), []byte("BREAKING_CHANGE_DETECTED")) {
-		t.Fatalf("BASE_LIB 类型破坏应返回 409 BREAKING_CHANGE_DETECTED，实测 %d: %s", baseBreakResp.Code, baseBreakResp.Body.String())
-	}
-	var radarResp struct {
-		AffectedDependents []decoder.AffectedDependent `json:"affected_dependents"`
-	}
-	if err := json.Unmarshal(baseBreakResp.Body.Bytes(), &radarResp); err != nil {
-		t.Fatalf("解析 radarResp 失败: %v", err)
+	// 4. F-26 BASE_LIB 递推闭包雷达：破坏 common/v1/base.proto 触发 Breaking 拦截并透出 MOD_SC13_BIZ 与 MOD_SC13_GW
+	_, _, _, baseBreakErr := compileTestProtoSchema(t, db, "sc13-common-base", "BASE_LIB", "", map[string]string{
+		"common/v1/base.proto": "syntax = \"proto3\";\npackage common.v1;\nmessage TraceMeta {\n  int32 trace_id = 1;\n}\n",
+	}, true, false, "")
+	var baseBreakTyped *decoder.SchemaBreakingError
+	if !errors.As(baseBreakErr, &baseBreakTyped) {
+		t.Fatalf("BASE_LIB 类型破坏应返回 SchemaBreakingError，实测: %v", baseBreakErr)
 	}
 	hitModules := make(map[string]bool)
-	for _, ad := range radarResp.AffectedDependents {
+	for _, ad := range baseBreakTyped.AffectedDependents {
 		hitModules[ad.ModuleCode] = true
 	}
 	if !hitModules["MOD_SC13_BIZ"] || !hitModules["MOD_SC13_GW"] {
-		t.Fatalf("BASE_LIB 传递闭包应命中 MOD_SC13_BIZ 与 MOD_SC13_GW，实测: %+v", radarResp.AffectedDependents)
+		t.Fatalf("BASE_LIB 传递闭包应命中 MOD_SC13_BIZ 与 MOD_SC13_GW，实测: %+v", baseBreakTyped.AffectedDependents)
 	}
 
 	// 5. 验证 GET /api/proto-schemas/dependencies-graph 与 GET /api/arch/topology/graph 元数据
@@ -757,8 +594,8 @@ service PayService {
 	if len(depGraph.Nodes) < 3 || len(depGraph.Edges) < 2 {
 		t.Fatalf("期望至少 3 节点 2 有向边，实测 nodes=%d edges=%d", len(depGraph.Nodes), len(depGraph.Edges))
 	}
-	if depGraph.Nodes[0].SourceType != models.ProtoSourceOnlineCompile {
-		t.Errorf("dependencies-graph 节点应包含 source_type='ONLINE_COMPILE'，实测 %+v", depGraph.Nodes[0])
+	if depGraph.Nodes[0].SourceType != models.ProtoSourceGitSync {
+		t.Errorf("dependencies-graph 节点应包含 source_type='GIT_SYNC'，实测 %+v", depGraph.Nodes[0])
 	}
 
 	for _, viewMode := range []string{"logical", "physical"} {

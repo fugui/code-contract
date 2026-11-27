@@ -18,6 +18,7 @@ import (
 	"code-common/backend/testdb"
 	"code-contract/config"
 	"code-contract/internal/server/decoder"
+	"code-contract/internal/server/protodoc"
 	"code-contract/models"
 
 	"gorm.io/datatypes"
@@ -369,11 +370,21 @@ func TestMRGateWebhook_SignatureGuard_Dedup_OverrideGuardAndP1Audit(t *testing.T
 	var autoSchema models.ProtoSchema
 	if err := db.Where("name = ? AND source_type = ?", bundle.TargetSchemaName, models.ProtoSourceGitMRAuto).
 		Order("id DESC").First(&autoSchema).Error; err != nil {
-		t.Fatalf("MAIN_MERGE 合入后未自动入池 GIT_MR_AUTO Schema: %v", err)
+		t.Fatalf("MAIN_MERGE 合入后未生成 GIT_MR_AUTO 预览 Schema: %v", err)
+	}
+	if autoSchema.IsActive {
+		t.Fatalf("ADR-29 §6: MAIN_MERGE 严禁旁路直激，预览 Schema is_active 必须为 false")
+	}
+	if reg, rErr := decoder.NewRegistry(db); rErr != nil {
+		t.Fatalf("NewRegistry 失败: %v", rErr)
+	} else if _, actSchema, _, aErr := reg.ActivateSchemaVersion(autoSchema.ID, decoder.BatchActivateOptions{AllowBreaking: true, BreakingReason: "测试环境验证合入后发布文档索引刷新"}); aErr != nil {
+		t.Fatalf("发布生效 MAIN_MERGE Schema 失败: %v", aErr)
+	} else {
+		_, _ = protodoc.RebuildForSchema(db, actSchema)
 	}
 	var docSymbols int64
 	if err := db.Model(&models.ProtoDocSymbol{}).Where("schema_id = ?", autoSchema.ID).Count(&docSymbols).Error; err != nil || docSymbols == 0 {
-		t.Fatalf("MAIN_MERGE 入池后期望刷新 ProtoDocSymbol 符号索引 > 0，实际 %d err=%v", docSymbols, err)
+		t.Fatalf("MAIN_MERGE 发布生效后期望刷新 ProtoDocSymbol 符号索引 > 0，实际 %d err=%v", docSymbols, err)
 	}
 
 	// 验证站内通知与 Webhook 0 审计断言 (commonAudit.Skip)

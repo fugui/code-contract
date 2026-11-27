@@ -243,6 +243,7 @@ func TestProtoSchemaActivateConflictAndHistoryImmutability(t *testing.T) {
 	dupV1, _, _, err := reg.UploadSchema(UploadSchemaInput{
 		Name:         "trade_dup.pb",
 		FileName:     "trade_dup.pb",
+		SourceType:   models.ProtoSourceGitSync,
 		RawBytes:     pbV1,
 		AutoActivate: false,
 	})
@@ -266,6 +267,7 @@ func TestProtoSchemaActivateConflictAndHistoryImmutability(t *testing.T) {
 	orderV2, _, _, err := reg.UploadSchema(UploadSchemaInput{
 		Name:         "order.pb",
 		FileName:     "order_v2.pb",
+		SourceType:   models.ProtoSourceGitSync,
 		RawBytes:     pbV2,
 		AutoActivate: false,
 	})
@@ -935,6 +937,7 @@ func TestUploadNewVersion_InheritsDiffIgnorePaths_AndDraftBorrowsInactiveBaseLib
 	tradeBaseDraft, _, _, err := reg.UploadSchema(UploadSchemaInput{
 		Name:         "trade-base",
 		Category:     models.ProtoCategoryBaseLib,
+		SourceType:   models.ProtoSourceGitSync,
 		RawBytes:     tradeBaseBytes,
 		AutoActivate: false,
 	})
@@ -949,6 +952,7 @@ func TestUploadNewVersion_InheritsDiffIgnorePaths_AndDraftBorrowsInactiveBaseLib
 	tradeBizDraft, _, _, err := reg.UploadSchema(UploadSchemaInput{
 		Name:         "trade-biz",
 		Category:     models.ProtoCategoryBusiness,
+		SourceType:   models.ProtoSourceGitSync,
 		RawBytes:     tradeBizBytes,
 		AutoActivate: false,
 	})
@@ -982,6 +986,7 @@ func TestCompileTrialPool_BatchActivate_DeactivateReverseDep_AndUnifiedRuntimeDe
 	tradeBaseV1, _, _, err := reg.UploadSchema(UploadSchemaInput{
 		Name:         "trade-base",
 		Category:     models.ProtoCategoryBaseLib,
+		SourceType:   models.ProtoSourceGitSync,
 		RawBytes:     tradeBaseBytes,
 		AutoActivate: false,
 	})
@@ -993,6 +998,7 @@ func TestCompileTrialPool_BatchActivate_DeactivateReverseDep_AndUnifiedRuntimeDe
 	tradeBizV1, _, _, err := reg.UploadSchema(UploadSchemaInput{
 		Name:         "trade-biz",
 		Category:     models.ProtoCategoryBusiness,
+		SourceType:   models.ProtoSourceGitSync,
 		RawBytes:     tradeBizBytes,
 		AutoActivate: false,
 	})
@@ -1058,6 +1064,7 @@ func TestCompileTrialPool_BatchActivate_DeactivateReverseDep_AndUnifiedRuntimeDe
 	tradeBaseV2, _, _, err := reg.UploadSchema(UploadSchemaInput{
 		Name:         "trade-base",
 		Category:     models.ProtoCategoryBaseLib,
+		SourceType:   models.ProtoSourceGitSync,
 		RawBytes:     brokenBaseBytes,
 		AutoActivate: false,
 	})
@@ -1122,6 +1129,7 @@ func TestCompiledRegistry_CustomServiceNameAliasAndPerImplIgnores(t *testing.T) 
 	tradeBaseV1, _, _, err := reg.UploadSchema(UploadSchemaInput{
 		Name:         "trade-base-alias",
 		Category:     models.ProtoCategoryBaseLib,
+		SourceType:   models.ProtoSourceGitSync,
 		RawBytes:     tradeBaseBytes,
 		AutoActivate: false,
 	})
@@ -1133,6 +1141,7 @@ func TestCompiledRegistry_CustomServiceNameAliasAndPerImplIgnores(t *testing.T) 
 	tradeBizV1, _, _, err := reg.UploadSchema(UploadSchemaInput{
 		Name:         "trade-biz-alias",
 		Category:     models.ProtoCategoryBusiness,
+		SourceType:   models.ProtoSourceGitSync,
 		RawBytes:     tradeBizBytes,
 		AutoActivate: false,
 	})
@@ -1220,5 +1229,62 @@ func TestCompiledRegistry_CustomServiceNameAliasAndPerImplIgnores(t *testing.T) 
 	}
 	if opKH.ServiceName != "KH_TradePayService" || len(opKH.ServiceIgnorePaths) != 0 {
 		t.Fatalf("KH 不应串用 DH 的 ServiceIgnorePaths: %+v", opKH)
+	}
+}
+
+func TestArchivedSource_ActivateRejected_DeactivateAllowed(t *testing.T) {
+	db := setupIsolatedDecoderDB(t)
+	reg, err := NewRegistry(db)
+	if err != nil {
+		t.Fatalf("NewRegistry 失败: %v", err)
+	}
+
+	pbBytes := buildTestOrderDescriptorBytes(t, "dophi.order.v1", "ArchiveSvc", "Run", false)
+	// Active legacy UPLOAD_PB can be deactivated
+	archActive, _, _, err := reg.UploadSchema(UploadSchemaInput{
+		Name:         "legacy-upload-active",
+		FileName:     "legacy.pb",
+		SourceType:   models.ProtoSourceUploadPB,
+		RawBytes:     pbBytes,
+		AutoActivate: true,
+	})
+	if err != nil {
+		t.Fatalf("写入历史生效 UPLOAD_PB 失败: %v", err)
+	}
+
+	// Inactive UPLOAD_PB & ONLINE_COMPILE cannot be activated / batch-activated
+	archUpload, _, _, err := reg.UploadSchema(UploadSchemaInput{
+		Name:         "legacy-upload-draft",
+		FileName:     "legacy_draft.pb",
+		SourceType:   models.ProtoSourceUploadPB,
+		RawBytes:     pbBytes,
+		AutoActivate: false,
+	})
+	if err != nil {
+		t.Fatalf("写入未激活 UPLOAD_PB 失败: %v", err)
+	}
+	archCompile, _, _, err := reg.UploadSchema(UploadSchemaInput{
+		Name:         "legacy-online-compile",
+		FileName:     "compile.pb",
+		SourceType:   models.ProtoSourceOnlineCompile,
+		RawBytes:     pbBytes,
+		AutoActivate: false,
+	})
+	if err != nil {
+		t.Fatalf("写入未激活 ONLINE_COMPILE 失败: %v", err)
+	}
+
+	if _, _, _, err := reg.ActivateSchemaVersion(archUpload.ID); !errors.Is(err, ErrSchemaSourceArchived) {
+		t.Fatalf("ActivateSchemaVersion(UPLOAD_PB) 期望返回 ErrSchemaSourceArchived, got %v", err)
+	}
+	if _, _, _, err := reg.ActivateSchemaVersion(archCompile.ID); !errors.Is(err, ErrSchemaSourceArchived) {
+		t.Fatalf("ActivateSchemaVersion(ONLINE_COMPILE) 期望返回 ErrSchemaSourceArchived, got %v", err)
+	}
+	if _, _, err := reg.BatchActivate([]uint64{archUpload.ID}); !errors.Is(err, ErrSchemaSourceArchived) {
+		t.Fatalf("BatchActivate(UPLOAD_PB) 期望返回 ErrSchemaSourceArchived, got %v", err)
+	}
+
+	if _, _, err := reg.DeactivateSchemaVersion(archActive.ID); err != nil {
+		t.Fatalf("DeactivateSchemaVersion(active UPLOAD_PB) 应允许停用清理, got %v", err)
 	}
 }

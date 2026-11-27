@@ -21,7 +21,6 @@ import (
 	"code-contract/internal/server/hub"
 	"code-contract/internal/server/linter"
 	"code-contract/internal/server/notify"
-	"code-contract/internal/server/protodoc"
 	"code-contract/internal/server/security"
 	"code-contract/models"
 
@@ -603,7 +602,7 @@ func (r *MRGateRunner) ApplyAdminOverride(
 			Severity:         models.NotifSeverityWarning,
 			Title:            fmt.Sprintf("[MR !%d] 契约门禁已由管理员 %s 强制豁免放行", run.MRIID, operatorName),
 			BodyMarkdown:     overrideComment,
-			LinkURL:          fmt.Sprintf("/schemas?tab=mr-gates&runId=%d", run.ID),
+			LinkURL:          fmt.Sprintf("/proto-governance?gov_tab=mr-gates&runId=%d", run.ID),
 			SourceType:       models.NotifSourceMRCheckRun,
 			SourceID:         run.ID,
 			Metadata: map[string]any{
@@ -775,6 +774,15 @@ func (r *MRGateRunner) syncAndPublishMergedBundle(
 	versionTag := fmt.Sprintf("mr-%d-%s", run.MRIID, shortSHA(run.HeadCommitSHA))
 	touchedVerIDs := make([]uint64, 0, len(paths))
 
+	lk, lErr := AcquirePipelineLockWithTimeout(ctx, r.db, PipelineLockHolder{
+		JobType: "MR_MERGE",
+		JobID:   repo.ID,
+		Holder:  strings.TrimSpace(run.AuthorUsername),
+	}, 10*time.Minute)
+	if lErr != nil {
+		log.Printf("[mr-gate] MAIN_MERGE 获取流水线锁失败: %v", lErr)
+	}
+
 	txErr := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var existing []models.ProtoFile
 		if err := tx.Where("bundle_id = ? AND is_deleted = false", bundle.ID).Find(&existing).Error; err != nil {
@@ -894,6 +902,9 @@ func (r *MRGateRunner) syncAndPublishMergedBundle(
 		}
 		return nil
 	})
+	if lk != nil {
+		lk.Release()
+	}
 	if txErr != nil {
 		log.Printf("[mr-gate] MAIN_MERGE 同步 Bundle #%d 源文件失败: %v", bundle.ID, txErr)
 	}
@@ -907,6 +918,8 @@ func (r *MRGateRunner) syncAndPublishMergedBundle(
 	bundleIDCopy := bundle.ID
 	mrIIDCopy := run.MRIID
 
+	// ADR-29 §2.3.2: MR 合入单仓不再直接激活，仅保存 GIT_MR_AUTO 预览草稿；
+	// 当开启 AUTO_ACTIVATE 时，入队 5 分钟去抖的 from_stage=RECONCILE 增量流水线由阶段 ③④ 统一收敛发布。
 	compileIn := decoder.CompileProtoBundleInput{
 		Name:             bundle.TargetSchemaName,
 		Category:         bundle.Category,
@@ -915,7 +928,7 @@ func (r *MRGateRunner) syncAndPublishMergedBundle(
 		Files:            virtualTree,
 		ProtoIncludeDirs: bundle.IncludeDirs(),
 		EntryPoints:      bundle.EntryFiles(),
-		AutoActivate:     wantAutoActivate,
+		AutoActivate:     false,
 		SourceType:       models.ProtoSourceGitMRAuto,
 		GitRepoID:        &repoIDCopy,
 		SourceBundleID:   &bundleIDCopy,
@@ -925,32 +938,27 @@ func (r *MRGateRunner) syncAndPublishMergedBundle(
 	}
 
 	schema, _, _, compErr := r.reg.CompileAndSaveSchema(ctx, compileIn)
-	if compErr != nil && wantAutoActivate {
-		// 若自动激活因跨包接口冲突或破坏性变更受阻，自动降级为草稿版本入库 (is_active=false)
-		compileIn.AutoActivate = false
-		schema, _, _, compErr = r.reg.CompileAndSaveSchema(ctx, compileIn)
-	}
 	if compErr != nil || schema == nil {
-		log.Printf("[mr-gate] MAIN_MERGE 自动编译 Schema [%s] 失败: %v", bundle.TargetSchemaName, compErr)
-		return nil
-	}
-
-	if len(touchedVerIDs) > 0 {
-		if err := r.db.WithContext(ctx).Model(&models.ProtoFileVersion{}).
-			Where("id IN ?", touchedVerIDs).
-			Update("schema_id", schema.ID).Error; err != nil {
-			log.Printf("[mr-gate] 更新 ProtoFileVersion schema_id 失败: %v", err)
+		log.Printf("[mr-gate] MAIN_MERGE 预览编译 Schema [%s] 失败: %v", bundle.TargetSchemaName, compErr)
+	} else {
+		if len(touchedVerIDs) > 0 {
+			if err := r.db.WithContext(ctx).Model(&models.ProtoFileVersion{}).
+				Where("id IN ?", touchedVerIDs).
+				Update("schema_id", schema.ID).Error; err != nil {
+				log.Printf("[mr-gate] 更新 ProtoFileVersion schema_id 失败: %v", err)
+			}
+		}
+		if err := r.db.WithContext(ctx).Model(bundle).Updates(map[string]any{
+			"last_schema_id":   schema.ID,
+			"last_sync_commit": run.HeadCommitSHA,
+			"last_sync_at":     &now,
+		}).Error; err != nil {
+			log.Printf("[mr-gate] 更新 Bundle last_schema_id 失败: %v", err)
 		}
 	}
-	if err := r.db.WithContext(ctx).Model(bundle).Updates(map[string]any{
-		"last_schema_id":   schema.ID,
-		"last_sync_commit": run.HeadCommitSHA,
-		"last_sync_at":     &now,
-	}).Error; err != nil {
-		log.Printf("[mr-gate] 更新 Bundle last_schema_id 失败: %v", err)
-	}
-	if _, docErr := protodoc.RebuildForSchema(r.db, schema); docErr != nil {
-		log.Printf("[mr-gate] MAIN_MERGE 重建 Schema #%d 文档符号失败: %v", schema.ID, docErr)
+
+	if wantAutoActivate {
+		EnqueueGlobalMRMergePipeline(repo.ID)
 	}
 	return schema
 }
@@ -980,7 +988,7 @@ func (r *MRGateRunner) dispatchMRNotifications(
 		toEmails = append(toEmails, run.AuthorEmail)
 	}
 
-	linkURL := fmt.Sprintf("/schemas?tab=mr-gates&runId=%d", run.ID)
+	linkURL := fmt.Sprintf("/proto-governance?gov_tab=mr-gates&runId=%d", run.ID)
 	meta := map[string]any{
 		"run_id":        run.ID,
 		"git_repo_id":   repo.ID,

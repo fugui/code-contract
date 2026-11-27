@@ -70,3 +70,11 @@ proto_collect:
   sync_cron: "*/30 * * * *"
   sync_concurrency: 4
   stale_threshold: "24h"
+
+# ── 四阶段 Proto 流水线与阶段 ④ 发布控制配置 (ADR-29 r4) ──
+proto_pipeline:
+  publish_mode: "AUTO"        # AUTO（自动激活生效）| PREVIEW（待确认生效）
+  compile_concurrency: 4      # 阶段 ④ 同拓扑层有界并发编译数
+  fanout_warn_threshold: 100  # 扇出超过该仓数时前端提示预计耗时
+  mr_merge_debounce_sec: 300  # MR 合入后触发增量流水线的去抖秒数（5 分钟）
+  archive_reminder_days: 30   # 归档外部来源生效资产未被覆盖时的提醒周期（天）

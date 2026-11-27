@@ -55,6 +55,7 @@ var (
 	ErrInvalidDescriptorProto  = errors.New("非法的 FileDescriptorSet 二进制结构或缺失 import 依赖")
 	ErrSchemaOperationConflict = errors.New("待激活描述集与其他已生效描述集存在接口映射冲突")
 	ErrDeleteActiveSchema      = errors.New("当前描述集版本处于生效状态，禁止删除")
+	ErrSchemaSourceArchived    = errors.New("历史外部来源描述集已归档，禁止重新激活")
 )
 
 // OperationConflictItem 跨描述集激活冲突明细项
@@ -149,11 +150,13 @@ type UploadSchemaInput struct {
 	AllowBreaking              bool
 	BreakingReason             string
 	OperatorID                 uint
-	SourceType                 string  // UPLOAD_PB | ONLINE_COMPILE | GIT_SYNC | GIT_MR_AUTO
+	SourceType                 string  // GIT_SYNC | GIT_MR_AUTO | GIT_PIPELINE (UPLOAD_PB / ONLINE_COMPILE 仅作历史只读归档)
 	GitRepoID                  *uint64 // M25 Git 仓外键
 	SourceBundleID             *uint64 // M25 Monorepo Bundle 外键
 	SourceCommitSHA            string
 	SourceMRIID                *int
+	CompileInputSHA256         string   // M43: 阶段 ④ 拓扑编译输入指纹
+	PublishRunID               *uint64  // M43: 阶段 ④ 发布批次 ID
 	ExplicitOwnFiles           []string // M22: 非空时仅对该集合自有文件抽取 Operation，跳过全部 external_imports
 	AllowSelfContainedExternal bool     // M22: 草稿模式下允许从当前链接产物自带的外部描述符补全静态闭合验证
 }
@@ -986,27 +989,29 @@ func (r *Registry) UploadSchema(in UploadSchemaInput) (*models.ProtoSchema, []mo
 		}
 
 		schema = models.ProtoSchema{
-			Name:            name,
-			Version:         nextVer,
-			VersionTag:      in.VersionTag,
-			Category:        category,
-			SourceType:      sourceType,
-			GitRepoID:       in.GitRepoID,
-			SourceBundleID:  in.SourceBundleID,
-			SourceCommitSHA: in.SourceCommitSHA,
-			SourceMRIID:     in.SourceMRIID,
-			FileName:        cleanFileName,
-			FileSHA256:      fileSHA256,
-			FileSize:        len(in.RawBytes),
-			DescriptorBytes: in.RawBytes,
-			IsActive:        false,
-			ProtoFileCount:  len(protoFiles),
-			ServiceCount:    len(svcSet),
-			OperationCount:  len(ops),
-			ProtoFiles:      datatypes.JSON(protoFilesBytes),
-			ExternalImports: datatypes.JSON(extImportsBytes),
-			Description:     in.Description,
-			CreatedBy:       in.OperatorID,
+			Name:               name,
+			Version:            nextVer,
+			VersionTag:         in.VersionTag,
+			Category:           category,
+			SourceType:         sourceType,
+			GitRepoID:          in.GitRepoID,
+			SourceBundleID:     in.SourceBundleID,
+			SourceCommitSHA:    in.SourceCommitSHA,
+			SourceMRIID:        in.SourceMRIID,
+			CompileInputSHA256: in.CompileInputSHA256,
+			PublishRunID:       in.PublishRunID,
+			FileName:           cleanFileName,
+			FileSHA256:         fileSHA256,
+			FileSize:           len(in.RawBytes),
+			DescriptorBytes:    in.RawBytes,
+			IsActive:           false,
+			ProtoFileCount:     len(protoFiles),
+			ServiceCount:       len(svcSet),
+			OperationCount:     len(ops),
+			ProtoFiles:         datatypes.JSON(protoFilesBytes),
+			ExternalImports:    datatypes.JSON(extImportsBytes),
+			Description:        in.Description,
+			CreatedBy:          in.OperatorID,
 		}
 		if err := tx.Create(&schema).Error; err != nil {
 			return err
@@ -1097,8 +1102,10 @@ func (r *Registry) UploadSchema(in UploadSchemaInput) (*models.ProtoSchema, []mo
 
 // BatchActivateOptions 批量或单描述集激活控制参数
 type BatchActivateOptions struct {
-	AllowBreaking  bool
-	BreakingReason string
+	AllowBreaking   bool
+	BreakingReason  string
+	SkipReload      bool
+	AllowLargeBatch bool
 }
 
 // ActivateSchemaVersion 切换单个描述集为生效态
@@ -1118,15 +1125,19 @@ func (r *Registry) BatchActivate(schemaIDs []uint64, opts ...BatchActivateOption
 	if len(schemaIDs) == 0 {
 		return nil, 0, errors.New("待激活描述集列表不能为空")
 	}
-	if len(schemaIDs) > 100 {
-		return nil, 0, errors.New("单次批量激活不能超过 100 个描述集")
-	}
 
 	var allowBreaking bool
 	var breakingReason string
+	var skipReload bool
+	var allowLargeBatch bool
 	if len(opts) > 0 {
 		allowBreaking = opts[0].AllowBreaking
 		breakingReason = opts[0].BreakingReason
+		skipReload = opts[0].SkipReload
+		allowLargeBatch = opts[0].AllowLargeBatch
+	}
+	if !allowLargeBatch && len(schemaIDs) > 100 {
+		return nil, 0, errors.New("单次批量激活不能超过 100 个描述集")
 	}
 
 	var activatedSchemas []models.ProtoSchema
@@ -1144,6 +1155,13 @@ func (r *Registry) BatchActivate(schemaIDs []uint64, opts ...BatchActivateOption
 		}
 		if len(targets) != len(schemaIDs) {
 			return ErrSchemaNotFound
+		}
+
+		// ADR-29 §2.5.4: 来源守卫，禁止历史外部来源（UPLOAD_PB / ONLINE_COMPILE）经激活或回滚重新入池
+		for _, t := range targets {
+			if !models.IsAllowedGitProtoSource(t.SourceType) {
+				return fmt.Errorf("%w: 描述集 [%s v%d] 来源为 %s", ErrSchemaSourceArchived, t.Name, t.Version, t.SourceType)
+			}
 		}
 
 		// 检查同批次是否包含同名多版本
@@ -1266,7 +1284,9 @@ func (r *Registry) BatchActivate(schemaIDs []uint64, opts ...BatchActivateOption
 		return nil, 0, err
 	}
 
-	_ = r.Reload()
+	if !skipReload {
+		_ = r.Reload()
+	}
 	return activatedSchemas, totalActiveOps, nil
 }
 

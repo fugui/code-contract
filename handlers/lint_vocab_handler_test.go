@@ -184,34 +184,15 @@ func TestSC15_StaticLinterVocabSeedDuplicateGuardrailsAndLLMTimeout(t *testing.T
 		t.Fatalf("更新词根期望 200，实际 %d", wUpdVocab.Code)
 	}
 
-	// 4. 在线编译真实多段包 Schema 入库，用于静态扫描与 AST 三护栏探测
+	// 4. 通过注册表编译真实多段包 Schema 入库，用于静态扫描与 AST 三护栏探测 (ADR-29 废止在线 HTTP compile)
 	compileSchema := func(name, category, filePath, content string) uint64 {
-		body, _ := json.Marshal(map[string]any{
-			"name":     name,
-			"category": category,
-			"files": []map[string]string{
-				{"path": filePath, "content": content},
-			},
-		})
-		req := httptest.NewRequest(http.MethodPost, "/api/proto-schemas/compile", bytes.NewReader(body))
-		req.Header.Set("Authorization", "Bearer "+adminToken)
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		r.ServeHTTP(w, req)
-		if w.Code != http.StatusCreated && w.Code != http.StatusOK {
-			t.Fatalf("编译 Schema %s 失败: code=%d body=%s", name, w.Code, w.Body.String())
+		schema, _, _, cErr := compileTestProtoSchema(t, db, name, category, "", map[string]string{
+			filePath: content,
+		}, false, false, "")
+		if cErr != nil {
+			t.Fatalf("编译 Schema %s 失败: %v", name, cErr)
 		}
-		var resp struct {
-			ID     uint64 `json:"id"`
-			Schema *struct {
-				ID uint64 `json:"id"`
-			} `json:"schema"`
-		}
-		_ = json.Unmarshal(w.Body.Bytes(), &resp)
-		if resp.Schema != nil && resp.Schema.ID > 0 {
-			return resp.Schema.ID
-		}
-		return resp.ID
+		return schema.ID
 	}
 
 	baseLibID := compileSchema("sc15-base-lib", "BASE_LIB", "dophi/base/v1/common.proto", `syntax = "proto3";

@@ -22,10 +22,10 @@ func TestM30bSchema_CheckI1_UnclaimedInvariants_AndPlacementDerivation(t *testin
 		t.Fatalf("二次幂等 SetupWithDB 失败: %v", err)
 	}
 
-	// 2. 验证 40 张核心业务表 + contract_settings = 41 表全部注册且存在
+	// 2. 验证 42 张核心业务表 + contract_settings = 43 表全部注册且存在
 	bizTables := BusinessTableNames()
-	if len(bizTables) != 40 {
-		t.Fatalf("BusinessTableNames 期望 40 张核心业务表，实际为 %d: %v", len(bizTables), bizTables)
+	if len(bizTables) != 42 {
+		t.Fatalf("BusinessTableNames 期望 42 张核心业务表，实际为 %d: %v", len(bizTables), bizTables)
 	}
 
 	allModels := []tabler{

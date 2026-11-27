@@ -227,6 +227,28 @@ func (b *SSEBroker) BroadcastProtoPoolReconcileProgress(data interface{}) {
 	})
 }
 
+// BroadcastProtoPipelineProgress 广播 ADR-29 四阶段可视化流水线编排进度
+func (b *SSEBroker) BroadcastProtoPipelineProgress(data interface{}) {
+	if b == nil {
+		return
+	}
+	b.BroadcastEvent(SSEEvent{
+		Event: "proto_pipeline.progress",
+		Data:  data,
+	})
+}
+
+// BroadcastProtoPublishProgress 广播 ADR-29 阶段 ④ 单仓拓扑编译发布进度
+func (b *SSEBroker) BroadcastProtoPublishProgress(data interface{}) {
+	if b == nil {
+		return
+	}
+	b.BroadcastEvent(SSEEvent{
+		Event: "proto_publish.progress",
+		Data:  data,
+	})
+}
+
 // BroadcastReplayItemDone 广播单条重放请求执行断言完成
 func (b *SSEBroker) BroadcastReplayItemDone(taskID, itemID, recordID uint64, resultStatus string, latencyUs int64) {
 	b.BroadcastEvent(SSEEvent{

@@ -72,10 +72,43 @@ const (
 	ImportOwnerSourceManual  = "MANUAL"
 	ImportOwnerSourceBaseLib = "BASE_LIB"
 	ImportOwnerSourceAuto    = "AUTO"
+	ImportOwnerSourceR3Auto  = "R3_AUTO"
 
 	PoolReconcileStatusRunning   = "RUNNING"
 	PoolReconcileStatusCompleted = "COMPLETED"
 	PoolReconcileStatusFailed    = "FAILED"
+
+	// ADR-29: 阶段 ④ 单仓拓扑发布状态与一键四阶段流水线状态
+	BundlePublishStatusPending          = "PENDING"
+	BundlePublishStatusPublished        = "PUBLISHED"
+	BundlePublishStatusSkippedUnchanged = "SKIPPED_UNCHANGED"
+	BundlePublishStatusBlockedBreaking  = "BLOCKED_BREAKING"
+	BundlePublishStatusBlockedConflict  = "BLOCKED_CONFLICT"
+	BundlePublishStatusPendingUpstream  = "PENDING_UPSTREAM"
+	BundlePublishStatusFailed           = "FAILED"
+
+	PublishModeAuto    = "AUTO"
+	PublishModePreview = "PREVIEW"
+
+	PublishRunStatusRunning        = "RUNNING"
+	PublishRunStatusCompleted      = "COMPLETED"
+	PublishRunStatusPreviewReady   = "PREVIEW_READY"
+	PublishRunStatusPartialBlocked = "PARTIAL_BLOCKED"
+	PublishRunStatusFailed         = "FAILED"
+	PublishRunStatusRejectedStale  = "REJECTED_STALE"
+
+	PipelineStageCollectNormalize = "COLLECT_NORMALIZE"
+	PipelineStageReconcile        = "RECONCILE"
+	PipelineStagePublish          = "PUBLISH"
+
+	PipelineRunStatusRunning        = "RUNNING"
+	PipelineRunStatusCompleted      = "COMPLETED"
+	PipelineRunStatusPartialBlocked = "PARTIAL_BLOCKED"
+	PipelineRunStatusFailed         = "FAILED"
+
+	PipelineTriggerManual   = "MANUAL"
+	PipelineTriggerMRMerge  = "MR_MERGE"
+	PipelineTriggerSchedule = "SCHEDULE"
 )
 
 // GitRepo 实体 #20：公共 repositories 的 1:1 契约治理扩展表（code-bench 为唯一真值源）
@@ -342,26 +375,29 @@ func (g GitRepo) PathRewrites() map[string]string {
 
 // GitProtoBundle 实体 #21：Monorepo 多独立 Proto 子目录 / 编译打包单元 (1:N 归属 GitRepo)
 type GitProtoBundle struct {
-	ID               uint64         `gorm:"primaryKey;autoIncrement" json:"id"`
-	GitRepoID        uint64         `gorm:"not null;uniqueIndex:uk_contract_git_bundle_repo_name;index:idx_contract_git_bundle_repo" json:"git_repo_id"`
-	BundleName       string         `gorm:"size:128;not null;uniqueIndex:uk_contract_git_bundle_repo_name" json:"bundle_name"`
-	TargetSchemaName string         `gorm:"size:128;not null;uniqueIndex:uk_contract_git_bundle_target" json:"target_schema_name"`
-	Category         string         `gorm:"size:32;not null;default:'BUSINESS'" json:"category"` // BASE_LIB | BUSINESS | GATEWAY
-	SubdirPath       string         `gorm:"size:512;not null;default:'.'" json:"subdir_path"`
-	IncludeDirsJSON  datatypes.JSON `gorm:"column:include_dirs_json;type:jsonb;not null;default:'[\".\"]'" json:"include_dirs_json"`
-	EntryFilesJSON   datatypes.JSON `gorm:"column:entry_files_json;type:jsonb;not null;default:'[]'" json:"entry_files_json"`
-	FileGlobsJSON    datatypes.JSON `gorm:"column:file_globs_json;type:jsonb;not null;default:'[\"*.proto\"]'" json:"file_globs_json"`
-	ExcludeGlobsJSON datatypes.JSON `gorm:"column:exclude_globs_json;type:jsonb;not null;default:'[]'" json:"exclude_globs_json"`
-	AutoCompile      bool           `gorm:"not null;default:true" json:"auto_compile"`
-	AutoActivate     bool           `gorm:"not null;default:false" json:"auto_activate"`
-	MRAutoPublish    string         `gorm:"column:mr_auto_publish;size:32;not null;default:'DISABLED'" json:"mr_auto_publish"` // DISABLED | DRAFT_ONLY | AUTO_ACTIVATE
-	LintOnSync       bool           `gorm:"not null;default:true" json:"lint_on_sync"`
-	LastSyncCommit   string         `gorm:"size:64;not null;default:''" json:"last_sync_commit"`
-	LastSyncAt       *time.Time     `json:"last_sync_at,omitempty"`
-	LastSchemaID     *uint64        `json:"last_schema_id,omitempty"`
-	Description      string         `gorm:"type:text;not null;default:''" json:"description"`
-	CreatedAt        time.Time      `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt        time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
+	ID                      uint64         `gorm:"primaryKey;autoIncrement" json:"id"`
+	GitRepoID               uint64         `gorm:"not null;uniqueIndex:uk_contract_git_bundle_repo_name;index:idx_contract_git_bundle_repo" json:"git_repo_id"`
+	BundleName              string         `gorm:"size:128;not null;uniqueIndex:uk_contract_git_bundle_repo_name" json:"bundle_name"`
+	TargetSchemaName        string         `gorm:"size:128;not null;uniqueIndex:uk_contract_git_bundle_target" json:"target_schema_name"`
+	Category                string         `gorm:"size:32;not null;default:'BUSINESS'" json:"category"` // BASE_LIB | BUSINESS | GATEWAY
+	SubdirPath              string         `gorm:"size:512;not null;default:'.'" json:"subdir_path"`
+	IncludeDirsJSON         datatypes.JSON `gorm:"column:include_dirs_json;type:jsonb;not null;default:'[\".\"]'" json:"include_dirs_json"`
+	EntryFilesJSON          datatypes.JSON `gorm:"column:entry_files_json;type:jsonb;not null;default:'[]'" json:"entry_files_json"`
+	FileGlobsJSON           datatypes.JSON `gorm:"column:file_globs_json;type:jsonb;not null;default:'[\"*.proto\"]'" json:"file_globs_json"`
+	ExcludeGlobsJSON        datatypes.JSON `gorm:"column:exclude_globs_json;type:jsonb;not null;default:'[]'" json:"exclude_globs_json"`
+	AutoCompile             bool           `gorm:"not null;default:true" json:"auto_compile"`
+	AutoActivate            bool           `gorm:"not null;default:false" json:"auto_activate"`
+	MRAutoPublish           string         `gorm:"column:mr_auto_publish;size:32;not null;default:'DISABLED'" json:"mr_auto_publish"` // DISABLED | DRAFT_ONLY | AUTO_ACTIVATE
+	LintOnSync              bool           `gorm:"not null;default:true" json:"lint_on_sync"`
+	LastSyncCommit          string         `gorm:"size:64;not null;default:''" json:"last_sync_commit"`
+	LastSyncAt              *time.Time     `json:"last_sync_at,omitempty"`
+	LastSchemaID            *uint64        `json:"last_schema_id,omitempty"`
+	LastPublishStatus       string         `gorm:"column:last_publish_status;size:32;not null;default:'PENDING'" json:"last_publish_status"`
+	LastPublishRunID        *uint64        `gorm:"column:last_publish_run_id" json:"last_publish_run_id,omitempty"`
+	PendingBreakingSchemaID *uint64        `gorm:"column:pending_breaking_schema_id" json:"pending_breaking_schema_id,omitempty"`
+	Description             string         `gorm:"type:text;not null;default:''" json:"description"`
+	CreatedAt               time.Time      `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt               time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
 }
 
 func (GitProtoBundle) TableName() string {
@@ -538,6 +574,7 @@ type ProtoPoolReconcileRun struct {
 	BareImportExpandedCount int            `gorm:"not null;default:0" json:"bare_import_expanded_count"`
 	PostStripCollisionCount int            `gorm:"not null;default:0" json:"post_strip_collision_count"`
 	WorkspaceVersion        string         `gorm:"size:128;not null;default:''" json:"workspace_version"`
+	InputFingerprint        string         `gorm:"column:input_fingerprint;size:64;not null;default:''" json:"input_fingerprint"`
 	ReportJSON              datatypes.JSON `gorm:"column:report_json;type:jsonb;not null;default:'{}'" json:"report_json"`
 	ErrorMessage            string         `gorm:"type:text;not null;default:''" json:"error_message"`
 	DurationMs              int64          `gorm:"not null;default:0" json:"duration_ms"`
@@ -549,6 +586,56 @@ type ProtoPoolReconcileRun struct {
 
 func (ProtoPoolReconcileRun) TableName() string {
 	return config.TablePrefix + "proto_pool_reconcile_runs"
+}
+
+// ProtoPublishRun 实体 #41：阶段 ④ 单仓拓扑编译与分级发布运行记录表 (ADR-29 §4.1)
+type ProtoPublishRun struct {
+	ID                   uint64         `gorm:"primaryKey;autoIncrement" json:"id"`
+	PoolReconcileRunID   uint64         `gorm:"column:pool_reconcile_run_id;not null;index:idx_contract_publish_reconcile" json:"pool_reconcile_run_id"`
+	PublishMode          string         `gorm:"column:publish_mode;size:16;not null;default:'AUTO'" json:"publish_mode"`
+	Status               string         `gorm:"size:24;not null;default:'RUNNING';index:idx_contract_publish_status" json:"status"`
+	TotalBundles         int            `gorm:"not null;default:0" json:"total_bundles"`
+	PublishedCount       int            `gorm:"not null;default:0" json:"published_count"`
+	SkippedCount         int            `gorm:"not null;default:0" json:"skipped_count"`
+	BreakingBlockedCount int            `gorm:"not null;default:0" json:"breaking_blocked_count"`
+	ConflictBlockedCount int            `gorm:"not null;default:0" json:"conflict_blocked_count"`
+	PendingUpstreamCount int            `gorm:"not null;default:0" json:"pending_upstream_count"`
+	FailedCount          int            `gorm:"not null;default:0" json:"failed_count"`
+	FanoutCount          int            `gorm:"not null;default:0" json:"fanout_count"`
+	DetailsJSON          datatypes.JSON `gorm:"column:details_json;type:jsonb;not null;default:'{}'" json:"details_json"`
+	ErrorMessage         string         `gorm:"type:text;not null;default:''" json:"error_message"`
+	TriggeredBy          string         `gorm:"size:128;not null;default:''" json:"triggered_by"`
+	DurationMs           int64          `gorm:"not null;default:0" json:"duration_ms"`
+	StartedAt            time.Time      `gorm:"not null" json:"started_at"`
+	FinishedAt           *time.Time     `json:"finished_at,omitempty"`
+	CreatedAt            time.Time      `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt            time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
+}
+
+func (ProtoPublishRun) TableName() string {
+	return config.TablePrefix + "proto_publish_runs"
+}
+
+// ProtoPipelineRun 实体 #42：一键四阶段 Proto 流水线编排任务表 (ADR-29 §4.1)
+type ProtoPipelineRun struct {
+	ID             uint64     `gorm:"primaryKey;autoIncrement" json:"id"`
+	FromStage      string     `gorm:"column:from_stage;size:24;not null;default:'COLLECT_NORMALIZE'" json:"from_stage"`
+	CurrentStage   string     `gorm:"column:current_stage;size:24;not null;default:'COLLECT_NORMALIZE'" json:"current_stage"`
+	Status         string     `gorm:"size:24;not null;default:'RUNNING';index:idx_contract_pipeline_status" json:"status"`
+	TriggerSource  string     `gorm:"column:trigger_source;size:24;not null;default:'MANUAL'" json:"trigger_source"`
+	SyncJobID      *uint64    `gorm:"column:sync_job_id" json:"sync_job_id,omitempty"`
+	ReconcileRunID *uint64    `gorm:"column:reconcile_run_id" json:"reconcile_run_id,omitempty"`
+	PublishRunID   *uint64    `gorm:"column:publish_run_id" json:"publish_run_id,omitempty"`
+	ErrorMessage   string     `gorm:"type:text;not null;default:''" json:"error_message"`
+	TriggeredBy    string     `gorm:"size:128;not null;default:''" json:"triggered_by"`
+	StartedAt      time.Time  `gorm:"not null" json:"started_at"`
+	FinishedAt     *time.Time `json:"finished_at,omitempty"`
+	CreatedAt      time.Time  `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt      time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
+}
+
+func (ProtoPipelineRun) TableName() string {
+	return config.TablePrefix + "proto_pipeline_runs"
 }
 
 // PreMigrateADR26R4Orphans 在 AutoMigrate 收口 platform_repo_id NOT NULL 前归并存量手工仓与清理孤儿记录。
@@ -718,6 +805,8 @@ func ensureADR26SchemaAndBackfill(db *gorm.DB) error {
 		`ALTER TABLE contract_git_repos DROP CONSTRAINT IF EXISTS chk_contract_git_repo_source_mode;`,
 		`ALTER TABLE contract_git_repos DROP CONSTRAINT IF EXISTS chk_contract_git_repo_platform_id;`,
 		`ALTER TABLE contract_git_repos DROP CONSTRAINT IF EXISTS chk_contract_git_repo_proto_status;`,
+		`ALTER TABLE contract_proto_import_owners DROP CONSTRAINT IF EXISTS chk_contract_import_owner_source;`,
+		`ALTER TABLE contract_proto_schemas DROP CONSTRAINT IF EXISTS chk_contract_proto_source_type;`,
 		`DO $$
 BEGIN
 	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_git_repo_source_mode') THEN
@@ -736,7 +825,10 @@ BEGIN
 		ALTER TABLE contract_proto_files ADD CONSTRAINT chk_contract_pfile_pipeline_status CHECK (pipeline_status IN ('COLLECTED', 'NORMALIZED', 'QUARANTINED'));
 	END IF;
 	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_import_owner_source') THEN
-		ALTER TABLE contract_proto_import_owners ADD CONSTRAINT chk_contract_import_owner_source CHECK (source IN ('MANUAL', 'BASE_LIB', 'AUTO'));
+		ALTER TABLE contract_proto_import_owners ADD CONSTRAINT chk_contract_import_owner_source CHECK (source IN ('MANUAL', 'BASE_LIB', 'AUTO', 'R3_AUTO'));
+	END IF;
+	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_proto_source_type') THEN
+		ALTER TABLE contract_proto_schemas ADD CONSTRAINT chk_contract_proto_source_type CHECK (source_type IN ('UPLOAD_PB', 'ONLINE_COMPILE', 'GIT_SYNC', 'GIT_MR_AUTO', 'GIT_PIPELINE'));
 	END IF;
 	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_proto_sync_job_scope') THEN
 		ALTER TABLE contract_proto_sync_jobs ADD CONSTRAINT chk_contract_proto_sync_job_scope CHECK (scope IN ('ALL', 'DEPARTMENT', 'SERVICE_GROUP', 'FAILED_ONLY', 'SELECTED'));
@@ -750,6 +842,24 @@ BEGIN
 	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_pool_reconcile_status') THEN
 		ALTER TABLE contract_proto_pool_reconcile_runs ADD CONSTRAINT chk_contract_pool_reconcile_status CHECK (status IN ('RUNNING', 'COMPLETED', 'FAILED'));
 	END IF;
+	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_git_bundle_publish_status') THEN
+		ALTER TABLE contract_git_proto_bundles ADD CONSTRAINT chk_contract_git_bundle_publish_status CHECK (last_publish_status IN ('PENDING', 'PUBLISHED', 'SKIPPED_UNCHANGED', 'BLOCKED_BREAKING', 'BLOCKED_CONFLICT', 'PENDING_UPSTREAM', 'FAILED'));
+	END IF;
+	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_proto_publish_mode') THEN
+		ALTER TABLE contract_proto_publish_runs ADD CONSTRAINT chk_contract_proto_publish_mode CHECK (publish_mode IN ('AUTO', 'PREVIEW'));
+	END IF;
+	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_proto_publish_status') THEN
+		ALTER TABLE contract_proto_publish_runs ADD CONSTRAINT chk_contract_proto_publish_status CHECK (status IN ('RUNNING', 'COMPLETED', 'PREVIEW_READY', 'PARTIAL_BLOCKED', 'FAILED', 'REJECTED_STALE'));
+	END IF;
+	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_proto_pipeline_from_stage') THEN
+		ALTER TABLE contract_proto_pipeline_runs ADD CONSTRAINT chk_contract_proto_pipeline_from_stage CHECK (from_stage IN ('COLLECT_NORMALIZE', 'RECONCILE', 'PUBLISH'));
+	END IF;
+	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_proto_pipeline_status') THEN
+		ALTER TABLE contract_proto_pipeline_runs ADD CONSTRAINT chk_contract_proto_pipeline_status CHECK (status IN ('RUNNING', 'COMPLETED', 'PARTIAL_BLOCKED', 'FAILED'));
+	END IF;
+	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_proto_pipeline_trigger') THEN
+		ALTER TABLE contract_proto_pipeline_runs ADD CONSTRAINT chk_contract_proto_pipeline_trigger CHECK (trigger_source IN ('MANUAL', 'MR_MERGE', 'SCHEDULE'));
+	END IF;
 END $$;`,
 		`CREATE INDEX IF NOT EXISTS idx_contract_pfile_closure ON contract_proto_files (in_service_closure, is_deleted);`,
 		`UPDATE contract_git_repos SET source_mode = 'PLATFORM_SHARED' WHERE source_mode <> 'PLATFORM_SHARED' OR source_mode = '' OR source_mode IS NULL;`,
@@ -759,6 +869,7 @@ END $$;`,
 		`UPDATE contract_proto_files SET pipeline_status = 'NORMALIZED' WHERE pipeline_status = '' OR pipeline_status IS NULL;`,
 		`UPDATE contract_proto_files SET normalizer_version = 'passthrough-0' WHERE normalizer_version = '' OR normalizer_version IS NULL;`,
 		`UPDATE contract_proto_files SET raw_blob_sha = content_sha256 WHERE (raw_blob_sha = '' OR raw_blob_sha IS NULL) AND content_sha256 <> '';`,
+		`UPDATE contract_git_proto_bundles SET last_publish_status = 'PENDING' WHERE last_publish_status = '' OR last_publish_status IS NULL;`,
 	}
 	for _, stmt := range stmts {
 		if err := db.Exec(stmt).Error; err != nil {

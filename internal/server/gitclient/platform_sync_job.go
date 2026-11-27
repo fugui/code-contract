@@ -60,9 +60,11 @@ type SyncAllRequest struct {
 	ServiceGroup   string   `json:"service_group"`
 	RepoIDs        []uint64 `json:"repo_ids"`
 	ForceRecompile bool     `json:"force_recompile"`
+	SkipCompile    *bool    `json:"skip_compile"` // ADR-29: 默认 true，仅执行 Stage A+B 采集清洗
 	OperatorID     uint     `json:"-"`
 	TriggeredBy    string   `json:"-"`
 	WaitSync       bool     `json:"sync"` // 仅测试或显式等待完成时设为 true
+	AlreadyLocked  bool     `json:"-"`    // 由 RunFullProtoPipeline 透传，避免重复加锁
 }
 
 // SyncSummaryDTO 汇总平台活跃仓、6 态数量与最近同步任务。
@@ -244,7 +246,26 @@ func RunSyncAllJob(
 		return nil, ErrSharedWriteDisabled
 	}
 
+	var pipelineLock *PipelineLock
+	if !req.AlreadyLocked {
+		lk, lErr := TryAcquirePipelineLock(ctx, db, PipelineLockHolder{
+			JobType: "SYNC_ALL",
+			Holder:  strings.TrimSpace(req.TriggeredBy),
+		})
+		if lErr != nil {
+			return nil, lErr
+		}
+		pipelineLock = lk
+	}
+	releaseLockOnErr := func() {
+		if pipelineLock != nil {
+			pipelineLock.Release()
+			pipelineLock = nil
+		}
+	}
+
 	if _, _, _, alignErr := AlignPlatformRepositories(ctx, db); alignErr != nil {
+		releaseLockOnErr()
 		return nil, fmt.Errorf("对齐平台代码仓失败: %w", alignErr)
 	}
 
@@ -274,6 +295,7 @@ func RunSyncAllJob(
 
 	var targets []models.GitRepo
 	if err := q.Order("contract_git_repos.id ASC").Find(&targets).Error; err != nil {
+		releaseLockOnErr()
 		return nil, err
 	}
 
@@ -337,7 +359,11 @@ func RunSyncAllJob(
 		job.FinishedAt = &now
 	}
 	if err := db.WithContext(ctx).Create(&job).Error; err != nil {
+		releaseLockOnErr()
 		return nil, err
+	}
+	if !req.AlreadyLocked {
+		SetActivePipelineLockJobID(job.ID)
 	}
 
 	emitProgress := func(j models.ProtoSyncJob, errItems []SyncJobErrorItem) {
@@ -364,10 +390,19 @@ func RunSyncAllJob(
 
 	if len(targets) == 0 {
 		emitProgress(job, nil)
+		releaseLockOnErr()
 		return &job, nil
 	}
 
+	skipCompile := true
+	if req.SkipCompile != nil {
+		skipCompile = *req.SkipCompile
+	}
+
 	runJob := func(runCtx context.Context) {
+		if pipelineLock != nil {
+			defer pipelineLock.Release()
+		}
 		conc := cfg.ProtoCollect.SyncConcurrency
 		if conc <= 0 {
 			conc = 4
@@ -431,10 +466,12 @@ func RunSyncAllJob(
 					CachePolicy:           policy,
 					SkipIfCommitUnchanged: !req.ForceRecompile,
 					ForceRecompile:        req.ForceRecompile,
+					SkipCompile:           skipCompile,
+					AlreadyLocked:         true,
 					CodesDir:              cfg.Storage.GetCodesDir(),
 					ProtosDir:             cfg.Storage.GetProtosDir(),
 					SharedWriteEnabled:    cfg.Storage.SharedWriteEnabled,
-					TriggerBlastRadius:    true,
+					TriggerBlastRadius:    !skipCompile,
 				})
 
 				mu.Lock()

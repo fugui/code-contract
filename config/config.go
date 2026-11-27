@@ -87,14 +87,32 @@ func (p ProtoCollectSection) StaleThresholdDuration() time.Duration {
 	return 24 * time.Hour
 }
 
+// ProtoPipelineSection 定义四阶段 Proto 流水线与阶段 ④ 拓扑发布控制配置 (ADR-29 r4)
+type ProtoPipelineSection struct {
+	PublishMode         string `yaml:"publish_mode"`          // AUTO | PREVIEW（默认 AUTO）
+	CompileConcurrency  int    `yaml:"compile_concurrency"`   // 阶段 ④ 同拓扑层并发编译数（默认 4）
+	FanoutWarnThreshold int    `yaml:"fanout_warn_threshold"` // 扇出提示阈值（默认 100）
+	MRMergeDebounceSec  int    `yaml:"mr_merge_debounce_sec"` // MR 合入增量流水线去抖秒数（默认 300）
+	ArchiveReminderDays int    `yaml:"archive_reminder_days"` // 归档外部资产提醒周期天数（默认 30）
+}
+
+// EffectivePublishMode 返回归一化后的发布模式（AUTO | PREVIEW，默认 AUTO）。
+func (p ProtoPipelineSection) EffectivePublishMode() string {
+	if strings.EqualFold(strings.TrimSpace(p.PublishMode), "PREVIEW") {
+		return "PREVIEW"
+	}
+	return "AUTO"
+}
+
 // Config 定义模块全局配置结构
 type Config struct {
-	Server       configutil.ServerConfig     `yaml:"server"`
-	Database     commonModels.DatabaseConfig `yaml:"database"`
-	Auth         AuthSection                 `yaml:"auth"`
-	AgentHub     AgentHubSection             `yaml:"agent_hub"`
-	Storage      StorageSection              `yaml:"storage"`
-	ProtoCollect ProtoCollectSection         `yaml:"proto_collect"`
+	Server        configutil.ServerConfig     `yaml:"server"`
+	Database      commonModels.DatabaseConfig `yaml:"database"`
+	Auth          AuthSection                 `yaml:"auth"`
+	AgentHub      AgentHubSection             `yaml:"agent_hub"`
+	Storage       StorageSection              `yaml:"storage"`
+	ProtoCollect  ProtoCollectSection         `yaml:"proto_collect"`
+	ProtoPipeline ProtoPipelineSection        `yaml:"proto_pipeline"`
 }
 
 // AppConfig 全局运行时配置单例
@@ -157,6 +175,27 @@ func applyDefaults() {
 	}
 
 	ApplyStorageAndCollectDefaults(&AppConfig.Storage, &AppConfig.ProtoCollect)
+	ApplyProtoPipelineDefaults(&AppConfig.ProtoPipeline)
+}
+
+// ApplyProtoPipelineDefaults 为四阶段流水线与阶段 ④ 发布填充安全默认值 (ADR-29 r4)。
+func ApplyProtoPipelineDefaults(pp *ProtoPipelineSection) {
+	if pp == nil {
+		return
+	}
+	pp.PublishMode = pp.EffectivePublishMode()
+	if pp.CompileConcurrency <= 0 {
+		pp.CompileConcurrency = 4
+	}
+	if pp.FanoutWarnThreshold <= 0 {
+		pp.FanoutWarnThreshold = 100
+	}
+	if pp.MRMergeDebounceSec <= 0 {
+		pp.MRMergeDebounceSec = 300
+	}
+	if pp.ArchiveReminderDays <= 0 {
+		pp.ArchiveReminderDays = 30
+	}
 }
 
 // DefaultCollectGlobs 返回 ADR-26 规定的默认 pg 白名单采集规则（严格全小写 pg）。

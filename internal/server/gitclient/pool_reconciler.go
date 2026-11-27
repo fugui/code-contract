@@ -70,6 +70,7 @@ type PoolReconcileOptions struct {
 	CodesDir           string
 	ProtosDir          string
 	TriggeredBy        string
+	AlreadyLocked      bool
 	ProgressFn         func(PoolReconcileProgressEvent)
 }
 
@@ -105,7 +106,10 @@ type PoolConflictEntry struct {
 	LogicalPath      string                  `json:"logical_path"`
 	Reason           string                  `json:"reason"`
 	WinnerRepoName   string                  `json:"winner_repo_name"`
+	WinnerGitRepoID  uint64                  `json:"winner_git_repo_id,omitempty"`
+	WinnerBundleID   uint64                  `json:"winner_bundle_id,omitempty"`
 	WinnerFileID     uint64                  `json:"winner_file_id"`
+	HasManualOwner   bool                    `json:"has_manual_owner,omitempty"`
 	ContentIdentical bool                    `json:"content_identical"`
 	SymbolDiff       map[string][]string     `json:"symbol_diff,omitempty"`
 	Candidates       []PoolConflictCandidate `json:"candidates"`
@@ -678,12 +682,12 @@ func selectR3Winner(
 	}
 
 	score := func(c *PoolFileState) (tier int, repoCount int) {
-		// 0. R7 Variant Swap 临时赢家覆盖
-		if c.ForcedVariantWinner {
+		// 0. MANUAL 人工仲裁（最高优先级，R7 Variant Swap 不可覆盖）
+		if c.ManualOwnerBundleID > 0 && c.BundleID == c.ManualOwnerBundleID {
 			return 0, repoFileCounts[c.GitRepoID]
 		}
-		// 1. MANUAL
-		if c.ManualOwnerBundleID > 0 && c.BundleID == c.ManualOwnerBundleID {
+		// 1. R7 Variant Swap 临时赢家覆盖
+		if c.ForcedVariantWinner {
 			return 1, repoFileCounts[c.GitRepoID]
 		}
 		// 2. BASE_LIB
@@ -792,17 +796,21 @@ func buildPoolConflictEntry(logicalPath string, grp []*PoolFileState, winner *Po
 	}
 
 	reason := "R3_AUTO_DISAMBIGUATED"
+	hasManual := false
 	if winner != nil {
 		if winner.ManualOwnerBundleID > 0 && winner.BundleID == winner.ManualOwnerBundleID {
 			reason = "MANUAL_OWNER"
+			hasManual = true
 		} else if winner.Category == models.ProtoCategoryBaseLib {
 			reason = "BASE_LIB_PRIORITY"
 		}
 	}
 	var winnerRepo string
-	var winnerID uint64
+	var winnerRepoID, winnerBundleID, winnerID uint64
 	if winner != nil {
 		winnerRepo = winner.RepoName
+		winnerRepoID = winner.GitRepoID
+		winnerBundleID = winner.BundleID
 		winnerID = winner.ProtoFileID
 	}
 
@@ -810,7 +818,10 @@ func buildPoolConflictEntry(logicalPath string, grp []*PoolFileState, winner *Po
 		LogicalPath:      logicalPath,
 		Reason:           reason,
 		WinnerRepoName:   winnerRepo,
+		WinnerGitRepoID:  winnerRepoID,
+		WinnerBundleID:   winnerBundleID,
 		WinnerFileID:     winnerID,
+		HasManualOwner:   hasManual,
 		ContentIdentical: len(hashes) <= 1,
 		SymbolDiff:       symbolDiff,
 		Candidates:       candsOut,
@@ -931,6 +942,16 @@ func RunPoolReconcile(ctx context.Context, db *gorm.DB, opts PoolReconcileOption
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if !opts.AlreadyLocked {
+		lk, lErr := TryAcquirePipelineLock(ctx, db, PipelineLockHolder{
+			JobType: "RECONCILE",
+			Holder:  strings.TrimSpace(opts.TriggeredBy),
+		})
+		if lErr != nil {
+			return nil, nil, lErr
+		}
+		defer lk.Release()
+	}
 	startedAt := time.Now().UTC()
 
 	govDoc := DefaultGovernanceConfig()
@@ -973,6 +994,9 @@ func RunPoolReconcile(ctx context.Context, db *gorm.DB, opts PoolReconcileOption
 	}
 	if err := db.WithContext(ctx).Create(&run).Error; err != nil {
 		return nil, nil, err
+	}
+	if !opts.AlreadyLocked {
+		SetActivePipelineLockJobID(run.ID)
 	}
 
 	emit := func(stage, msg string, report *PoolReconcileReport) {
@@ -1124,6 +1148,9 @@ func RunPoolReconcile(ctx context.Context, db *gorm.DB, opts PoolReconcileOption
 	run.BareImportExpandedCount = out.Report.Stats.BareImportExpandedCount
 	run.PostStripCollisionCount = out.Report.Stats.PostStripCollisionCount
 	run.WorkspaceVersion = workspaceVer
+	if fp, fpErr := ComputePoolInputFingerprint(ctx, db); fpErr == nil {
+		run.InputFingerprint = fp
+	}
 	run.ReportJSON = datatypes.JSON(reportBytes)
 	run.DurationMs = fin.Sub(startedAt).Milliseconds()
 	run.FinishedAt = &fin
@@ -1282,6 +1309,123 @@ func persistPoolReconcileOutput(ctx context.Context, db *gorm.DB, out *PoolRecon
 				}
 			}
 		}
-		return nil
+		return syncR3WinnersToImportOwners(ctx, tx, out)
 	})
+}
+
+// ComputePoolInputFingerprint 计算全池参与收敛与编译文件集合的确定性输入快照指纹。
+func ComputePoolInputFingerprint(ctx context.Context, db *gorm.DB) (string, error) {
+	if db == nil {
+		return "", errors.New("db 不能为空")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	type fpRow struct {
+		ID             uint64
+		FilePath       string
+		ContentSHA256  string
+		PipelineStatus string
+	}
+	var rows []fpRow
+	if err := db.WithContext(ctx).
+		Table("contract_proto_files AS f").
+		Select("f.id, f.file_path, f.content_sha256, f.pipeline_status").
+		Joins("JOIN contract_git_repos AS r ON r.id = f.git_repo_id").
+		Where("f.is_deleted = false AND (r.sync_enabled = true OR r.platform_repo_id = ?)", SystemSharedBasePlatformRepoID).
+		Order("f.id ASC").
+		Scan(&rows).Error; err != nil {
+		return "", err
+	}
+	h := sha256.New()
+	for _, r := range rows {
+		_, _ = fmt.Fprintf(h, "%d|%s|%s|%s\n", r.ID, r.FilePath, r.ContentSHA256, r.PipelineStatus)
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// syncR3WinnersToImportOwners 在同一事务内将多候选 R3 胜出方以 R3_AUTO 写入 contract_proto_import_owners，
+// 不覆盖 MANUAL 与 BASE_LIB，并清理本轮已不存在冲突的过期 R3_AUTO 记录。
+func syncR3WinnersToImportOwners(ctx context.Context, tx *gorm.DB, out *PoolReconcileOutput) error {
+	if out == nil {
+		return nil
+	}
+	type winnerSpec struct {
+		GitRepoID uint64
+		BundleID  uint64
+	}
+	multiWinnerByLP := make(map[string]winnerSpec, len(out.Report.Conflicts))
+	conflictLPs := make(map[string]struct{}, len(out.Report.Conflicts))
+	for _, c := range out.Report.Conflicts {
+		if c.LogicalPath != "" {
+			conflictLPs[c.LogicalPath] = struct{}{}
+		}
+	}
+	for _, st := range out.Files {
+		if st.LogicalPath == "" || st.PipelineStatus == models.ProtoPipelineQuarantined || st.IsExternalCopy {
+			continue
+		}
+		if _, isMulti := conflictLPs[st.LogicalPath]; !isMulti {
+			continue
+		}
+		if st.GitRepoID > 0 && st.BundleID > 0 {
+			multiWinnerByLP[st.LogicalPath] = winnerSpec{
+				GitRepoID: st.GitRepoID,
+				BundleID:  st.BundleID,
+			}
+		}
+	}
+
+	var existingOwners []models.ProtoImportOwner
+	if err := tx.WithContext(ctx).Find(&existingOwners).Error; err != nil {
+		return err
+	}
+	existingByLP := make(map[string]models.ProtoImportOwner, len(existingOwners))
+	for _, ow := range existingOwners {
+		existingByLP[ow.LogicalPath] = ow
+		if ow.Source == models.ImportOwnerSourceR3Auto {
+			if _, keep := multiWinnerByLP[ow.LogicalPath]; !keep {
+				if err := tx.WithContext(ctx).Delete(&models.ProtoImportOwner{}, ow.ID).Error; err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	keys := make([]string, 0, len(multiWinnerByLP))
+	for lp := range multiWinnerByLP {
+		keys = append(keys, lp)
+	}
+	sort.Strings(keys)
+
+	for _, lp := range keys {
+		w := multiWinnerByLP[lp]
+		if existing, ok := existingByLP[lp]; ok {
+			if existing.Source == models.ImportOwnerSourceManual || existing.Source == models.ImportOwnerSourceBaseLib {
+				continue
+			}
+			if existing.OwnerGitRepoID != w.GitRepoID || existing.OwnerBundleID != w.BundleID || existing.Source != models.ImportOwnerSourceR3Auto {
+				if err := tx.WithContext(ctx).Model(&models.ProtoImportOwner{}).Where("id = ?", existing.ID).Updates(map[string]any{
+					"owner_git_repo_id": w.GitRepoID,
+					"owner_bundle_id":   w.BundleID,
+					"source":            models.ImportOwnerSourceR3Auto,
+					"updated_by":        "pool_reconciler",
+				}).Error; err != nil {
+					return err
+				}
+			}
+			continue
+		}
+		rec := models.ProtoImportOwner{
+			LogicalPath:    lp,
+			OwnerGitRepoID: w.GitRepoID,
+			OwnerBundleID:  w.BundleID,
+			Source:         models.ImportOwnerSourceR3Auto,
+			UpdatedBy:      "pool_reconciler",
+		}
+		if err := tx.WithContext(ctx).Create(&rec).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }

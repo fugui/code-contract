@@ -1,7 +1,6 @@
 package handlers_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -141,7 +140,7 @@ func TestSC14_LivingProtoDocsGoldenSamplesAndMarkdownExport(t *testing.T) {
 	r, db := setupProtoDocRouterAndDB(t)
 	adminUser := createTestUserInDB(t, db, "admin_sc14", config.AdminRole)
 	normalUser := createTestUserInDB(t, db, "viewer_sc14", "user")
-	adminToken := generateTestJWT(t, adminUser)
+	_ = generateTestJWT(t, adminUser)
 	viewerToken := generateTestJWT(t, normalUser)
 
 	// 1. 验证未登录访客访问文档中心与只读源码接口均返回 401
@@ -275,38 +274,20 @@ service BillingService {
   rpc Charge(ChargeReq) returns (ChargeRsp);
 }
 `
-	compileBody, _ := json.Marshal(map[string]any{
-		"name":          "billing-service-pb",
-		"category":      models.ProtoCategoryBusiness,
-		"auto_activate": true,
-		"files": []map[string]string{
-			{"path": "billing/v1/billing.proto", "content": billingProto},
-		},
-	})
-	cReq := httptest.NewRequest(http.MethodPost, "/api/proto-schemas/compile", bytes.NewReader(compileBody))
-	cReq.Header.Set("Content-Type", "application/json")
-	cReq.Header.Set("Authorization", "Bearer "+adminToken)
-	cResp := httptest.NewRecorder()
-	r.ServeHTTP(cResp, cReq)
-	if cResp.Code != http.StatusCreated {
-		t.Fatalf("CompileProtoSchema 失败 (%d): %s", cResp.Code, cResp.Body.String())
+	// 3. 通过 Git 来源注册表编译并激活真实 Proto（ADR-29 已废止在线 compile HTTP 入口）
+	compiledSchema, _, docCount, cErr := compileTestProtoSchema(t, db, "billing-service-pb", models.ProtoCategoryBusiness, "", map[string]string{
+		"billing/v1/billing.proto": billingProto,
+	}, true, false, "")
+	if cErr != nil {
+		t.Fatalf("compileTestProtoSchema 失败: %v", cErr)
 	}
-	var compileOut struct {
-		Schema struct {
-			ID uint64 `json:"id"`
-		} `json:"schema"`
-		DocSymbolCount int `json:"doc_symbol_count"`
-	}
-	if err := json.Unmarshal(cResp.Body.Bytes(), &compileOut); err != nil {
-		t.Fatalf("解析 compile 输出失败: %v", err)
-	}
-	if compileOut.DocSymbolCount <= 0 {
-		t.Fatalf("预期 CompileProtoSchema 自动生成并回传 doc_symbol_count > 0，实际=%d", compileOut.DocSymbolCount)
+	if docCount <= 0 {
+		t.Fatalf("预期自动生成并回传 doc_symbol_count > 0，实际=%d", docCount)
 	}
 
 	// 4. 构造 ACTIVE 黄金测试集样本
 	var savedSchema models.ProtoSchema
-	if err := db.First(&savedSchema, compileOut.Schema.ID).Error; err != nil {
+	if err := db.First(&savedSchema, compiledSchema.ID).Error; err != nil {
 		t.Fatalf("读取已存 Schema 失败: %v", err)
 	}
 	var fds descriptorpb.FileDescriptorSet
@@ -475,30 +456,13 @@ service UserProfileService {
 }
 `, methodExtra, vNote)
 
-		body, _ := json.Marshal(map[string]any{
-			"name":          "user-profile-pb",
-			"category":      models.ProtoCategoryBusiness,
-			"version_tag":   vNote,
-			"auto_activate": true,
-			"files": []map[string]string{
-				{"path": "user_profile.proto", "content": src},
-			},
-		})
-		req := httptest.NewRequest(http.MethodPost, "/api/proto-schemas/compile", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+adminToken)
-		resp := httptest.NewRecorder()
-		r.ServeHTTP(resp, req)
-		if resp.Code != http.StatusCreated {
-			t.Fatalf("编译版本 %s 失败 (%d): %s", vNote, resp.Code, resp.Body.String())
+		sc, _, _, cErr := compileTestProtoSchema(t, db, "user-profile-pb", models.ProtoCategoryBusiness, vNote, map[string]string{
+			"user_profile.proto": src,
+		}, true, false, "")
+		if cErr != nil {
+			t.Fatalf("编译版本 %s 失败: %v", vNote, cErr)
 		}
-		var out struct {
-			Schema struct {
-				ID uint64 `json:"id"`
-			} `json:"schema"`
-		}
-		_ = json.Unmarshal(resp.Body.Bytes(), &out)
-		return out.Schema.ID
+		return sc.ID
 	}
 
 	_ = compileVersion("v1.0.0", "")

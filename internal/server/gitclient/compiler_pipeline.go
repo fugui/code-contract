@@ -233,6 +233,8 @@ type PipelineOptions struct {
 	SkipIfCommitUnchanged bool
 	ForceRecompile        bool
 	ForceRenormalize      bool
+	SkipCompile           bool // ADR-29: 为 true 时仅运行 Stage A+B 采集清洗落库，不触发单仓盲编
+	AlreadyLocked         bool // ADR-29: 由外部（如 RunSyncAllJob / RunFullProtoPipeline）已持有全局锁
 	Normalizer            Normalizer
 	AuxConfigJSON         []byte
 	CodesDir              string
@@ -271,6 +273,17 @@ func RunFourStagePipeline(
 ) (*PipelineRunResult, error) {
 	if db == nil {
 		return nil, errors.New("db 不能为空")
+	}
+	if !opts.AlreadyLocked {
+		lk, lErr := AcquirePipelineLockWithTimeout(ctx, db, PipelineLockHolder{
+			JobType: "REPO_SYNC",
+			JobID:   repoID,
+			Holder:  fmt.Sprintf("user-%d", opts.OperatorID),
+		}, 10*time.Minute)
+		if lErr != nil {
+			return nil, lErr
+		}
+		defer lk.Release()
 	}
 	var repo models.GitRepo
 	if err := db.WithContext(ctx).First(&repo, repoID).Error; err != nil {
@@ -491,6 +504,17 @@ func ReNormalizeRepo(
 ) (*PipelineRunResult, error) {
 	if db == nil {
 		return nil, errors.New("db 不能为空")
+	}
+	if !opts.AlreadyLocked {
+		lk, lErr := TryAcquirePipelineLock(ctx, db, PipelineLockHolder{
+			JobType: "RENORMALIZE",
+			JobID:   repoID,
+			Holder:  fmt.Sprintf("user-%d", opts.OperatorID),
+		})
+		if lErr != nil {
+			return nil, lErr
+		}
+		defer lk.Release()
 	}
 	var repo models.GitRepo
 	if err := db.WithContext(ctx).First(&repo, repoID).Error; err != nil {
@@ -1314,9 +1338,9 @@ func executeStagesBToD(
 		refreshedByBundle[rf.BundleID] = append(refreshedByBundle[rf.BundleID], rf)
 	}
 
-	// 强制阶段二防线：PLATFORM_SHARED + passthrough-0 时禁止自动激活
-	isPassthroughPlatform := repo.SourceMode == models.GitSourceModePlatformShared && strings.HasPrefix(normVer, "passthrough-")
-
+	// ADR-29 §2.3.1 & §2.3.2:
+	// 1. sync-all (opts.SkipCompile=true) 跳过单仓盲编，统一交由阶段 ④ 拓扑编译发布；
+	// 2. 单仓同步 / Webhook 编译仅作为预览，强制 AutoActivate = false，绝不直接激活进入生效池。
 	bundleResults := make([]SyncBundleResult, 0, len(bundles))
 	for _, b := range bundles {
 		st := bundleStats[b.ID]
@@ -1346,14 +1370,13 @@ func executeStagesBToD(
 			})
 		}
 
-		shouldCompile := b.AutoCompile && len(compileFiles) > 0 &&
+		shouldCompile := !opts.SkipCompile && b.AutoCompile && len(compileFiles) > 0 &&
 			(opts.ForceRecompile || opts.ForceRenormalize || b.LastSchemaID == nil || st.AddedFiles > 0 || st.ModifiedFiles > 0 || st.DeletedFiles > 0)
 
 		if !shouldCompile || reg == nil {
 			st.CompileSkipped = true
 			st.CompiledSchemaID = b.LastSchemaID
 		} else {
-			autoActivate := b.AutoActivate && !isPassthroughPlatform
 			repoIDCopy := repo.ID
 			bundleIDCopy := b.ID
 			schema, _, _, compErr := reg.CompileAndSaveSchema(ctx, decoder.CompileProtoBundleInput{
@@ -1364,7 +1387,7 @@ func executeStagesBToD(
 				Files:            compileFiles,
 				ProtoIncludeDirs: []string{"."},
 				EntryPoints:      b.EntryFiles(),
-				AutoActivate:     autoActivate,
+				AutoActivate:     false,
 				SourceType:       models.ProtoSourceGitSync,
 				GitRepoID:        &repoIDCopy,
 				SourceBundleID:   &bundleIDCopy,
@@ -1381,7 +1404,9 @@ func executeStagesBToD(
 					_ = db.Model(&models.ProtoFileVersion{}).Where("id IN ?", vers).Update("schema_id", scID).Error
 				}
 				_ = db.Model(&models.GitProtoBundle{}).Where("id = ?", b.ID).Update("last_schema_id", scID).Error
-				_, _ = protodoc.RebuildForSchema(db, schema)
+				if schema.IsActive {
+					_, _ = protodoc.RebuildForSchema(db, schema)
+				}
 			}
 		}
 
@@ -1455,7 +1480,7 @@ func executeStagesBToD(
 	}
 
 	// Stage D 联动：单仓变更后计算影响面并对下游受影响 Bundle 局部重编 + F-26 破坏性检查
-	if opts.TriggerBlastRadius && len(changedLogicalSet) > 0 && reg != nil {
+	if !opts.SkipCompile && opts.TriggerBlastRadius && len(changedLogicalSet) > 0 && reg != nil {
 		changedList := make([]string, 0, len(changedLogicalSet))
 		for lp := range changedLogicalSet {
 			changedList = append(changedList, lp)

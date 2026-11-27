@@ -14,6 +14,7 @@ const (
 	NotifCategoryBaseLibImpact   = "BASE_LIB_IMPACT_ALERT"
 	NotifCategoryDuplicateWarn   = "DUPLICATE_STRUCT_WARN"
 	NotifCategorySchemaPublished = "SCHEMA_PUBLISHED"
+	NotifCategoryArchiveReminder = "ARCHIVE_SCHEMA_REMINDER"
 
 	NotifSeverityInfo     = "INFO"
 	NotifSeverityWarning  = "WARNING"

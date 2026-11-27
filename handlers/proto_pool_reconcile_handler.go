@@ -94,6 +94,9 @@ func TriggerPoolReconcileHandler(c *gin.Context) {
 	if req.Sync {
 		run, report, rErr := gitclient.RunPoolReconcile(c.Request.Context(), models.DB, opts)
 		if rErr != nil {
+			if handlePipelineLockOrStaleError(c, rErr) {
+				return
+			}
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "全池协调执行失败: " + rErr.Error()})
 			return
 		}

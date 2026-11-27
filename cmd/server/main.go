@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	commonAudit "code-common/backend/audit"
 	commonServer "code-common/backend/server"
@@ -16,6 +17,7 @@ import (
 	"code-contract/internal/server/discovery"
 	"code-contract/internal/server/gitclient"
 	"code-contract/internal/server/hub"
+	"code-contract/internal/server/notify"
 	"code-contract/models"
 	"code-contract/pkg/version"
 
@@ -116,6 +118,32 @@ func main() {
 	syncSched.SetJobBroadcaster(handlers.MakeSyncJobProgressBroadcaster(handlers.GetGlobalSSEBroker()))
 	handlers.InitGlobalSyncScheduler(syncSched)
 	syncSched.Start(rootCtx)
+	broker := handlers.GetGlobalSSEBroker()
+	gitclient.InitGlobalPipelineDebouncer(models.DB, syncSched, decoderReg, &config.AppConfig, func(evt gitclient.PipelineProgressEvent) {
+		if broker != nil {
+			broker.BroadcastProtoPipelineProgress(evt)
+		}
+	})
+	go func(ctx context.Context) {
+		notifier := notify.NewDispatcher(models.DB, broker)
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		// 启动后延迟 30 秒执行首轮历史归档巡检，随后每 24 小时巡检一次（30 天去重由 DB 控制）
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(30 * time.Second):
+			_, _ = gitclient.RunArchivedSchemaReminderCheck(ctx, models.DB, notifier, time.Now().UTC(), config.AppConfig.ProtoPipeline.ArchiveReminderDays)
+		}
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				_, _ = gitclient.RunArchivedSchemaReminderCheck(ctx, models.DB, notifier, time.Now().UTC(), config.AppConfig.ProtoPipeline.ArchiveReminderDays)
+			}
+		}
+	}(rootCtx)
 
 	// 7. 基于 code-common/backend/server 启动服务（自动处理 /<ModuleKey> 网关前缀剥离与前端静态产物内嵌托管）
 	// TODO(security): 若独立直接暴露于公网环境，请在网关层配置严格 CORS 白名单与全局 API 速率限制

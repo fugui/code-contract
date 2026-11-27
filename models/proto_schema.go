@@ -12,40 +12,53 @@ const (
 	ProtoCategoryBusiness = "BUSINESS" // 业务微服务契约
 	ProtoCategoryGateway  = "GATEWAY"  // 接入网关/边缘代理契约
 
-	ProtoSourceUploadPB      = "UPLOAD_PB"      // 手工上传 .pb 描述集二进制（M1~M21 默认模式）
-	ProtoSourceOnlineCompile = "ONLINE_COMPILE" // 在线源码树直编 (M22 protocompile)
+	ProtoSourceUploadPB      = "UPLOAD_PB"      // 手工上传 .pb 描述集二进制（历史归档）
+	ProtoSourceOnlineCompile = "ONLINE_COMPILE" // 在线源码树直编 (M22 protocompile，历史归档)
 	ProtoSourceGitSync       = "GIT_SYNC"       // Git 仓库同步直编 (M25)
 	ProtoSourceGitMRAuto     = "GIT_MR_AUTO"    // Git MR 合入自动编译同步 (M25)
+	ProtoSourceGitPipeline   = "GIT_PIPELINE"   // 阶段 ④ 单仓拓扑编译发布流水线产出 (M43 / ADR-29)
 
 	MaxDescriptorFileSize = 16 * 1024 * 1024 // 16MB (16,777,216 Bytes)
 )
 
+// IsAllowedGitProtoSource 校验描述集来源是否属于合法的自封闭 Git 来源集合。
+func IsAllowedGitProtoSource(sourceType string) bool {
+	switch sourceType {
+	case ProtoSourceGitSync, ProtoSourceGitMRAuto, ProtoSourceGitPipeline:
+		return true
+	default:
+		return false
+	}
+}
+
 // ProtoSchema Protobuf 编译描述集 (.pb FileDescriptorSet) 多版本仓库表 (contract_proto_schemas)
 type ProtoSchema struct {
-	ID              uint64         `gorm:"primaryKey;autoIncrement" json:"id"`
-	Name            string         `gorm:"size:128;not null;uniqueIndex:uk_contract_proto_name_ver,priority:1" json:"name"`
-	Version         int            `gorm:"not null;uniqueIndex:uk_contract_proto_name_ver,priority:2" json:"version"` // 同名递增版本号 1, 2, 3...
-	VersionTag      string         `gorm:"size:64;not null;default:''" json:"version_tag"`
-	Category        string         `gorm:"size:32;not null;default:'BUSINESS';index:idx_contract_proto_category" json:"category"` // BASE_LIB | BUSINESS | GATEWAY
-	SourceType      string         `gorm:"size:24;not null;default:'UPLOAD_PB';index:idx_contract_proto_source_type;check:chk_contract_proto_source_type,source_type IN ('UPLOAD_PB','ONLINE_COMPILE','GIT_SYNC','GIT_MR_AUTO')" json:"source_type"`
-	GitRepoID       *uint64        `gorm:"index:idx_contract_proto_git_repo" json:"git_repo_id,omitempty"`
-	SourceBundleID  *uint64        `gorm:"index:idx_contract_proto_source_bundle" json:"source_bundle_id,omitempty"`
-	SourceCommitSHA string         `gorm:"size:64;not null;default:''" json:"source_commit_sha"`
-	SourceMRIID     *int           `gorm:"column:source_mr_iid;default:null" json:"source_mr_iid,omitempty"`
-	FileName        string         `gorm:"size:255;not null" json:"file_name"` // 经 filepath.Base 净化的展示文件名
-	FileSHA256      string         `gorm:"size:64;not null;index:idx_contract_proto_sha" json:"file_sha256"`
-	FileSize        int            `gorm:"not null;check:chk_contract_proto_size,file_size > 0 AND file_size <= 16777216" json:"file_size"` // <= 16MB
-	DescriptorBytes []byte         `gorm:"type:bytea;not null" json:"-"`                                                                    // 二进制仅入库
-	IsActive        bool           `gorm:"not null;default:false;index:idx_contract_proto_active" json:"is_active"`
-	ProtoFileCount  int            `gorm:"not null;default:0" json:"proto_file_count"`               // 自有 .proto 文件数量
-	ServiceCount    int            `gorm:"not null;default:0" json:"service_count"`                  // 自有导出的去重 RPC Service 数量
-	OperationCount  int            `gorm:"not null;default:0" json:"operation_count"`                // 自有导出的 RPC Method 总数
-	ProtoFiles      datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"proto_files"`      // 解析包含的 .proto 源文件清单 []string (F-03.4)
-	ExternalImports datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"external_imports"` // 需外部描述集供给的 import .proto 路径清单 []string
-	Description     string         `gorm:"type:text" json:"description"`
-	CreatedBy       uint           `gorm:"not null;default:0" json:"created_by"`
-	CreatedAt       time.Time      `json:"created_at"`
-	UpdatedAt       time.Time      `json:"updated_at"`
+	ID                 uint64         `gorm:"primaryKey;autoIncrement" json:"id"`
+	Name               string         `gorm:"size:128;not null;uniqueIndex:uk_contract_proto_name_ver,priority:1" json:"name"`
+	Version            int            `gorm:"not null;uniqueIndex:uk_contract_proto_name_ver,priority:2" json:"version"` // 同名递增版本号 1, 2, 3...
+	VersionTag         string         `gorm:"size:64;not null;default:''" json:"version_tag"`
+	Category           string         `gorm:"size:32;not null;default:'BUSINESS';index:idx_contract_proto_category" json:"category"` // BASE_LIB | BUSINESS | GATEWAY
+	SourceType         string         `gorm:"size:24;not null;default:'GIT_PIPELINE';index:idx_contract_proto_source_type;check:chk_contract_proto_source_type,source_type IN ('UPLOAD_PB','ONLINE_COMPILE','GIT_SYNC','GIT_MR_AUTO','GIT_PIPELINE')" json:"source_type"`
+	GitRepoID          *uint64        `gorm:"index:idx_contract_proto_git_repo" json:"git_repo_id,omitempty"`
+	SourceBundleID     *uint64        `gorm:"index:idx_contract_proto_source_bundle" json:"source_bundle_id,omitempty"`
+	SourceCommitSHA    string         `gorm:"size:64;not null;default:''" json:"source_commit_sha"`
+	SourceMRIID        *int           `gorm:"column:source_mr_iid;default:null" json:"source_mr_iid,omitempty"`
+	CompileInputSHA256 string         `gorm:"column:compile_input_sha256;size:64;not null;default:''" json:"compile_input_sha256"`
+	PublishRunID       *uint64        `gorm:"column:publish_run_id;index:idx_contract_proto_publish_run" json:"publish_run_id,omitempty"`
+	FileName           string         `gorm:"size:255;not null" json:"file_name"` // 经 filepath.Base 净化的展示文件名
+	FileSHA256         string         `gorm:"size:64;not null;index:idx_contract_proto_sha" json:"file_sha256"`
+	FileSize           int            `gorm:"not null;check:chk_contract_proto_size,file_size > 0 AND file_size <= 16777216" json:"file_size"` // <= 16MB
+	DescriptorBytes    []byte         `gorm:"type:bytea;not null" json:"-"`                                                                    // 二进制仅入库
+	IsActive           bool           `gorm:"not null;default:false;index:idx_contract_proto_active" json:"is_active"`
+	ProtoFileCount     int            `gorm:"not null;default:0" json:"proto_file_count"`               // 自有 .proto 文件数量
+	ServiceCount       int            `gorm:"not null;default:0" json:"service_count"`                  // 自有导出的去重 RPC Service 数量
+	OperationCount     int            `gorm:"not null;default:0" json:"operation_count"`                // 自有导出的 RPC Method 总数
+	ProtoFiles         datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"proto_files"`      // 解析包含的 .proto 源文件清单 []string (F-03.4)
+	ExternalImports    datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'" json:"external_imports"` // 需外部描述集供给的 import .proto 路径清单 []string
+	Description        string         `gorm:"type:text" json:"description"`
+	CreatedBy          uint           `gorm:"not null;default:0" json:"created_by"`
+	CreatedAt          time.Time      `json:"created_at"`
+	UpdatedAt          time.Time      `json:"updated_at"`
 }
 
 func (ProtoSchema) TableName() string { return config.TablePrefix + "proto_schemas" }

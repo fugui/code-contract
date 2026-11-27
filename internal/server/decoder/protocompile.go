@@ -361,23 +361,25 @@ func (p *DBProtoSourceProvider) SuggestMissingImportCandidates(ctx context.Conte
 
 // CompileProtoBundleInput 纯 Go protocompile 在线编译入参
 type CompileProtoBundleInput struct {
-	Name             string
-	Category         string
-	VersionTag       string
-	Description      string
-	Files            map[string]string
-	ProtoIncludeDirs []string
-	EntryPoints      []string
-	AutoActivate     bool
-	AllowBreaking    bool
-	BreakingReason   string
-	SourceType       string
-	GitRepoID        *uint64
-	SourceBundleID   *uint64
-	SourceCommitSHA  string
-	SourceMRIID      *int
-	OperatorID       uint
-	SourceProvider   ProtoSourceProvider
+	Name               string
+	Category           string
+	VersionTag         string
+	Description        string
+	Files              map[string]string
+	ProtoIncludeDirs   []string
+	EntryPoints        []string
+	AutoActivate       bool
+	AllowBreaking      bool
+	BreakingReason     string
+	SourceType         string
+	GitRepoID          *uint64
+	SourceBundleID     *uint64
+	SourceCommitSHA    string
+	SourceMRIID        *int
+	CompileInputSHA256 string
+	PublishRunID       *uint64
+	OperatorID         uint
+	SourceProvider     ProtoSourceProvider
 }
 
 // CompileProtoOutput 纯 Go protocompile 编译输出结果
@@ -1004,6 +1006,8 @@ func (r *Registry) CompileAndSaveSchema(ctx context.Context, in CompileProtoBund
 		SourceBundleID:             in.SourceBundleID,
 		SourceCommitSHA:            in.SourceCommitSHA,
 		SourceMRIID:                in.SourceMRIID,
+		CompileInputSHA256:         in.CompileInputSHA256,
+		PublishRunID:               in.PublishRunID,
 		ExplicitOwnFiles:           compiled.OwnProtoFiles,
 		AllowSelfContainedExternal: allowSelfContainedExt,
 	})

@@ -10,7 +10,9 @@ import (
 	"testing"
 
 	"code-contract/handlers"
+	"code-contract/internal/server/decoder"
 	"code-contract/internal/server/gitclient"
+	"code-contract/internal/server/protodoc"
 	"code-contract/models"
 
 	"gorm.io/datatypes"
@@ -164,6 +166,18 @@ service OrderService {
 	})
 	if _, err := syncSvc.SyncRepo(context.Background(), repo.ID, gitclient.SyncOptions{Branch: "main", ForceCompile: true}); err != nil {
 		t.Fatalf("第 2 轮 SyncRepo 失败: %v", err)
+	}
+	var previewSchema models.ProtoSchema
+	if err := db.Where("name = ?", bundle.TargetSchemaName).Order("version DESC, id DESC").First(&previewSchema).Error; err != nil {
+		t.Fatalf("查询 Commit 2 预览 Schema 失败: %v", err)
+	}
+	if _, actSchema, _, err := decReg.ActivateSchemaVersion(previewSchema.ID, decoder.BatchActivateOptions{
+		AllowBreaking:  true,
+		BreakingReason: "测试验证 Commit 2 同步后发布激活与活体文档源码锚点",
+	}); err != nil {
+		t.Fatalf("激活 Commit 2 Schema 失败: %v", err)
+	} else {
+		_, _ = protodoc.RebuildForSchema(db, actSchema)
 	}
 
 	viewer := createTestUserInDB(t, db, "pfile_viewer", "viewer")

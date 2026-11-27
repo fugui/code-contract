@@ -739,7 +739,7 @@ func (s *SyncService) applyBundleSnapshot(
 			Files:            filesMap,
 			ProtoIncludeDirs: bundle.IncludeDirs(),
 			EntryPoints:      bundle.EntryFiles(),
-			AutoActivate:     bundle.AutoActivate,
+			AutoActivate:     false, // ADR-29 §2.3.2: 单仓同步强制不激活
 			SourceType:       models.ProtoSourceGitSync,
 			GitRepoID:        &repoIDCopy,
 			SourceBundleID:   &bundleIDCopy,
@@ -762,8 +762,10 @@ func (s *SyncService) applyBundleSnapshot(
 			if updErr := s.db.Model(bundle).Update("last_schema_id", scID).Error; updErr != nil {
 				log.Printf("[GitSync] 更新 Bundle #%d last_schema_id 失败: %v", bundle.ID, updErr)
 			}
-			if _, docErr := protodoc.RebuildForSchema(s.db, schema); docErr != nil {
-				log.Printf("[GitSync] 重建 Schema #%d 文档符号失败: %v", scID, docErr)
+			if schema.IsActive {
+				if _, docErr := protodoc.RebuildForSchema(s.db, schema); docErr != nil {
+					log.Printf("[GitSync] 重建 Schema #%d 文档符号失败: %v", scID, docErr)
+				}
 			}
 		}
 	}

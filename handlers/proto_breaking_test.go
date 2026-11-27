@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +13,7 @@ import (
 	commonAudit "code-common/backend/audit"
 	commonModels "code-common/backend/models"
 	"code-contract/config"
+	"code-contract/handlers"
 	"code-contract/internal/server/decoder"
 	"code-contract/models"
 	"google.golang.org/protobuf/proto"
@@ -189,61 +189,29 @@ func TestSC09_BreakingChangeDetection_DownstreamAlert_AndAllowBreakingRollbackAu
 	}
 	_ = db.Create(&dep).Error
 
-	// 2. 上传并激活 account v1 (基线版本)
+	// 2. 通过注册表写入并激活 account v1 (基线版本)
 	v1Bytes := buildAccountV1DescriptorBytes(t)
-	var body bytes.Buffer
-	w := multipart.NewWriter(&body)
-	fw, _ := w.CreateFormFile("file", "account.pb")
-	_, _ = fw.Write(v1Bytes)
-	_ = w.WriteField("name", "account-schema")
-	_ = w.WriteField("category", "BUSINESS")
-	_ = w.WriteField("auto_activate", "true")
-	_ = w.Close()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/proto-schemas", &body)
-	req.Header.Set("Content-Type", w.FormDataContentType())
-	req.Header.Set("Authorization", "Bearer "+adminToken)
-	resp := httptest.NewRecorder()
-	r.ServeHTTP(resp, req)
-	if resp.Code != http.StatusCreated {
-		t.Fatalf("上传 account v1 失败: code=%d, body=%s", resp.Code, resp.Body.String())
+	s1, _, _, err1 := uploadTestProtoBytes(t, db, "account-schema", "account.pb", "BUSINESS", v1Bytes, true, false, "")
+	if err1 != nil {
+		t.Fatalf("导入并激活 account v1 失败: %v", err1)
 	}
+	v1ID := s1.ID
 
-	var uploadResp struct {
-		Schema models.ProtoSchema `json:"schema"`
-	}
-	_ = json.Unmarshal(resp.Body.Bytes(), &uploadResp)
-	v1ID := uploadResp.Schema.ID
-
-	// 3. 上传 account v2 草稿 (auto_activate=false, 带破坏性改动) -> 201 Created, 附带 breaking_warnings
+	// 3. 写入 account v2 草稿 (auto_activate=false, 带破坏性改动) + 破坏性告警检测
 	v2Bytes := buildAccountV2BreakingDescriptorBytes(t)
-	body.Reset()
-	w = multipart.NewWriter(&body)
-	fw, _ = w.CreateFormFile("file", "account.pb")
-	_, _ = fw.Write(v2Bytes)
-	_ = w.WriteField("name", "account-schema")
-	_ = w.WriteField("category", "BUSINESS")
-	_ = w.WriteField("auto_activate", "false")
-	_ = w.Close()
-
-	req = httptest.NewRequest(http.MethodPost, "/api/proto-schemas", &body)
-	req.Header.Set("Content-Type", w.FormDataContentType())
-	req.Header.Set("Authorization", "Bearer "+adminToken)
-	resp = httptest.NewRecorder()
-	r.ServeHTTP(resp, req)
-	if resp.Code != http.StatusCreated {
-		t.Fatalf("上传 account v2 草稿应成功 201: code=%d, body=%s", resp.Code, resp.Body.String())
+	s2, _, _, err2 := uploadTestProtoBytes(t, db, "account-schema", "account.pb", "BUSINESS", v2Bytes, false, false, "")
+	if err2 != nil {
+		t.Fatalf("导入 account v2 草稿失败: %v", err2)
+	}
+	v2ID := s2.ID
+	reg, _ := handlers.GetDecoderRegistry()
+	breakingWarnings, _ := reg.DetectBreakingChangesAgainstActive("account-schema", v2Bytes)
+	if len(breakingWarnings) == 0 {
+		t.Fatalf("v2 草稿应检测到 breaking_warnings 提示，但为空")
 	}
 
-	var draftResp struct {
-		Schema           models.ProtoSchema              `json:"schema"`
-		BreakingWarnings []decoder.BreakingRuleViolation `json:"breaking_warnings"`
-	}
-	_ = json.Unmarshal(resp.Body.Bytes(), &draftResp)
-	v2ID := draftResp.Schema.ID
-	if len(draftResp.BreakingWarnings) == 0 {
-		t.Fatalf("上传草稿应附带 breaking_warnings 提示，但为空: %s", resp.Body.String())
-	}
+	var req *http.Request
+	var resp *httptest.ResponseRecorder
 
 	// 4. 尝试直接激活 account v2 (默认 allow_breaking=false) -> 必须返回 409 BREAKING_CHANGE_DETECTED 与下游血缘
 	req = httptest.NewRequest(http.MethodPost, "/api/proto-schemas/"+strconvFormat(v2ID)+"/activate", bytes.NewReader([]byte("{}")))

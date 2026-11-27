@@ -123,11 +123,20 @@ type SharedBaseSourceSpec struct {
 
 // PoolReconcileConfig 控制 Stage C+ 全池协调与 R7/R8 编译自愈开关及轮数上限。
 type PoolReconcileConfig struct {
-	ClosureOnly        *bool `json:"closure_only,omitempty"`
-	EnableR7AutoFix    *bool `json:"enable_r7_auto_fix,omitempty"`
-	MaxR7Rounds        int   `json:"max_r7_rounds,omitempty"`
-	EnableR8Quarantine *bool `json:"enable_r8_quarantine,omitempty"`
-	MaxR8Rounds        int   `json:"max_r8_rounds,omitempty"`
+	ClosureOnly               *bool `json:"closure_only,omitempty"`
+	EnableR7AutoFix           *bool `json:"enable_r7_auto_fix,omitempty"`
+	MaxR7Rounds               int   `json:"max_r7_rounds,omitempty"`
+	EnableR8Quarantine        *bool `json:"enable_r8_quarantine,omitempty"`
+	MaxR8Rounds               int   `json:"max_r8_rounds,omitempty"`
+	BlockOnUnresolvedConflict *bool `json:"block_on_unresolved_conflict,omitempty"`
+}
+
+// EffectiveBlockOnUnresolvedConflict 返回存在未人工裁决的内容不等价冲突时是否阻塞对应 Bundle 发布（默认 false）。
+func (p PoolReconcileConfig) EffectiveBlockOnUnresolvedConflict() bool {
+	if p.BlockOnUnresolvedConflict == nil {
+		return false
+	}
+	return *p.BlockOnUnresolvedConflict
 }
 
 // EffectiveClosureOnly 返回是否仅导出与编译服务依赖闭包（默认 true）。

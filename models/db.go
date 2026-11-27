@@ -32,6 +32,8 @@ func BusinessTableNames() []string {
 		VocabularyTerm{}.TableName(),
 		CheckRule{}.TableName(),
 		ProtoDocSymbol{}.TableName(),
+		ProtoPipelineRun{}.TableName(),
+		ProtoPublishRun{}.TableName(),
 		ProtoPoolReconcileRun{}.TableName(),
 		ProtoGovernanceConfig{}.TableName(),
 		ProtoSyncJob{}.TableName(),
@@ -107,6 +109,8 @@ func SetupWithDB(db *gorm.DB) error {
 		&ProtoSyncJob{},
 		&ProtoGovernanceConfig{},
 		&ProtoPoolReconcileRun{},
+		&ProtoPublishRun{},
+		&ProtoPipelineRun{},
 		&ProtoSchema{},
 		&ProtoOperation{},
 		&RecordingSession{},
@@ -183,10 +187,9 @@ BEGIN
         ALTER TABLE contract_proto_schemas ADD CONSTRAINT chk_contract_proto_category CHECK (category IN ('BASE_LIB', 'BUSINESS', 'GATEWAY'));
     END IF;
 
-    -- contract_proto_schemas 资产来源类型检查约束 (M22 ADR-18)
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_proto_source_type') THEN
-        ALTER TABLE contract_proto_schemas ADD CONSTRAINT chk_contract_proto_source_type CHECK (source_type IN ('UPLOAD_PB', 'ONLINE_COMPILE', 'GIT_SYNC', 'GIT_MR_AUTO'));
-    END IF;
+    -- contract_proto_schemas 资产来源类型检查约束 (M22 ADR-18 / M43 ADR-29)
+    ALTER TABLE contract_proto_schemas DROP CONSTRAINT IF EXISTS chk_contract_proto_source_type;
+    ALTER TABLE contract_proto_schemas ADD CONSTRAINT chk_contract_proto_source_type CHECK (source_type IN ('UPLOAD_PB', 'ONLINE_COMPILE', 'GIT_SYNC', 'GIT_MR_AUTO', 'GIT_PIPELINE'));
 
     -- contract_subsystems / contract_modules 架构分层约束 (M22 ADR-18)
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_subsystems_layer') THEN

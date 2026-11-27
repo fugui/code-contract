@@ -318,10 +318,10 @@ message ExtraNote {
 		t.Fatalf("预期每个 Bundle 同步均广播 git_sync.completed SSE 事件，实际=%d", len(sseEvents))
 	}
 
-	// 校验 Schema 与 Lint Report 与 ProtoFile 入库
+	// 校验 Schema 与 Lint Report 与 ProtoFile 入库 (ADR-29 §2.3.2: 单仓同步仅保存预览稿 is_active = false)
 	var orderSchema models.ProtoSchema
-	if err := db.Where("name = ? AND is_active = true", orderBundle.TargetSchemaName).First(&orderSchema).Error; err != nil {
-		t.Fatalf("order-svc 编译激活后的 ProtoSchema 未落库: %v", err)
+	if err := db.Where("name = ? AND is_active = false", orderBundle.TargetSchemaName).First(&orderSchema).Error; err != nil {
+		t.Fatalf("order-svc 预览编译后的 ProtoSchema 未落库: %v", err)
 	}
 	if orderSchema.SourceType != models.ProtoSourceGitSync ||
 		orderSchema.SourceBundleID == nil || *orderSchema.SourceBundleID != orderBundle.ID ||

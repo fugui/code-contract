@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -12,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	commonAuth "code-common/backend/auth"
 	commonModels "code-common/backend/models"
 	"code-contract/internal/server/decoder"
 	"code-contract/models"
@@ -649,275 +647,46 @@ func writeProtoMutationError(c *gin.Context, err error) {
 	c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 }
 
-// UploadProtoSchema POST /api/proto-schemas (AdminOnly)
-func UploadProtoSchema(c *gin.Context) {
-	uc := commonAuth.GetUserContext(c)
-
-	// 安全限制：升级上限至 16MB + 64KB 头部开销
-	// TODO(security): 接入企业制品防病毒扫描网关对上传描述集做沙箱扫描
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<20+65536)
-
-	file, header, err := c.Request.FormFile("file")
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少或非法的 file 文件参数（须 <= 16MB）"})
-		return
-	}
-	defer file.Close()
-
-	// 校验扩展名白名单 (.pb, .desc, .protoset, .bin)
-	ext := strings.ToLower(filepath.Ext(header.Filename))
-	if ext != ".pb" && ext != ".desc" && ext != ".protoset" && ext != ".bin" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "非法的描述集文件类型，仅支持 .pb, .desc, .protoset, .bin"})
-		return
-	}
-
-	name := strings.TrimSpace(c.PostForm("name"))
-	if name == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "描述集标识 name 不能为空"})
-		return
-	}
-
-	category := strings.TrimSpace(c.PostForm("category"))
-	if category == "" {
-		category = models.ProtoCategoryBusiness
-	}
-	if category != models.ProtoCategoryBaseLib && category != models.ProtoCategoryBusiness && category != models.ProtoCategoryGateway {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "非法的 category 分类，仅支持 BASE_LIB, BUSINESS, GATEWAY"})
-		return
-	}
-
-	versionTag := strings.TrimSpace(c.PostForm("version_tag"))
-	description := strings.TrimSpace(c.PostForm("description"))
-	autoActivate := c.PostForm("auto_activate") == "true"
-	allowBreaking := c.PostForm("allow_breaking") == "true"
-	breakingReason := strings.TrimSpace(c.PostForm("breaking_reason"))
-
-	if allowBreaking && len(breakingReason) < 8 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "强制放行破坏性变更必须填写不少于 8 个字符的原因 (breaking_reason)"})
-		return
-	}
-
-	rawBytes, err := io.ReadAll(file)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "读取上传文件内容失败"})
-		return
-	}
-
-	reg, err := GetDecoderRegistry()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	schema, ops, inheritedCount, err := reg.UploadSchema(decoder.UploadSchemaInput{
-		Name:           name,
-		Category:       category,
-		VersionTag:     versionTag,
-		FileName:       header.Filename,
-		RawBytes:       rawBytes,
-		Description:    description,
-		AutoActivate:   autoActivate,
-		AllowBreaking:  allowBreaking,
-		BreakingReason: breakingReason,
-		OperatorID:     uc.UserID,
-	})
-	if err != nil {
-		writeProtoMutationError(c, err)
-		return
-	}
-
-	var breakingWarnings []decoder.BreakingRuleViolation
-	if !autoActivate {
-		breakingWarnings, _ = reg.DetectBreakingChangesAgainstActive(schema.Name, rawBytes)
-	}
-
-	docCount := rebuildProtoDocSymbolsForSchema(schema)
-
-	auditSummary := fmt.Sprintf("上传描述集 [%s] 版本 %d", schema.Name, schema.Version)
-	if autoActivate && allowBreaking {
-		auditSummary = fmt.Sprintf("强制上传并激活破坏性描述集 [%s] 版本 %d (授权原因: %s)", schema.Name, schema.Version, breakingReason)
-	}
-	recordAudit(c, "upload", commonModels.AuditLevelP1, auditSummary, "proto_schema", schema.ID, schema.Name, nil, schema)
-
-	respData := gin.H{
-		"schema":                    schema,
-		"operations":                ops,
-		"doc_symbol_count":          docCount,
-		"inherited_ignore_op_count": inheritedCount,
-	}
-	if len(breakingWarnings) > 0 {
-		respData["breaking_warnings"] = breakingWarnings
-	}
-	if autoActivate && allowBreaking {
-		respData["forced_breaking"] = true
-	}
-	c.JSON(http.StatusCreated, respData)
-}
-
-type compileProtoFileRequest struct {
-	Path    string `json:"path"`
-	Content string `json:"content"`
-}
-
-// CompileProtoSchema POST /api/proto-schemas/compile (AdminOnly)
-// 纯 Go protocompile 在线编译 .proto 源码树并直接汇入描述集生命周期与破坏性检查闭环
-func CompileProtoSchema(c *gin.Context) {
-	uc := commonAuth.GetUserContext(c)
-
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, int64(models.MaxDescriptorFileSize)+262144)
-
-	var req struct {
-		Name           string                    `json:"name"`
-		Category       string                    `json:"category"`
-		VersionTag     string                    `json:"version_tag"`
-		Description    string                    `json:"description"`
-		IncludeDirs    []string                  `json:"include_dirs"`
-		EntryFiles     []string                  `json:"entry_files"`
-		Files          []compileProtoFileRequest `json:"files"`
-		AutoActivate   bool                      `json:"auto_activate"`
-		AllowBreaking  bool                      `json:"allow_breaking"`
-		BreakingReason string                    `json:"breaking_reason"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		if strings.Contains(err.Error(), "request body too large") || strings.Contains(err.Error(), "http: request body too large") {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"code":  "PAYLOAD_TOO_LARGE",
-				"error": "提交的在线编译源码请求体超过 16MB 上限",
-			})
-			return
-		}
-		c.JSON(http.StatusBadRequest, gin.H{"error": "非法的 JSON 请求体"})
-		return
-	}
-
-	name := strings.TrimSpace(req.Name)
-	if name == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "描述集标识 name 不能为空"})
-		return
-	}
-
-	category := strings.TrimSpace(req.Category)
-	if category == "" {
-		category = models.ProtoCategoryBusiness
-	}
-	if category != models.ProtoCategoryBaseLib && category != models.ProtoCategoryBusiness && category != models.ProtoCategoryGateway {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "非法的 category 分类，仅支持 BASE_LIB, BUSINESS, GATEWAY"})
-		return
-	}
-
-	breakingReason := strings.TrimSpace(req.BreakingReason)
-	if req.AllowBreaking && len(breakingReason) < 8 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "强制放行破坏性变更必须填写不少于 8 个字符的原因 (breaking_reason)"})
-		return
-	}
-
-	if len(req.Files) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":  "COMPILE_SYNTAX_ERROR",
-			"error": "files 源码列表不能为空",
+func writeProtoActivateError(c *gin.Context, err error) bool {
+	if errors.Is(err, decoder.ErrSchemaSourceArchived) {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"code":     "SCHEMA_SOURCE_ARCHIVED",
+			"err_code": "SCHEMA_SOURCE_ARCHIVED",
+			"error":    err.Error(),
 		})
-		return
+		return true
 	}
-
-	filesMap := make(map[string]string, len(req.Files))
-	for _, f := range req.Files {
-		cleaned, sanErr := decoder.SanitizeProtoRelPath(f.Path, true)
-		if sanErr != nil {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"code":  "PATH_TRAVERSAL_DENIED",
-				"error": sanErr.Error(),
-			})
-			return
-		}
-		if _, dup := filesMap[cleaned]; dup {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"code":  "COMPILE_SYNTAX_ERROR",
-				"error": fmt.Sprintf("存在重复的 .proto 文件路径: %s", cleaned),
-			})
-			return
-		}
-		filesMap[cleaned] = f.Content
+	var breakingErr *decoder.SchemaBreakingError
+	if errors.As(err, &breakingErr) {
+		c.JSON(http.StatusConflict, gin.H{
+			"error":               breakingErr.Error(),
+			"code":                "BREAKING_CHANGE_DETECTED",
+			"breaking_rules":      breakingErr.BreakingRules,
+			"affected_dependents": breakingErr.AffectedDependents,
+		})
+		return true
 	}
-
-	reg, err := GetDecoderRegistry()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+	var conflictErr *decoder.SchemaConflictError
+	if errors.As(err, &conflictErr) {
+		c.JSON(http.StatusConflict, gin.H{
+			"error":     conflictErr.Error(),
+			"conflicts": conflictErr.Conflicts,
+		})
+		return true
 	}
-
-	schema, ops, inheritedCount, err := reg.CompileAndSaveSchema(c.Request.Context(), decoder.CompileProtoBundleInput{
-		Name:             name,
-		Category:         category,
-		VersionTag:       strings.TrimSpace(req.VersionTag),
-		Description:      strings.TrimSpace(req.Description),
-		ProtoIncludeDirs: req.IncludeDirs,
-		EntryPoints:      req.EntryFiles,
-		Files:            filesMap,
-		AutoActivate:     req.AutoActivate,
-		AllowBreaking:    req.AllowBreaking,
-		BreakingReason:   breakingReason,
-		SourceType:       models.ProtoSourceOnlineCompile,
-		OperatorID:       uc.UserID,
-	})
-	if err != nil {
-		writeProtoMutationError(c, err)
-		return
+	var brokenErr *decoder.SchemaBrokenDependentsError
+	if errors.As(err, &brokenErr) {
+		c.JSON(http.StatusConflict, gin.H{
+			"error":             brokenErr.Error(),
+			"broken_dependents": brokenErr.BrokenDependents,
+		})
+		return true
 	}
-
-	var breakingWarnings []decoder.BreakingRuleViolation
-	if !req.AutoActivate {
-		var detectErr error
-		breakingWarnings, detectErr = reg.DetectBreakingChangesAgainstActive(schema.Name, schema.DescriptorBytes)
-		if detectErr != nil {
-			breakingWarnings = nil
-		}
+	if errors.Is(err, decoder.ErrSchemaNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return true
 	}
-
-	var compiledFiles []string
-	if len(schema.ProtoFiles) > 0 {
-		if unmarshalErr := json.Unmarshal(schema.ProtoFiles, &compiledFiles); unmarshalErr != nil {
-			compiledFiles = []string{}
-		}
-	}
-	if compiledFiles == nil {
-		compiledFiles = []string{}
-	}
-
-	var externalImports []string
-	if len(schema.ExternalImports) > 0 {
-		if unmarshalErr := json.Unmarshal(schema.ExternalImports, &externalImports); unmarshalErr != nil {
-			externalImports = []string{}
-		}
-	}
-	if externalImports == nil {
-		externalImports = []string{}
-	}
-	resolvedDeps := resolveDependenciesWithLookup(externalImports, buildActiveProtoLookup(models.DB))
-	docCount := rebuildProtoDocSymbolsForSchema(schema)
-
-	auditSummary := fmt.Sprintf("在线编译描述集 [%s] 版本 %d (来源: ONLINE_COMPILE)", schema.Name, schema.Version)
-	if req.AutoActivate && req.AllowBreaking {
-		auditSummary = fmt.Sprintf("强制在线编译并激活破坏性描述集 [%s] 版本 %d (授权原因: %s)", schema.Name, schema.Version, breakingReason)
-	}
-	recordAudit(c, "compile", commonModels.AuditLevelP1, auditSummary, "proto_schema", schema.ID, schema.Name, nil, schema)
-
-	respData := gin.H{
-		"schema":                    schema,
-		"operations":                ops,
-		"proto_files":               compiledFiles,
-		"compiled_files":            compiledFiles,
-		"external_imports":          externalImports,
-		"resolved_dependencies":     resolvedDeps,
-		"doc_symbol_count":          docCount,
-		"inherited_ignore_op_count": inheritedCount,
-	}
-	if len(breakingWarnings) > 0 {
-		respData["breaking_warnings"] = breakingWarnings
-	}
-	if req.AutoActivate && req.AllowBreaking {
-		respData["forced_breaking"] = true
-	}
-	c.JSON(http.StatusCreated, respData)
+	return false
 }
 
 // UpdateProtoSchema PATCH /api/proto-schemas/:id (AdminOnly)
@@ -1012,34 +781,7 @@ func ActivateProtoSchema(c *gin.Context) {
 		BreakingReason: req.BreakingReason,
 	})
 	if err != nil {
-		var breakingErr *decoder.SchemaBreakingError
-		if errors.As(err, &breakingErr) {
-			c.JSON(http.StatusConflict, gin.H{
-				"error":               breakingErr.Error(),
-				"code":                "BREAKING_CHANGE_DETECTED",
-				"breaking_rules":      breakingErr.BreakingRules,
-				"affected_dependents": breakingErr.AffectedDependents,
-			})
-			return
-		}
-		var conflictErr *decoder.SchemaConflictError
-		if errors.As(err, &conflictErr) {
-			c.JSON(http.StatusConflict, gin.H{
-				"error":     conflictErr.Error(),
-				"conflicts": conflictErr.Conflicts,
-			})
-			return
-		}
-		var brokenErr *decoder.SchemaBrokenDependentsError
-		if errors.As(err, &brokenErr) {
-			c.JSON(http.StatusConflict, gin.H{
-				"error":             brokenErr.Error(),
-				"broken_dependents": brokenErr.BrokenDependents,
-			})
-			return
-		}
-		if errors.Is(err, decoder.ErrSchemaNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		if writeProtoActivateError(c, err) {
 			return
 		}
 		if strings.Contains(err.Error(), "不少于 8 个字符") {
@@ -1147,34 +889,7 @@ func BatchActivateProtoSchemas(c *gin.Context) {
 		BreakingReason: req.BreakingReason,
 	})
 	if err != nil {
-		var breakingErr *decoder.SchemaBreakingError
-		if errors.As(err, &breakingErr) {
-			c.JSON(http.StatusConflict, gin.H{
-				"error":               breakingErr.Error(),
-				"code":                "BREAKING_CHANGE_DETECTED",
-				"breaking_rules":      breakingErr.BreakingRules,
-				"affected_dependents": breakingErr.AffectedDependents,
-			})
-			return
-		}
-		var conflictErr *decoder.SchemaConflictError
-		if errors.As(err, &conflictErr) {
-			c.JSON(http.StatusConflict, gin.H{
-				"error":     conflictErr.Error(),
-				"conflicts": conflictErr.Conflicts,
-			})
-			return
-		}
-		var brokenErr *decoder.SchemaBrokenDependentsError
-		if errors.As(err, &brokenErr) {
-			c.JSON(http.StatusConflict, gin.H{
-				"error":             brokenErr.Error(),
-				"broken_dependents": brokenErr.BrokenDependents,
-			})
-			return
-		}
-		if errors.Is(err, decoder.ErrSchemaNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		if writeProtoActivateError(c, err) {
 			return
 		}
 		if strings.Contains(err.Error(), "同名") || strings.Contains(err.Error(), "不少于 8 个字符") {

@@ -386,6 +386,19 @@ func ApplyAndRenormalizeGovernanceHandler(c *gin.Context) {
 	broker := GetGlobalSSEBroker()
 	protosDir := config.AppConfig.Storage.GetProtosDir()
 
+	lockLease, lockErr := gitclient.TryAcquirePipelineLock(c.Request.Context(), models.DB, gitclient.PipelineLockHolder{
+		JobType: "RENORMALIZE",
+		Holder:  opName,
+	})
+	if lockErr != nil {
+		if handlePipelineLockOrStaleError(c, lockErr) {
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": lockErr.Error()})
+		return
+	}
+	defer lockLease.Release()
+
 	results := make([]*gitclient.PipelineRunResult, 0, len(targetIDs))
 	errs := make(map[string]string)
 	for _, rid := range targetIDs {
@@ -393,6 +406,8 @@ func ApplyAndRenormalizeGovernanceHandler(c *gin.Context) {
 			OperatorID:         uid,
 			ForceRecompile:     req.ForceRecompile,
 			ForceRenormalize:   true,
+			SkipCompile:        !req.ForceRecompile,
+			AlreadyLocked:      true,
 			ProtosDir:          protosDir,
 			TriggerBlastRadius: true,
 		})

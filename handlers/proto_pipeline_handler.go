@@ -99,6 +99,9 @@ func SyncAllGitReposHandler(c *gin.Context) {
 
 	job, err := gitclient.RunSyncAllJob(c.Request.Context(), models.DB, sched, &config.AppConfig, req)
 	if err != nil {
+		if handlePipelineLockOrStaleError(c, err) {
+			return
+		}
 		if errors.Is(err, gitclient.ErrSharedWriteDisabled) {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"err_code": "SHARED_WRITE_DISABLED",
@@ -257,6 +260,9 @@ func ReNormalizeGitRepoHandler(c *gin.Context) {
 		},
 	)
 	if err != nil {
+		if handlePipelineLockOrStaleError(c, err) {
+			return
+		}
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": gitclient.ErrGitRepoNotFound.Error()})
 			return
