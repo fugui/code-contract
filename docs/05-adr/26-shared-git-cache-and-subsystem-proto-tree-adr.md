@@ -1,16 +1,17 @@
 # ADR-26：复用平台代码仓与共享宿主机 Git 缓存，构建「采集 → 清理整顿 → 解析 → 分仓编译」四段式跨仓 Proto 流水线与按子系统组织的只读聚合目录树
 
 - **文档编号**：`26-shared-git-cache-and-subsystem-proto-tree-adr.md`
-- **状态**：Implemented（已交付，M33~M36）
-- **日期**：2026-11-26
+- **状态**：Implemented（M33~M36 已交付）/ Revised（r4，配套 [`ADR-27`](./27-proto-export-directory-and-normalization-governance-adr.md) 待实施）
+- **日期**：2026-11-27
 - **修订记录**：
   - r1：初稿，确立共享 `codes/` 缓存、无工作树直读、按子系统聚合目录树与两阶段编译。
   - r2：依据评审意见修订——采集范围改为 `pg` 目录白名单；在采集与编译之间**预留「清理整顿」环节**（规则由后续 ADR 定义）；修正 `ls-tree` 通配符、目录原子替换、仓级依赖成环、共享缓存浅克隆降级、远端跟踪引用互踩等技术缺陷；补充权威关系、命名规范化、同步触发、存量迁移、上线顺序与验收标准。
   - r3：明确 `pg` 目录严格全小写（不含 `PG` / `Pg` 等大小写变体）；记录从 `raw` 到 `clean` 清理阶段预留辅助 `.json` 映射与清理规则配置文件，留待后续 ADR 定义。
+  - r4：面向 500+ 平台仓规模收口架构——**正式废除独立 Git 仓管理（下线 `EXTERNAL_STANDALONE` 与独立接入入口），确立 `code-bench` `repositories` 为全局唯一真值源**；废除逐仓勾选导入，改为「零勾选全量自动对齐 + 双按钮异步同步（默认「仅同步已有缓存」、按需「缺失时自动拉取」）」与 `NO_PROTO` / `NO_LOCAL_CACHE` 静默状态分层；导出后目标目录治理、Stage B 清理规则框架与双子标签 IA 正式独立立项至 [`ADR-27`](./27-proto-export-directory-and-normalization-governance-adr.md)。
 - **关联与演进关系**：
-  - 修订并补充 [`ADR-18`](./18-proto-full-lifecycle-and-git-mr-governance-adr.md)：针对真实业务 Polyrepo 场景新增 `PLATFORM_SHARED` 平台代码仓共享模式与宿主机共享 Git 缓存协议；原独立 REST API / `go-git memfs` 拉取路径收敛为 `EXTERNAL_STANDALONE` 兼容模式，并进入弃用期（见 §2.1.3）。
+  - 修订并替代 [`ADR-18`](./18-proto-full-lifecycle-and-git-mr-governance-adr.md) 中的仓库接入部分：针对真实业务 Polyrepo 场景确立 `PLATFORM_SHARED` 唯一共享模式与宿主机共享 Git 缓存协议；原独立 REST API / `go-git memfs` / `EXTERNAL_STANDALONE` 独立管理路径正式下线，所有仓库统一由 `code-bench` 管理。
   - 关联 [`ADR-10`](./10-enhanced-proto-schema-file-management-adr.md)（全局单一生效 `.pb` 池与冲突仲裁）、[`ADR-16`](./16-multi-implementation-service-contract-adr.md)（多实现服务契约）、[`ADR-19`](./19-proto-contract-ia-unbundling-and-four-workbenches-adr.md)（`/contract/proto-sources` 源码与 Git 仓工作台）。
-  - **前置约束后续 ADR**：《业务 Proto 清理整顿规则》（编号待定）负责定义 Stage B 的具体清理规则；本 ADR 只定义该环节的接口、状态、版本与数据契约。
+  - **配套演进 ADR**：[`ADR-27`](./27-proto-export-directory-and-normalization-governance-adr.md)（《500+ 平台仓全量同步、导出目录治理与 Stage B 清理整顿架构决策》）承接 r4 规模化全量对齐、方案 A 仓级目标目录调整、Stage B 清理规则与辅助 `.json` 治理闭环。
 
 ---
 
@@ -48,16 +49,17 @@
 
 ### 2.1 平台代码仓真值源统一与存储目录
 
-1. **打通 `code-bench` 公共 `repositories` 元数据**：
-   - `contract_git_repos` 新增 **`platform_repo_id`**（可空唯一索引，关联公共 `repositories.id`）、**`source_mode`**（`PLATFORM_SHARED` 默认 | `EXTERNAL_STANDALONE` 兼容）与 **`sync_strategy`**（`FETCH_AND_READ` 默认 | `LOCAL_CACHE_ONLY`）；
-   - `PLATFORM_SHARED` 模式下 URL、分支、子系统、负责人一律**实时引用** `repositories`，`contract_git_repos` 仅保存 contract 侧特有配置（采集规则覆盖、Bundle、同步状态），不再冗余存储可漂移字段（`subsystem_slug` 仅作为目录名缓存，见 §2.5.3）；
-   - `/contract/proto-sources` 主入口升级为 **「从平台代码仓批量发现与一键导入」**：按部门 / 子系统（`service_group`）筛选，后端依据 §2.3 白名单探测含 `.proto` 的仓库，预览 `pg` 目录列表、文件数量与 Stage B 预检结果，勾选后批量纳管。默认**每个 `pg` 目录生成一个候选 Bundle**（`SubdirPath = pg` 或 `<dir>/pg`），导入时可合并或拆分。
+1. **确立 `code-bench` 公共 `repositories` 为全局唯一真值源（禁止独立接入仓库）**：
+   - 所有业务代码仓必须在 `code-bench` 公共表 `repositories` 中统一维护，`code-contract` **禁止独立创建、编辑仓库基础信息或单独维护 Git 凭据**；
+   - `contract_git_repos` 定位收敛为公共 `repositories` 的 **1:1 契约治理扩展表**：**`platform_repo_id`** 约束为 **`NOT NULL` 唯一索引**（关联 `repositories.id`），**`source_mode`** 固定为 `PLATFORM_SHARED`；**`sync_strategy`** 支持 `LOCAL_CACHE_ONLY`（默认读取宿主机共享缓存）与 `FETCH_AND_READ`（缺失或显式请求时由共享协议拉取）；
+   - URL、分支、子系统（`service_group`）、部门、负责人及启停状态（`is_active`）一律**实时引用** `repositories`，`contract_git_repos` 仅保存 contract 侧特有治理配置（`proto_status`、采集规则覆盖、导出目录覆写、清理规则、Bundle 与同步状态）；
+   - 面对 500+ 平台仓规模，`/contract/proto-sources` **彻底废除逐仓勾选导入与 `+ 接入 Git 仓库` 独立入口**，升级为**「零勾选全量自动对齐 + 双按钮异步同步控制台 + 导出后治理台账」**（具体交互、状态分层与批处理机制见 [`ADR-27`](./27-proto-export-directory-and-normalization-governance-adr.md)）。
 2. **存储目录配置（可拆分）**：
    - 新增 `storage.root`（默认 `./data`），以及可选覆盖项 `storage.codes_dir`（为空取 `<root>/codes`）与 `storage.protos_dir`（为空取 `<root>/protos`）；
    - 同机部署时 `codes_dir` 与 `code-shield` 指向宿主机同一目录；异机或容器隔离部署时 contract 可使用独立 `codes_dir`，协议不变，仅失去缓存复用收益。
-3. **`EXTERNAL_STANDALONE` 收敛**：
-   - 未接入 `code-bench` 的外部独立仓同样**落盘到 `<codes_dir>/_external/<git_repo_id>/`**，复用同一套 flock 与无工作树对象直读协议，仅凭据改由 `ADR-18` 加密存储并通过 `GIT_ASKPASS` / `GIT_SSH_COMMAND` 临时注入；
-   - `go-git memfs` 路径进入弃用期：Phase 2 起新接入仓库不再使用，Phase 4 下线，最终只保留一套 Git 读取代码路径。
+3. **独立模式与 `memfs` 彻底下线（r4 修订）**：
+   - 原 `EXTERNAL_STANDALONE` 模式、`<codes_dir>/_external/<git_repo_id>/` 目录、`POST /api/git-repos` 独立创建接口、前端 `+ 接入 Git 仓库` 按钮及 `关联平台仓` 迁移按钮全部下线；
+   - `go-git memfs` 路径已下线，全系统仅保留宿主机共享 `codes/` 的 `flock` + 无工作树对象直读一套 Git 读取路径。
 
 ---
 
@@ -98,7 +100,8 @@
    - `collect_globs` 默认 `["pg/**/*.proto", "*/pg/**/*.proto"]`，即仓库根目录 `pg/` 与一级子目录下 `pg/` 及其任意深度子目录；
    - `pg` 目录名**严格区分大小写且固定为全小写 `pg`**，`PG`、`Pg` 等大小写变体一律不纳入采集范围；
    - 二级过滤 `exclude_globs` 默认 `["**/test/**", "**/testdata/**", "**/mock/**", "**/examples/**", "**/third_party/**", "**/vendor/**"]`，支持仓库 / Bundle 级增删；
-   - 白名单之外的 `.proto` 一律不采集（不进入 raw 树与数据库），仅在发现预览中给出「白名单外 `.proto` 数量」作为提示。
+   - 白名单之外的 `.proto` 一律不采集（不进入 raw 树与数据库），仅在导出与治理统计中给出「白名单外 `.proto` 数量」作为提示；
+   - **500+ 仓毫秒快筛与静默归类（r4 修订）**：全量对齐探测阶段**严禁使用全仓 `git ls-tree -r`**，统一通过 `derivePGPrefixes` 仅列举顶层与一级目录判定是否存在合法 `pg/` 目录。未命中任何 `pg/`（或命中后白名单文件数为 0）的仓库标记 `proto_status = NO_PROTO`：**不创建空 Bundle、不在 `protos/` 生成空目录、默认不在源码树展示**；后续 commit 变更且新增 `pg/` 时自动晋升为 `HAS_PROTO`。
 2. **对象读取实现（`git ls-tree` 不支持通配符与 `:(glob)` 魔法，必须按前缀列举）**：
    1. `git ls-tree -z -d --name-only <ref>`：列出顶层目录，命中 `pg`；
    2. `git ls-tree -z -d --name-only <ref> -- <dir1>/ <dir2>/ ...`：单次调用列出全部一级目录的子目录，命中 `<dir>/pg`；
@@ -123,11 +126,11 @@
 
 ```mermaid
 flowchart TD
-    Bench["code-bench 公共 repositories 表"] -->|"批量发现 / 按子系统导入"| RepoCfg["contract_git_repos / bundles"]
+    Bench["code-bench 公共 repositories 表"] -->|"全量自动对齐 / 零勾选同步"| RepoCfg["contract_git_repos / bundles"]
     RepoCfg --> A["Stage A 采集 Collect"]
     GitObj["codes/ 共享 Git 对象库 (两层锁, 私有 ref)"] -->|"fetch (LOCK_EX) + ls-tree / cat-file (LOCK_SH)"| A
     A -->|"pg 白名单 + blob 字节镜像"| Raw["protos/raw/ 原样树"]
-    A --> B["Stage B 清理整顿 Normalize (规则由后续 ADR 定义, 当前透传)"]
+    A --> B["Stage B 清理整顿 Normalize (见 ADR-27 规则框架与辅助 .json)"]
     B -->|"语法校验失败"| Q["QUARANTINED 隔离区"]
     B -->|"NORMALIZED"| C["Stage C 解析 Analyze"]
     C -->|"逻辑路径 / 导入归属 / 符号冲突预检"| DB["DB: contract_proto_files (清理后内容, Tier-2 池)"]
@@ -161,7 +164,7 @@ flowchart TD
    ```
 
    - 以**整仓文件集合**作为输入，为后续跨文件规则（如 import 路径改写）预留空间；
-   - **预留辅助 `.json` 映射与清理规则配置**：从 `raw/` 清理到 `clean/` 时，后续将引入辅助 `.json` 配置文件以描述各代码仓的映射关系与专属清理规则；`NormalizeInput` 预留传入该配置，且配置版本/摘要须并入 `normalizer_version`。该辅助 `.json` 的存放位置、JSON Schema 与加载机制不在本 ADR 展开，留待后续《业务 Proto 清理整顿规则》ADR 定义；
+   - **辅助 `.json` 映射与清理规则配置**：从 `raw/` 清理到 `clean/` 时，由 [`ADR-27`](./27-proto-export-directory-and-normalization-governance-adr.md) 正式定义辅助 `.json` 治理配置（含仓级导出目录映射、仓内路径裁剪重写、Stage B 清理规则集与仓库级覆写）的 JSON Schema、Web 双向编排、Dry-Run 预览与增量失效机制；`NormalizeInput` 传入该配置，且规范摘要并入 `normalizer_version`；
    - 输出必须是确定性的：同一输入（含辅助配置）与同一 `Version()` 产出逐字节相同的结果。
 2. **默认实现**：`PassthroughNormalizer`（`Version() = "passthrough-0"`）原样透传，确保在规则 ADR 落地前流水线可端到端运行。
 3. **后置语法校验（入池门禁）**：清理产物须通过 `protocompile` **仅解析、不链接**的语法检查。失败的文件标记 `QUARANTINED`（原因 `PARSE_FAILED`，附诊断），**不进入 Tier-2 源码池**，且不影响同仓其他文件与其他仓库；链接期错误（如缺失 import）归入 Stage D 的 Bundle 级编译诊断。
@@ -202,9 +205,9 @@ flowchart TD
    | 业务代码仓 Git | `.proto` 唯一写入口（SSOT） | — |
    | `protos/raw/` | Stage A 原样镜像，供清理工具（含外部脚本）输入、问题排查 | Git 对象 |
    | DB `contract_proto_files` | **编译与浏览的权威派生数据**（清理后内容 + 状态 + 血缘） | raw + Normalizer（及辅助规则配置 `.json`） |
-   | `protos/clean/` | 清理后物化视图，供人工查阅、离线 `protoc`、IDE 等外部工具使用 | DB |
+   | `protos/clean/` | 清理与目录治理后物化视图（支持 ADR-27 方案 A 仓级目标目录调整），供人工查阅、离线 `protoc`、IDE 等外部工具使用 | DB + 治理配置 |
 
-   - 两棵目录树均为只读派生视图，**严禁人工或工具直接编辑**；
+   - 两棵目录树均为只读派生视图，**严禁人工或工具直接编辑**；`protos/raw/` 严格保留原始血缘（不接受目录重定位），导出后治理统一作用于 `protos/clean/` 与 DB；
    - **写入顺序**：raw 新版本写入临时目录 → Stage B / C → DB 事务提交 → 原子切换 raw 与 clean 链接；
    - **崩溃恢复**：后台对账任务比对 `.proto-meta.json` 中的 `commit_sha` / `normalizer_version` 与 DB，不一致时重建对应子树。
 2. **物理目录结构**：
@@ -242,7 +245,7 @@ flowchart TD
    - **搬迁**：子系统或仓库名变更时，仅新建目标链接并删除旧链接，实体目录不动；
    - **全局回收**：定期清理不在纳管清单中的孤儿链接与版本目录；
    - 刷新时同步将 DB 中缺失的文件置为 `is_deleted = true`。
-5. **前端双视图**：`/contract/proto-sources` 支持一键切换两种视图：
+5. **前端双子标签与双视图（r4 演进）**：`/contract/proto-sources` 拆分为 **「源码浏览」** 与 **「仓库导出与治理」** 两个清晰子标签页（详见 [`ADR-27`](./27-proto-export-directory-and-normalization-governance-adr.md)）。其中「源码浏览」支持两种目录树视图（默认仅展示含有效 Proto 的仓库，并支持按子系统聚合与懒加载）：
    - **「按子系统 / 代码仓树」**：定位归属，展示 `COLLECTED / NORMALIZED / QUARANTINED` 状态与同步新鲜度，可对比原始与清理后的内容；
    - **「按 Proto Package 逻辑树」**：跨仓检索 Service / Message，并经 `line_map` 跳转到原始源码行。
 
@@ -266,16 +269,18 @@ flowchart TD
 ### 2.7 同步触发、调度与新鲜度
 
 1. **触发方式**：
-   - **定时增量**：默认 `*/30 * * * *`，可配；
-   - **手动**：在 UI 中单仓或批量同步；
-   - **Webhook**：Phase 4 可选，复用 `ADR-18` 的 Webhook 鉴权；
-   - **`LOCAL_CACHE_ONLY` 仓**：定时检查 `refs/remotes/origin/<branch>` 是否变化，有变化才执行后续阶段。
-2. **并发与限流**：
+   - **定时增量**：默认 `*/30 * * * *`，可配；自动对齐 `code-bench` 新增/变更/停用仓库，并默认采用**「仅同步已有缓存」**策略；
+   - **手动全量 / 局部异步同步（双按钮策略，r4 修订）**：由于 `code-shield` 每日全量拉取代码，提供两个显式操作按钮（详见 [`ADR-27`](./27-proto-export-directory-and-normalization-governance-adr.md)）：
+     - **「仅同步已有缓存」**（默认推荐）：仅读取宿主机 `codes/` 中已存在的共享缓存；若缺失（多因权限不足或仓库已失效），**不主动执行网络拉取**，标记为 `NO_LOCAL_CACHE` 并计入统计；
+     - **「缺失时自动拉取」**：显式请求对缓存缺失仓执行共享写拉取（受 `storage.shared_write_enabled` 与按 Host 限流保护）；
+   - **Webhook**：可选，复用 `ADR-18` 的 Webhook 鉴权；
+   - **`LOCAL_CACHE_ONLY` 模式**：定时检查 `refs/remotes/origin/<branch>` 是否变化，有变化才执行后续阶段。
+2. **并发与限流（面向 500+ 仓持久化批处理）**：
    - 全局 worker 池默认 4 个，可配；
    - 按 Git 服务器限速；
    - 同一仓库用 singleflight 合并重复请求；
-   - 全量采集分批执行，避免与 `code-shield` 扫描高峰争抢写锁。
-3. **新鲜度**：记录 `last_fetched_at`、`ref_commit_time`、`last_collected_commit`。UI 对超过阈值（默认 24h）未更新的仓库标记「缓存陈旧」，`LOCAL_CACHE_ONLY` 仓额外提示其新鲜度依赖 `code-shield`。
+   - 全量同步通过持久化批处理任务（`contract_proto_sync_jobs`）分批执行与断点重试（取消 10 分钟硬超时限制），通过 SSE 实时推送汇总进度，避免与 `code-shield` 扫描高峰争抢写锁。
+3. **新鲜度**：记录 `last_fetched_at`、`ref_commit_time`、`last_collected_commit`。UI 对超过阈值（默认 24h）未更新的仓库标记「缓存陈旧」，缓存依赖 `code-shield` 的仓库额外提示其新鲜度来源。
 
 ---
 
@@ -289,6 +294,9 @@ flowchart TD
 | **编译粒度** | 整树合并编译为单一 `.pb` | **统一收树，按 Bundle 分仓编译** | 规避 16MB 上限与单点故障，保持服务级独立版本与破坏性变更门禁。 |
 | **编译顺序** | 仓级 DAG 拓扑排序后才能编译 | **Tier-2 读源码池，顺序无关；文件级依赖图只用于影响面计算** | 仓级依赖可能成环，强行拓扑排序不成立；文件级依赖图天然无环。 |
 | **Git 拉取与缓存** | 各自独立 clone，或延续 `memfs` | **共享 `codes/` + 两层锁 + 私有 ref 命名空间 + 无工作树直读** | 复用缓存与宿主机凭据；私有 ref 与关闭自动 gc，保证对 `code-shield` 零副作用。 |
+| **仓库真值源（r4）** | 允许独立接入 Git 仓（`EXTERNAL_STANDALONE`） | **完全取消独立接入，`code-bench` `repositories` 为全局唯一真值源** | 杜绝 URL/分支/凭据/子系统多头漂移，集中管控 Git 权限与资产台账，降低运维心智负担。 |
+| **批量发现方式（r4）** | 按页预览 `pg/` 并逐行勾选导入 | **500+ 仓零勾选全量自动对齐 + 无 `pg/` 仓毫秒快筛静默** | 500+ 仓规模下逐行勾选与单页表格不可用；全量导出后再分层治理更符合真实工作流。 |
+| **全量同步策略（r4）** | 缺失缓存默认自动 `clone` | **提供「仅同步已有缓存」（默认）与「缺失时自动拉取」双按钮** | `code-shield` 每日全量拉取代码，缺失仓多为无权限或已失效，默认不主动拉取避免雪崩与无效报错。 |
 | **目录原子刷新** | 直接 `rename` 覆盖目录 / 先删后写 | **版本目录 + 符号链接原子切换** | `rename(2)` 不能覆盖非空目录；先删后写会出现空窗与半成品状态。 |
 
 ---
@@ -313,13 +321,14 @@ flowchart TD
      stale_threshold: 24h
    ```
 
-2. **`contract_git_repos`（`models/git_repo.go`）**：新增以下字段：
-   - `platform_repo_id`（`*uint64`，可空唯一索引）、`source_mode`、`sync_strategy`；
-   - `subsystem_slug`、`resolved_branch`；
+2. **`contract_git_repos`（`models/git_repo.go`）**：收敛为 `repositories` 的 1:1 契约治理扩展表：
+   - **`platform_repo_id`**（`uint64`，**`NOT NULL` 唯一索引**，r4 收口）、`source_mode`（固定 `PLATFORM_SHARED`）、`sync_strategy`（`LOCAL_CACHE_ONLY` | `FETCH_AND_READ`）；
+   - `proto_status`（`PENDING` | `HAS_PROTO` | `NO_PROTO` | `NO_LOCAL_CACHE` | `EXCLUDED` | `SYNC_FAILED`）、`sync_enabled`（默认 `true`，允许导出后在 contract 侧停用采集）；
+   - `subsystem_slug`、`resolved_branch`、导出目录与清洗治理配置字段（见 [`ADR-27`](./27-proto-export-directory-and-normalization-governance-adr.md)）；
    - `collect_globs_json` / `exclude_globs_json`（可空，非空即覆盖全局）；
    - `last_fetched_at`、`ref_commit_time`、`last_collected_commit`。
 
-   `PLATFORM_SHARED` 记录的 `repo_url` / `default_branch` 以 `repositories` 为准，仅作只读快照。
+   所有字段以 `repositories` 的 `repo_url` / `default_branch` / `service_group` / `is_active` 为唯一事实源；废除独立 `CredentialsEnc` / `WebhookSecretEnc` 录入入口（历史独立仓按 URL 归并或归档清理）。
 3. **`contract_proto_files`**：
    - 沿用 `repo_file_path`（仓内原始路径）与 `file_path`（逻辑导入路径，由 Stage C 填充）；`content_sha256` 定义为**清理后内容**的哈希；
    - 新增 `raw_blob_sha`、`normalizer_version`、`pipeline_status`（`COLLECTED` | `NORMALIZED` | `QUARANTINED`）、`status_reason`、`line_map_json`（可空，表示行号不变）、`is_external_copy`；
@@ -332,9 +341,8 @@ flowchart TD
    - 路径：`ResolveRepoLocalPath(codesRoot, repoURL string) (string, error)`（兼容现有映射 + origin URL 一致性校验）；
    - 防降级：`IsShallowRepository`，并修正 `Sync` / `FetchCommitMetadata` 的 `--depth` 守卫；
    - 对象直读：`FetchBranchToRef`（私有命名空间、`gc.auto=0`）、`ListTreeEntries`（`-z`、带 mode 与 SHA、按前缀）、`ReadBlobsBatch`（`cat-file --batch`）、`ReadCommitMeta`、`ResolveBranch`（与 `code-shield` 共用）。
-6. **存量迁移**：
-   - 现有手工录入的 `contract_git_repos` 默认迁移为 `EXTERNAL_STANDALONE`；
-   - 提供「关联平台仓」操作：以 `ResolveRepoLocalPath` 归一化 URL 匹配 `repositories`，确认后转为 `PLATFORM_SHARED` 并清除冗余凭据；
+6. **存量迁移（r4 修订）**：
+   - 取消 `EXTERNAL_STANDALONE` 长期兼容与手工关联迁移流：升级迁移脚本以 `ResolveRepoLocalPath` 归一化 URL 自动匹配 `repositories` 补全 `platform_repo_id` 并清除历史冗余凭据；无法匹配 `repositories` 的孤儿手工仓记录直接标记归档清理（待用户在 `code-bench` 纳管后自动对齐）；
    - 既有 `contract_proto_files` 回填 `raw_blob_sha`，并按 `passthrough-0` 标记 `NORMALIZED`，保证升级前后编译结果不变。
 7. **物理防腐边界维持不变**：`gitsync`、目录树与 Normalizer 仅限控制面 `cmd/server` 调用；`cmd/agent` 及防腐核心包（`pkg/{crosrpc,agentproto,csgdlink,rpcmon,csgmock,ebpf,transport,replay}`）继续保持零 Git、零 DB、零 `.pb`、零 CGO 依赖。
 
@@ -349,11 +357,13 @@ flowchart TD
 | **Phase 3：解析编译 + 清理树 + 双视图** | 1. Stage C：逻辑路径推断、导入归属登记、符号冲突预检；<br/>2. Stage D：按 Bundle 编译、文件级依赖图、SCC 分组；<br/>3. clean 树物化与对账任务；<br/>4. 前端双视图、原始 / 清理后对比、`line_map` 跳转；<br/>5. MR 门禁接入同一 Normalizer；<br/>6. 接入清理整顿 ADR 的首版规则。 | 1. 相同输入重复运行产出逐字节一致；<br/>2. `IMPORT_AMBIGUOUS` 不会静默择一；<br/>3. MR 门禁与同步链路编译结果一致。 | **风险**：存量仓 `proto_root` 不统一导致 `MISSING_IMPORTS`。<br/>**缓解**：默认以 `pg` 目录为根，结合 import 后缀反推，诊断中附带全池近似候选。 |
 | **Phase 4：冲突仲裁与增量影响面联动** | 1. 跨仓符号冲突仲裁 UI 与权威指认；<br/>2. 单仓变更后触发影响面局部重编与 `F-26` 告警；<br/>3. 结合 `service_group` / `owner` 推荐架构 `Subsystem` / `Module` 归属；<br/>4. Webhook 触发；<br/>5. 下线 `memfs` 路径。 | 1. 激活阶段 `409 Conflict` 在预检阶段被 100% 拦截；<br/>2. 影响面重编覆盖全部受影响 Bundle 且不多编。 | **风险**：调用方仓拷贝被调方 `.proto` 引发激活冲突。<br/>**缓解**：同步前预检拦截，非权威副本自动标记为外部副本。 |
 
+> **r4 演进说明**：上表 M33~M36 为本 ADR 首版交付基线；r4 确立的「独立仓全面下线、500+ 仓全量对齐与双按钮同步、导出后目录调整与清理规则治理、双子标签 IA」并入 [`ADR-27`](./27-proto-export-directory-and-normalization-governance-adr.md) 的 **M37~M39** 实施路线图。
+
 ---
 
 ## 6. 待后续 ADR / 迭代决议事项
 
-1. **《业务 Proto 清理整顿规则》**：定义从 `raw` 目录清理到 `clean` 目录所需的**辅助 `.json` 配置文件**（各代码仓的映射关系与清理规则配置、存放位置、JSON Schema、版本摘要混入增量键的方式与维护入口），以及具体清理规则、规则 ID 体系、是否允许跨文件改写（如 import 重定向）、规则灰度与回滚策略（依赖 Phase 2 基线报告）。
+1. **导出后目录治理与 Stage B 清理整顿规则（已立项）**：已独立立项为 [`ADR-27`](./27-proto-export-directory-and-normalization-governance-adr.md)，正式定义方案 A 仓级目标目录调整、仓内路径裁剪重写、Stage B 全局/仓库清理规则框架、辅助 `.json` 治理配置 Schema、Dry-Run 预览与 500+ 仓双子标签工作台。具体业务规则 ID（`NORM-*`）随现网基线报告迭代扩充。
 2. 多分支 / Tag 契约采集（当前只采集 `repositories.Branch` 单分支）。
 3. 逐文件最后修改提交（`git log -1 -- <path>`）的按需计算与缓存策略。
 4. `ResolveRepoLocalPath` 引入 host 维度以消除跨服务器同名碰撞（需要 `code-shield` 协同迁移缓存目录）。
