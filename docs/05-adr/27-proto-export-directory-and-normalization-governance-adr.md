@@ -1,7 +1,7 @@
 # ADR-27：500+ 平台仓全量零勾选同步、导出后目录治理与 Stage B 清理整顿架构决策
 
 - **文档编号**：`27-proto-export-directory-and-normalization-governance-adr.md`
-- **状态**：Proposed（r1，待实施 M37~M39）
+- **状态**：Implemented（r1，已交付 M37~M39）
 - **日期**：2026-11-27
 - **关联与演进关系**：
   - 承接并演进 [`ADR-26 (r4)`](./26-shared-git-cache-and-subsystem-proto-tree-adr.md)（共享宿主机 Git 缓存与四段式跨仓 Proto 流水线），正式落地其预留的「从 `raw/` 到 `clean/` 的清理整顿规则与辅助 `.json` 映射配置」；

@@ -9,7 +9,6 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -22,19 +21,24 @@ import (
 var (
 	// ErrMaxFilesPerRepoExceeded 表示单仓命中的白名单 .proto 文件数超过安全上限。
 	ErrMaxFilesPerRepoExceeded = errors.New("单仓采集 .proto 文件数量超过 max_files_per_repo 上限")
+	// ErrLocalCacheMissing 表示 CACHE_ONLY / LOCAL_CACHE_ONLY 模式下宿主机共享缓存尚不存在（非致命，静默归类为 NO_LOCAL_CACHE）。
+	ErrLocalCacheMissing = errors.New("宿主机共享缓存尚未就绪")
 )
 
 const lfsPointerPrefix = "version https://git-lfs.github.com/spec/v1"
 
 // CollectConfig 控制 Stage A pg 目录白名单采集参数。
 type CollectConfig struct {
-	CodesDir           string
-	SharedWriteEnabled bool
-	CollectGlobs       []string
-	ExcludeGlobs       []string
-	MaxFileBytes       int64
-	MaxFilesPerRepo    int
-	KnownRawBlobSHAs   map[string]string // repo_file_path -> raw_blob_sha
+	CodesDir              string
+	SharedWriteEnabled    bool
+	CachePolicy           string // CACHE_ONLY | FETCH_MISSING（为空时按仓库 SyncStrategy + SharedWriteEnabled 决定）
+	KnownCommitSHA        string
+	SkipIfCommitUnchanged bool
+	CollectGlobs          []string
+	ExcludeGlobs          []string
+	MaxFileBytes          int64
+	MaxFilesPerRepo       int
+	KnownRawBlobSHAs      map[string]string // repo_file_path -> raw_blob_sha
 }
 
 // CollectedFile 表示 Stage A 采集出的单个原始 .proto 文件。
@@ -56,6 +60,8 @@ type CollectResult struct {
 	EffectiveSyncStrategy string              `json:"effective_sync_strategy"`
 	ResolvedBranch        string              `json:"resolved_branch"`
 	FullRef               string              `json:"full_ref"`
+	SkippedUnchanged      bool                `json:"skipped_unchanged"`
+	PGDirs                []string            `json:"pg_dirs,omitempty"`
 	CommitMeta            *gitsync.CommitMeta `json:"commit_meta,omitempty"`
 	Files                 []CollectedFile     `json:"files"`
 	OutsideWhitelistCount int                 `json:"outside_whitelist_count"`
@@ -63,8 +69,13 @@ type CollectResult struct {
 	SkippedSubmodules     []string            `json:"skipped_submodules,omitempty"`
 }
 
-// ResolveEffectiveRepoLocalPath 解析仓库在宿主机共享缓存或隔离目录中的物理路径，以及实际采集策略。
+// ResolveEffectiveRepoLocalPath 解析仓库在宿主机共享缓存中的物理路径及实际采集策略（r4：统一走共享缓存）。
 func ResolveEffectiveRepoLocalPath(repo *models.GitRepo, codesDir string, sharedWriteEnabled bool) (localPath string, strategy string, err error) {
+	return ResolveEffectiveRepoLocalPathWithPolicy(repo, codesDir, "", sharedWriteEnabled)
+}
+
+// ResolveEffectiveRepoLocalPathWithPolicy 结合批处理缓存策略与共享写开关解析宿主机共享路径及采集策略。
+func ResolveEffectiveRepoLocalPathWithPolicy(repo *models.GitRepo, codesDir, cachePolicy string, sharedWriteEnabled bool) (localPath string, strategy string, err error) {
 	if repo == nil {
 		return "", "", errors.New("GitRepo 不能为空")
 	}
@@ -72,33 +83,30 @@ func ResolveEffectiveRepoLocalPath(repo *models.GitRepo, codesDir string, shared
 		codesDir = config.AppConfig.Storage.GetCodesDir()
 	}
 
-	sourceMode := repo.SourceMode
-	if sourceMode == "" {
-		sourceMode = models.GitSourceModeExternalStandalone
-	}
-	strategy = repo.SyncStrategy
-	if strategy == "" {
-		strategy = models.GitSyncStrategyFetchAndRead
-	}
-
-	if sourceMode == models.GitSourceModePlatformShared {
-		p, pErr := gitsync.ResolveRepoLocalPath(codesDir, repo.RepoURL)
-		if pErr != nil {
-			return "", "", pErr
-		}
-		if !sharedWriteEnabled {
-			strategy = models.GitSyncStrategyLocalCacheOnly
-		}
-		return p, strategy, nil
-	}
-
-	// EXTERNAL_STANDALONE 统一收敛至 <codes_dir>/_external/<git_repo_id>/
-	absCodes, err := filepath.Abs(filepath.Clean(codesDir))
+	localPath, err = gitsync.ResolveRepoLocalPath(codesDir, repo.RepoURL)
 	if err != nil {
 		return "", "", err
 	}
-	localPath = filepath.Join(absCodes, "_external", strconv.FormatUint(repo.ID, 10))
-	return localPath, models.GitSyncStrategyFetchAndRead, nil
+
+	policy := strings.ToUpper(strings.TrimSpace(cachePolicy))
+	switch policy {
+	case models.SyncCachePolicyCacheOnly:
+		return localPath, models.GitSyncStrategyLocalCacheOnly, nil
+	case models.SyncCachePolicyFetchMissing:
+		if sharedWriteEnabled {
+			return localPath, models.GitSyncStrategyFetchAndRead, nil
+		}
+		return localPath, models.GitSyncStrategyLocalCacheOnly, nil
+	}
+
+	strategy = strings.ToUpper(strings.TrimSpace(repo.SyncStrategy))
+	if strategy == "" {
+		strategy = models.GitSyncStrategyLocalCacheOnly
+	}
+	if !sharedWriteEnabled {
+		strategy = models.GitSyncStrategyLocalCacheOnly
+	}
+	return localPath, strategy, nil
 }
 
 // CollectRepoStageA 执行 Stage A 字节级白名单采集（两层锁、私有 ref、仅增量读取变更 blob）。
@@ -133,7 +141,7 @@ func CollectRepoStageA(ctx context.Context, repo *models.GitRepo, branch string,
 		cfg.MaxFilesPerRepo = 5000
 	}
 
-	localPath, strategy, err := ResolveEffectiveRepoLocalPath(repo, cfg.CodesDir, cfg.SharedWriteEnabled)
+	localPath, strategy, err := ResolveEffectiveRepoLocalPathWithPolicy(repo, cfg.CodesDir, cfg.CachePolicy, cfg.SharedWriteEnabled)
 	if err != nil {
 		return nil, err
 	}
@@ -149,31 +157,32 @@ func CollectRepoStageA(ctx context.Context, repo *models.GitRepo, branch string,
 		fullRef        string
 	)
 	if strategy == models.GitSyncStrategyLocalCacheOnly {
-		// 仅读取 code-shield 维护的 refs/remotes/origin/<branch>，瞬时失败自动重试
+		if st, statErr := os.Stat(filepath.Join(localPath, ".git")); statErr != nil || !st.IsDir() {
+			return nil, fmt.Errorf("%w: %s", ErrLocalCacheMissing, localPath)
+		}
+		// 仅读取宿主机共享缓存引用（优先 refs/remotes/origin，回退 refs/contract/heads），绝不发起网络请求
 		var resolveErr error
 		for attempt := 0; attempt < 2; attempt++ {
 			resolvedBranch, fullRef, resolveErr = gitsync.ResolveLocalRef(ctx, localPath, "refs/remotes/origin", targetBranch)
 			if resolveErr == nil {
 				break
 			}
+			resolvedBranch, fullRef, resolveErr = gitsync.ResolveLocalRef(ctx, localPath, "refs/contract/heads", targetBranch)
+			if resolveErr == nil {
+				break
+			}
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
-			case <-time.After(150 * time.Millisecond):
+			case <-time.After(80 * time.Millisecond):
 			}
 		}
 		if resolveErr != nil {
-			return nil, resolveErr
+			return nil, fmt.Errorf("%w: %v", ErrLocalCacheMissing, resolveErr)
 		}
 	} else {
-		extraEnv, cleanupEnv, envErr := buildExternalGitAuthEnv(repo)
-		if envErr != nil {
-			return nil, envErr
-		}
-		defer cleanupEnv()
-
 		resolvedBranch, fullRef, err = gitsync.FetchBranchToRef(
-			ctx, cfg.CodesDir, localPath, repo.RepoURL, targetBranch, "refs/contract/heads", extraEnv...,
+			ctx, cfg.CodesDir, localPath, repo.RepoURL, targetBranch, "refs/contract/heads",
 		)
 		if err != nil {
 			return nil, err
@@ -199,6 +208,20 @@ func CollectRepoStageA(ctx context.Context, repo *models.GitRepo, branch string,
 		return nil, err
 	}
 
+	if cfg.SkipIfCommitUnchanged && cfg.KnownCommitSHA != "" && meta != nil && meta.CommitSHA == cfg.KnownCommitSHA {
+		releaseOnce()
+		return &CollectResult{
+			RepoID:                repo.ID,
+			LocalPath:             localPath,
+			EffectiveSyncStrategy: strategy,
+			ResolvedBranch:        resolvedBranch,
+			FullRef:               fullRef,
+			SkippedUnchanged:      true,
+			CommitMeta:            meta,
+			Files:                 nil,
+		}, nil
+	}
+
 	entries, err := listWhitelistCandidateEntries(ctx, localPath, fullRef, cfg.CollectGlobs)
 	if err != nil {
 		return nil, err
@@ -212,6 +235,11 @@ func CollectRepoStageA(ctx context.Context, repo *models.GitRepo, branch string,
 		FullRef:               fullRef,
 		CommitMeta:            meta,
 		Files:                 make([]CollectedFile, 0),
+	}
+
+	if len(entries) == 0 {
+		releaseOnce()
+		return res, nil
 	}
 
 	type pendingBlob struct {
@@ -295,13 +323,28 @@ func CollectRepoStageA(ctx context.Context, repo *models.GitRepo, branch string,
 	// 立即释放 LOCK_SH，后续 Stage B/C/D 均在锁外执行
 	releaseOnce()
 
+	pgDirSet := make(map[string]struct{})
+	for _, f := range res.Files {
+		if f.PGDir != "" {
+			pgDirSet[f.PGDir] = struct{}{}
+		}
+	}
+	if len(pgDirSet) > 0 {
+		pgDirs := make([]string, 0, len(pgDirSet))
+		for d := range pgDirSet {
+			pgDirs = append(pgDirs, d)
+		}
+		sort.Strings(pgDirs)
+		res.PGDirs = pgDirs
+	}
+
 	sort.Slice(res.Files, func(i, j int) bool {
 		return res.Files[i].RepoFilePath < res.Files[j].RepoFilePath
 	})
 	return res, nil
 }
 
-// ProbeRepoPGStructure 在只读共享锁下快速探测本地缓存中的全小写 pg 目录与白名单统计（用于平台仓发现预览）。
+// ProbeRepoPGStructure 在只读共享锁下通过 derivePGPrefixes 毫秒级快筛全小写 pg 目录与白名单统计（严禁全仓 ls-tree -r）。
 func ProbeRepoPGStructure(ctx context.Context, codesDir, repoURL, branch string) (pgDirs []string, whitelistCount int, outsideCount int, resolvedBranch string, err error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -311,7 +354,7 @@ func ProbeRepoPGStructure(ctx context.Context, codesDir, repoURL, branch string)
 		return nil, 0, 0, "", err
 	}
 	if _, statErr := os.Stat(filepath.Join(localPath, ".git")); statErr != nil {
-		return nil, 0, 0, "", fmt.Errorf("本地缓存尚无该仓库: %w", statErr)
+		return nil, 0, 0, "", fmt.Errorf("%w: %v", ErrLocalCacheMissing, statErr)
 	}
 
 	lk, err := gitsync.AcquireRepoLock(ctx, codesDir, localPath, gitsync.LockShared)
@@ -324,19 +367,19 @@ func ProbeRepoPGStructure(ctx context.Context, codesDir, repoURL, branch string)
 	if err != nil {
 		resolved, fullRef, err = gitsync.ResolveLocalRef(ctx, localPath, "refs/contract/heads", gitsync.ResolveBranchDefault(branch))
 		if err != nil {
-			return nil, 0, 0, "", err
+			return nil, 0, 0, "", fmt.Errorf("%w: %v", ErrLocalCacheMissing, err)
 		}
 	}
 
-	allEntries, err := gitsync.ListTreeEntries(ctx, localPath, fullRef, true, false)
+	defaultGlobs := config.DefaultCollectGlobs()
+	defaultEx := config.DefaultExcludeGlobs()
+	entries, err := listWhitelistCandidateEntries(ctx, localPath, fullRef, defaultGlobs)
 	if err != nil {
 		return nil, 0, 0, "", err
 	}
 
 	pgDirSet := make(map[string]struct{})
-	defaultGlobs := config.DefaultCollectGlobs()
-	defaultEx := config.DefaultExcludeGlobs()
-	for _, e := range allEntries {
+	for _, e := range entries {
 		if e.Type != "blob" || (e.Mode != "100644" && e.Mode != "100755") {
 			continue
 		}
@@ -507,54 +550,4 @@ func matchSegs(patSegs, pathSegs []string) bool {
 func isGitLFSPointer(content []byte) bool {
 	trimmed := bytes.TrimSpace(content)
 	return bytes.HasPrefix(trimmed, []byte(lfsPointerPrefix))
-}
-
-// buildExternalGitAuthEnv 为 EXTERNAL_STANDALONE 仓库在独立临时目录生成一次性 GIT_ASKPASS / SSH key 环境变量。
-func buildExternalGitAuthEnv(repo *models.GitRepo) ([]string, func(), error) {
-	noop := func() {}
-	if repo == nil || repo.AuthType == "" || repo.AuthType == models.GitAuthNone {
-		return nil, noop, nil
-	}
-	creds, err := repo.DecryptCredentials()
-	if err != nil {
-		return nil, noop, fmt.Errorf("解密 Git 凭据失败: %w", err)
-	}
-	if strings.TrimSpace(creds) == "" {
-		return nil, noop, nil
-	}
-
-	tmpDir, err := os.MkdirTemp("", "cc-gitauth-*")
-	if err != nil {
-		return nil, noop, err
-	}
-	cleanup := func() {
-		_ = os.RemoveAll(tmpDir)
-	}
-
-	if repo.AuthType == models.GitAuthSSHKey {
-		keyPath := filepath.Join(tmpDir, "id_key")
-		if wErr := os.WriteFile(keyPath, []byte(creds+"\n"), 0600); wErr != nil {
-			cleanup()
-			return nil, noop, wErr
-		}
-		sshCmd := fmt.Sprintf("ssh -i %s -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o BatchMode=yes -o ConnectTimeout=15", keyPath)
-		return []string{"GIT_SSH_COMMAND=" + sshCmd}, cleanup, nil
-	}
-
-	// TOKEN 模式通过 GIT_ASKPASS 脚本注入密码，避免密码出现在命令行参数或 .git/config 中
-	askpassPath := filepath.Join(tmpDir, "askpass.sh")
-	username := "oauth2"
-	if repo.Provider == models.GitProviderGitHub {
-		username = "x-access-token"
-	}
-	script := "#!/bin/sh\ncase \"$1\" in\n  *Username*|*username*) printf '%s\\n' \"$CC_GIT_USER\" ;;\n  *) printf '%s\\n' \"$CC_GIT_PASS\" ;;\nesac\n"
-	if wErr := os.WriteFile(askpassPath, []byte(script), 0700); wErr != nil {
-		cleanup()
-		return nil, noop, wErr
-	}
-	return []string{
-		"GIT_ASKPASS=" + askpassPath,
-		"CC_GIT_USER=" + username,
-		"CC_GIT_PASS=" + creds,
-	}, cleanup, nil
 }

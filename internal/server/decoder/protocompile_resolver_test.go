@@ -469,12 +469,14 @@ func TestDBProtoSourceProvider_ResolvesBaseLibAndIgnoresSoftDeleted(t *testing.T
 
 	// 1. 构造 GitRepo 与 3 组 Bundle（同路径分别位于 BUSINESS 与 BASE_LIB，且另一条已被软删除）
 	repo := models.GitRepo{
-		Name:          "proto-monorepo",
-		Provider:      models.GitProviderGitLab,
-		RepoURL:       "http://127.0.0.1:8080/org/monorepo.git",
-		DefaultBranch: "main",
-		AuthType:      models.GitAuthNone,
-		SyncMode:      models.GitSyncManual,
+		Name:           "proto-monorepo",
+		Provider:       models.GitProviderGitLab,
+		RepoURL:        "http://127.0.0.1:8080/org/monorepo.git",
+		DefaultBranch:  "main",
+		AuthType:       models.GitAuthNone,
+		SyncMode:       models.GitSyncManual,
+		PlatformRepoID: 1,
+		SourceMode:     models.GitSourceModePlatformShared,
 	}
 	if err := db.Create(&repo).Error; err != nil {
 		t.Fatalf("创建 GitRepo 失败: %v", err)

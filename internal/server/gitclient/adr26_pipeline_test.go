@@ -144,13 +144,14 @@ func TestCollector_PgWhitelistStrictLowercase_IncrementalBlob_AndLFSQuarantine(t
 	})
 
 	repo := contractModels.GitRepo{
-		Name:          "collect-whitelist-repo",
-		Provider:      contractModels.GitProviderGeneric,
-		RepoURL:       bareDir,
-		DefaultBranch: "main",
-		AuthType:      contractModels.GitAuthNone,
-		SourceMode:    contractModels.GitSourceModeExternalStandalone,
-		SyncStrategy:  contractModels.GitSyncStrategyFetchAndRead,
+		Name:           "collect-whitelist-repo",
+		Provider:       contractModels.GitProviderGeneric,
+		RepoURL:        bareDir,
+		DefaultBranch:  "main",
+		AuthType:       contractModels.GitAuthNone,
+		PlatformRepoID: 1,
+		SourceMode:     contractModels.GitSourceModePlatformShared,
+		SyncStrategy:   contractModels.GitSyncStrategyFetchAndRead,
 	}
 	if err := db.Create(&repo).Error; err != nil {
 		t.Fatalf("create repo: %v", err)
@@ -170,15 +171,16 @@ func TestCollector_PgWhitelistStrictLowercase_IncrementalBlob_AndLFSQuarantine(t
 		t.Fatalf("expected exactly 4 whitelist .proto files under pg/ & submod/pg/, got %d", len(collect1.Files))
 	}
 
-	// 验证 PLATFORM_SHARED 只读探测对非 pg 白名单目录的统计 (PG/, Pg/, src/pg_extra/ 共 3 份)
+	// 验证 PLATFORM_SHARED 只读探测：通过 derivePGPrefixes 直接过滤，无需全仓 ls-tree -r
 	platShared := contractModels.GitRepo{
-		Name:          "collect-probe-shared",
-		Provider:      contractModels.GitProviderGeneric,
-		RepoURL:       bareDir,
-		DefaultBranch: "main",
-		AuthType:      contractModels.GitAuthNone,
-		SourceMode:    contractModels.GitSourceModePlatformShared,
-		SyncStrategy:  contractModels.GitSyncStrategyFetchAndRead,
+		Name:           "collect-probe-shared",
+		Provider:       contractModels.GitProviderGeneric,
+		RepoURL:        bareDir,
+		DefaultBranch:  "main",
+		AuthType:       contractModels.GitAuthNone,
+		PlatformRepoID: 1,
+		SourceMode:     contractModels.GitSourceModePlatformShared,
+		SyncStrategy:   contractModels.GitSyncStrategyFetchAndRead,
 	}
 	if _, pErr := CollectRepoStageA(ctx, &platShared, "main", CollectConfig{
 		CodesDir:           codesDir,
@@ -192,8 +194,8 @@ func TestCollector_PgWhitelistStrictLowercase_IncrementalBlob_AndLFSQuarantine(t
 	if probeErr != nil {
 		t.Fatalf("ProbeRepoPGStructure failed: %v", probeErr)
 	}
-	if wlCnt != 4 || outCnt != 3 || len(pgDirs) != 2 {
-		t.Fatalf("expected whitelist=4 outside=3 pgDirs=2, got wl=%d out=%d pgDirs=%v", wlCnt, outCnt, pgDirs)
+	if wlCnt != 4 || outCnt != 0 || len(pgDirs) != 2 {
+		t.Fatalf("expected whitelist=4 outside=0 pgDirs=2, got wl=%d out=%d pgDirs=%v", wlCnt, outCnt, pgDirs)
 	}
 
 	byPath := make(map[string]CollectedFile, len(collect1.Files))
@@ -293,13 +295,14 @@ func TestNormalizer_PassthroughAndSyntaxGateQuarantine(t *testing.T) {
 	})
 
 	repo := contractModels.GitRepo{
-		Name:          "norm-syntax-gate-repo",
-		Provider:      contractModels.GitProviderGeneric,
-		RepoURL:       bareDir,
-		DefaultBranch: "main",
-		AuthType:      contractModels.GitAuthNone,
-		SourceMode:    contractModels.GitSourceModeExternalStandalone,
-		SyncStrategy:  contractModels.GitSyncStrategyFetchAndRead,
+		Name:           "norm-syntax-gate-repo",
+		Provider:       contractModels.GitProviderGeneric,
+		RepoURL:        bareDir,
+		DefaultBranch:  "main",
+		AuthType:       contractModels.GitAuthNone,
+		PlatformRepoID: 2,
+		SourceMode:     contractModels.GitSourceModePlatformShared,
+		SyncStrategy:   contractModels.GitSyncStrategyFetchAndRead,
 	}
 	if err := db.Create(&repo).Error; err != nil {
 		t.Fatalf("create repo: %v", err)
@@ -356,14 +359,15 @@ func TestProtoTree_AtomicSymlinkAndReconcile(t *testing.T) {
 		},
 	})
 	repo := contractModels.GitRepo{
-		Name:          "tree-reconcile-repo",
-		Provider:      contractModels.GitProviderGeneric,
-		RepoURL:       bareDir,
-		DefaultBranch: "main",
-		AuthType:      contractModels.GitAuthNone,
-		SourceMode:    contractModels.GitSourceModeExternalStandalone,
-		SyncStrategy:  contractModels.GitSyncStrategyFetchAndRead,
-		SubsystemSlug: "billing-core",
+		Name:           "tree-reconcile-repo",
+		Provider:       contractModels.GitProviderGeneric,
+		RepoURL:        bareDir,
+		DefaultBranch:  "main",
+		AuthType:       contractModels.GitAuthNone,
+		PlatformRepoID: 3,
+		SourceMode:     contractModels.GitSourceModePlatformShared,
+		SyncStrategy:   contractModels.GitSyncStrategyFetchAndRead,
+		SubsystemSlug:  "billing-core",
 	}
 	if err := db.Create(&repo).Error; err != nil {
 		t.Fatalf("create repo: %v", err)
@@ -436,8 +440,8 @@ func TestAnalyzer_ImportOwners_AmbiguousError_AndExternalCopy(t *testing.T) {
 		{"pg/shared/types.proto": "syntax = \"proto3\";\npackage acme.shared;\nmessage Money { string amount = 1; }\n"},
 	})
 	// 场景 B: Repo C 为 BUSINESS 且拷贝了一份与 Repo A 完全相同的 pg/shared/alias_copy.proto（同时 Repo A 也有同一文件），验证 is_external_copy=true
-	repoA := contractModels.GitRepo{Name: "owner-a", Provider: contractModels.GitProviderGeneric, RepoURL: bareA, DefaultBranch: "main", AuthType: contractModels.GitAuthNone, SourceMode: contractModels.GitSourceModeExternalStandalone, SyncStrategy: contractModels.GitSyncStrategyFetchAndRead}
-	repoB := contractModels.GitRepo{Name: "owner-b", Provider: contractModels.GitProviderGeneric, RepoURL: bareB, DefaultBranch: "main", AuthType: contractModels.GitAuthNone, SourceMode: contractModels.GitSourceModeExternalStandalone, SyncStrategy: contractModels.GitSyncStrategyFetchAndRead}
+	repoA := contractModels.GitRepo{Name: "owner-a", Provider: contractModels.GitProviderGeneric, RepoURL: bareA, DefaultBranch: "main", AuthType: contractModels.GitAuthNone, PlatformRepoID: 4, SourceMode: contractModels.GitSourceModePlatformShared, SyncStrategy: contractModels.GitSyncStrategyFetchAndRead}
+	repoB := contractModels.GitRepo{Name: "owner-b", Provider: contractModels.GitProviderGeneric, RepoURL: bareB, DefaultBranch: "main", AuthType: contractModels.GitAuthNone, PlatformRepoID: 5, SourceMode: contractModels.GitSourceModePlatformShared, SyncStrategy: contractModels.GitSyncStrategyFetchAndRead}
 	if err := db.Create(&repoA).Error; err != nil {
 		t.Fatalf("create repoA: %v", err)
 	}
@@ -522,13 +526,14 @@ func TestCompiler_CycleBundleSCC_BlastRadius_ReNormalize_AndDeterminism(t *testi
 	})
 
 	repo := contractModels.GitRepo{
-		Name:          "scc-blast-repo",
-		Provider:      contractModels.GitProviderGeneric,
-		RepoURL:       bareDir,
-		DefaultBranch: "main",
-		AuthType:      contractModels.GitAuthNone,
-		SourceMode:    contractModels.GitSourceModeExternalStandalone,
-		SyncStrategy:  contractModels.GitSyncStrategyFetchAndRead,
+		Name:           "scc-blast-repo",
+		Provider:       contractModels.GitProviderGeneric,
+		RepoURL:        bareDir,
+		DefaultBranch:  "main",
+		AuthType:       contractModels.GitAuthNone,
+		PlatformRepoID: 6,
+		SourceMode:     contractModels.GitSourceModePlatformShared,
+		SyncStrategy:   contractModels.GitSyncStrategyFetchAndRead,
 	}
 	if err := db.Create(&repo).Error; err != nil {
 		t.Fatalf("create repo: %v", err)
@@ -588,7 +593,7 @@ func TestCompiler_CycleBundleSCC_BlastRadius_ReNormalize_AndDeterminism(t *testi
 	downBare := createBareGitRepoWithCommits(t, "main", []map[string]string{
 		{"pg/ext_consumer.proto": "syntax = \"proto3\";\npackage acme.ext;\nimport \"cyc/a1.proto\";\nmessage ExtReq { acme.cyc.A1 a = 1; }\n"},
 	})
-	extRepo := contractModels.GitRepo{Name: "ext-consumer-repo", Provider: contractModels.GitProviderGeneric, RepoURL: downBare, DefaultBranch: "main", AuthType: contractModels.GitAuthNone, SourceMode: contractModels.GitSourceModeExternalStandalone, SyncStrategy: contractModels.GitSyncStrategyFetchAndRead}
+	extRepo := contractModels.GitRepo{Name: "ext-consumer-repo", Provider: contractModels.GitProviderGeneric, RepoURL: downBare, DefaultBranch: "main", AuthType: contractModels.GitAuthNone, PlatformRepoID: 7, SourceMode: contractModels.GitSourceModePlatformShared, SyncStrategy: contractModels.GitSyncStrategyFetchAndRead}
 	if err := db.Create(&extRepo).Error; err != nil {
 		t.Fatalf("create extRepo: %v", err)
 	}
@@ -649,12 +654,13 @@ func TestMRGate_NormalizerConsistency(t *testing.T) {
 	ctx := context.Background()
 
 	repo := contractModels.GitRepo{
-		Name:          "mr-norm-repo",
-		Provider:      contractModels.GitProviderGitLab,
-		RepoURL:       "https://git.example.com/team/mr-norm",
-		DefaultBranch: "main",
-		AuthType:      contractModels.GitAuthNone,
-		SourceMode:    contractModels.GitSourceModePlatformShared,
+		Name:           "mr-norm-repo",
+		Provider:       contractModels.GitProviderGitLab,
+		RepoURL:        "https://git.example.com/team/mr-norm",
+		DefaultBranch:  "main",
+		AuthType:       contractModels.GitAuthNone,
+		PlatformRepoID: 8,
+		SourceMode:     contractModels.GitSourceModePlatformShared,
 	}
 	if err := db.Create(&repo).Error; err != nil {
 		t.Fatalf("create repo: %v", err)
@@ -754,7 +760,7 @@ func TestSyncScheduler_SingleflightAndLocalCacheOnly(t *testing.T) {
 		RepoURL:        platURL,
 		DefaultBranch:  "main",
 		AuthType:       contractModels.GitAuthNone,
-		PlatformRepoID: &platID,
+		PlatformRepoID: platID,
 		SourceMode:     contractModels.GitSourceModePlatformShared,
 		SyncStrategy:   contractModels.GitSyncStrategyLocalCacheOnly,
 		SubsystemSlug:  "cache-sub",

@@ -88,8 +88,8 @@ docs/
 │   ├── 23-dophi-mesh-uprobe-bypass-capture-adr.md                      # ADR-23：[已采纳] 基于内核 uprobe 的 dophi_mesh 数据面旁路观测工程实证与纯 Go 采集通道裁决 (v1.1.0)
 │   ├── 24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md # ADR-24：[已定稿待实施] 以「现网发现」为中心的活体契约工作流水线与物理/逻辑双态架构决策 (v1.1.0)
 │   ├── 25-noise-service-filtering-and-traffic-denoising-adr.md               # ADR-25：[已实施] 低关注/噪音服务全链路降噪治理（双源 SSOT + Agent 源头丢弃 + 事务分析折叠）
-│   ├── 26-shared-git-cache-and-subsystem-proto-tree-adr.md                 # ADR-26：[Implemented / Revised r4] 复用平台代码仓与共享宿主机 Git 缓存，构建「采集 → 清理整顿 → 解析 → 分仓编译」四段式跨仓 Proto 流水线与按子系统组织的只读聚合目录树
-│   └── 27-proto-export-directory-and-normalization-governance-adr.md       # ADR-27：[Proposed r1] 500+ 平台仓全量零勾选同步、方案 A 导出后目录治理与 Stage B 清理整顿架构决策
+│   ├── 26-shared-git-cache-and-subsystem-proto-tree-adr.md                 # ADR-26：[Implemented / r4] 复用平台代码仓与共享宿主机 Git 缓存，构建「采集 → 清理整顿 → 解析 → 分仓编译」四段式跨仓 Proto 流水线与按子系统组织的只读聚合目录树
+│   └── 27-proto-export-directory-and-normalization-governance-adr.md       # ADR-27：[Implemented] 500+ 平台仓全量零勾选同步、方案 A 导出后目录治理与 Stage B 清理整顿架构决策
 ├── 06-ops/          # 交付与验证：双模联调、物理隔离数据库测试与生产环境单二进制部署手册
 │   └── 01-verification-and-deployment-guide.md    # 联调验证、自动化回归测试与生产部署操作指南
 └── 07-references/   # 外部参考与上位契约基准：协议包规范、字节字典与领域标准文档

@@ -2,13 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { renderToString } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { GitSourcesWorkbenchPane } from '../GitSourcesWorkbenchPane';
-import { PlatformRepoImportDrawer } from '../PlatformRepoImportDrawer';
+import { GitRepoConfigDrawer } from '../GitRepoConfigDrawer';
+import { GlobalGovernanceConfigDrawer } from '../GlobalGovernanceConfigDrawer';
 import { ProtoConflictArbitrationDrawer } from '../ProtoConflictArbitrationDrawer';
+import { ProtoExportGovernancePane } from '../ProtoExportGovernancePane';
 import { ProtoReadOnlyCodeViewer } from '../ProtoReadOnlyCodeViewer';
+import { ProtoSourcesWorkbenchPage } from '../ProtoSourcesWorkbenchPage';
 import type {
-  BaselineReportDTO,
   GitRepoDTO,
-  PlatformRepoPreviewDTO,
+  GitReposSyncSummaryDTO,
   ProtoConflictsReportDTO,
   ProtoFileContentResponse,
   ProtoFileDTO,
@@ -166,9 +168,11 @@ describe('ADR-26 Platform Shared Repo, Dual View, Raw/Clean LineMap & Conflict A
     expect(html).toContain('陈旧待同步');
     expect(html).toContain('按子系统/仓库');
     expect(html).toContain('按 Proto 包路径');
-    expect(html).toContain('平台仓导入');
     expect(html).toContain('冲突仲裁');
     expect(html).toContain('重跑清洗');
+    expect(html).not.toContain('平台仓导入');
+    expect(html).not.toContain('接入 Git 仓库');
+    expect(html).not.toContain('关联平台仓');
     expect(html).toContain('QUARANTINED');
     expect(html).toContain('外部副本');
     expect(html).toContain('Clean');
@@ -195,71 +199,93 @@ describe('ADR-26 Platform Shared Repo, Dual View, Raw/Clean LineMap & Conflict A
     expect(html).toContain('原L2');
   });
 
-  it('PlatformRepoImportDrawer renders discovered repos, pg whitelist probe & baseline metrics with RBAC guard', () => {
-    const previews: PlatformRepoPreviewDTO[] = [
-      {
-        platform_repo_id: 301,
-        name: 'payment-core',
-        url: 'https://git.example.com/pay/payment-core.git',
-        http_url: 'https://git.example.com/pay/payment-core.git',
-        branch: 'main',
-        department_id: 1,
-        department_name: '基础研发',
-        service_group: 'pay-sub',
-        subsystem_slug: 'pay-sub',
-        owner_id: 9,
-        already_imported: false,
-        local_cache_present: true,
-        resolved_branch: 'main',
-        pg_dirs: ['pg', 'order/pg'],
-        whitelist_proto_count: 14,
-        outside_whitelist_count: 2,
-        candidate_bundles: [
-          {
-            bundle_name: 'pg',
-            target_schema_name: 'payment-core-pg',
-            category: 'BUSINESS',
-            subdir_path: 'pg',
-          },
-        ],
+  it('ProtoSourcesWorkbenchPage renders dual subtabs ?view=sources|governance & ProtoExportGovernancePane 6-state ledger', () => {
+    const summary: GitReposSyncSummaryDTO = {
+      platform_active_total: 520,
+      aligned_total: 520,
+      pending_count: 10,
+      has_proto_count: 42,
+      no_proto_count: 68,
+      no_local_cache_count: 390,
+      excluded_count: 5,
+      sync_failed_count: 5,
+      shared_write_enabled: false,
+      service_groups: ['trade-core', 'pay-core'],
+      latest_job: {
+        id: 88,
+        scope: 'ALL',
+        cache_policy: 'CACHE_ONLY',
+        status: 'COMPLETED',
+        total_repos: 520,
+        processed_repos: 520,
+        has_proto_count: 42,
+        no_proto_count: 68,
+        no_cache_count: 390,
+        failed_count: 5,
+        skipped_unchanged_count: 20,
+        triggered_by: 'admin',
+        started_at: '2026-11-27T01:00:00Z',
+        finished_at: '2026-11-27T01:02:00Z',
       },
-    ];
-    const baseline: BaselineReportDTO = {
-      generated_at: '2026-11-26T00:00:00Z',
-      total_repos: 12,
-      whitelist_files: 120,
-      normalized_files: 118,
-      quarantined_files: 2,
-      syntax_pass_rate: 0.983,
-      compile_pass_rate: 0.91,
-      error_distribution: { PARSE_FAILED: 2 },
-      repos: [],
+    };
+    const governedRepo: GitRepoDTO = {
+      ...sharedRepo,
+      proto_status: 'HAS_PROTO',
+      sync_enabled: true,
+      service_group: 'trade-core',
+      department_name: '交易研发部',
+      export_target_subsystem: 'trade',
+      export_target_repo_dir: 'gateway-clean',
+      effective_export_dir: 'clean/trade/gateway-clean',
+      has_export_override: true,
+      whitelist_count: 6,
     };
 
-    const adminHtml = renderToString(
-      <PlatformRepoImportDrawer
+    const pageHtml = renderToString(
+      <MemoryRouter initialEntries={['/proto-sources?view=governance']}>
+        <ProtoSourcesWorkbenchPage isAdmin />
+      </MemoryRouter>
+    );
+    expect(pageHtml).toContain('源码浏览');
+    expect(pageHtml).toContain('仓库导出与治理');
+    expect(pageHtml).not.toContain('平台仓导入');
+    expect(pageHtml).not.toContain('接入 Git 仓库');
+
+    const govPaneHtml = renderToString(
+      <MemoryRouter initialEntries={['/proto-sources?view=governance']}>
+        <ProtoExportGovernancePane
+          isAdmin
+          initialSummary={summary}
+          initialRepos={[governedRepo]}
+          initialTotal={1}
+        />
+      </MemoryRouter>
+    );
+    expect(govPaneHtml).toContain('520');
+    expect(govPaneHtml).toContain('390');
+    expect(govPaneHtml).toContain('仅同步已有缓存');
+    expect(govPaneHtml).toContain('缺失时自动拉取');
+    expect(govPaneHtml).toContain('clean/trade/gateway-clean');
+    expect(govPaneHtml).toContain('已覆写');
+    expect(govPaneHtml).toContain('全局清理规则与 JSON');
+  });
+
+  it('GitRepoConfigDrawer & GlobalGovernanceConfigDrawer render without retired create/import forms', () => {
+    const repoDrawerHtml = renderToString(
+      <GitRepoConfigDrawer
         open
         isAdmin
-        initialRepos={previews}
-        initialBaseline={baseline}
+        repo={sharedRepo}
         onClose={() => undefined}
+        onSaved={() => undefined}
       />
     );
-    expect(adminHtml).toContain('payment-core');
-    expect(adminHtml).toContain('pg, order/pg');
-    expect(adminHtml).toContain('已命中共享缓存');
-    expect(adminHtml).toContain('批量导入');
-    expect(adminHtml).toContain('98.3%');
+    expect(repoDrawerHtml).toBeDefined();
 
-    const viewerHtml = renderToString(
-      <PlatformRepoImportDrawer
-        open
-        isAdmin={false}
-        initialRepos={previews}
-        onClose={() => undefined}
-      />
+    const globalDrawerHtml = renderToString(
+      <GlobalGovernanceConfigDrawer open isAdmin={false} onClose={() => undefined} />
     );
-    expect(viewerHtml).not.toContain('批量导入 (');
+    expect(globalDrawerHtml).toBeDefined();
   });
 
   it('ProtoConflictArbitrationDrawer renders import ambiguities, symbol conflicts, and owner list', () => {

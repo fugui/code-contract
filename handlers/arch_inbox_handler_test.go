@@ -267,6 +267,7 @@ func TestSC22_DiscoveryInbox_1ProcNModules_DepSynthesis_Backfill_AndMRImpact(t *
 		Name: "sc22-repo", Provider: models.GitProviderGitLab,
 		RepoURL: mockGit.URL + "/sc22/repo.git", APIBaseURL: mockGit.URL + "/api/v4",
 		DefaultBranch: "main", AuthType: models.GitAuthToken, SyncMode: models.GitSyncWebhook,
+		PlatformRepoID: 1, SourceMode: models.GitSourceModePlatformShared,
 	}
 	_ = repo.SetCredentials("tok")
 	_ = db.Create(&repo).Error

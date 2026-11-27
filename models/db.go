@@ -32,6 +32,8 @@ func BusinessTableNames() []string {
 		VocabularyTerm{}.TableName(),
 		CheckRule{}.TableName(),
 		ProtoDocSymbol{}.TableName(),
+		ProtoGovernanceConfig{}.TableName(),
+		ProtoSyncJob{}.TableName(),
 		ProtoImportOwner{}.TableName(),
 		ProtoFileVersion{}.TableName(),
 		ProtoFile{}.TableName(),
@@ -74,7 +76,12 @@ func InitDB() error {
 func SetupWithDB(db *gorm.DB) error {
 	DB = db
 
-	// 1. 自动迁移标准实体表（核心 contract_* 表 + 平台公共审计/用户表，ADR-14 ~ ADR-20）
+	// 0. ADR-26 (r4): AutoMigrate 收口 platform_repo_id NOT NULL 前先归并存量手工仓并归档孤儿记录
+	if err := PreMigrateADR26R4Orphans(DB); err != nil {
+		return fmt.Errorf("预迁移存量 Git 仓库失败: %w", err)
+	}
+
+	// 1. 自动迁移标准实体表（核心 contract_* 表 + 平台公共审计/用户表，ADR-14 ~ ADR-27）
 	if err := DB.AutoMigrate(
 		&Department{},
 		&User{},
@@ -96,6 +103,8 @@ func SetupWithDB(db *gorm.DB) error {
 		&ProtoFile{},
 		&ProtoFileVersion{},
 		&ProtoImportOwner{},
+		&ProtoSyncJob{},
+		&ProtoGovernanceConfig{},
 		&ProtoSchema{},
 		&ProtoOperation{},
 		&RecordingSession{},

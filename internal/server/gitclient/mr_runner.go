@@ -301,8 +301,16 @@ func (r *MRGateRunner) ExecuteCheckRun(ctx context.Context, runID uint64, patchF
 		}
 	}
 
-	// Step 1.5 (ADR-26): 应用同源 pg/ 白名单与 Normalizer 清洗 + 语法门禁（失败标记 normalize_failed=true，严禁 Override）
-	normReport, normErr := NormalizeAndValidateMRTree(ctx, &repo, &bundle, virtualTree, changedFiles, NewPassthroughNormalizer(), nil)
+	// Step 1.5 (ADR-26 / ADR-27): 加载激活治理配置并使用 RuleBasedNormalizer 执行清洗 + 语法门禁（失败标记 normalize_failed=true，严禁 Override）
+	var mrNorm Normalizer = NewRuleBasedNormalizer(nil)
+	var mrAuxJSON []byte
+	if snap, gErr := LoadActiveGovernanceConfig(ctx, r.db); gErr == nil && snap != nil {
+		mrNorm = NewRuleBasedNormalizer(&snap.Doc)
+		mrAuxJSON = BuildEffectiveRepoAuxJSON(repo, &snap.Doc)
+	} else {
+		mrAuxJSON = BuildEffectiveRepoAuxJSON(repo, nil)
+	}
+	normReport, normErr := NormalizeAndValidateMRTree(ctx, &repo, &bundle, virtualTree, changedFiles, mrNorm, mrAuxJSON)
 	if normErr != nil {
 		return r.failRunWithNormalizeError(ctx, &run, &repo, &bundle, startedAt, changedFiles, "NORMALIZE_FAILED: "+normErr.Error())
 	}

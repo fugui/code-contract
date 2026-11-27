@@ -1622,4 +1622,22 @@ func (MigrationBackup) TableName() string { return config.TablePrefix + "mig_bac
    - 字段：`id` (`bigserial PK`)、`logical_path` (`varchar(512) NOT NULL UNIQUE`)、`owner_git_repo_id` (`bigint NOT NULL`)、`owner_bundle_id` (`bigint NOT NULL`)、`source` (`varchar(24) NOT NULL CHECK IN ('MANUAL','BASE_LIB','AUTO')`)、`updated_by` (`varchar(128)`)、`created_at`、`updated_at`。
    - 写操作全面接入 `code-common/backend/audit` 记录字段级 Diff 审计。
 
+---
+
+## 8. ADR-26 (r4) & ADR-27 唯一真值源收口、批处理同步与治理配置演进 (M37~M39)
+
+1. **`contract_git_repos` r4 收口与导出治理字段**：
+   - `platform_repo_id` 收口为 `bigint NOT NULL` 唯一索引 `uk_contract_git_repo_platform`（`CHECK (platform_repo_id > 0)`）；`source_mode` 收口为 `CHECK (source_mode = 'PLATFORM_SHARED')`；`sync_strategy` 默认 `'LOCAL_CACHE_ONLY'`；
+   - 存量迁移：按 `gitsync.NormalizeGitURL` 匹配公共 `repositories` 自动补全 `platform_repo_id` 并清空历史凭据；无法匹配的孤儿手工仓备份摘要至 `contract_mig_backups` (`kind='ADR26_R4_ORPHAN_GIT_REPO'`) 后归档删除（置空历史 `contract_proto_schemas` 外键）；
+   - 新增：`proto_status`（`varchar(32) NOT NULL DEFAULT 'PENDING' CHECK IN ('PENDING','HAS_PROTO','NO_PROTO','NO_LOCAL_CACHE','EXCLUDED','SYNC_FAILED')`）、`sync_enabled`（`boolean NOT NULL DEFAULT true`）；
+   - 新增方案 A 导出与清理治理字段：`export_target_subsystem`（`varchar(128)`）、`export_target_repo_dir`（`varchar(128)`）、`strip_prefixes_json`（`jsonb`）、`path_rewrites_json`（`jsonb`）、`repo_normalize_config_json`（`jsonb`）。
+
+2. **新增表 #38：`contract_proto_sync_jobs`（500+ 仓持久化异步同步任务表）**：
+   - 字段：`id` (`bigserial PK`)、`scope`（`varchar(24) NOT NULL CHECK IN ('ALL','DEPARTMENT','SERVICE_GROUP','FAILED_ONLY','SELECTED')`）、`cache_policy`（`varchar(24) NOT NULL CHECK IN ('CACHE_ONLY','FETCH_MISSING')`）、`filter_json` (`jsonb`)、`status`（`varchar(24) NOT NULL CHECK IN ('RUNNING','COMPLETED','PARTIAL_FAILED','FAILED')`）；
+   - 状态统计字段：`total_repos`、`processed_repos`、`has_proto_count`、`no_proto_count`、`no_cache_count`、`failed_count`、`skipped_unchanged_count`、`error_summary_json` (`jsonb`)、`triggered_by` (`varchar(128)`)、`started_at`、`finished_at`、`created_at`、`updated_at`。
+
+3. **新增表 #39：`contract_proto_governance_configs`（辅助 `.json` 治理配置版本表）**：
+   - 字段：`id` (`bigserial PK`)、`revision` (`int NOT NULL`)、`config_sha256` (`varchar(64) NOT NULL`)、`config_json` (`jsonb NOT NULL`)、`is_active` (`boolean NOT NULL DEFAULT true`)、`updated_by` (`varchar(128)`)、`created_at`、`updated_at`。
+   - 写操作接入 `code-common/backend/audit` 记录字段级 Diff 审计。
+
 

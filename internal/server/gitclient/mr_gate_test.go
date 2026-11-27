@@ -30,12 +30,14 @@ func TestMRVirtualTree_BaselineMerge_DeleteAndRename(t *testing.T) {
 	}
 
 	repo := models.GitRepo{
-		Name:          "vt-repo",
-		Provider:      models.GitProviderGitLab,
-		RepoURL:       "http://127.0.0.1:8080/org/vt-repo.git",
-		DefaultBranch: "main",
-		AuthType:      models.GitAuthNone,
-		SyncMode:      models.GitSyncWebhook,
+		Name:           "vt-repo",
+		Provider:       models.GitProviderGitLab,
+		RepoURL:        "http://127.0.0.1:8080/org/vt-repo.git",
+		DefaultBranch:  "main",
+		AuthType:       models.GitAuthNone,
+		SyncMode:       models.GitSyncWebhook,
+		PlatformRepoID: 1,
+		SourceMode:     models.GitSourceModePlatformShared,
 	}
 	if err := db.Create(&repo).Error; err != nil {
 		t.Fatalf("创建 GitRepo 失败: %v", err)
@@ -223,14 +225,16 @@ func TestMRRunner_FourInOneGate_BotCommentInPlaceUpsert_AndMergeAutoCompile(t *t
 	defer mockGitLab.Close()
 
 	repo := models.GitRepo{
-		Name:          "payment-monorepo",
-		Provider:      models.GitProviderGitLab,
-		RepoURL:       mockGitLab.URL + "/fin/payment-monorepo.git",
-		APIBaseURL:    mockGitLab.URL + "/api/v4",
-		DefaultBranch: "main",
-		AuthType:      models.GitAuthToken,
-		SyncMode:      models.GitSyncWebhook,
-		AutoCompile:   true,
+		Name:           "payment-monorepo",
+		Provider:       models.GitProviderGitLab,
+		RepoURL:        mockGitLab.URL + "/fin/payment-monorepo.git",
+		APIBaseURL:     mockGitLab.URL + "/api/v4",
+		DefaultBranch:  "main",
+		AuthType:       models.GitAuthToken,
+		SyncMode:       models.GitSyncWebhook,
+		AutoCompile:    true,
+		PlatformRepoID: 2,
+		SourceMode:     models.GitSourceModePlatformShared,
 	}
 	if err := repo.SetCredentials("glpat-test-token"); err != nil {
 		t.Fatalf("SetCredentials 失败: %v", err)

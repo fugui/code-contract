@@ -2,14 +2,17 @@ package models
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
+	"code-common/backend/gitsync"
 	"code-contract/config"
 	"code-contract/internal/server/security"
 
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const (
@@ -35,12 +38,32 @@ const (
 	MRAutoPublishDraftOnly    = "DRAFT_ONLY"
 	MRAutoPublishAutoActivate = "AUTO_ACTIVATE"
 
-	// ADR-26: 平台代码仓共享模式、同步策略、流水线状态与导入归属来源
-	GitSourceModePlatformShared     = "PLATFORM_SHARED"
-	GitSourceModeExternalStandalone = "EXTERNAL_STANDALONE"
+	// ADR-26 (r4) & ADR-27: 平台代码仓唯一共享模式、同步策略、6 态分层、流水线状态与导入归属来源
+	GitSourceModePlatformShared = "PLATFORM_SHARED"
 
 	GitSyncStrategyFetchAndRead   = "FETCH_AND_READ"
 	GitSyncStrategyLocalCacheOnly = "LOCAL_CACHE_ONLY"
+
+	GitRepoProtoStatusPending      = "PENDING"
+	GitRepoProtoStatusHasProto     = "HAS_PROTO"
+	GitRepoProtoStatusNoProto      = "NO_PROTO"
+	GitRepoProtoStatusNoLocalCache = "NO_LOCAL_CACHE"
+	GitRepoProtoStatusExcluded     = "EXCLUDED"
+	GitRepoProtoStatusSyncFailed   = "SYNC_FAILED"
+
+	SyncJobScopeAll          = "ALL"
+	SyncJobScopeDepartment   = "DEPARTMENT"
+	SyncJobScopeServiceGroup = "SERVICE_GROUP"
+	SyncJobScopeFailedOnly   = "FAILED_ONLY"
+	SyncJobScopeSelected     = "SELECTED"
+
+	SyncCachePolicyCacheOnly    = "CACHE_ONLY"
+	SyncCachePolicyFetchMissing = "FETCH_MISSING"
+
+	SyncJobStatusRunning       = "RUNNING"
+	SyncJobStatusCompleted     = "COMPLETED"
+	SyncJobStatusPartialFailed = "PARTIAL_FAILED"
+	SyncJobStatusFailed        = "FAILED"
 
 	ProtoPipelineCollected   = "COLLECTED"
 	ProtoPipelineNormalized  = "NORMALIZED"
@@ -51,41 +74,48 @@ const (
 	ImportOwnerSourceAuto    = "AUTO"
 )
 
-// GitRepo 实体 #20：Git 契约仓库连接与鉴权配置表（SSOT 控制面元数据）
+// GitRepo 实体 #20：公共 repositories 的 1:1 契约治理扩展表（code-bench 为唯一真值源）
 type GitRepo struct {
-	ID                  uint64         `gorm:"primaryKey;autoIncrement" json:"id"`
-	PlatformRepoID      *uint64        `gorm:"column:platform_repo_id" json:"platform_repo_id,omitempty"` // 关联公共 repositories.id（可空唯一部分索引）
-	SourceMode          string         `gorm:"column:source_mode;size:32;not null;default:'EXTERNAL_STANDALONE'" json:"source_mode"`
-	SyncStrategy        string         `gorm:"column:sync_strategy;size:32;not null;default:'FETCH_AND_READ'" json:"sync_strategy"`
-	SubsystemSlug       string         `gorm:"column:subsystem_slug;size:128;not null;default:''" json:"subsystem_slug"`
-	ResolvedBranch      string         `gorm:"column:resolved_branch;size:128;not null;default:''" json:"resolved_branch"`
-	CollectGlobsJSON    datatypes.JSON `gorm:"column:collect_globs_json;type:jsonb" json:"collect_globs_json,omitempty"`
-	ExcludeGlobsJSON    datatypes.JSON `gorm:"column:exclude_globs_json;type:jsonb" json:"exclude_globs_json,omitempty"`
-	LastFetchedAt       *time.Time     `gorm:"column:last_fetched_at" json:"last_fetched_at,omitempty"`
-	RefCommitTime       *time.Time     `gorm:"column:ref_commit_time" json:"ref_commit_time,omitempty"`
-	LastCollectedCommit string         `gorm:"column:last_collected_commit;size:64;not null;default:''" json:"last_collected_commit"`
-	Name                string         `gorm:"size:128;not null;uniqueIndex:uk_contract_git_repo_name" json:"name"`
-	Provider            string         `gorm:"size:32;not null;default:'GITLAB'" json:"provider"` // GITLAB | GITHUB | GITEA | GENERIC
-	RepoURL             string         `gorm:"size:512;not null" json:"repo_url"`
-	APIBaseURL          string         `gorm:"size:512;not null;default:''" json:"api_base_url"`
-	DefaultBranch       string         `gorm:"size:128;not null;default:'main'" json:"default_branch"`
-	AuthType            string         `gorm:"size:32;not null;default:'TOKEN'" json:"auth_type"` // NONE | TOKEN | SSH_KEY
-	CredentialsEnc      string         `gorm:"type:text;not null;default:''" json:"-"`            // AES-256-GCM 密文，严禁序列化泄漏
-	CredentialHint      string         `gorm:"size:64;not null;default:''" json:"credential_hint"`
-	WebhookSecretEnc    string         `gorm:"type:text;not null;default:''" json:"-"`             // AES-256-GCM 密文，严禁序列化泄漏
-	SyncMode            string         `gorm:"size:32;not null;default:'MANUAL'" json:"sync_mode"` // WEBHOOK | POLL | MANUAL
-	PollIntervalSec     int            `gorm:"not null;default:300" json:"poll_interval_sec"`
-	AutoCompile         bool           `gorm:"not null;default:true" json:"auto_compile"`
-	AutoActivate        bool           `gorm:"not null;default:false" json:"auto_activate"`
-	LintOnSync          bool           `gorm:"not null;default:true" json:"lint_on_sync"`
-	LastSyncAt          *time.Time     `json:"last_sync_at,omitempty"`
-	LastSyncCommit      string         `gorm:"size:64;not null;default:''" json:"last_sync_commit"`
-	LastSyncStatus      string         `gorm:"size:32;not null;default:'IDLE'" json:"last_sync_status"` // IDLE | RUNNING | SUCCESS | FAILED
-	LastSyncError       string         `gorm:"type:text;not null;default:''" json:"last_sync_error"`
-	Description         string         `gorm:"type:text;not null;default:''" json:"description"`
-	CreatedBy           uint           `gorm:"not null;default:0" json:"created_by"`
-	CreatedAt           time.Time      `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt           time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
+	ID                      uint64         `gorm:"primaryKey;autoIncrement" json:"id"`
+	PlatformRepoID          uint64         `gorm:"column:platform_repo_id;not null" json:"platform_repo_id"` // 关联公共 repositories.id（NOT NULL 唯一索引）
+	SourceMode              string         `gorm:"column:source_mode;size:32;not null;default:'PLATFORM_SHARED'" json:"source_mode"`
+	SyncStrategy            string         `gorm:"column:sync_strategy;size:32;not null;default:'LOCAL_CACHE_ONLY'" json:"sync_strategy"`
+	ProtoStatus             string         `gorm:"column:proto_status;size:32;not null;default:'PENDING';index:idx_contract_git_repo_proto_status" json:"proto_status"`
+	SyncEnabled             bool           `gorm:"column:sync_enabled;not null;default:true;index:idx_contract_git_repo_sync_enabled" json:"sync_enabled"`
+	SubsystemSlug           string         `gorm:"column:subsystem_slug;size:128;not null;default:''" json:"subsystem_slug"`
+	ExportTargetSubsystem   string         `gorm:"column:export_target_subsystem;size:128;not null;default:''" json:"export_target_subsystem"`
+	ExportTargetRepoDir     string         `gorm:"column:export_target_repo_dir;size:128;not null;default:''" json:"export_target_repo_dir"`
+	StripPrefixesJSON       datatypes.JSON `gorm:"column:strip_prefixes_json;type:jsonb" json:"strip_prefixes_json,omitempty"`
+	PathRewritesJSON        datatypes.JSON `gorm:"column:path_rewrites_json;type:jsonb" json:"path_rewrites_json,omitempty"`
+	RepoNormalizeConfigJSON datatypes.JSON `gorm:"column:repo_normalize_config_json;type:jsonb" json:"repo_normalize_config_json,omitempty"`
+	ResolvedBranch          string         `gorm:"column:resolved_branch;size:128;not null;default:''" json:"resolved_branch"`
+	CollectGlobsJSON        datatypes.JSON `gorm:"column:collect_globs_json;type:jsonb" json:"collect_globs_json,omitempty"`
+	ExcludeGlobsJSON        datatypes.JSON `gorm:"column:exclude_globs_json;type:jsonb" json:"exclude_globs_json,omitempty"`
+	LastFetchedAt           *time.Time     `gorm:"column:last_fetched_at" json:"last_fetched_at,omitempty"`
+	RefCommitTime           *time.Time     `gorm:"column:ref_commit_time" json:"ref_commit_time,omitempty"`
+	LastCollectedCommit     string         `gorm:"column:last_collected_commit;size:64;not null;default:''" json:"last_collected_commit"`
+	Name                    string         `gorm:"size:128;not null;uniqueIndex:uk_contract_git_repo_name" json:"name"`
+	Provider                string         `gorm:"size:32;not null;default:'GITLAB'" json:"provider"` // GITLAB | GITHUB | GITEA | GENERIC
+	RepoURL                 string         `gorm:"size:512;not null" json:"repo_url"`
+	APIBaseURL              string         `gorm:"size:512;not null;default:''" json:"api_base_url"`
+	DefaultBranch           string         `gorm:"size:128;not null;default:'main'" json:"default_branch"`
+	AuthType                string         `gorm:"size:32;not null;default:'NONE'" json:"auth_type"` // NONE | TOKEN | SSH_KEY
+	CredentialsEnc          string         `gorm:"type:text;not null;default:''" json:"-"`           // 兼容保留列，禁止新写入或导出
+	CredentialHint          string         `gorm:"size:64;not null;default:''" json:"credential_hint"`
+	WebhookSecretEnc        string         `gorm:"type:text;not null;default:''" json:"-"`           // AES-256-GCM 密文，严禁序列化泄漏
+	SyncMode                string         `gorm:"size:32;not null;default:'POLL'" json:"sync_mode"` // WEBHOOK | POLL | MANUAL
+	PollIntervalSec         int            `gorm:"not null;default:1800" json:"poll_interval_sec"`
+	AutoCompile             bool           `gorm:"not null;default:true" json:"auto_compile"`
+	AutoActivate            bool           `gorm:"not null;default:false" json:"auto_activate"`
+	LintOnSync              bool           `gorm:"not null;default:true" json:"lint_on_sync"`
+	LastSyncAt              *time.Time     `json:"last_sync_at,omitempty"`
+	LastSyncCommit          string         `gorm:"size:64;not null;default:''" json:"last_sync_commit"`
+	LastSyncStatus          string         `gorm:"size:32;not null;default:'IDLE'" json:"last_sync_status"` // IDLE | RUNNING | SUCCESS | FAILED
+	LastSyncError           string         `gorm:"type:text;not null;default:''" json:"last_sync_error"`
+	Description             string         `gorm:"type:text;not null;default:''" json:"description"`
+	CreatedBy               uint           `gorm:"not null;default:0" json:"created_by"`
+	CreatedAt               time.Time      `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt               time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
 }
 
 func (GitRepo) TableName() string {
@@ -94,40 +124,47 @@ func (GitRepo) TableName() string {
 
 // GitRepoRedactedDTO 脱敏后的 GitRepo 接口输出模型（绝不返回 CredentialsEnc / WebhookSecretEnc / 明文）
 type GitRepoRedactedDTO struct {
-	ID                  uint64           `json:"id"`
-	PlatformRepoID      *uint64          `json:"platform_repo_id,omitempty"`
-	SourceMode          string           `json:"source_mode"`
-	SyncStrategy        string           `json:"sync_strategy"`
-	SubsystemSlug       string           `json:"subsystem_slug"`
-	ResolvedBranch      string           `json:"resolved_branch"`
-	CollectGlobs        []string         `json:"collect_globs,omitempty"`
-	ExcludeGlobs        []string         `json:"exclude_globs,omitempty"`
-	LastFetchedAt       *time.Time       `json:"last_fetched_at,omitempty"`
-	RefCommitTime       *time.Time       `json:"ref_commit_time,omitempty"`
-	LastCollectedCommit string           `json:"last_collected_commit"`
-	Name                string           `json:"name"`
-	Provider            string           `json:"provider"`
-	RepoURL             string           `json:"repo_url"`
-	APIBaseURL          string           `json:"api_base_url"`
-	DefaultBranch       string           `json:"default_branch"`
-	AuthType            string           `json:"auth_type"`
-	HasCredentials      bool             `json:"has_credentials"`
-	CredentialHint      string           `json:"credential_hint"`
-	HasWebhookSecret    bool             `json:"has_webhook_secret"`
-	SyncMode            string           `json:"sync_mode"`
-	PollIntervalSec     int              `json:"poll_interval_sec"`
-	AutoCompile         bool             `json:"auto_compile"`
-	AutoActivate        bool             `json:"auto_activate"`
-	LintOnSync          bool             `json:"lint_on_sync"`
-	LastSyncAt          *time.Time       `json:"last_sync_at,omitempty"`
-	LastSyncCommit      string           `json:"last_sync_commit"`
-	LastSyncStatus      string           `json:"last_sync_status"`
-	LastSyncError       string           `json:"last_sync_error"`
-	Description         string           `json:"description"`
-	CreatedBy           uint             `json:"created_by"`
-	CreatedAt           time.Time        `json:"created_at"`
-	UpdatedAt           time.Time        `json:"updated_at"`
-	Bundles             []GitProtoBundle `json:"bundles,omitempty"`
+	ID                    uint64            `json:"id"`
+	PlatformRepoID        uint64            `json:"platform_repo_id"`
+	SourceMode            string            `json:"source_mode"`
+	SyncStrategy          string            `json:"sync_strategy"`
+	ProtoStatus           string            `json:"proto_status"`
+	SyncEnabled           bool              `json:"sync_enabled"`
+	SubsystemSlug         string            `json:"subsystem_slug"`
+	ExportTargetSubsystem string            `json:"export_target_subsystem"`
+	ExportTargetRepoDir   string            `json:"export_target_repo_dir"`
+	StripPrefixes         []string          `json:"strip_prefixes,omitempty"`
+	PathRewrites          map[string]string `json:"path_rewrites,omitempty"`
+	RepoNormalizeConfig   datatypes.JSON    `json:"repo_normalize_config,omitempty"`
+	ResolvedBranch        string            `json:"resolved_branch"`
+	CollectGlobs          []string          `json:"collect_globs,omitempty"`
+	ExcludeGlobs          []string          `json:"exclude_globs,omitempty"`
+	LastFetchedAt         *time.Time        `json:"last_fetched_at,omitempty"`
+	RefCommitTime         *time.Time        `json:"ref_commit_time,omitempty"`
+	LastCollectedCommit   string            `json:"last_collected_commit"`
+	Name                  string            `json:"name"`
+	Provider              string            `json:"provider"`
+	RepoURL               string            `json:"repo_url"`
+	APIBaseURL            string            `json:"api_base_url"`
+	DefaultBranch         string            `json:"default_branch"`
+	AuthType              string            `json:"auth_type"`
+	HasCredentials        bool              `json:"has_credentials"`
+	CredentialHint        string            `json:"credential_hint"`
+	HasWebhookSecret      bool              `json:"has_webhook_secret"`
+	SyncMode              string            `json:"sync_mode"`
+	PollIntervalSec       int               `json:"poll_interval_sec"`
+	AutoCompile           bool              `json:"auto_compile"`
+	AutoActivate          bool              `json:"auto_activate"`
+	LintOnSync            bool              `json:"lint_on_sync"`
+	LastSyncAt            *time.Time        `json:"last_sync_at,omitempty"`
+	LastSyncCommit        string            `json:"last_sync_commit"`
+	LastSyncStatus        string            `json:"last_sync_status"`
+	LastSyncError         string            `json:"last_sync_error"`
+	Description           string            `json:"description"`
+	CreatedBy             uint              `json:"created_by"`
+	CreatedAt             time.Time         `json:"created_at"`
+	UpdatedAt             time.Time         `json:"updated_at"`
+	Bundles               []GitProtoBundle  `json:"bundles,omitempty"`
 }
 
 // MaskSecretHint 生成不可逆的脱敏凭证尾部摘要提示（永不暴露核心秘密片段）
@@ -217,47 +254,58 @@ func (g *GitRepo) ToRedactedDTO(bundles ...GitProtoBundle) GitRepoRedactedDTO {
 	}
 	sourceMode := g.SourceMode
 	if sourceMode == "" {
-		sourceMode = GitSourceModeExternalStandalone
+		sourceMode = GitSourceModePlatformShared
 	}
 	syncStrategy := g.SyncStrategy
 	if syncStrategy == "" {
-		syncStrategy = GitSyncStrategyFetchAndRead
+		syncStrategy = GitSyncStrategyLocalCacheOnly
+	}
+	protoStatus := g.ProtoStatus
+	if protoStatus == "" {
+		protoStatus = GitRepoProtoStatusPending
 	}
 	return GitRepoRedactedDTO{
-		ID:                  g.ID,
-		PlatformRepoID:      g.PlatformRepoID,
-		SourceMode:          sourceMode,
-		SyncStrategy:        syncStrategy,
-		SubsystemSlug:       g.SubsystemSlug,
-		ResolvedBranch:      g.ResolvedBranch,
-		CollectGlobs:        g.CollectGlobs(),
-		ExcludeGlobs:        g.ExcludeGlobs(),
-		LastFetchedAt:       g.LastFetchedAt,
-		RefCommitTime:       g.RefCommitTime,
-		LastCollectedCommit: g.LastCollectedCommit,
-		Name:                g.Name,
-		Provider:            g.Provider,
-		RepoURL:             g.RepoURL,
-		APIBaseURL:          g.APIBaseURL,
-		DefaultBranch:       g.DefaultBranch,
-		AuthType:            g.AuthType,
-		HasCredentials:      hasCreds,
-		CredentialHint:      hint,
-		HasWebhookSecret:    strings.TrimSpace(g.WebhookSecretEnc) != "",
-		SyncMode:            g.SyncMode,
-		PollIntervalSec:     g.PollIntervalSec,
-		AutoCompile:         g.AutoCompile,
-		AutoActivate:        g.AutoActivate,
-		LintOnSync:          g.LintOnSync,
-		LastSyncAt:          g.LastSyncAt,
-		LastSyncCommit:      g.LastSyncCommit,
-		LastSyncStatus:      g.LastSyncStatus,
-		LastSyncError:       g.LastSyncError,
-		Description:         g.Description,
-		CreatedBy:           g.CreatedBy,
-		CreatedAt:           g.CreatedAt,
-		UpdatedAt:           g.UpdatedAt,
-		Bundles:             bundles,
+		ID:                    g.ID,
+		PlatformRepoID:        g.PlatformRepoID,
+		SourceMode:            sourceMode,
+		SyncStrategy:          syncStrategy,
+		ProtoStatus:           protoStatus,
+		SyncEnabled:           g.SyncEnabled,
+		SubsystemSlug:         g.SubsystemSlug,
+		ExportTargetSubsystem: g.ExportTargetSubsystem,
+		ExportTargetRepoDir:   g.ExportTargetRepoDir,
+		StripPrefixes:         g.StripPrefixes(),
+		PathRewrites:          g.PathRewrites(),
+		RepoNormalizeConfig:   g.RepoNormalizeConfigJSON,
+		ResolvedBranch:        g.ResolvedBranch,
+		CollectGlobs:          g.CollectGlobs(),
+		ExcludeGlobs:          g.ExcludeGlobs(),
+		LastFetchedAt:         g.LastFetchedAt,
+		RefCommitTime:         g.RefCommitTime,
+		LastCollectedCommit:   g.LastCollectedCommit,
+		Name:                  g.Name,
+		Provider:              g.Provider,
+		RepoURL:               g.RepoURL,
+		APIBaseURL:            g.APIBaseURL,
+		DefaultBranch:         g.DefaultBranch,
+		AuthType:              g.AuthType,
+		HasCredentials:        hasCreds,
+		CredentialHint:        hint,
+		HasWebhookSecret:      strings.TrimSpace(g.WebhookSecretEnc) != "",
+		SyncMode:              g.SyncMode,
+		PollIntervalSec:       g.PollIntervalSec,
+		AutoCompile:           g.AutoCompile,
+		AutoActivate:          g.AutoActivate,
+		LintOnSync:            g.LintOnSync,
+		LastSyncAt:            g.LastSyncAt,
+		LastSyncCommit:        g.LastSyncCommit,
+		LastSyncStatus:        g.LastSyncStatus,
+		LastSyncError:         g.LastSyncError,
+		Description:           g.Description,
+		CreatedBy:             g.CreatedBy,
+		CreatedAt:             g.CreatedAt,
+		UpdatedAt:             g.UpdatedAt,
+		Bundles:               bundles,
 	}
 }
 
@@ -269,6 +317,23 @@ func (g GitRepo) CollectGlobs() []string {
 // ExcludeGlobs 返回仓库级排除规则覆盖配置（未配置则返回 nil，表示使用全局默认）
 func (g GitRepo) ExcludeGlobs() []string {
 	return decodeStringSliceJSON(g.ExcludeGlobsJSON, nil)
+}
+
+// StripPrefixes 返回仓库级导出相对路径剥离前缀列表（ADR-27 §2.3）
+func (g GitRepo) StripPrefixes() []string {
+	return decodeStringSliceJSON(g.StripPrefixesJSON, nil)
+}
+
+// PathRewrites 返回仓库级精确路径前缀重映射表（ADR-27 §2.3）
+func (g GitRepo) PathRewrites() map[string]string {
+	if len(g.PathRewritesJSON) == 0 || string(g.PathRewritesJSON) == "null" {
+		return nil
+	}
+	var out map[string]string
+	if err := json.Unmarshal(g.PathRewritesJSON, &out); err != nil || len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // GitProtoBundle 实体 #21：Monorepo 多独立 Proto 子目录 / 编译打包单元 (1:N 归属 GitRepo)
@@ -402,20 +467,228 @@ func (ProtoImportOwner) TableName() string {
 	return config.TablePrefix + "proto_import_owners"
 }
 
-// ensureADR26SchemaAndBackfill 幂等创建 ADR-26 部分唯一索引、CHECK 约束，并执行存量数据安全回填。
+// ProtoSyncJob 实体 #38：500+ 平台仓持久化异步同步批处理任务表 (ADR-27 §2.2)
+type ProtoSyncJob struct {
+	ID                    uint64         `gorm:"primaryKey;autoIncrement" json:"id"`
+	Scope                 string         `gorm:"size:24;not null;default:'ALL'" json:"scope"`               // ALL | DEPARTMENT | SERVICE_GROUP | FAILED_ONLY | SELECTED
+	CachePolicy           string         `gorm:"size:24;not null;default:'CACHE_ONLY'" json:"cache_policy"` // CACHE_ONLY | FETCH_MISSING
+	FilterJSON            datatypes.JSON `gorm:"column:filter_json;type:jsonb;not null;default:'{}'" json:"filter_json"`
+	Status                string         `gorm:"size:24;not null;default:'RUNNING';index:idx_contract_psync_job_status" json:"status"` // RUNNING | COMPLETED | PARTIAL_FAILED | FAILED
+	TotalRepos            int            `gorm:"not null;default:0" json:"total_repos"`
+	ProcessedRepos        int            `gorm:"not null;default:0" json:"processed_repos"`
+	HasProtoCount         int            `gorm:"not null;default:0" json:"has_proto_count"`
+	NoProtoCount          int            `gorm:"not null;default:0" json:"no_proto_count"`
+	NoCacheCount          int            `gorm:"not null;default:0" json:"no_cache_count"`
+	FailedCount           int            `gorm:"not null;default:0" json:"failed_count"`
+	SkippedUnchangedCount int            `gorm:"not null;default:0" json:"skipped_unchanged_count"`
+	ErrorSummaryJSON      datatypes.JSON `gorm:"column:error_summary_json;type:jsonb;not null;default:'[]'" json:"error_summary_json"`
+	TriggeredBy           string         `gorm:"size:128;not null;default:''" json:"triggered_by"`
+	StartedAt             time.Time      `gorm:"not null" json:"started_at"`
+	FinishedAt            *time.Time     `json:"finished_at,omitempty"`
+	CreatedAt             time.Time      `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt             time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
+}
+
+func (ProtoSyncJob) TableName() string {
+	return config.TablePrefix + "proto_sync_jobs"
+}
+
+// ProtoGovernanceConfig 实体 #39：辅助 .json 治理配置版本快照表 (ADR-27 §2.4)
+type ProtoGovernanceConfig struct {
+	ID           uint64         `gorm:"primaryKey;autoIncrement" json:"id"`
+	Revision     int            `gorm:"not null;default:1;index:idx_contract_pgov_rev" json:"revision"`
+	ConfigSHA256 string         `gorm:"column:config_sha256;size:64;not null" json:"config_sha256"`
+	ConfigJSON   datatypes.JSON `gorm:"column:config_json;type:jsonb;not null;default:'{}'" json:"config_json"`
+	IsActive     bool           `gorm:"not null;default:true;index:idx_contract_pgov_active" json:"is_active"`
+	UpdatedBy    string         `gorm:"size:128;not null;default:''" json:"updated_by"`
+	CreatedAt    time.Time      `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt    time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
+}
+
+func (ProtoGovernanceConfig) TableName() string {
+	return config.TablePrefix + "proto_governance_configs"
+}
+
+// PreMigrateADR26R4Orphans 在 AutoMigrate 收口 platform_repo_id NOT NULL 前归并存量手工仓与清理孤儿记录。
+func PreMigrateADR26R4Orphans(db *gorm.DB) error {
+	if db == nil || !db.Migrator().HasTable(&GitRepo{}) {
+		return nil
+	}
+	// 先放宽旧版 source_mode CHECK 约束，避免升级写入 PLATFORM_SHARED 冲突
+	_ = db.Exec(`ALTER TABLE contract_git_repos DROP CONSTRAINT IF EXISTS chk_contract_git_repo_source_mode;`).Error
+	_ = db.Exec(`DROP INDEX IF EXISTS uk_contract_git_repo_platform;`).Error
+
+	return migrateLegacyGitReposToPlatformShared(db)
+}
+
+func migrateLegacyGitReposToPlatformShared(db *gorm.DB) error {
+	if db == nil || !db.Migrator().HasTable(&GitRepo{}) {
+		return nil
+	}
+
+	type legacyRepoRow struct {
+		ID             uint64
+		PlatformRepoID *uint64
+		Name           string
+		RepoURL        string
+		DefaultBranch  string
+		SourceMode     string
+	}
+	var legacyRows []legacyRepoRow
+	if err := db.Table("contract_git_repos").
+		Select("id, platform_repo_id, name, repo_url, default_branch, source_mode").
+		Where("platform_repo_id IS NULL OR platform_repo_id = 0").
+		Order("id ASC").
+		Scan(&legacyRows).Error; err != nil {
+		return err
+	}
+
+	if len(legacyRows) > 0 {
+		// 确保备份表存在以归档无法匹配的孤儿仓摘要
+		if !db.Migrator().HasTable(&MigBackup{}) {
+			if err := db.AutoMigrate(&MigBackup{}); err != nil {
+				return err
+			}
+		}
+
+		var plats []Repository
+		if db.Migrator().HasTable(&Repository{}) {
+			_ = db.Order("id ASC").Find(&plats).Error
+		}
+		platByNormURL := make(map[string]Repository, len(plats)*2)
+		for _, p := range plats {
+			if u := gitsync.NormalizeGitURL(p.URL); u != "" {
+				if _, ok := platByNormURL[u]; !ok {
+					platByNormURL[u] = p
+				}
+			}
+			if hu := gitsync.NormalizeGitURL(p.HTTPURL); hu != "" {
+				if _, ok := platByNormURL[hu]; !ok {
+					platByNormURL[hu] = p
+				}
+			}
+		}
+
+		var existingPlatIDs []uint64
+		_ = db.Table("contract_git_repos").
+			Where("platform_repo_id IS NOT NULL AND platform_repo_id > 0").
+			Pluck("platform_repo_id", &existingPlatIDs).Error
+		usedPlatIDs := make(map[uint64]struct{}, len(existingPlatIDs))
+		for _, pid := range existingPlatIDs {
+			usedPlatIDs[pid] = struct{}{}
+		}
+
+		for _, lr := range legacyRows {
+			normURL := gitsync.NormalizeGitURL(lr.RepoURL)
+			matched, ok := platByNormURL[normURL]
+			if ok && matched.ID > 0 {
+				if _, taken := usedPlatIDs[uint64(matched.ID)]; !taken {
+					usedPlatIDs[uint64(matched.ID)] = struct{}{}
+					effectiveURL := strings.TrimSpace(matched.URL)
+					if effectiveURL == "" {
+						effectiveURL = strings.TrimSpace(matched.HTTPURL)
+					}
+					if err := db.Table("contract_git_repos").Where("id = ?", lr.ID).Updates(map[string]any{
+						"platform_repo_id":   uint64(matched.ID),
+						"source_mode":        GitSourceModePlatformShared,
+						"repo_url":           effectiveURL,
+						"default_branch":     gitsync.ResolveBranchDefault(matched.Branch),
+						"auth_type":          GitAuthNone,
+						"credentials_enc":    "",
+						"credential_hint":    "",
+						"webhook_secret_enc": "",
+					}).Error; err != nil {
+						return err
+					}
+					continue
+				}
+			}
+
+			// 无法匹配或已被占用：备份摘要至 contract_mig_backups 并安全清理孤儿手工仓（保全历史 ProtoSchema）
+			backupBytes, _ := json.Marshal(map[string]any{
+				"legacy_repo_id": lr.ID,
+				"name":           lr.Name,
+				"repo_url":       lr.RepoURL,
+				"default_branch": lr.DefaultBranch,
+				"source_mode":    lr.SourceMode,
+				"reason":         "unmatched_or_duplicate_legacy_standalone_repo",
+			})
+			if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&MigBackup{
+				MigrationKey:  "ADR26_R4_ORPHAN_GIT_REPO",
+				Entity:        "contract_git_repos",
+				EntityID:      lr.ID,
+				Payload:       datatypes.JSON(backupBytes),
+				MigratedState: "APPLIED",
+			}).Error; err != nil {
+				return err
+			}
+			if err := db.Transaction(func(tx *gorm.DB) error {
+				if tx.Migrator().HasTable(&ProtoSchema{}) {
+					if err := tx.Exec(`UPDATE contract_proto_schemas SET git_repo_id = NULL, source_bundle_id = NULL WHERE git_repo_id = ?`, lr.ID).Error; err != nil {
+						return err
+					}
+				}
+				if tx.Migrator().HasTable(&ProtoFile{}) {
+					if err := tx.Exec(`UPDATE contract_proto_files SET latest_version_id = NULL WHERE git_repo_id = ?`, lr.ID).Error; err != nil {
+						return err
+					}
+				}
+				if tx.Migrator().HasTable(&ProtoFileVersion{}) && tx.Migrator().HasTable(&ProtoFile{}) {
+					if err := tx.Exec(`DELETE FROM contract_proto_file_versions WHERE proto_file_id IN (SELECT id FROM contract_proto_files WHERE git_repo_id = ?)`, lr.ID).Error; err != nil {
+						return err
+					}
+				}
+				if tx.Migrator().HasTable(&ProtoFile{}) {
+					if err := tx.Exec(`DELETE FROM contract_proto_files WHERE git_repo_id = ?`, lr.ID).Error; err != nil {
+						return err
+					}
+				}
+				if tx.Migrator().HasTable(&GitProtoBundle{}) {
+					if err := tx.Exec(`DELETE FROM contract_git_proto_bundles WHERE git_repo_id = ?`, lr.ID).Error; err != nil {
+						return err
+					}
+				}
+				return tx.Exec(`DELETE FROM contract_git_repos WHERE id = ?`, lr.ID).Error
+			}); err != nil {
+				return fmt.Errorf("归档清理孤儿 GitRepo #%d 失败: %w", lr.ID, err)
+			}
+		}
+	}
+
+	// 回填并清理所有历史独立模式下留存的凭据（r4 唯一真值源收口）
+	_ = db.Exec(`UPDATE contract_git_repos SET source_mode = 'PLATFORM_SHARED', auth_type = 'NONE', credentials_enc = '', credential_hint = '' WHERE source_mode <> 'PLATFORM_SHARED' OR source_mode = '' OR source_mode IS NULL;`).Error
+	return nil
+}
+
+// ensureADR26SchemaAndBackfill 幂等收口 ADR-26 (r4) & ADR-27 约束、索引与存量数据回填。
 func ensureADR26SchemaAndBackfill(db *gorm.DB) error {
 	if db == nil {
 		return nil
 	}
+	if err := migrateLegacyGitReposToPlatformShared(db); err != nil {
+		return err
+	}
+
 	stmts := []string{
-		`CREATE UNIQUE INDEX IF NOT EXISTS uk_contract_git_repo_platform ON contract_git_repos (platform_repo_id) WHERE platform_repo_id IS NOT NULL;`,
+		`ALTER TABLE contract_git_repos ALTER COLUMN platform_repo_id SET NOT NULL;`,
+		`DROP INDEX IF EXISTS uk_contract_git_repo_platform;`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS uk_contract_git_repo_platform ON contract_git_repos (platform_repo_id);`,
+		`ALTER TABLE contract_git_repos DROP CONSTRAINT IF EXISTS chk_contract_git_repo_source_mode;`,
+		`ALTER TABLE contract_git_repos DROP CONSTRAINT IF EXISTS chk_contract_git_repo_platform_id;`,
+		`ALTER TABLE contract_git_repos DROP CONSTRAINT IF EXISTS chk_contract_git_repo_proto_status;`,
 		`DO $$
 BEGIN
 	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_git_repo_source_mode') THEN
-		ALTER TABLE contract_git_repos ADD CONSTRAINT chk_contract_git_repo_source_mode CHECK (source_mode IN ('PLATFORM_SHARED', 'EXTERNAL_STANDALONE'));
+		ALTER TABLE contract_git_repos ADD CONSTRAINT chk_contract_git_repo_source_mode CHECK (source_mode = 'PLATFORM_SHARED');
+	END IF;
+	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_git_repo_platform_id') THEN
+		ALTER TABLE contract_git_repos ADD CONSTRAINT chk_contract_git_repo_platform_id CHECK (platform_repo_id > 0);
 	END IF;
 	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_git_repo_sync_strategy') THEN
 		ALTER TABLE contract_git_repos ADD CONSTRAINT chk_contract_git_repo_sync_strategy CHECK (sync_strategy IN ('FETCH_AND_READ', 'LOCAL_CACHE_ONLY'));
+	END IF;
+	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_git_repo_proto_status') THEN
+		ALTER TABLE contract_git_repos ADD CONSTRAINT chk_contract_git_repo_proto_status CHECK (proto_status IN ('PENDING', 'HAS_PROTO', 'NO_PROTO', 'NO_LOCAL_CACHE', 'EXCLUDED', 'SYNC_FAILED'));
 	END IF;
 	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_pfile_pipeline_status') THEN
 		ALTER TABLE contract_proto_files ADD CONSTRAINT chk_contract_pfile_pipeline_status CHECK (pipeline_status IN ('COLLECTED', 'NORMALIZED', 'QUARANTINED'));
@@ -423,9 +696,20 @@ BEGIN
 	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_import_owner_source') THEN
 		ALTER TABLE contract_proto_import_owners ADD CONSTRAINT chk_contract_import_owner_source CHECK (source IN ('MANUAL', 'BASE_LIB', 'AUTO'));
 	END IF;
+	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_proto_sync_job_scope') THEN
+		ALTER TABLE contract_proto_sync_jobs ADD CONSTRAINT chk_contract_proto_sync_job_scope CHECK (scope IN ('ALL', 'DEPARTMENT', 'SERVICE_GROUP', 'FAILED_ONLY', 'SELECTED'));
+	END IF;
+	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_proto_sync_job_policy') THEN
+		ALTER TABLE contract_proto_sync_jobs ADD CONSTRAINT chk_contract_proto_sync_job_policy CHECK (cache_policy IN ('CACHE_ONLY', 'FETCH_MISSING'));
+	END IF;
+	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_proto_sync_job_status') THEN
+		ALTER TABLE contract_proto_sync_jobs ADD CONSTRAINT chk_contract_proto_sync_job_status CHECK (status IN ('RUNNING', 'COMPLETED', 'PARTIAL_FAILED', 'FAILED'));
+	END IF;
 END $$;`,
-		`UPDATE contract_git_repos SET source_mode = 'EXTERNAL_STANDALONE' WHERE source_mode = '' OR source_mode IS NULL;`,
-		`UPDATE contract_git_repos SET sync_strategy = 'FETCH_AND_READ' WHERE sync_strategy = '' OR sync_strategy IS NULL;`,
+		`UPDATE contract_git_repos SET source_mode = 'PLATFORM_SHARED' WHERE source_mode <> 'PLATFORM_SHARED' OR source_mode = '' OR source_mode IS NULL;`,
+		`UPDATE contract_git_repos SET sync_strategy = 'LOCAL_CACHE_ONLY' WHERE sync_strategy = '' OR sync_strategy IS NULL;`,
+		`UPDATE contract_git_repos SET proto_status = 'HAS_PROTO' WHERE (proto_status = '' OR proto_status IS NULL OR proto_status = 'PENDING') AND EXISTS (SELECT 1 FROM contract_proto_files f WHERE f.git_repo_id = contract_git_repos.id AND f.is_deleted = false);`,
+		`UPDATE contract_git_repos SET proto_status = 'PENDING' WHERE proto_status = '' OR proto_status IS NULL;`,
 		`UPDATE contract_proto_files SET pipeline_status = 'NORMALIZED' WHERE pipeline_status = '' OR pipeline_status IS NULL;`,
 		`UPDATE contract_proto_files SET normalizer_version = 'passthrough-0' WHERE normalizer_version = '' OR normalizer_version IS NULL;`,
 		`UPDATE contract_proto_files SET raw_blob_sha = content_sha256 WHERE (raw_blob_sha = '' OR raw_blob_sha IS NULL) AND content_sha256 <> '';`,

@@ -2,15 +2,14 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useSearchParams } from 'react-router-dom';
 import {
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   Code2,
-  Download,
   FileDiff,
   FolderGit2,
   GitBranch,
   GitCommitHorizontal,
   Layers,
-  Link2,
-  Plus,
   RefreshCw,
   Scale,
   Search,
@@ -37,7 +36,6 @@ import { ProtoCommitDiffView } from './ProtoCommitDiffView';
 import { ProtoReadOnlyCodeViewer } from './ProtoReadOnlyCodeViewer';
 import { GitConsistencyDrawer } from './GitConsistencyDrawer';
 import { GitRepoConfigDrawer } from './GitRepoConfigDrawer';
-import { PlatformRepoImportDrawer } from './PlatformRepoImportDrawer';
 import { ProtoConflictArbitrationDrawer } from './ProtoConflictArbitrationDrawer';
 import './ProtoDocsAndCodeViewer.css';
 
@@ -161,16 +159,17 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
   const [diffData, setDiffData] = useState<ProtoFileDiffResponse | null>(initialDiff);
   const [diffLoading, setDiffLoading] = useState<boolean>(false);
 
-  // 4. 抽屉与同步运行状态 & ADR-26 双视图树状态
+  // 4. 抽屉与同步运行状态 & ADR-26 双视图懒加载树状态
   const [manageDrawerOpen, setManageDrawerOpen] = useState<boolean>(initialManageOpen);
-  const [manageCreatingNew, setManageCreatingNew] = useState<boolean>(false);
   const [consistencyDrawerOpen, setConsistencyDrawerOpen] = useState<boolean>(initialConsistencyOpen);
-  const [platformImportOpen, setPlatformImportOpen] = useState<boolean>(false);
   const [conflictDrawerOpen, setConflictDrawerOpen] = useState<boolean>(false);
   const [syncDispatching, setSyncDispatching] = useState<boolean>(false);
+  const [subsystemFilter, setSubsystemFilter] = useState<string>('');
   const [treeViewMode, setTreeViewMode] = useState<'flat' | 'subsystem' | 'package'>('flat');
   const [treeData, setTreeData] = useState<ProtoFilesTreeResponse | null>(null);
   const [treeLoading, setTreeLoading] = useState<boolean>(false);
+  const [expandedRepoIds, setExpandedRepoIds] = useState<Set<number>>(new Set());
+  const [expandedPackages, setExpandedPackages] = useState<Set<string>>(new Set());
 
   // 防止 SSR / 单测注入的初始数据在首次挂载时被无意义空请求覆盖
   const skipInitialReposFetchRef = useRef<boolean>(initialGitRepos !== undefined);
@@ -212,7 +211,13 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
   const loadGitRepos = useCallback(async () => {
     setReposLoading(true);
     try {
-      const resp = await schemaApi.listGitRepos({ page: 1, page_size: 100 });
+      const resp = await schemaApi.listGitRepos({
+        proto_status: 'HAS_PROTO',
+        sync_enabled: true,
+        service_group: subsystemFilter || undefined,
+        page: 1,
+        page_size: 100,
+      });
       const items = resp.items ?? [];
       setGitRepos(items);
       if (items.length > 0 && selectedRepoId === null && !urlFileId) {
@@ -223,7 +228,7 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
     } finally {
       setReposLoading(false);
     }
-  }, [selectedRepoId, urlFileId, toast]);
+  }, [subsystemFilter, selectedRepoId, urlFileId, toast]);
 
   const loadFiles = useCallback(async () => {
     setFilesLoading(true);
@@ -431,22 +436,94 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
     }
   };
 
-  const loadTreeView = useCallback(async (mode: 'subsystem' | 'package') => {
-    setTreeLoading(true);
-    try {
-      const resp = await schemaApi.getProtoFilesTree({
-        view: mode,
-        git_repo_id: selectedRepoId ?? undefined,
-        include_deleted: includeDeleted,
-        search: searchText.trim() || undefined,
-      });
-      setTreeData(resp);
-    } catch (err) {
-      toast.error((err as Error).message || '加载双视图树失败');
-    } finally {
-      setTreeLoading(false);
+  const loadTreeView = useCallback(
+    async (
+      mode: 'subsystem' | 'package',
+      expandOpts?: { expandRepoId?: number; expandPackage?: string }
+    ) => {
+      setTreeLoading(true);
+      try {
+        const hasSearch = searchText.trim().length > 0;
+        const resp = await schemaApi.getProtoFilesTree({
+          view: mode,
+          summary_only: !hasSearch,
+          expand_repo_id: expandOpts?.expandRepoId,
+          expand_package: expandOpts?.expandPackage,
+          subsystem: subsystemFilter || undefined,
+          git_repo_id: selectedRepoId ?? undefined,
+          include_deleted: includeDeleted,
+          search: searchText.trim() || undefined,
+        });
+        setTreeData((prev) => {
+          if (!expandOpts || !prev || prev.view !== resp.view) {
+            return resp;
+          }
+          if (prev.view === 'subsystem' && resp.view === 'subsystem') {
+            const hydratedMap = new Map<number, ProtoFileDTO[]>();
+            for (const g of resp.groups) {
+              if (g.files.length > 0) hydratedMap.set(g.git_repo_id, g.files);
+            }
+            return {
+              ...resp,
+              groups: resp.groups.map((g) => {
+                const fresh = hydratedMap.get(g.git_repo_id);
+                if (fresh && fresh.length > 0) return { ...g, files: fresh };
+                const old = prev.groups.find((pg) => pg.git_repo_id === g.git_repo_id);
+                return old && old.files.length > 0 ? { ...g, files: old.files } : g;
+              }),
+            };
+          }
+          if (prev.view === 'package' && resp.view === 'package') {
+            const hydratedMap = new Map<string, ProtoFileDTO[]>();
+            for (const g of resp.groups) {
+              if (g.files.length > 0) hydratedMap.set(g.package_name, g.files);
+            }
+            return {
+              ...resp,
+              groups: resp.groups.map((g) => {
+                const fresh = hydratedMap.get(g.package_name);
+                if (fresh && fresh.length > 0) return { ...g, files: fresh };
+                const old = prev.groups.find((pg) => pg.package_name === g.package_name);
+                return old && old.files.length > 0 ? { ...g, files: old.files } : g;
+              }),
+            };
+          }
+          return resp;
+        });
+      } catch (err) {
+        toast.error((err as Error).message || '加载双视图树失败');
+      } finally {
+        setTreeLoading(false);
+      }
+    },
+    [selectedRepoId, subsystemFilter, includeDeleted, searchText, toast]
+  );
+
+  const toggleExpandRepoGroup = async (repoId: number, hasFilesLoaded: boolean) => {
+    const nextOpen = !expandedRepoIds.has(repoId);
+    setExpandedRepoIds((prev) => {
+      const next = new Set(prev);
+      if (nextOpen) next.add(repoId);
+      else next.delete(repoId);
+      return next;
+    });
+    if (nextOpen && !hasFilesLoaded) {
+      await loadTreeView('subsystem', { expandRepoId: repoId });
     }
-  }, [selectedRepoId, includeDeleted, searchText, toast]);
+  };
+
+  const toggleExpandPackageGroup = async (pkgName: string, hasFilesLoaded: boolean) => {
+    const nextOpen = !expandedPackages.has(pkgName);
+    setExpandedPackages((prev) => {
+      const next = new Set(prev);
+      if (nextOpen) next.add(pkgName);
+      else next.delete(pkgName);
+      return next;
+    });
+    if (nextOpen && !hasFilesLoaded) {
+      await loadTreeView('package', { expandPackage: pkgName });
+    }
+  };
 
   useEffect(() => {
     if (treeViewMode === 'flat') return;
@@ -491,19 +568,14 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
     }
   };
 
-  const handleLinkPlatform = async () => {
-    if (!selectedRepo || !isAdmin) return;
-    setSyncDispatching(true);
-    try {
-      const updated = await schemaApi.linkGitRepoPlatform(selectedRepo.id);
-      setGitRepos((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
-      toast.success(`已将 [${updated.name}] 关联升级为 PLATFORM_SHARED 并清理历史独立凭据`);
-    } catch (err) {
-      toast.error((err as Error).message || '关联平台代码仓失败');
-    } finally {
-      setSyncDispatching(false);
+  const distinctSubsystems = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of gitRepos) {
+      const sg = r.service_group || r.export_target_subsystem || r.subsystem_slug;
+      if (sg) set.add(sg);
     }
-  };
+    return Array.from(set).sort();
+  }, [gitRepos]);
 
   const activeFileMeta = contentData?.file ?? files.find((f) => f.id === selectedFileId) ?? null;
 
@@ -513,6 +585,26 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
       <div className="pdoc-card pgit-repo-bar">
         <div className="pgit-toolbar-row">
           <div className="pgit-toolbar-group">
+            {distinctSubsystems.length > 0 && (
+              <select
+                className="pgit-input"
+                aria-label="筛选子系统"
+                value={subsystemFilter}
+                onChange={(e) => {
+                  setSubsystemFilter(e.target.value);
+                  setSelectedRepoId(null);
+                  setPage(1);
+                }}
+              >
+                <option value="">全部含 Proto 子系统</option>
+                {distinctSubsystems.map((sg) => (
+                  <option key={sg} value={sg}>
+                    {sg}
+                  </option>
+                ))}
+              </select>
+            )}
+
             <label className="pgit-inline-field">
               <span>
                 <FolderGit2 size={14} /> Git 仓库
@@ -526,10 +618,10 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
                   handleSelectRepo(e.target.value ? Number(e.target.value) : null)
                 }
               >
-                <option value="">全部已纳管源码（含描述集重构兜底）</option>
+                <option value="">全部 HAS_PROTO 启用仓 ({gitRepos.length})</option>
                 {gitRepos.map((repo) => (
                   <option key={repo.id} value={repo.id}>
-                    {repo.name} ({repo.provider} · {repo.default_branch})
+                    {repo.name} ({repo.service_group || repo.subsystem_slug || 'default'} · {repo.default_branch})
                   </option>
                 ))}
               </select>
@@ -573,16 +665,6 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
               <Scale size={14} /> 冲突仲裁
             </button>
 
-            {isAdmin && (
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => setPlatformImportOpen(true)}
-              >
-                <Download size={14} /> 平台仓导入
-              </button>
-            )}
-
             {selectedRepo && (
               <button
                 type="button"
@@ -590,17 +672,6 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
                 onClick={() => setConsistencyDrawerOpen(true)}
               >
                 <ShieldCheck size={14} /> 远端 SHA256 对账
-              </button>
-            )}
-
-            {isAdmin && selectedRepo && selectedRepo.source_mode !== 'PLATFORM_SHARED' && (
-              <button
-                type="button"
-                className="btn btn-secondary"
-                disabled={syncDispatching}
-                onClick={() => void handleLinkPlatform()}
-              >
-                <Link2 size={14} /> 关联平台仓
               </button>
             )}
 
@@ -631,25 +702,9 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
               <button
                 type="button"
                 className="btn btn-secondary"
-                onClick={() => {
-                  setManageCreatingNew(false);
-                  setManageDrawerOpen(true);
-                }}
+                onClick={() => setManageDrawerOpen(true)}
               >
-                <Settings2 size={14} /> 仓库与 Bundle 配置
-              </button>
-            )}
-
-            {isAdmin && (
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => {
-                  setManageCreatingNew(true);
-                  setManageDrawerOpen(true);
-                }}
-              >
-                <Plus size={14} /> 接入 Git 仓库
+                <Settings2 size={14} /> 导出与治理配置
               </button>
             )}
           </div>
@@ -751,79 +806,107 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
               ) : !treeData || treeData.groups.length === 0 ? (
                 <div className="pdoc-empty">当前双视图下暂无匹配的 .proto 文件。</div>
               ) : treeData.view === 'subsystem' ? (
-                treeData.groups.map((grp) => (
-                  <div key={`${grp.subsystem_slug}:${grp.git_repo_id}`} className="pgit-tree-group">
-                    <div className="pgit-tree-group__header">
-                      <span>
-                        {grp.subsystem_slug} / {grp.git_repo_name}
-                      </span>
-                      <span className="pdoc-pill">{grp.files.length}</span>
+                treeData.groups.map((grp) => {
+                  const isExpanded =
+                    expandedRepoIds.has(grp.git_repo_id) ||
+                    (grp.files.length > 0 && !treeData.summary_only);
+                  const countBadge = grp.total_count ?? grp.files.length;
+                  return (
+                    <div key={`${grp.subsystem_slug}:${grp.git_repo_id}`} className="pgit-tree-group">
+                      <button
+                        type="button"
+                        className="pgit-tree-group__header pgit-tree-group__header-btn"
+                        data-testid={`tree-repo-group-${grp.git_repo_id}`}
+                        onClick={() => void toggleExpandRepoGroup(grp.git_repo_id, grp.files.length > 0)}
+                      >
+                        <span className="pgit-tree-group__title">
+                          {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                          {grp.subsystem_slug} / {grp.export_target_repo_dir || grp.git_repo_name}
+                        </span>
+                        <span className="pdoc-pill">{countBadge}</span>
+                      </button>
+                      {isExpanded &&
+                        grp.files.map((file) => {
+                          const active = file.id === selectedFileId;
+                          return (
+                            <button
+                              key={file.id}
+                              type="button"
+                              className={`pdoc-tree-node ${active ? 'pdoc-tree-node--active' : ''}`}
+                              onClick={() => handleSelectFile(file)}
+                            >
+                              <div className="pdoc-tree-node__main">
+                                <Code2 size={14} />
+                                <span className="pgit-file-path" title={file.repo_file_path || file.file_path}>
+                                  {file.file_path || file.repo_file_path}
+                                </span>
+                              </div>
+                              <div className="pgit-file-meta">
+                                {file.pipeline_status === 'QUARANTINED' && (
+                                  <span className="code-badge code-badge-danger">隔离</span>
+                                )}
+                                {file.is_external_copy && (
+                                  <span className="code-badge code-badge-warning">外部副本</span>
+                                )}
+                                <span className="pdoc-tree-node__badge">v{file.latest_version}</span>
+                              </div>
+                            </button>
+                          );
+                        })}
                     </div>
-                    {grp.files.map((file) => {
-                      const active = file.id === selectedFileId;
-                      return (
-                        <button
-                          key={file.id}
-                          type="button"
-                          className={`pdoc-tree-node ${active ? 'pdoc-tree-node--active' : ''}`}
-                          onClick={() => handleSelectFile(file)}
-                        >
-                          <div className="pdoc-tree-node__main">
-                            <Code2 size={14} />
-                            <span className="pgit-file-path" title={file.repo_file_path || file.file_path}>
-                              {file.repo_file_path || file.file_path}
-                            </span>
-                          </div>
-                          <div className="pgit-file-meta">
-                            {file.pipeline_status === 'QUARANTINED' && (
-                              <span className="code-badge code-badge-danger">隔离</span>
-                            )}
-                            {file.is_external_copy && (
-                              <span className="code-badge code-badge-warning">外部副本</span>
-                            )}
-                            <span className="pdoc-tree-node__badge">v{file.latest_version}</span>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                ))
+                  );
+                })
               ) : (
-                treeData.groups.map((grp) => (
-                  <div key={grp.package_name} className="pgit-tree-group">
-                    <div className="pgit-tree-group__header">
-                      <span>{grp.package_name}</span>
-                      <span className="pdoc-pill">{grp.files.length}</span>
+                treeData.groups.map((grp) => {
+                  const isExpanded =
+                    expandedPackages.has(grp.package_name) ||
+                    (grp.files.length > 0 && !treeData.summary_only);
+                  const countBadge = grp.total_count ?? grp.files.length;
+                  return (
+                    <div key={grp.package_name} className="pgit-tree-group">
+                      <button
+                        type="button"
+                        className="pgit-tree-group__header pgit-tree-group__header-btn"
+                        data-testid={`tree-pkg-group-${grp.package_name}`}
+                        onClick={() => void toggleExpandPackageGroup(grp.package_name, grp.files.length > 0)}
+                      >
+                        <span className="pgit-tree-group__title">
+                          {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                          {grp.package_name}
+                        </span>
+                        <span className="pdoc-pill">{countBadge}</span>
+                      </button>
+                      {isExpanded &&
+                        grp.files.map((file) => {
+                          const active = file.id === selectedFileId;
+                          return (
+                            <button
+                              key={file.id}
+                              type="button"
+                              className={`pdoc-tree-node ${active ? 'pdoc-tree-node--active' : ''}`}
+                              onClick={() => handleSelectFile(file)}
+                            >
+                              <div className="pdoc-tree-node__main">
+                                <Code2 size={14} />
+                                <span className="pgit-file-path" title={file.repo_file_path || file.file_path}>
+                                  {file.file_path}
+                                </span>
+                              </div>
+                              <div className="pgit-file-meta">
+                                {file.pipeline_status === 'QUARANTINED' && (
+                                  <span className="code-badge code-badge-danger">隔离</span>
+                                )}
+                                {file.is_external_copy && (
+                                  <span className="code-badge code-badge-warning">外部副本</span>
+                                )}
+                                <span className="pdoc-tree-node__badge">v{file.latest_version}</span>
+                              </div>
+                            </button>
+                          );
+                        })}
                     </div>
-                    {grp.files.map((file) => {
-                      const active = file.id === selectedFileId;
-                      return (
-                        <button
-                          key={file.id}
-                          type="button"
-                          className={`pdoc-tree-node ${active ? 'pdoc-tree-node--active' : ''}`}
-                          onClick={() => handleSelectFile(file)}
-                        >
-                          <div className="pdoc-tree-node__main">
-                            <Code2 size={14} />
-                            <span className="pgit-file-path" title={file.repo_file_path || file.file_path}>
-                              {file.file_path}
-                            </span>
-                          </div>
-                          <div className="pgit-file-meta">
-                            {file.pipeline_status === 'QUARANTINED' && (
-                              <span className="code-badge code-badge-danger">隔离</span>
-                            )}
-                            {file.is_external_copy && (
-                              <span className="code-badge code-badge-warning">外部副本</span>
-                            )}
-                            <span className="pdoc-tree-node__badge">v{file.latest_version}</span>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                ))
+                  );
+                })
               )
             ) : filesLoading ? (
               <div className="pdoc-empty">正在加载契约源码列表...</div>
@@ -1074,33 +1157,15 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
         </section>
       </div>
 
-      {/* Git 仓库与 Monorepo 1:N Bundles 配置抽屉 */}
+      {/* 单仓导出与清洗治理抽屉 */}
       <GitRepoConfigDrawer
         open={manageDrawerOpen}
         isAdmin={isAdmin}
-        repo={manageCreatingNew ? null : selectedRepo}
-        onClose={() => {
-          setManageDrawerOpen(false);
-          setManageCreatingNew(false);
-        }}
-        onSaved={(savedRepo, created) => {
-          setGitRepos((prev) => {
-            if (created) {
-              return [savedRepo, ...prev];
-            }
-            return prev.map((r) => (r.id === savedRepo.id ? savedRepo : r));
-          });
+        repo={selectedRepo}
+        onClose={() => setManageDrawerOpen(false)}
+        onSaved={(savedRepo) => {
+          setGitRepos((prev) => prev.map((r) => (r.id === savedRepo.id ? savedRepo : r)));
           setSelectedRepoId(savedRepo.id);
-          if (created) {
-            setManageCreatingNew(false);
-          }
-        }}
-        onDeleted={(deletedId) => {
-          setGitRepos((prev) => prev.filter((r) => r.id !== deletedId));
-          if (selectedRepoId === deletedId) {
-            setSelectedRepoId(null);
-            setSelectedBundleId(null);
-          }
         }}
       />
 
@@ -1113,19 +1178,6 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
         initialReport={initialConsistencyReport}
         onClose={() => setConsistencyDrawerOpen(false)}
         onTriggerSync={handleTriggerSync}
-      />
-
-      {/* ADR-26: 平台代码仓批量发现与共享导入抽屉 */}
-      <PlatformRepoImportDrawer
-        open={platformImportOpen}
-        isAdmin={isAdmin}
-        onClose={() => setPlatformImportOpen(false)}
-        onImported={(created) => {
-          if (created.length > 0) {
-            setGitRepos((prev) => [...created, ...prev]);
-            setSelectedRepoId(created[0].id);
-          }
-        }}
       />
 
       {/* ADR-26: 跨仓导入路径歧义与符号冲突仲裁抽屉 */}

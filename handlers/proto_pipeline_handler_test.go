@@ -127,91 +127,112 @@ func TestADR26PlatformImport_DualView_RawCleanContent_Conflicts_WebhookAndRBAC(t
 		t.Fatalf("create platRepo2: %v", err)
 	}
 
-	// 1. 发现平台代码仓（已登录用户可读）
-	{
-		req := httptest.NewRequest(http.MethodGet, "/api/git-repos/platform-discover?probe_protos=false", nil)
-		req.Header.Set("Authorization", "Bearer "+viewerJWT)
+	// 1. 验证已下线端点的 404 退场契约
+	for _, tc := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/git-repos/platform-discover"},
+		{http.MethodPost, "/api/git-repos/platform-import"},
+		{http.MethodPost, "/api/git-repos"},
+		{http.MethodDelete, "/api/git-repos/1"},
+		{http.MethodPost, "/api/git-repos/1/link-platform"},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, bytes.NewBufferString(`{}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+adminJWT)
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
-		if w.Code != http.StatusOK {
-			t.Fatalf("GET /api/git-repos/platform-discover expected 200, got %d: %s", w.Code, w.Body.String())
-		}
-		if !strings.Contains(w.Body.String(), "order-core-svc") {
-			t.Fatalf("expected order-core-svc in discover list: %s", w.Body.String())
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("retired endpoint %s %s expected 404, got %d: %s", tc.method, tc.path, w.Code, w.Body.String())
 		}
 	}
 
-	// 2. 批量导入平台仓（RBAC: 普通用户 403，管理员 201，且默认 auto_activate=false）
-	importPayload, _ := json.Marshal(map[string]any{
-		"items": []map[string]any{
-			{
-				"platform_repo_id": platRepo1.ID,
-				"sync_strategy":    "FETCH_AND_READ",
-				"bundles": []map[string]any{
-					{
-						"bundle_name":        "common-pg",
-						"target_schema_name": "adr26-common-schema",
-						"category":           "BASE_LIB",
-						"subdir_path":        "pg/common",
-					},
-					{
-						"bundle_name":        "order-pg",
-						"target_schema_name": "adr26-order-schema",
-						"category":           "BUSINESS",
-						"subdir_path":        "pg/order",
-					},
-				},
-			},
-			{
-				"platform_repo_id": platRepo2.ID,
-				"sync_strategy":    "FETCH_AND_READ",
-				"bundles": []map[string]any{
-					{
-						"bundle_name":        "legacy-common-pg",
-						"target_schema_name": "adr26-legacy-common-schema",
-						"category":           "BASE_LIB",
-						"subdir_path":        "pg/common",
-					},
-				},
-			},
-		},
-	})
+	// 2. 验证 POST /api/git-repos/sync-all RBAC、SharedWriteEnabled 门禁、双模对齐及作业持久化
 	{
-		req := httptest.NewRequest(http.MethodPost, "/api/git-repos/platform-import", bytes.NewReader(importPayload))
+		req := httptest.NewRequest(http.MethodPost, "/api/git-repos/sync-all", bytes.NewReader([]byte(`{"scope":"ALL","cache_policy":"CACHE_ONLY","sync":true}`)))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+viewerJWT)
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 		if w.Code != http.StatusForbidden {
-			t.Fatalf("non-admin POST /platform-import expected 403, got %d", w.Code)
+			t.Fatalf("non-admin POST /sync-all expected 403, got %d", w.Code)
 		}
 	}
-
-	var importedRepoID1, importedRepoID2 uint64
-	var ownerBundleID1 uint64
 	{
-		req := httptest.NewRequest(http.MethodPost, "/api/git-repos/platform-import", bytes.NewReader(importPayload))
+		config.AppConfig.Storage.SharedWriteEnabled = false
+		req := httptest.NewRequest(http.MethodPost, "/api/git-repos/sync-all", bytes.NewReader([]byte(`{"scope":"ALL","cache_policy":"FETCH_MISSING","sync":true}`)))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+adminJWT)
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
-		if w.Code != http.StatusCreated {
-			t.Fatalf("admin POST /platform-import expected 201, got %d: %s", w.Code, w.Body.String())
-		}
-		var resp struct {
-			ImportedCount int                         `json:"imported_count"`
-			Items         []models.GitRepoRedactedDTO `json:"items"`
-		}
-		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil || resp.ImportedCount != 2 {
-			t.Fatalf("unexpected platform-import response: err=%v body=%s", err, w.Body.String())
-		}
-		importedRepoID1 = resp.Items[0].ID
-		importedRepoID2 = resp.Items[1].ID
-		ownerBundleID1 = resp.Items[0].Bundles[0].ID
-		if resp.Items[0].AutoActivate {
-			t.Fatalf("expected AutoActivate=false by default on platform-import")
+		config.AppConfig.Storage.SharedWriteEnabled = true
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "SHARED_WRITE_DISABLED") {
+			t.Fatalf("FETCH_MISSING with SharedWriteEnabled=false expected 400 SHARED_WRITE_DISABLED, got %d: %s", w.Code, w.Body.String())
 		}
 	}
+
+	var syncJobID uint64
+	{
+		syncAllPayload, _ := json.Marshal(map[string]any{
+			"scope":        "ALL",
+			"cache_policy": "FETCH_MISSING",
+			"sync":         true,
+		})
+		req := httptest.NewRequest(http.MethodPost, "/api/git-repos/sync-all", bytes.NewReader(syncAllPayload))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+adminJWT)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusAccepted {
+			t.Fatalf("admin POST /sync-all expected 202, got %d: %s", w.Code, w.Body.String())
+		}
+		var jobResp models.ProtoSyncJob
+		if err := json.Unmarshal(w.Body.Bytes(), &jobResp); err != nil {
+			t.Fatalf("decode sync-all job failed: %v body=%s", err, w.Body.String())
+		}
+		if jobResp.ID == 0 || jobResp.TotalRepos != 2 || jobResp.HasProtoCount != 2 || jobResp.FailedCount != 0 {
+			t.Fatalf("unexpected sync-all job stats: %+v", jobResp)
+		}
+		syncJobID = jobResp.ID
+	}
+
+	// 验证 GET /sync-summary & GET /sync-jobs/:jobId
+	{
+		req := httptest.NewRequest(http.MethodGet, "/api/git-repos/sync-summary", nil)
+		req.Header.Set("Authorization", "Bearer "+viewerJWT)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "has_proto_count") || !strings.Contains(w.Body.String(), "trade-sub") {
+			t.Fatalf("GET /sync-summary unexpected: %d %s", w.Code, w.Body.String())
+		}
+
+		jReq := httptest.NewRequest(http.MethodGet, "/api/git-repos/sync-jobs/"+strconv.FormatUint(syncJobID, 10), nil)
+		jReq.Header.Set("Authorization", "Bearer "+viewerJWT)
+		jw := httptest.NewRecorder()
+		r.ServeHTTP(jw, jReq)
+		if jw.Code != http.StatusOK || !strings.Contains(jw.Body.String(), models.SyncJobStatusCompleted) {
+			t.Fatalf("GET /sync-jobs/:jobId unexpected: %d %s", jw.Code, jw.Body.String())
+		}
+	}
+
+	var repo1, repo2 models.GitRepo
+	if err := db.Where("platform_repo_id = ?", platRepo1.ID).First(&repo1).Error; err != nil {
+		t.Fatalf("aligned repo1 not found: %v", err)
+	}
+	if err := db.Where("platform_repo_id = ?", platRepo2.ID).First(&repo2).Error; err != nil {
+		t.Fatalf("aligned repo2 not found: %v", err)
+	}
+	importedRepoID1 := repo1.ID
+	importedRepoID2 := repo2.ID
+	if repo1.AutoActivate {
+		t.Fatalf("expected AutoActivate=false by default on aligned platform repo")
+	}
+	var commonBundle1 models.GitProtoBundle
+	if err := db.Where("git_repo_id = ? AND subdir_path = ?", repo1.ID, "pg").Order("id ASC").First(&commonBundle1).Error; err != nil {
+		t.Fatalf("auto candidate bundle pg not created for repo1: %v", err)
+	}
+	ownerBundleID1 := commonBundle1.ID
 
 	// 3. 验证批量同步 (?sync=true)、免网络重跑 re-normalize、基线报告与架构建议
 	{
@@ -336,6 +357,7 @@ func TestADR26PlatformImport_DualView_RawCleanContent_Conflicts_WebhookAndRBAC(t
 	}
 
 	// 5. 冲突发现、仲裁落定 MANUAL、导入归属表 CRUD 及 RBAC 验证
+	conflictLogicalPath := "common/base.proto"
 	{
 		req := httptest.NewRequest(http.MethodGet, "/api/proto-conflicts", nil)
 		req.Header.Set("Authorization", "Bearer "+viewerJWT)
@@ -344,10 +366,18 @@ func TestADR26PlatformImport_DualView_RawCleanContent_Conflicts_WebhookAndRBAC(t
 		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "base.proto") {
 			t.Fatalf("GET /proto-conflicts expected ambiguity/conflict for base.proto: %d %s", w.Code, w.Body.String())
 		}
+		var confResp struct {
+			Items []struct {
+				LogicalPath string `json:"logical_path"`
+			} `json:"items"`
+		}
+		if json.Unmarshal(w.Body.Bytes(), &confResp) == nil && len(confResp.Items) > 0 && confResp.Items[0].LogicalPath != "" {
+			conflictLogicalPath = confResp.Items[0].LogicalPath
+		}
 	}
 	resolvePayload, _ := json.Marshal(map[string]any{
 		"kind":              "IMPORT",
-		"logical_path":      "base.proto",
+		"logical_path":      conflictLogicalPath,
 		"owner_git_repo_id": importedRepoID1,
 		"owner_bundle_id":   ownerBundleID1,
 	})
@@ -397,51 +427,7 @@ func TestADR26PlatformImport_DualView_RawCleanContent_Conflicts_WebhookAndRBAC(t
 		}
 	}
 
-	// 6. 存量孤儿仓一键关联平台仓 (/api/git-repos/:id/link-platform)
-	platLinkRepo := commonModels.Repository{
-		DepartmentID: dep.ID,
-		Name:         "legacy-orphan-plat",
-		URL:          "https://git.internal.local/team/legacy-orphan.git",
-		OwnerID:      adminUser.ID,
-		Branch:       "main",
-		ServiceGroup: "pay-sub",
-		IsActive:     true,
-	}
-	if err := db.Create(&platLinkRepo).Error; err != nil {
-		t.Fatalf("create platLinkRepo: %v", err)
-	}
-	legacyRepo := models.GitRepo{
-		Name:          "legacy-orphan-git",
-		Provider:      models.GitProviderGitLab,
-		RepoURL:       "https://git.internal.local/team/legacy-orphan.git",
-		DefaultBranch: "main",
-		AuthType:      models.GitAuthToken,
-		SourceMode:    models.GitSourceModeExternalStandalone,
-	}
-	_ = legacyRepo.SetCredentials("glpat-legacy-secret")
-	if err := db.Create(&legacyRepo).Error; err != nil {
-		t.Fatalf("create legacyRepo: %v", err)
-	}
-	{
-		req := httptest.NewRequest(http.MethodPost, "/api/git-repos/"+strconv.FormatUint(legacyRepo.ID, 10)+"/link-platform", bytes.NewReader([]byte(`{}`)))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+adminJWT)
-		w := httptest.NewRecorder()
-		r.ServeHTTP(w, req)
-		if w.Code != http.StatusOK {
-			t.Fatalf("POST /link-platform expected 200, got %d: %s", w.Code, w.Body.String())
-		}
-		var refreshed models.GitRepo
-		if err := db.First(&refreshed, legacyRepo.ID).Error; err != nil {
-			t.Fatalf("reload legacyRepo: %v", err)
-		}
-		if refreshed.SourceMode != models.GitSourceModePlatformShared || refreshed.CredentialsEnc != "" {
-			t.Fatalf("expected PLATFORM_SHARED and cleared credentials_enc, got mode=%s encLen=%d",
-				refreshed.SourceMode, len(refreshed.CredentialsEnc))
-		}
-	}
-
-	// 7. Git Push Webhook 常量时间验签与 SyncScheduler 触发
+	// 6. Git Push Webhook 常量时间验签与 SyncScheduler 触发
 	var syncedRepo models.GitRepo
 	if err := db.First(&syncedRepo, importedRepoID1).Error; err != nil {
 		t.Fatalf("load importedRepoID1: %v", err)
@@ -473,6 +459,159 @@ func TestADR26PlatformImport_DualView_RawCleanContent_Conflicts_WebhookAndRBAC(t
 		r.ServeHTTP(ow, okReq)
 		if ow.Code != http.StatusAccepted {
 			t.Fatalf("valid webhook expected 202, got %d: %s", ow.Code, ow.Body.String())
+		}
+	}
+}
+
+func TestProtoFilesTree_LazySummaryAndExpand(t *testing.T) {
+	r, db := setupProtoDocRouterAndDB(t)
+	handlers.InitGlobalSyncScheduler(nil)
+	defer handlers.InitGlobalSyncScheduler(nil)
+
+	oldCodes := config.AppConfig.Storage.CodesDir
+	oldProtos := config.AppConfig.Storage.ProtosDir
+	oldShared := config.AppConfig.Storage.SharedWriteEnabled
+	config.AppConfig.Storage.CodesDir = filepath.Join(t.TempDir(), "codes")
+	config.AppConfig.Storage.ProtosDir = filepath.Join(t.TempDir(), "protos")
+	config.AppConfig.Storage.SharedWriteEnabled = true
+	defer func() {
+		config.AppConfig.Storage.CodesDir = oldCodes
+		config.AppConfig.Storage.ProtosDir = oldProtos
+		config.AppConfig.Storage.SharedWriteEnabled = oldShared
+	}()
+
+	adminUser := createTestUserInDB(t, db, "lazy_admin", config.AdminRole)
+	viewerUser := createTestUserInDB(t, db, "lazy_viewer", "viewer")
+	adminJWT := generateTestJWT(t, adminUser)
+	viewerJWT := generateTestJWT(t, viewerUser)
+
+	dep := commonModels.Department{Name: "懒加载测试部"}
+	_ = db.Create(&dep).Error
+
+	bare1 := initTestBareRepoForHandler(t, map[string]string{
+		"pg/order/a.proto": "syntax = \"proto3\";\npackage acme.order.v1;\nmessage OrderA { string id = 1; }\n",
+	})
+	bare2 := initTestBareRepoForHandler(t, map[string]string{
+		"pg/pay/b.proto": "syntax = \"proto3\";\npackage acme.pay.v1;\nmessage PayB { int64 amt = 1; }\n",
+	})
+	bareExcluded := initTestBareRepoForHandler(t, map[string]string{
+		"pg/hidden/c.proto": "syntax = \"proto3\";\npackage acme.hidden.v1;\nmessage HiddenC { string id = 1; }\n",
+	})
+
+	p1 := commonModels.Repository{DepartmentID: dep.ID, Name: "lazy-order", URL: bare1, OwnerID: adminUser.ID, Branch: "main", ServiceGroup: "trade", IsActive: true}
+	p2 := commonModels.Repository{DepartmentID: dep.ID, Name: "lazy-pay", URL: bare2, OwnerID: adminUser.ID, Branch: "main", ServiceGroup: "finance", IsActive: true}
+	p3 := commonModels.Repository{DepartmentID: dep.ID, Name: "lazy-hidden", URL: bareExcluded, OwnerID: adminUser.ID, Branch: "main", ServiceGroup: "hidden-sub", IsActive: true}
+	_ = db.Create(&p1).Error
+	_ = db.Create(&p2).Error
+	_ = db.Create(&p3).Error
+
+	// Sync all
+	syncReq := httptest.NewRequest(http.MethodPost, "/api/git-repos/sync-all", bytes.NewReader([]byte(`{"scope":"ALL","cache_policy":"FETCH_MISSING","sync":true}`)))
+	syncReq.Header.Set("Content-Type", "application/json")
+	syncReq.Header.Set("Authorization", "Bearer "+adminJWT)
+	sw := httptest.NewRecorder()
+	r.ServeHTTP(sw, syncReq)
+	if sw.Code != http.StatusAccepted {
+		t.Fatalf("sync-all failed: %d %s", sw.Code, sw.Body.String())
+	}
+
+	var r1, r3 models.GitRepo
+	_ = db.Where("platform_repo_id = ?", p1.ID).First(&r1).Error
+	_ = db.Where("platform_repo_id = ?", p3.ID).First(&r3).Error
+
+	// Disable p3 via governance -> EXCLUDED
+	govReq := httptest.NewRequest(http.MethodPut, "/api/git-repos/"+strconv.FormatUint(r3.ID, 10)+"/governance", bytes.NewReader([]byte(`{"sync_enabled":false}`)))
+	govReq.Header.Set("Content-Type", "application/json")
+	govReq.Header.Set("Authorization", "Bearer "+adminJWT)
+	gw := httptest.NewRecorder()
+	r.ServeHTTP(gw, govReq)
+	if gw.Code != http.StatusOK {
+		t.Fatalf("disable repo failed: %d %s", gw.Code, gw.Body.String())
+	}
+
+	// 1. summary_only=true returns counts without hydrating files[], and filters out EXCLUDED repo
+	{
+		req := httptest.NewRequest(http.MethodGet, "/api/proto-files/tree?view=subsystem&summary_only=true", nil)
+		req.Header.Set("Authorization", "Bearer "+viewerJWT)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("summary tree failed: %d %s", w.Code, w.Body.String())
+		}
+		var resp struct {
+			SummaryOnly bool `json:"summary_only"`
+			Total       int  `json:"total"`
+			Groups      []struct {
+				GitRepoID       uint64 `json:"git_repo_id"`
+				GitRepoName     string `json:"git_repo_name"`
+				TotalCount      int    `json:"total_count"`
+				NormalizedCount int    `json:"normalized_count"`
+				Files           []any  `json:"files"`
+			} `json:"groups"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode summary tree: %v", err)
+		}
+		if !resp.SummaryOnly || resp.Total != 2 || len(resp.Groups) != 2 {
+			t.Fatalf("expected 2 enabled repos in summary tree, got %+v", resp)
+		}
+		for _, g := range resp.Groups {
+			if len(g.Files) != 0 || g.TotalCount != 1 || g.NormalizedCount != 1 {
+				t.Fatalf("expected unexpanded group to have 0 files and total_count=1, got %+v", g)
+			}
+		}
+	}
+
+	// 2. summary_only=true&expand_repo_id=<r1.ID> hydrates ONLY r1
+	{
+		req := httptest.NewRequest(http.MethodGet, "/api/proto-files/tree?view=subsystem&summary_only=true&expand_repo_id="+strconv.FormatUint(r1.ID, 10), nil)
+		req.Header.Set("Authorization", "Bearer "+viewerJWT)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expand_repo_id failed: %d %s", w.Code, w.Body.String())
+		}
+		var resp struct {
+			Groups []struct {
+				GitRepoID uint64 `json:"git_repo_id"`
+				Files     []any  `json:"files"`
+			} `json:"groups"`
+		}
+		_ = json.Unmarshal(w.Body.Bytes(), &resp)
+		for _, g := range resp.Groups {
+			if g.GitRepoID == r1.ID && len(g.Files) != 1 {
+				t.Fatalf("expected expanded repo %d to have 1 file", r1.ID)
+			}
+			if g.GitRepoID != r1.ID && len(g.Files) != 0 {
+				t.Fatalf("expected collapsed repo %d to have 0 files", g.GitRepoID)
+			}
+		}
+	}
+
+	// 3. view=package&summary_only=true&expand_package=acme.pay.v1
+	{
+		req := httptest.NewRequest(http.MethodGet, "/api/proto-files/tree?view=package&summary_only=true&expand_package=acme.pay.v1", nil)
+		req.Header.Set("Authorization", "Bearer "+viewerJWT)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expand_package failed: %d %s", w.Code, w.Body.String())
+		}
+		var resp struct {
+			Groups []struct {
+				PackageName string `json:"package_name"`
+				TotalCount  int    `json:"total_count"`
+				Files       []any  `json:"files"`
+			} `json:"groups"`
+		}
+		_ = json.Unmarshal(w.Body.Bytes(), &resp)
+		for _, g := range resp.Groups {
+			if g.PackageName == "acme.pay.v1" && len(g.Files) != 1 {
+				t.Fatalf("expected expanded package acme.pay.v1 to have 1 file")
+			}
+			if g.PackageName != "acme.pay.v1" && len(g.Files) != 0 {
+				t.Fatalf("expected collapsed package %s to have 0 files", g.PackageName)
+			}
 		}
 	}
 }

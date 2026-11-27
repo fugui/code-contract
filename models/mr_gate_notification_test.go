@@ -98,12 +98,14 @@ func TestM26_All30CoreTablesPlusSettings_MRDedupAndNotifications(t *testing.T) {
 	// 3. 验证 uk_contract_mr_dedup 表达式唯一索引:
 	// (git_repo_id, COALESCE(bundle_id, 0), event_phase, head_commit_sha, target_head_sha)
 	repo := GitRepo{
-		Name:          "mr-gate-test-repo",
-		Provider:      GitProviderGitLab,
-		RepoURL:       "http://127.0.0.1:8080/org/mr-repo.git",
-		DefaultBranch: "main",
-		AuthType:      GitAuthToken,
-		SyncMode:      GitSyncWebhook,
+		Name:           "mr-gate-test-repo",
+		Provider:       GitProviderGitLab,
+		RepoURL:        "http://127.0.0.1:8080/org/mr-repo.git",
+		DefaultBranch:  "main",
+		AuthType:       GitAuthToken,
+		SyncMode:       GitSyncWebhook,
+		PlatformRepoID: 1,
+		SourceMode:     GitSourceModePlatformShared,
 	}
 	if err := db.Create(&repo).Error; err != nil {
 		t.Fatalf("创建 GitRepo 失败: %v", err)

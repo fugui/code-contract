@@ -46,11 +46,19 @@ func NormalizeAndValidateMRTree(
 		Version:        norm.Version(),
 	}
 
-	applyPgWhitelist := repo != nil && repo.SourceMode == models.GitSourceModePlatformShared
 	subdir := "."
 	if bundle != nil {
 		if cleanSub, err := SanitizeSubdirPath(bundle.SubdirPath); err == nil && cleanSub != "" {
 			subdir = cleanSub
+		}
+	}
+	isPGSubdir := subdir == "pg" || strings.HasPrefix(subdir, "pg/") || strings.HasSuffix(subdir, "/pg") || strings.Contains(subdir, "/pg/")
+	applyPgWhitelist := false
+	if repo != nil && repo.SourceMode == models.GitSourceModePlatformShared {
+		if len(repo.CollectGlobs()) > 0 || isPGSubdir {
+			applyPgWhitelist = true
+		} else if subdir == "." && (repo.ProtoStatus == models.GitRepoProtoStatusHasProto || repo.LastCollectedCommit != "") {
+			applyPgWhitelist = true
 		}
 	}
 	collectGlobs := []string(nil)

@@ -188,6 +188,9 @@ func SyncImportOwnersForRepo(ctx context.Context, tx *gorm.DB, repoID uint64) er
 	sort.Strings(logicalPaths)
 
 	for _, lp := range logicalPaths {
+		if lockErr := tx.WithContext(ctx).Exec("SELECT pg_advisory_xact_lock(hashtext(?))", "contract_import_owner:"+lp).Error; lockErr != nil {
+			return lockErr
+		}
 		var existingOwner models.ProtoImportOwner
 		err := tx.WithContext(ctx).Where("logical_path = ?", lp).Limit(1).Find(&existingOwner).Error
 		if err != nil {

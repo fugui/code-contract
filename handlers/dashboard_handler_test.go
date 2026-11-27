@@ -519,13 +519,15 @@ func TestGetDashboardOverview_M26_StaticComplianceAndUnchangedHealthScore(t *tes
 	adminToken := generateTestJWT(t, admin)
 
 	repo := models.GitRepo{
-		Name:          "order-contracts",
-		Provider:      models.GitProviderGitLab,
-		RepoURL:       "https://git.internal.corp/arch/order-contracts.git",
-		DefaultBranch: "main",
-		AuthType:      models.GitAuthNone,
-		SyncMode:      models.GitSyncWebhook,
-		CreatedBy:     admin.ID,
+		Name:           "order-contracts",
+		Provider:       models.GitProviderGitLab,
+		RepoURL:        "https://git.internal.corp/arch/order-contracts.git",
+		DefaultBranch:  "main",
+		AuthType:       models.GitAuthNone,
+		SyncMode:       models.GitSyncWebhook,
+		CreatedBy:      admin.ID,
+		PlatformRepoID: 1,
+		SourceMode:     models.GitSourceModePlatformShared,
 	}
 	if err := db.Create(&repo).Error; err != nil {
 		t.Fatalf("create repo: %v", err)

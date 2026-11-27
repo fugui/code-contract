@@ -87,15 +87,17 @@ message LegacyInfo {
 	defer gitSrv.Close()
 
 	repo := &models.GitRepo{
-		Name:          "pfile-test-repo",
-		Provider:      models.GitProviderGitLab,
-		RepoURL:       gitSrv.URL + "/dophi/order.git",
-		APIBaseURL:    gitSrv.URL,
-		DefaultBranch: "main",
-		AuthType:      models.GitAuthToken,
-		AutoCompile:   true,
-		AutoActivate:  true,
-		LintOnSync:    true,
+		Name:           "pfile-test-repo",
+		Provider:       models.GitProviderGitLab,
+		RepoURL:        gitSrv.URL + "/dophi/order.git",
+		APIBaseURL:     gitSrv.URL,
+		DefaultBranch:  "main",
+		AuthType:       models.GitAuthToken,
+		AutoCompile:    true,
+		AutoActivate:   true,
+		LintOnSync:     true,
+		PlatformRepoID: 1,
+		SourceMode:     models.GitSourceModePlatformShared,
 	}
 	if err := repo.SetCredentials("glpat-pfile-token"); err != nil {
 		t.Fatalf("SetCredentials 失败: %v", err)

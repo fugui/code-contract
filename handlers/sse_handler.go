@@ -205,6 +205,17 @@ func (b *SSEBroker) BroadcastGitSyncCompleted(data interface{}) {
 	})
 }
 
+// BroadcastProtoSyncJobProgress 广播 500+ 平台仓批处理同步任务进度 (ADR-27)
+func (b *SSEBroker) BroadcastProtoSyncJobProgress(data interface{}) {
+	if b == nil {
+		return
+	}
+	b.BroadcastEvent(SSEEvent{
+		Event: "proto_sync_job.progress",
+		Data:  data,
+	})
+}
+
 // BroadcastReplayItemDone 广播单条重放请求执行断言完成
 func (b *SSEBroker) BroadcastReplayItemDone(taskID, itemID, recordID uint64, resultStatus string, latencyUs int64) {
 	b.BroadcastEvent(SSEEvent{

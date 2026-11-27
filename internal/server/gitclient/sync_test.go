@@ -231,15 +231,17 @@ message ExtraNote {
 	})
 
 	repo := models.GitRepo{
-		Name:          "monorepo-contracts",
-		Provider:      models.GitProviderGitLab,
-		RepoURL:       srv.URL + "/org/monorepo-contracts.git",
-		APIBaseURL:    srv.URL + "/api/v4",
-		DefaultBranch: "main",
-		AuthType:      models.GitAuthToken,
-		SyncMode:      models.GitSyncManual,
-		AutoCompile:   true,
-		LintOnSync:    true,
+		Name:           "monorepo-contracts",
+		Provider:       models.GitProviderGitLab,
+		RepoURL:        srv.URL + "/org/monorepo-contracts.git",
+		APIBaseURL:     srv.URL + "/api/v4",
+		DefaultBranch:  "main",
+		AuthType:       models.GitAuthToken,
+		SyncMode:       models.GitSyncManual,
+		AutoCompile:    true,
+		LintOnSync:     true,
+		PlatformRepoID: 1,
+		SourceMode:     models.GitSourceModePlatformShared,
 	}
 	if err := repo.SetCredentials(mockToken); err != nil {
 		t.Fatalf("加密凭证失败: %v", err)
@@ -450,10 +452,13 @@ func TestSyncViaGitCache_GenericBareRepo_SSRFAndPathTraversalGuard(t *testing.T)
 	db, reg := setupGitClientTestDB(t)
 	oldRoot := config.AppConfig.Storage.Root
 	oldCodes := config.AppConfig.Storage.CodesDir
+	oldSharedWrite := config.AppConfig.Storage.SharedWriteEnabled
 	config.AppConfig.Storage.CodesDir = t.TempDir()
+	config.AppConfig.Storage.SharedWriteEnabled = true
 	defer func() {
 		config.AppConfig.Storage.Root = oldRoot
 		config.AppConfig.Storage.CodesDir = oldCodes
+		config.AppConfig.Storage.SharedWriteEnabled = oldSharedWrite
 	}()
 
 	bareDir := createBareGitRepoWithCommits(t, "master", []map[string]string{
@@ -469,13 +474,16 @@ service BillingService { rpc Charge(ChargeReq) returns (ChargeRsp); }
 
 	// 1. 验证 HTTP/HTTPS 地址在未配置 outbound_trusted_cidrs 时仍被 SSRF SafeDialer 拦截
 	ssrfRepo := models.GitRepo{
-		Name:          "generic-ssrf-blocked",
-		Provider:      models.GitProviderGeneric,
-		RepoURL:       "http://127.0.0.1:19999/billing.git",
-		DefaultBranch: "master",
-		AuthType:      models.GitAuthNone,
-		SyncMode:      models.GitSyncManual,
-		AutoCompile:   true,
+		Name:           "generic-ssrf-blocked",
+		Provider:       models.GitProviderGeneric,
+		RepoURL:        "http://127.0.0.1:19999/billing.git",
+		DefaultBranch:  "master",
+		AuthType:       models.GitAuthNone,
+		SyncMode:       models.GitSyncManual,
+		AutoCompile:    true,
+		PlatformRepoID: 2,
+		SourceMode:     models.GitSourceModePlatformShared,
+		SyncStrategy:   models.GitSyncStrategyFetchAndRead,
 	}
 	if err := db.Create(&ssrfRepo).Error; err != nil {
 		t.Fatalf("创建 SSRF 测试 GitRepo 失败: %v", err)
@@ -487,15 +495,16 @@ service BillingService { rpc Charge(ChargeReq) returns (ChargeRsp); }
 
 	// 2. 验证真实本地 bare 仓库通过 gitsync 无工作树缓存同步并编译入库 + ListBranches
 	repo := models.GitRepo{
-		Name:          "generic-billing-git",
-		Provider:      models.GitProviderGeneric,
-		RepoURL:       bareDir,
-		DefaultBranch: "master",
-		AuthType:      models.GitAuthNone,
-		SyncMode:      models.GitSyncManual,
-		SourceMode:    models.GitSourceModeExternalStandalone,
-		SyncStrategy:  models.GitSyncStrategyFetchAndRead,
-		AutoCompile:   true,
+		Name:           "generic-billing-git",
+		Provider:       models.GitProviderGeneric,
+		RepoURL:        bareDir,
+		DefaultBranch:  "master",
+		AuthType:       models.GitAuthNone,
+		SyncMode:       models.GitSyncManual,
+		PlatformRepoID: 3,
+		SourceMode:     models.GitSourceModePlatformShared,
+		SyncStrategy:   models.GitSyncStrategyFetchAndRead,
+		AutoCompile:    true,
 	}
 	if err := db.Create(&repo).Error; err != nil {
 		t.Fatalf("创建 GENERIC GitRepo 失败: %v", err)

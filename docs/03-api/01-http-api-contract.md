@@ -443,18 +443,32 @@
 
 ---
 
-## 14. 平台代码仓共享与四段式 Proto 流水线 API (`ADR-26` / `M33 ~ M36`)
+## 14. 平台代码仓共享与四段式 Proto 流水线 API (`ADR-26` / `M33 ~ M36` & `ADR-26 r4 / ADR-27` / `M37 ~ M39`)
+
+> **r4 / M37 路由下线清单**：以下独立建删与手工导入/关联路由已正式下线（返回 `404`），`code-bench` `repositories` 为平台代码仓唯一真值源：
+> - ~~`POST /api/git-repos`~~（已下线）
+> - ~~`DELETE /api/git-repos/:id`~~（已下线，改为 `PUT /api/git-repos/:id/governance` 或 `PUT /api/git-repos/:id` 停用采集 `sync_enabled=false`）
+> - ~~`POST /api/git-repos/:id/link-platform`~~（已下线，升级迁移自动归并）
+> - ~~`GET /api/git-repos/platform-discover`~~（已下线，改为零勾选全量自动对齐）
+> - ~~`POST /api/git-repos/platform-import`~~（已下线，改为 `POST /api/git-repos/sync-all`）
 
 | 方法 | 路径 | 权限 | 请求参数 / 载荷 | 响应与错误码 |
 | :--- | :--- | :---: | :--- | :--- |
-| `GET` | `/api/git-repos/platform-discover` | `Auth` | Query: `department_id`, `service_group`, `search`, `probe_protos` (`bool`), `page`, `page_size` | `200`: 平台 `repositories` 列表 + 本地缓存状态、探测到的全小写 `pg` 目录列表、候选 Bundle 预览、白名单内外文件数与 Stage B 语法预检摘要 |
-| `POST` | `/api/git-repos/platform-import` | `Admin` | Body: `{ items: [{ platform_repo_id, sync_strategy?, collect_globs?, exclude_globs?, bundles: [{ bundle_name, target_schema_name, category, subdir_path, include_dirs? }] }] }` | `201`: 批量创建 `PLATFORM_SHARED` `GitRepo` 及自定义合并/拆分的 Bundle（`auto_activate` 默认 `false`）+ `P2` 审计；`409` 目标 Schema 冲突 |
-| `POST` | `/api/git-repos/:id/link-platform` | `Admin` | Body: `{ platform_repo_id?, sync_strategy? }`（空则按 `NormalizeGitURL` 自动匹配） | `200`: 转为 `PLATFORM_SHARED` 并清除 `credentials_enc`/`credential_hint` + `P1` 审计；`404`/`409` |
+| `GET` | `/api/git-repos` | `Auth` | Query: `proto_status`, `service_group`, `sync_enabled`, `last_sync_status`, `search`, `page`, `page_size` | `200`: 标准分页返回平台共享契约仓台账（含只读平台元数据 `service_group`/`department_name`/`owner_id`、6 态 `proto_status`、方案 A 目标导出目录与文件统计） |
+| `POST` | `/api/git-repos/sync-all` | `Admin` | Body: `{ scope?: "ALL"\|"DEPARTMENT"\|"SERVICE_GROUP"\|"FAILED_ONLY"\|"SELECTED", cache_policy?: "CACHE_ONLY"\|"FETCH_MISSING", department_id?, service_group?, repo_ids?, force_recompile?, sync? }` | `202`: 对齐 `repositories` 并持久化创建 `contract_proto_sync_jobs` 异步批量执行（`FETCH_MISSING` 在 `shared_write_enabled=false` 时返 `400`）+ `P2` 审计；实时推送 SSE `proto_sync_job.progress` |
+| `GET` | `/api/git-repos/sync-summary` | `Auth` | 无 | `200`: 返回 `platform_active_total`、6 态计数、`shared_write_enabled`、`service_groups[]` 及最近一次 `latest_job` |
+| `GET` | `/api/git-repos/sync-jobs/:jobId` | `Auth` | Path: `jobId` | `200`: 返回批处理任务进度、各状态计数与失败仓明细 `error_summary` |
+| `PUT` | `/api/git-repos/:id/governance` | `Admin` | Body: `{ sync_enabled?, sync_strategy?, export_target_subsystem?, export_target_repo_dir?, strip_prefixes?, path_rewrites?, collect_globs?, exclude_globs?, disabled_rules?, regex_rewrites?, import_rewrites?, exempt_files?, quarantined_files? }` | `200`: 更新单仓契约治理配置并回收停用仓 `clean/` 软链 + `P2` 审计；全局 `(effective_subsystem, effective_repo_dir)` 碰撞返 `409 Conflict`；仓内路径裁剪碰撞或正则非法返 `400` |
+| `POST` | `/api/git-repos/:id/governance/dry-run` | `Auth` | Body: 同 `PUT /api/git-repos/:id/governance`（可选试算覆盖载荷） | `200`: 零网络、零写盘试算返回路径对照表、碰撞列表、源码清理 Unified Diff 与语法通过率前后对比（`409`/`400` 校验碰撞或透出 `collisions`） |
+| `GET` | `/api/proto-governance/config` | `Auth` | 无 | `200`: 返回当前生效 `proto-governance/v1` 配置文档（`revision`/`config_sha256`）与内置规则元数据 `builtin_rules`（`NORM-001`~`NORM-005`） |
+| `PUT` | `/api/proto-governance/config` | `Admin` | Body: `proto-governance/v1` 完整 JSON 文档 | `200`: 校验 Schema/正则/全局 409 碰撞并持久化新版本快照及回写单仓治理字段 + `P1` 审计 |
+| `POST` | `/api/proto-governance/dry-run` | `Auth` | Body: `proto-governance/v1` 完整 JSON 文档（可选 `repo_ids[]`） | `200`: 全局目录碰撞校验 + 受影响仓库免网络 Dry-Run 汇总与样例 Diff |
+| `POST` | `/api/proto-governance/apply-and-renormalize` | `Admin` | Body: `{ config?: GovernanceConfigDoc, repo_ids?: number[], force_recompile?: boolean }` | `200`: 应用配置（若提供）并批量免网络重清洗受影响仓库（Stage B~D），原子切换 `protos/clean/` + `P1` 审计 |
 | `POST` | `/api/git-repos/batch-sync` | `Admin` | Body: `{ repo_ids?: number[], branch?: string, force_recompile?: boolean }` | `202`: 经 `SyncScheduler` 并发限速派发批量四段式流水线同步 |
-| `POST` | `/api/git-repos/:id/re-normalize` | `Admin` | Body: `{ bundle_id?: number, force?: boolean }` | `200`: 直接基于 `raw/` 树或本地 Git 对象重跑 Stage B~D（零网络 `git fetch`）并返回流水线报告 |
+| `POST` | `/api/git-repos/:id/re-normalize` | `Admin` | Body: `{ bundle_id?: number, force?: boolean }` | `200`: 直接基于 DB `raw` 快照重跑 Stage B~D（零网络 `git fetch`）并返回流水线报告 |
 | `GET` | `/api/git-repos/baseline-report` | `Auth` | 无 | `200`: 全平台基线报告（`total_repos`, `whitelist_files`, `normalized_files`, `quarantined_files`, `syntax_pass_rate`, `compile_pass_rate`, `error_distribution`, `repos[]`） |
 | `GET` | `/api/git-repos/arch-suggestions` | `Auth` | 无 | `200`: 结合 `repositories.service_group` 与 `owner_id` 推荐架构 `Subsystem` / `Module` 归属列表 |
-| `GET` | `/api/proto-files/tree` | `Auth` | Query: `view` (`subsystem` \| `package`), `search`, `pipeline_status`, `include_deleted` | `200`: 双视图树响应（含子系统 slug、新鲜度 `is_stale`、`sync_strategy`、`pipeline_status`、`is_external_copy`） |
+| `GET` | `/api/proto-files/tree` | `Auth` | Query: `view` (`subsystem` \| `package`), `summary_only` (`bool`), `expand_repo_id`, `expand_package`, `subsystem`, `search`, `pipeline_status`, `include_deleted` | `200`: 双视图树响应；`summary_only=true` 仅返回分组摘要与计数，按需展开指定仓库/包明细，默认过滤 `sync_enabled=false` |
 | `GET` | `/api/proto-files/:id/content` | `Auth` | Query: `version` | `200`: 扩展返回 `raw_content`、`line_map`、`pipeline_status`、`status_reason`、`normalizer_version`、`is_external_copy` |
 | `GET` | `/api/proto-import-owners` | `Auth` | Query: `search`, `source`, `page`, `page_size` | `200`: 分页返回逻辑导入归属清单 |
 | `PUT` | `/api/proto-import-owners` | `Admin` | Body: `{ logical_path, owner_git_repo_id, owner_bundle_id, source? }` | `200`: Upsert 权威提供方（写入 `MANUAL` 并标记非权威同哈希副本 `is_external_copy=true`）+ `P1` 审计 |

@@ -39,6 +39,16 @@ func MakeSSEEventBroadcaster(broker *SSEBroker) gitclient.EventBroadcaster {
 	}
 }
 
+// MakeSyncJobProgressBroadcaster 将全局 SSEBroker 适配为 gitclient.SyncJobBroadcaster。
+func MakeSyncJobProgressBroadcaster(broker *SSEBroker) gitclient.SyncJobBroadcaster {
+	if broker == nil {
+		return nil
+	}
+	return func(evt gitclient.SyncJobProgressEvent) {
+		broker.BroadcastProtoSyncJobProgress(evt)
+	}
+}
+
 // InitGlobalSyncScheduler 注册全局 ADR-26 SyncScheduler 单例。
 func InitGlobalSyncScheduler(sched *gitclient.SyncScheduler) {
 	globalSyncSchedulerMu.Lock()
@@ -56,6 +66,9 @@ func GetGlobalSyncScheduler() *gitclient.SyncScheduler {
 // EnsureSyncScheduler 获取或按需懒初始化全局 SyncScheduler。
 func EnsureSyncScheduler(db *gorm.DB, reg *decoder.Registry, broker *SSEBroker) *gitclient.SyncScheduler {
 	if sched := GetGlobalSyncScheduler(); sched != nil {
+		if broker != nil {
+			sched.SetJobBroadcaster(MakeSyncJobProgressBroadcaster(broker))
+		}
 		return sched
 	}
 	globalSyncSchedulerMu.Lock()
@@ -63,136 +76,84 @@ func EnsureSyncScheduler(db *gorm.DB, reg *decoder.Registry, broker *SSEBroker) 
 	if globalSyncScheduler == nil {
 		globalSyncScheduler = gitclient.NewSyncScheduler(db, reg, MakeSSEEventBroadcaster(broker), &config.AppConfig)
 	}
+	if broker != nil {
+		globalSyncScheduler.SetJobBroadcaster(MakeSyncJobProgressBroadcaster(broker))
+	}
 	return globalSyncScheduler
 }
 
-// DiscoverPlatformReposHandler 从公共 repositories 发现平台代码仓并探测全小写 pg/ 目录 (GET /api/git-repos/platform-discover)。
-func DiscoverPlatformReposHandler(c *gin.Context) {
-	var depID uint64
-	if raw := strings.TrimSpace(c.Query("department_id")); raw != "" {
-		parsed, err := strconv.ParseUint(raw, 10, 64)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "非法的 department_id 参数"})
+// SyncAllGitReposHandler 对齐 code-bench repositories 并启动持久化双按钮批处理同步作业 (POST /api/git-repos/sync-all)。
+func SyncAllGitReposHandler(c *gin.Context) {
+	var req gitclient.SyncAllRequest
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数不合法: " + err.Error()})
+		return
+	}
+	uid, opName := currentOperatorName(c)
+	req.OperatorID = uid
+	req.TriggeredBy = opName
+
+	decReg, _ := GetDecoderRegistry()
+	broker := GetGlobalSSEBroker()
+	sched := EnsureSyncScheduler(models.DB, decReg, broker)
+
+	job, err := gitclient.RunSyncAllJob(c.Request.Context(), models.DB, sched, &config.AppConfig, req)
+	if err != nil {
+		if errors.Is(err, gitclient.ErrSharedWriteDisabled) {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"err_code": "SHARED_WRITE_DISABLED",
+				"error":    err.Error(),
+			})
 			return
 		}
-		depID = parsed
-	}
-	page, pageSize := parseStandardPagination(c)
-	probeProtos := true
-	if rawProbe := strings.TrimSpace(c.Query("probe_protos")); rawProbe == "false" || rawProbe == "0" {
-		probeProtos = false
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
 
-	res, err := gitclient.DiscoverPlatformRepos(c.Request.Context(), models.DB, config.AppConfig.Storage.GetCodesDir(), gitclient.PlatformDiscoverFilter{
-		DepartmentID: depID,
-		ServiceGroup: strings.TrimSpace(c.Query("service_group")),
-		Search:       strings.TrimSpace(c.Query("search")),
-		ProbeProtos:  probeProtos,
-		Page:         page,
-		PageSize:     pageSize,
-	})
+	recordAudit(c, "contract_git:sync_all_repos", commonModels.AuditLevelP2,
+		fmt.Sprintf("管理员 [%s] 发起全量平台仓同步任务 #%d (%s / %s，共 %d 仓)", opName, job.ID, job.Scope, job.CachePolicy, job.TotalRepos),
+		"proto_sync_job", job.ID, fmt.Sprintf("job-%d", job.ID), nil, job)
+
+	c.JSON(http.StatusAccepted, job)
+}
+
+// GetGitReposSyncSummaryHandler 返回 500+ 平台仓 6 态统计汇总与最近任务状态 (GET /api/git-repos/sync-summary)。
+func GetGitReposSyncSummaryHandler(c *gin.Context) {
+	if strings.EqualFold(strings.TrimSpace(c.Query("align")), "true") {
+		_, _, _, _ = gitclient.AlignPlatformRepositories(c.Request.Context(), models.DB)
+	}
+	summary, err := gitclient.GetSyncSummary(c.Request.Context(), models.DB, config.AppConfig.Storage.SharedWriteEnabled)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, res)
+	c.JSON(http.StatusOK, summary)
 }
 
-// ImportPlatformReposHandler 批量将平台代码仓以 PLATFORM_SHARED 模式纳管并创建候选 Bundle (POST /api/git-repos/platform-import)。
-func ImportPlatformReposHandler(c *gin.Context) {
-	var req struct {
-		Items []gitclient.PlatformRepoImportItem `json:"items"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil || len(req.Items) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "items 不能为空"})
+// GetProtoSyncJobHandler 查询持久化异步批处理任务进度与失败仓明细 (GET /api/git-repos/sync-jobs/:jobId)。
+func GetProtoSyncJobHandler(c *gin.Context) {
+	jobID, err := strconv.ParseUint(c.Param("jobId"), 10, 64)
+	if err != nil || jobID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "非法的 jobId 参数"})
 		return
 	}
-
-	uid, opName := currentOperatorName(c)
-	created, err := gitclient.BatchImportPlatformRepos(
-		c.Request.Context(),
-		models.DB,
-		config.AppConfig.Storage.GetCodesDir(),
-		uid,
-		req.Items,
-	)
-	if err != nil {
-		errMsg := err.Error()
-		switch {
-		case strings.Contains(errMsg, "已纳管"),
-			strings.Contains(errMsg, "duplicate key"),
-			strings.Contains(errMsg, "UNIQUE constraint"):
-			c.JSON(http.StatusConflict, gin.H{"error": errMsg})
-		case strings.Contains(errMsg, "未找到"):
-			c.JSON(http.StatusNotFound, gin.H{"error": errMsg})
-		default:
-			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+	var job models.ProtoSyncJob
+	if err := models.DB.First(&job, jobID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "未找到指定的同步任务"})
+			return
 		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-
-	recordAudit(c, "contract_git:platform_import", commonModels.AuditLevelP2,
-		fmt.Sprintf("管理员 [%s] 批量导入 %d 个平台共享代码仓", opName, len(created)),
-		"git_repo", 0, "platform-import", nil, gin.H{"count": len(created), "items": created})
-
-	c.JSON(http.StatusCreated, gin.H{
-		"imported_count": len(created),
-		"items":          created,
+	var errItems []gitclient.SyncJobErrorItem
+	if len(job.ErrorSummaryJSON) > 0 {
+		_ = json.Unmarshal(job.ErrorSummaryJSON, &errItems)
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"job":           job,
+		"error_summary": errItems,
 	})
-}
-
-// LinkPlatformRepoHandler 将已有 EXTERNAL_STANDALONE 仓库关联升级为 PLATFORM_SHARED 并清理冗余凭据 (POST /api/git-repos/:id/link-platform)。
-func LinkPlatformRepoHandler(c *gin.Context) {
-	repoID, err := strconv.ParseUint(c.Param("id"), 10, 64)
-	if err != nil || repoID == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "非法的 git_repo ID"})
-		return
-	}
-
-	var req struct {
-		PlatformRepoID uint64 `json:"platform_repo_id"`
-		SyncStrategy   string `json:"sync_strategy"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数不合法"})
-		return
-	}
-
-	var before models.GitRepo
-	_ = models.DB.First(&before, repoID).Error
-
-	updated, err := gitclient.LinkLegacyRepoToPlatform(c.Request.Context(), models.DB, repoID, req.PlatformRepoID, req.SyncStrategy)
-	if err != nil {
-		switch {
-		case errors.Is(err, gorm.ErrRecordNotFound) || strings.Contains(err.Error(), "未找到"):
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-		case strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "已关联") || strings.Contains(err.Error(), "UNIQUE"):
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
-		default:
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		}
-		return
-	}
-
-	var bundles []models.GitProtoBundle
-	_ = models.DB.Where("git_repo_id = ?", updated.ID).Order("id ASC").Find(&bundles).Error
-	_, opName := currentOperatorName(c)
-
-	recordAudit(c, "contract_git:link_platform", commonModels.AuditLevelP1,
-		fmt.Sprintf("管理员 [%s] 将仓库 [%s] 关联至平台仓 #%d 并清理历史独立凭据", opName, updated.Name, derefUint64Ptr(updated.PlatformRepoID)),
-		"git_repo", updated.ID, updated.Name,
-		map[string]any{"source_mode": before.SourceMode, "platform_repo_id": before.PlatformRepoID, "auth_type": before.AuthType},
-		map[string]any{"source_mode": updated.SourceMode, "platform_repo_id": updated.PlatformRepoID, "auth_type": updated.AuthType},
-	)
-
-	c.JSON(http.StatusOK, toGitRepoResponseDTO(*updated, bundles))
-}
-
-func derefUint64Ptr(p *uint64) uint64 {
-	if p == nil {
-		return 0
-	}
-	return *p
 }
 
 // BatchSyncGitReposHandler 经 SyncScheduler 并发限速派发批量四段式流水线同步 (POST /api/git-repos/batch-sync)。
@@ -333,23 +294,31 @@ func GetGitReposArchSuggestionsHandler(c *gin.Context) {
 
 // ProtoTreeRepoGroup 按子系统/仓库视图组织的文件树分面节点。
 type ProtoTreeRepoGroup struct {
-	SubsystemSlug string         `json:"subsystem_slug"`
-	GitRepoID     uint64         `json:"git_repo_id"`
-	GitRepoName   string         `json:"git_repo_name"`
-	SourceMode    string         `json:"source_mode"`
-	SyncStrategy  string         `json:"sync_strategy"`
-	IsStale       bool           `json:"is_stale"`
-	LastSyncAt    *time.Time     `json:"last_sync_at,omitempty"`
-	Files         []ProtoFileDTO `json:"files"`
+	SubsystemSlug       string         `json:"subsystem_slug"`
+	RawSubsystemSlug    string         `json:"raw_subsystem_slug,omitempty"`
+	ExportTargetRepoDir string         `json:"export_target_repo_dir,omitempty"`
+	GitRepoID           uint64         `json:"git_repo_id"`
+	GitRepoName         string         `json:"git_repo_name"`
+	SourceMode          string         `json:"source_mode"`
+	SyncStrategy        string         `json:"sync_strategy"`
+	IsStale             bool           `json:"is_stale"`
+	LastSyncAt          *time.Time     `json:"last_sync_at,omitempty"`
+	TotalCount          int            `json:"total_count"`
+	NormalizedCount     int            `json:"normalized_count"`
+	QuarantinedCount    int            `json:"quarantined_count"`
+	Files               []ProtoFileDTO `json:"files"`
 }
 
 // ProtoTreePackageGroup 按 Proto package 逻辑域视图组织的文件树分面节点。
 type ProtoTreePackageGroup struct {
-	PackageName string         `json:"package_name"`
-	Files       []ProtoFileDTO `json:"files"`
+	PackageName      string         `json:"package_name"`
+	TotalCount       int            `json:"total_count"`
+	NormalizedCount  int            `json:"normalized_count"`
+	QuarantinedCount int            `json:"quarantined_count"`
+	Files            []ProtoFileDTO `json:"files"`
 }
 
-// GetProtoFilesTreeHandler 返回双视图树（subsystem | package）只读清单与统计 (GET /api/proto-files/tree)。
+// GetProtoFilesTreeHandler 返回双视图树（subsystem | package）只读清单、摘要统计与按需懒加载节点 (GET /api/proto-files/tree)。
 func GetProtoFilesTreeHandler(c *gin.Context) {
 	view := strings.ToLower(strings.TrimSpace(c.DefaultQuery("view", "subsystem")))
 	if view != "subsystem" && view != "package" {
@@ -357,9 +326,54 @@ func GetProtoFilesTreeHandler(c *gin.Context) {
 		return
 	}
 
+	summaryQ := strings.TrimSpace(c.Query("summary_only"))
+	summaryOnly := strings.EqualFold(summaryQ, "true") || summaryQ == "1"
+	subsystemFilter := strings.TrimSpace(c.Query("subsystem"))
+	expandPkg := strings.TrimSpace(c.Query("expand_package"))
+
+	expandRepoID, okExpand := parseOptionalUint64Query(c, "expand_repo_id")
+	if !okExpand {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "非法的 expand_repo_id 参数"})
+		return
+	}
+
+	var repos []models.GitRepo
+	_ = models.DB.Order("id ASC").Find(&repos).Error
+	repoByID := make(map[uint64]models.GitRepo, len(repos))
+	disabledRepoIDs := make([]uint64, 0)
+	enabledSubRepoIDs := make([]uint64, 0)
+	for _, r := range repos {
+		repoByID[r.ID] = r
+		if !r.SyncEnabled {
+			disabledRepoIDs = append(disabledRepoIDs, r.ID)
+			continue
+		}
+		if subsystemFilter != "" {
+			effSub, _ := gitclient.ResolveEffectiveExportTarget(r, nil)
+			if strings.EqualFold(effSub, subsystemFilter) || strings.EqualFold(r.SubsystemSlug, subsystemFilter) {
+				enabledSubRepoIDs = append(enabledSubRepoIDs, r.ID)
+			}
+		}
+	}
+
 	q := models.DB.Model(&models.ProtoFile{})
 	if strings.TrimSpace(c.Query("include_deleted")) != "true" {
 		q = q.Where("is_deleted = false")
+	}
+	if len(disabledRepoIDs) > 0 {
+		q = q.Where("git_repo_id IS NULL OR git_repo_id NOT IN ?", disabledRepoIDs)
+	}
+	if subsystemFilter != "" {
+		if len(enabledSubRepoIDs) == 0 {
+			c.JSON(http.StatusOK, gin.H{
+				"view":         view,
+				"total":        0,
+				"summary_only": summaryOnly,
+				"groups":       []any{},
+			})
+			return
+		}
+		q = q.Where("git_repo_id IN ?", enabledSubRepoIDs)
 	}
 	if pStatus := strings.ToUpper(strings.TrimSpace(c.Query("pipeline_status"))); pStatus != "" {
 		q = q.Where("pipeline_status = ?", pStatus)
@@ -391,13 +405,6 @@ func GetProtoFilesTreeHandler(c *gin.Context) {
 		dtos = append(dtos, buildGitProtoFileDTO(f, repoNames, bundleNames, schemaByID, latestVerSchemaByFile, activeSchemaByName))
 	}
 
-	var repos []models.GitRepo
-	_ = models.DB.Order("id ASC").Find(&repos).Error
-	repoByID := make(map[uint64]models.GitRepo, len(repos))
-	for _, r := range repos {
-		repoByID[r.ID] = r
-	}
-
 	if view == "package" {
 		pkgMap := make(map[string][]ProtoFileDTO)
 		for _, d := range dtos {
@@ -418,15 +425,32 @@ func GetProtoFilesTreeHandler(c *gin.Context) {
 			sort.Slice(filesInPkg, func(i, j int) bool {
 				return filesInPkg[i].FilePath < filesInPkg[j].FilePath
 			})
+			normCnt, quarCnt := 0, 0
+			for _, f := range filesInPkg {
+				switch f.PipelineStatus {
+				case models.ProtoPipelineNormalized:
+					normCnt++
+				case models.ProtoPipelineQuarantined:
+					quarCnt++
+				}
+			}
+			outFiles := filesInPkg
+			if summaryOnly && (expandPkg == "" || expandPkg != pkg) {
+				outFiles = []ProtoFileDTO{}
+			}
 			groups = append(groups, ProtoTreePackageGroup{
-				PackageName: pkg,
-				Files:       filesInPkg,
+				PackageName:      pkg,
+				TotalCount:       len(filesInPkg),
+				NormalizedCount:  normCnt,
+				QuarantinedCount: quarCnt,
+				Files:            outFiles,
 			})
 		}
 		c.JSON(http.StatusOK, gin.H{
-			"view":   view,
-			"total":  len(dtos),
-			"groups": groups,
+			"view":         view,
+			"total":        len(dtos),
+			"summary_only": summaryOnly,
+			"groups":       groups,
 		})
 		return
 	}
@@ -440,34 +464,47 @@ func GetProtoFilesTreeHandler(c *gin.Context) {
 		grp, exists := repoGroupsMap[rid]
 		if !exists {
 			r := repoByID[rid]
-			subSlug := r.SubsystemSlug
-			if strings.TrimSpace(subSlug) == "" {
-				subSlug = gitclient.UnassignedSubsystemSlug
+			effSub, effRepoDir := gitclient.ResolveEffectiveExportTarget(r, nil)
+			rawSub := r.SubsystemSlug
+			if strings.TrimSpace(rawSub) == "" {
+				rawSub = gitclient.UnassignedSubsystemSlug
 			}
 			srcMode := r.SourceMode
 			if srcMode == "" {
-				srcMode = models.GitSourceModeExternalStandalone
+				srcMode = models.GitSourceModePlatformShared
 			}
 			syncStrat := r.SyncStrategy
 			if syncStrat == "" {
-				syncStrat = models.GitSyncStrategyFetchAndRead
+				syncStrat = models.GitSyncStrategyLocalCacheOnly
 			}
 			repoName := r.Name
 			if repoName == "" {
 				repoName = d.GitRepoName
 			}
 			grp = &ProtoTreeRepoGroup{
-				SubsystemSlug: subSlug,
-				GitRepoID:     rid,
-				GitRepoName:   repoName,
-				SourceMode:    srcMode,
-				SyncStrategy:  syncStrat,
-				IsStale:       computeRepoIsStale(r),
-				LastSyncAt:    r.LastSyncAt,
+				SubsystemSlug:       effSub,
+				RawSubsystemSlug:    rawSub,
+				ExportTargetRepoDir: effRepoDir,
+				GitRepoID:           rid,
+				GitRepoName:         repoName,
+				SourceMode:          srcMode,
+				SyncStrategy:        syncStrat,
+				IsStale:             computeRepoIsStale(r),
+				LastSyncAt:          r.LastSyncAt,
+				Files:               []ProtoFileDTO{},
 			}
 			repoGroupsMap[rid] = grp
 		}
-		grp.Files = append(grp.Files, d)
+		grp.TotalCount++
+		switch d.PipelineStatus {
+		case models.ProtoPipelineNormalized:
+			grp.NormalizedCount++
+		case models.ProtoPipelineQuarantined:
+			grp.QuarantinedCount++
+		}
+		if !summaryOnly || (expandRepoID != nil && *expandRepoID == rid) {
+			grp.Files = append(grp.Files, d)
+		}
 	}
 	groups := make([]ProtoTreeRepoGroup, 0, len(repoGroupsMap))
 	for _, grp := range repoGroupsMap {
@@ -484,9 +521,10 @@ func GetProtoFilesTreeHandler(c *gin.Context) {
 	})
 
 	c.JSON(http.StatusOK, gin.H{
-		"view":   view,
-		"total":  len(dtos),
-		"groups": groups,
+		"view":         view,
+		"total":        len(dtos),
+		"summary_only": summaryOnly,
+		"groups":       groups,
 	})
 }
 

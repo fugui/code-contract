@@ -50,13 +50,15 @@ func TestMRGateWebhook_SignatureGuard_Dedup_OverrideGuardAndP1Audit(t *testing.T
 
 	// 准备 GitLab 与 GitHub 两个仓库及 Bundle
 	gitlabRepo := models.GitRepo{
-		Name:          "trade-proto-gitlab",
-		Provider:      models.GitProviderGitLab,
-		RepoURL:       "http://127.0.0.1:8080/trade/trade-proto.git",
-		DefaultBranch: "main",
-		AuthType:      models.GitAuthToken,
-		SyncMode:      models.GitSyncWebhook,
-		AutoCompile:   true,
+		Name:           "trade-proto-gitlab",
+		Provider:       models.GitProviderGitLab,
+		RepoURL:        "http://127.0.0.1:8080/trade/trade-proto.git",
+		DefaultBranch:  "main",
+		AuthType:       models.GitAuthToken,
+		SyncMode:       models.GitSyncWebhook,
+		AutoCompile:    true,
+		PlatformRepoID: 1,
+		SourceMode:     models.GitSourceModePlatformShared,
 	}
 	if err := gitlabRepo.SetWebhookSecret("gl-webhook-secret-999"); err != nil {
 		t.Fatalf("SetWebhookSecret 失败: %v", err)
@@ -270,12 +272,14 @@ func TestMRGateWebhook_SignatureGuard_Dedup_OverrideGuardAndP1Audit(t *testing.T
 
 	// 5. 验证 GitHub X-Hub-Signature-256 HMAC-SHA256 验签与 GET /api/mr-check-runs 列表/详情查询
 	ghRepo := models.GitRepo{
-		Name:          "gh-proto-repo",
-		Provider:      models.GitProviderGitHub,
-		RepoURL:       "https://github.com/acme/gh-proto.git",
-		DefaultBranch: "main",
-		AuthType:      models.GitAuthToken,
-		SyncMode:      models.GitSyncWebhook,
+		Name:           "gh-proto-repo",
+		Provider:       models.GitProviderGitHub,
+		RepoURL:        "https://github.com/acme/gh-proto.git",
+		DefaultBranch:  "main",
+		AuthType:       models.GitAuthToken,
+		SyncMode:       models.GitSyncWebhook,
+		PlatformRepoID: 2,
+		SourceMode:     models.GitSourceModePlatformShared,
 	}
 	_ = ghRepo.SetWebhookSecret("gh-hmac-secret-777")
 	_ = db.Create(&ghRepo).Error

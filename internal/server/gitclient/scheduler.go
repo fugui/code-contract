@@ -2,9 +2,12 @@ package gitclient
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,16 +24,25 @@ import (
 
 // SyncScheduler 提供定时增量同步、并发 Worker 池、按 Git 服务器限速、singleflight 去重与 LOCAL_CACHE_ONLY 变更检测 (ADR-26 §2.7)。
 type SyncScheduler struct {
-	db          *gorm.DB
-	reg         *decoder.Registry
-	broadcaster EventBroadcaster
-	cfg         *config.Config
+	db             *gorm.DB
+	reg            *decoder.Registry
+	broadcaster    EventBroadcaster
+	jobBroadcaster SyncJobBroadcaster
+	cfg            *config.Config
 
 	sfGroup     singleflight.Group
 	sem         chan struct{}
 	hostMu      sync.Mutex
 	hostLastHit map[string]time.Time
 	hostMinGap  time.Duration
+}
+
+// SetJobBroadcaster 注册批处理同步任务进度 SSE 广播器。
+func (s *SyncScheduler) SetJobBroadcaster(b SyncJobBroadcaster) {
+	if s == nil {
+		return
+	}
+	s.jobBroadcaster = b
 }
 
 // NewSyncScheduler 创建同步调度器。
@@ -58,7 +70,7 @@ func (s *SyncScheduler) TriggerRepoSync(ctx context.Context, repoID uint64, opts
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("SyncScheduler 未初始化")
 	}
-	key := fmt.Sprintf("repo-%d-%s-%v", repoID, strings.TrimSpace(opts.Branch), opts.ForceRecompile)
+	key := fmt.Sprintf("repo-%d-%s-%s-%v", repoID, strings.TrimSpace(opts.Branch), strings.TrimSpace(opts.CachePolicy), opts.ForceRecompile)
 	val, err, _ := s.sfGroup.Do(key, func() (any, error) {
 		select {
 		case s.sem <- struct{}{}:
@@ -84,7 +96,7 @@ func (s *SyncScheduler) TriggerRepoSync(ctx context.Context, repoID uint64, opts
 		}
 		opts.TriggerBlastRadius = true
 
-		// PLATFORM_SHARED 与使用本地共享路径的仓库统一走四段式流水线
+		// 统一走共享缓存四段式流水线
 		return RunFourStagePipeline(ctx, s.db, s.reg, s.broadcaster, repoID, opts)
 	})
 	if err != nil {
@@ -146,9 +158,13 @@ func (s *SyncScheduler) Start(ctx context.Context) {
 }
 
 func (s *SyncScheduler) runPollCycle(ctx context.Context) {
+	if _, _, _, err := AlignPlatformRepositories(ctx, s.db); err != nil {
+		log.Printf("[SyncScheduler] 对齐平台 repositories 失败: %v", err)
+	}
+
 	var repos []models.GitRepo
 	if err := s.db.WithContext(ctx).
-		Where("sync_mode = ? OR source_mode = ?", models.GitSyncPoll, models.GitSourceModePlatformShared).
+		Where("sync_enabled = true").
 		Order("id ASC").
 		Find(&repos).Error; err != nil {
 		return
@@ -156,32 +172,38 @@ func (s *SyncScheduler) runPollCycle(ctx context.Context) {
 	var toSync []uint64
 	codesDir := s.cfg.Storage.GetCodesDir()
 	for _, r := range repos {
-		strategy := r.SyncStrategy
-		if r.SourceMode == models.GitSourceModePlatformShared && !s.cfg.Storage.SharedWriteEnabled {
-			strategy = models.GitSyncStrategyLocalCacheOnly
-		}
-		if strategy == models.GitSyncStrategyLocalCacheOnly {
-			changed, err := s.hasLocalCacheCommitChanged(ctx, &r, codesDir)
-			if err != nil || !changed {
-				continue
+		// 定时巡检默认仅同步已有缓存（CACHE_ONLY），避免缺失/无权限仓引发拉取风暴
+		changed, err := s.hasLocalCacheCommitChanged(ctx, &r, codesDir)
+		if err != nil {
+			if errors.Is(err, ErrLocalCacheMissing) && r.ProtoStatus != models.GitRepoProtoStatusNoLocalCache {
+				_ = s.db.Model(&r).Update("proto_status", models.GitRepoProtoStatusNoLocalCache).Error
 			}
+			continue
+		}
+		if !changed && r.ProtoStatus != models.GitRepoProtoStatusPending && r.ProtoStatus != models.GitRepoProtoStatusNoLocalCache {
+			continue
 		}
 		toSync = append(toSync, r.ID)
 	}
 	if len(toSync) > 0 {
 		s.BatchTriggerSync(ctx, toSync, PipelineOptions{
-			CodesDir:           codesDir,
-			ProtosDir:          s.cfg.Storage.GetProtosDir(),
-			SharedWriteEnabled: s.cfg.Storage.SharedWriteEnabled,
-			TriggerBlastRadius: true,
+			CodesDir:              codesDir,
+			ProtosDir:             s.cfg.Storage.GetProtosDir(),
+			SharedWriteEnabled:    s.cfg.Storage.SharedWriteEnabled,
+			CachePolicy:           models.SyncCachePolicyCacheOnly,
+			SkipIfCommitUnchanged: true,
+			TriggerBlastRadius:    true,
 		})
 	}
 }
 
 func (s *SyncScheduler) hasLocalCacheCommitChanged(ctx context.Context, repo *models.GitRepo, codesDir string) (bool, error) {
-	localPath, _, err := ResolveEffectiveRepoLocalPath(repo, codesDir, s.cfg.Storage.SharedWriteEnabled)
+	localPath, _, err := ResolveEffectiveRepoLocalPathWithPolicy(repo, codesDir, models.SyncCachePolicyCacheOnly, s.cfg.Storage.SharedWriteEnabled)
 	if err != nil {
 		return false, err
+	}
+	if _, statErr := os.Stat(filepath.Join(localPath, ".git")); statErr != nil {
+		return false, fmt.Errorf("%w: %v", ErrLocalCacheMissing, statErr)
 	}
 	lk, err := gitsync.AcquireRepoLock(ctx, codesDir, localPath, gitsync.LockShared)
 	if err != nil {
@@ -191,7 +213,10 @@ func (s *SyncScheduler) hasLocalCacheCommitChanged(ctx context.Context, repo *mo
 
 	_, fullRef, err := gitsync.ResolveLocalRef(ctx, localPath, "refs/remotes/origin", gitsync.ResolveBranchDefault(repo.DefaultBranch))
 	if err != nil {
-		return false, err
+		_, fullRef, err = gitsync.ResolveLocalRef(ctx, localPath, "refs/contract/heads", gitsync.ResolveBranchDefault(repo.DefaultBranch))
+		if err != nil {
+			return false, fmt.Errorf("%w: %v", ErrLocalCacheMissing, err)
+		}
 	}
 	meta, err := gitsync.ReadCommitMeta(ctx, localPath, fullRef)
 	if err != nil {

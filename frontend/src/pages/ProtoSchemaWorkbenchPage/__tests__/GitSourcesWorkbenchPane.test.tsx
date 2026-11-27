@@ -17,6 +17,11 @@ import type {
 
 const sampleGitRepo: GitRepoDTO = {
   id: 11,
+  platform_repo_id: 111,
+  source_mode: 'PLATFORM_SHARED',
+  proto_status: 'HAS_PROTO',
+  sync_enabled: true,
+  service_group: 'trade-core',
   name: 'dophi-monorepo',
   provider: 'GITLAB',
   repo_url: 'https://git.example.com/dophi/contracts.git',
@@ -294,7 +299,11 @@ describe('M25 GitSourcesWorkbenchPane & DeepLink & Source Badges', () => {
     expect(htmlCode).toContain('COMMENT_REQUIRED');
     expect(htmlCode).toContain('pdoc-code-line--highlighted');
     expect(htmlCode).toContain('id="L42"');
-    expect(htmlCode).not.toContain('<textarea');
+    const drawerIdx = htmlCode.indexOf('data-testid="git-repo-governance-drawer"');
+    const viewerRegion = drawerIdx > 0 ? htmlCode.slice(0, drawerIdx) : htmlCode;
+    expect(viewerRegion).not.toContain('<textarea');
+    expect(htmlCode).toContain('Dry-Run 预览');
+    expect(htmlCode).not.toContain('接入 Git 仓库');
     expect(htmlCode).not.toContain('锁定文件');
     expect(htmlCode).not.toContain('解锁文件');
 

@@ -138,6 +138,7 @@ func TestMRGate_LiveImpactExcludesPrivateEnvironments(t *testing.T) {
 		Name: "mr-impact-repo", Provider: models.GitProviderGitLab,
 		RepoURL: mockGitLab.URL + "/fin/mr-impact.git", APIBaseURL: mockGitLab.URL + "/api/v4",
 		DefaultBranch: "main", AuthType: models.GitAuthToken, SyncMode: models.GitSyncWebhook,
+		PlatformRepoID: 1, SourceMode: models.GitSourceModePlatformShared,
 	}
 	_ = repo.SetCredentials("token")
 	_ = db.Create(&repo).Error

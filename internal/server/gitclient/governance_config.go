@@ -1,0 +1,833 @@
+package gitclient
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"regexp"
+	"sort"
+	"strings"
+
+	"code-contract/config"
+	"code-contract/internal/server/decoder"
+	"code-contract/models"
+
+	"gorm.io/datatypes"
+	"gorm.io/gorm"
+)
+
+const (
+	// GovernanceSchemaVersion 为 ADR-27 辅助 .json 治理配置的 Schema 标识。
+	GovernanceSchemaVersion = "proto-governance/v1"
+
+	NormRuleEncodingAndEOL   = "NORM-001"
+	NormRuleSyntaxHeaderFix  = "NORM-002"
+	NormRulePackageNormalize = "NORM-003"
+	NormRuleDirectiveStrip   = "NORM-004"
+	NormRuleImportRewrite    = "NORM-005"
+)
+
+var (
+	// ErrExportTargetConflict 表示多个有效仓库映射到相同的 (effective_subsystem, effective_repo_dir) 导出目录。
+	ErrExportTargetConflict = errors.New("目标导出目录存在全局冲突")
+	// ErrIntraRepoPathConflict 表示单仓内多份源文件经裁剪重写后碰撞为同一逻辑/导出路径。
+	ErrIntraRepoPathConflict = errors.New("仓内路径裁剪或重写后存在目标路径碰撞")
+	// ErrGovernanceValidation 表示治理配置或正则表达式校验不通过。
+	ErrGovernanceValidation = errors.New("契约治理配置校验失败")
+)
+
+var validBuiltinRuleIDs = map[string]struct{}{
+	NormRuleEncodingAndEOL:   {},
+	NormRuleSyntaxHeaderFix:  {},
+	NormRulePackageNormalize: {},
+	NormRuleDirectiveStrip:   {},
+	NormRuleImportRewrite:    {},
+}
+
+// BuiltinRuleMeta 描述内置 Stage B 清理规则元数据。
+type BuiltinRuleMeta struct {
+	ID             string `json:"id"`
+	Code           string `json:"code"`
+	Name           string `json:"name"`
+	Description    string `json:"description"`
+	DefaultEnabled bool   `json:"default_enabled"`
+}
+
+// BuiltinGovernanceRules 返回所有预置内置规则元数据。
+func BuiltinGovernanceRules() []BuiltinRuleMeta {
+	return []BuiltinRuleMeta{
+		{
+			ID:             NormRuleEncodingAndEOL,
+			Code:           "encoding_and_eol",
+			Name:           "编码与换行符统一",
+			Description:    "剥离 UTF-8 BOM 头并将 CRLF/CR 统一规范为 LF",
+			DefaultEnabled: true,
+		},
+		{
+			ID:             NormRuleSyntaxHeaderFix,
+			Code:           "syntax_header_fix",
+			Name:           "Syntax 声明补齐",
+			Description:    "为缺失 syntax = \"proto2\"/\"proto3\" 的存量文件补齐默认语法头并维护 line_map 偏移",
+			DefaultEnabled: true,
+		},
+		{
+			ID:             NormRulePackageNormalize,
+			Code:           "package_normalize",
+			Name:           "Package 标识符规范化",
+			Description:    "修正 package 声明中的连字符、斜杠或非法空白字符",
+			DefaultEnabled: true,
+		},
+		{
+			ID:             NormRuleDirectiveStrip,
+			Code:           "nonstandard_directive_strip",
+			Name:           "非标指令剥离",
+			Description:    "清理 C/C++ 预处理指令（如 #include/#ifdef/#pragma）及自定义历史宏指令并保留注释",
+			DefaultEnabled: true,
+		},
+		{
+			ID:             NormRuleImportRewrite,
+			Code:           "import_path_rewrite",
+			Name:           "Import 路径重写",
+			Description:    "规范化 import 反斜杠与前导 ./ 并应用仓/全局 import_rewrites 映射",
+			DefaultEnabled: true,
+		},
+	}
+}
+
+// RegexRewriteRule 描述单条正则表达式清洗规则。
+type RegexRewriteRule struct {
+	ID          string `json:"id"`
+	Pattern     string `json:"pattern"`
+	Replacement string `json:"replacement"`
+	Multiline   bool   `json:"multiline,omitempty"`
+}
+
+// GlobalGovernanceSection 为 proto-governance/v1 的全局规则段。
+type GlobalGovernanceSection struct {
+	CollectGlobs   []string           `json:"collect_globs,omitempty"`
+	ExcludeGlobs   []string           `json:"exclude_globs,omitempty"`
+	EnabledRules   []string           `json:"enabled_rules,omitempty"`
+	DefaultSyntax  string             `json:"default_syntax,omitempty"`
+	ImportRewrites map[string]string  `json:"import_rewrites,omitempty"`
+	RegexRewrites  []RegexRewriteRule `json:"regex_rewrites,omitempty"`
+}
+
+// RepoNormalizeConfig 描述单仓级别的 Stage B 清洗规则与文件豁免/隔离清单（持久化在 contract_git_repos.repo_normalize_config_json）。
+type RepoNormalizeConfig struct {
+	DisabledRules    []string           `json:"disabled_rules,omitempty"`
+	RegexRewrites    []RegexRewriteRule `json:"regex_rewrites,omitempty"`
+	ImportRewrites   map[string]string  `json:"import_rewrites,omitempty"`
+	ExemptFiles      []string           `json:"exempt_files,omitempty"`
+	QuarantinedFiles []string           `json:"quarantined_files,omitempty"`
+}
+
+// RepoGovernanceSpec 描述单个仓库在辅助 .json 中的完整导出目录与清洗配置。
+type RepoGovernanceSpec struct {
+	PlatformRepoID        uint64             `json:"platform_repo_id,omitempty"`
+	SyncEnabled           *bool              `json:"sync_enabled,omitempty"`
+	SyncStrategy          string             `json:"sync_strategy,omitempty"`
+	ExportTargetSubsystem string             `json:"export_target_subsystem,omitempty"`
+	ExportTargetRepoDir   string             `json:"export_target_repo_dir,omitempty"`
+	StripPrefixes         []string           `json:"strip_prefixes,omitempty"`
+	PathRewrites          map[string]string  `json:"path_rewrites,omitempty"`
+	CollectGlobs          []string           `json:"collect_globs,omitempty"`
+	ExcludeGlobs          []string           `json:"exclude_globs,omitempty"`
+	ExtraExcludeGlobs     []string           `json:"extra_exclude_globs,omitempty"`
+	DisabledRules         []string           `json:"disabled_rules,omitempty"`
+	RegexRewrites         []RegexRewriteRule `json:"regex_rewrites,omitempty"`
+	ImportRewrites        map[string]string  `json:"import_rewrites,omitempty"`
+	ExemptFiles           []string           `json:"exempt_files,omitempty"`
+	QuarantinedFiles      []string           `json:"quarantined_files,omitempty"`
+}
+
+// GovernanceConfigDoc 为 proto-governance/v1 完整双向互通配置文档。
+type GovernanceConfigDoc struct {
+	SchemaVersion string                        `json:"schema_version"`
+	Revision      int                           `json:"revision"`
+	Global        GlobalGovernanceSection       `json:"global"`
+	Repos         map[string]RepoGovernanceSpec `json:"repos,omitempty"`
+}
+
+// GovernanceConfigSnapshot 为带持久化摘要的生效配置视图。
+type GovernanceConfigSnapshot struct {
+	Doc          GovernanceConfigDoc `json:"doc"`
+	ConfigSHA256 string              `json:"config_sha256"`
+	UpdatedBy    string              `json:"updated_by,omitempty"`
+}
+
+// ExportTargetCollision 描述两个仓库在 clean/ 目录树下的导出目录碰撞。
+type ExportTargetCollision struct {
+	TargetSubsystem string   `json:"target_subsystem"`
+	TargetRepoDir   string   `json:"target_repo_dir"`
+	RepoIDs         []uint64 `json:"repo_ids"`
+	RepoNames       []string `json:"repo_names"`
+}
+
+// IntraRepoPathCollision 描述单仓内路径裁剪重写引发的路径碰撞。
+type IntraRepoPathCollision struct {
+	MappedPath  string   `json:"mapped_path"`
+	SourcePaths []string `json:"source_paths"`
+}
+
+// DefaultGovernanceConfig 返回内置默认 proto-governance/v1 配置文档。
+func DefaultGovernanceConfig() GovernanceConfigDoc {
+	return GovernanceConfigDoc{
+		SchemaVersion: GovernanceSchemaVersion,
+		Revision:      0,
+		Global: GlobalGovernanceSection{
+			CollectGlobs: config.DefaultCollectGlobs(),
+			ExcludeGlobs: config.DefaultExcludeGlobs(),
+			EnabledRules: []string{
+				NormRuleEncodingAndEOL,
+				NormRuleSyntaxHeaderFix,
+				NormRulePackageNormalize,
+				NormRuleDirectiveStrip,
+				NormRuleImportRewrite,
+			},
+			DefaultSyntax:  "proto3",
+			ImportRewrites: map[string]string{},
+			RegexRewrites:  []RegexRewriteRule{},
+		},
+		Repos: map[string]RepoGovernanceSpec{},
+	}
+}
+
+// ParseRepoNormalizeConfig 安全反序列化单仓 repo_normalize_config_json。
+func ParseRepoNormalizeConfig(raw datatypes.JSON) RepoNormalizeConfig {
+	var out RepoNormalizeConfig
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &out)
+	}
+	if out.ImportRewrites == nil {
+		out.ImportRewrites = map[string]string{}
+	}
+	return out
+}
+
+func validateRelRewriteToken(token string, allowEmpty bool) error {
+	trimmed := strings.TrimSpace(token)
+	if trimmed == "" {
+		if allowEmpty {
+			return nil
+		}
+		return fmt.Errorf("%w: 路径规则不能为空", ErrGovernanceValidation)
+	}
+	if strings.ContainsRune(trimmed, 0) || strings.Contains(trimmed, "\\") {
+		return fmt.Errorf("%w: 路径规则 %q 包含非法反斜杠或空字节", ErrGovernanceValidation, token)
+	}
+	if strings.HasPrefix(trimmed, "/") {
+		return fmt.Errorf("%w: 禁止使用绝对路径前缀 %q", ErrGovernanceValidation, token)
+	}
+	for _, seg := range strings.Split(trimmed, "/") {
+		if seg == ".." {
+			return fmt.Errorf("%w: 禁止路径穿越片段 %q", ErrGovernanceValidation, token)
+		}
+	}
+	return nil
+}
+
+func validateExportSegment(seg string, label string) error {
+	trimmed := strings.TrimSpace(seg)
+	if trimmed == "" {
+		return nil
+	}
+	if strings.ContainsRune(trimmed, 0) || strings.Contains(trimmed, "/") || strings.Contains(trimmed, "\\") {
+		return fmt.Errorf("%w: %s %q 不能包含路径分隔符", ErrGovernanceValidation, label, seg)
+	}
+	if trimmed == "." || trimmed == ".." || trimmed == ".versions" || trimmed == ".tmp" {
+		return fmt.Errorf("%w: %s %q 为保留目录名", ErrGovernanceValidation, label, seg)
+	}
+	return nil
+}
+
+func validateRegexRules(rules []RegexRewriteRule) error {
+	for i, r := range rules {
+		if strings.TrimSpace(r.Pattern) == "" {
+			return fmt.Errorf("%w: regex_rewrites[%d] pattern 不能为空", ErrGovernanceValidation, i)
+		}
+		if _, err := regexp.Compile(r.Pattern); err != nil {
+			return fmt.Errorf("%w: regex_rewrites[%d] (%s) 正则表达式非法: %v", ErrGovernanceValidation, i, r.ID, err)
+		}
+	}
+	return nil
+}
+
+// ValidateGovernanceConfig 严格校验 proto-governance/v1 文档 Schema、路径安全与正则合法性。
+func ValidateGovernanceConfig(doc *GovernanceConfigDoc) error {
+	if doc == nil {
+		return fmt.Errorf("%w: 配置文档不能为空", ErrGovernanceValidation)
+	}
+	if strings.TrimSpace(doc.SchemaVersion) != GovernanceSchemaVersion {
+		return fmt.Errorf("%w: schema_version 必须为 %s", ErrGovernanceValidation, GovernanceSchemaVersion)
+	}
+	syn := strings.TrimSpace(doc.Global.DefaultSyntax)
+	if syn == "" {
+		doc.Global.DefaultSyntax = "proto3"
+	} else if syn != "proto2" && syn != "proto3" {
+		return fmt.Errorf("%w: global.default_syntax 仅支持 proto2 或 proto3", ErrGovernanceValidation)
+	}
+
+	for _, id := range doc.Global.EnabledRules {
+		if _, ok := validBuiltinRuleIDs[strings.TrimSpace(id)]; !ok {
+			return fmt.Errorf("%w: 未知内置规则 ID %q", ErrGovernanceValidation, id)
+		}
+	}
+	if err := validateRegexRules(doc.Global.RegexRewrites); err != nil {
+		return err
+	}
+	for from, to := range doc.Global.ImportRewrites {
+		if err := validateRelRewriteToken(from, false); err != nil {
+			return err
+		}
+		if err := validateRelRewriteToken(to, false); err != nil {
+			return err
+		}
+	}
+
+	for key, spec := range doc.Repos {
+		if strings.TrimSpace(key) == "" {
+			return fmt.Errorf("%w: repos map key 不能为空", ErrGovernanceValidation)
+		}
+		if spec.SyncStrategy != "" && spec.SyncStrategy != models.GitSyncStrategyLocalCacheOnly && spec.SyncStrategy != models.GitSyncStrategyFetchAndRead {
+			return fmt.Errorf("%w: repos[%s].sync_strategy 非法: %q", ErrGovernanceValidation, key, spec.SyncStrategy)
+		}
+		if err := validateExportSegment(spec.ExportTargetSubsystem, "export_target_subsystem"); err != nil {
+			return err
+		}
+		if err := validateExportSegment(spec.ExportTargetRepoDir, "export_target_repo_dir"); err != nil {
+			return err
+		}
+		for _, pfx := range spec.StripPrefixes {
+			if err := validateRelRewriteToken(pfx, false); err != nil {
+				return err
+			}
+		}
+		for from, to := range spec.PathRewrites {
+			if err := validateRelRewriteToken(from, false); err != nil {
+				return err
+			}
+			if err := validateRelRewriteToken(to, true); err != nil {
+				return err
+			}
+		}
+		for _, rid := range spec.DisabledRules {
+			if _, ok := validBuiltinRuleIDs[strings.TrimSpace(rid)]; !ok {
+				return fmt.Errorf("%w: repos[%s].disabled_rules 包含未知规则 ID %q", ErrGovernanceValidation, key, rid)
+			}
+		}
+		if err := validateRegexRules(spec.RegexRewrites); err != nil {
+			return err
+		}
+		for from, to := range spec.ImportRewrites {
+			if err := validateRelRewriteToken(from, false); err != nil {
+				return err
+			}
+			if err := validateRelRewriteToken(to, false); err != nil {
+				return err
+			}
+		}
+		for _, f := range spec.ExemptFiles {
+			if err := validateRelRewriteToken(f, false); err != nil {
+				return err
+			}
+		}
+		for _, f := range spec.QuarantinedFiles {
+			if err := validateRelRewriteToken(f, false); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// MarshalGovernanceConfigCanonical 生成确定性 JSON 字节及 SHA-256 摘要，保证增量缓存键稳定。
+func MarshalGovernanceConfigCanonical(doc GovernanceConfigDoc) ([]byte, string, error) {
+	if doc.SchemaVersion == "" {
+		doc.SchemaVersion = GovernanceSchemaVersion
+	}
+	if doc.Global.DefaultSyntax == "" {
+		doc.Global.DefaultSyntax = "proto3"
+	}
+	if doc.Global.ImportRewrites == nil {
+		doc.Global.ImportRewrites = map[string]string{}
+	}
+	if doc.Repos == nil {
+		doc.Repos = map[string]RepoGovernanceSpec{}
+	}
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		return nil, "", err
+	}
+	sum := sha256.Sum256(raw)
+	return raw, hex.EncodeToString(sum[:]), nil
+}
+
+// ResolveEffectiveExportTarget 按 ADR-27 方案 A 计算单仓在 protos/clean/ 下的有效导出目录。
+// 注意：protos/raw/ 始终使用平台原始 subsystem_slug + repo_slug，不受此覆写影响。
+func ResolveEffectiveExportTarget(repo models.GitRepo, override *RepoGovernanceSpec) (subsystemSlug string, repoDirSlug string) {
+	rawSub := strings.TrimSpace(repo.ExportTargetSubsystem)
+	if override != nil && strings.TrimSpace(override.ExportTargetSubsystem) != "" {
+		rawSub = strings.TrimSpace(override.ExportTargetSubsystem)
+	}
+	if rawSub != "" {
+		subsystemSlug = NormalizeSlug(rawSub, nil, "exp-sub:"+rawSub, true)
+	} else if strings.TrimSpace(repo.SubsystemSlug) != "" {
+		subsystemSlug = NormalizeSlug(repo.SubsystemSlug, nil, "sub:"+repo.SubsystemSlug, true)
+	} else {
+		subsystemSlug = UnassignedSubsystemSlug
+	}
+
+	rawDir := strings.TrimSpace(repo.ExportTargetRepoDir)
+	if override != nil && strings.TrimSpace(override.ExportTargetRepoDir) != "" {
+		rawDir = strings.TrimSpace(override.ExportTargetRepoDir)
+	}
+	if rawDir != "" {
+		repoDirSlug = NormalizeSlug(rawDir, nil, fmt.Sprintf("exp-repo:%d", repo.ID), false)
+	} else {
+		repoDirSlug = NormalizeSlug(repo.Name, nil, fmt.Sprintf("repo:%d", repo.ID), false)
+	}
+	return subsystemSlug, repoDirSlug
+}
+
+// CheckGlobalExportTargetCollisions 检测全平台所有启用同步仓库之间的 (effective_subsystem, effective_repo_dir) 碰撞。
+func CheckGlobalExportTargetCollisions(
+	ctx context.Context,
+	db *gorm.DB,
+	overridesByRepoID map[uint64]*RepoGovernanceSpec,
+) ([]ExportTargetCollision, error) {
+	if db == nil {
+		return nil, nil
+	}
+	var repos []models.GitRepo
+	if err := db.WithContext(ctx).Order("id ASC").Find(&repos).Error; err != nil {
+		return nil, err
+	}
+
+	type bucket struct {
+		sub   string
+		dir   string
+		ids   []uint64
+		names []string
+	}
+	buckets := make(map[string]*bucket, len(repos))
+	var keys []string
+
+	for _, r := range repos {
+		ov := overridesByRepoID[r.ID]
+		enabled := r.SyncEnabled
+		if ov != nil && ov.SyncEnabled != nil {
+			enabled = *ov.SyncEnabled
+		}
+		if !enabled {
+			continue
+		}
+		sub, dir := ResolveEffectiveExportTarget(r, ov)
+		k := sub + "\x00" + dir
+		b, ok := buckets[k]
+		if !ok {
+			b = &bucket{sub: sub, dir: dir}
+			buckets[k] = b
+			keys = append(keys, k)
+		}
+		b.ids = append(b.ids, r.ID)
+		b.names = append(b.names, r.Name)
+	}
+
+	sort.Strings(keys)
+	var collisions []ExportTargetCollision
+	for _, k := range keys {
+		b := buckets[k]
+		if len(b.ids) > 1 {
+			collisions = append(collisions, ExportTargetCollision{
+				TargetSubsystem: b.sub,
+				TargetRepoDir:   b.dir,
+				RepoIDs:         b.ids,
+				RepoNames:       b.names,
+			})
+		}
+	}
+	if len(collisions) > 0 {
+		first := collisions[0]
+		return collisions, fmt.Errorf("%w: clean/%s/%s 被仓库 %v 同时占用",
+			ErrExportTargetConflict, first.TargetSubsystem, first.TargetRepoDir, first.RepoNames)
+	}
+	return nil, nil
+}
+
+// ApplyIntraRepoPathMapping 应用单仓 strip_prefixes（按配置顺序首次命中即剥离）与 path_rewrites（最长前缀替换）。
+func ApplyIntraRepoPathMapping(repoRelPath string, stripPrefixes []string, pathRewrites map[string]string) (string, error) {
+	cleaned, err := decoder.SanitizeProtoRelPath(repoRelPath, true)
+	if err != nil {
+		return "", err
+	}
+	cur := cleaned
+
+	for _, rawPrefix := range stripPrefixes {
+		pfx := strings.TrimPrefix(strings.ReplaceAll(strings.TrimSpace(rawPrefix), "\\", "/"), "./")
+		if pfx == "" {
+			continue
+		}
+		if !strings.HasSuffix(pfx, "/") {
+			pfx += "/"
+		}
+		if strings.HasPrefix(cur, pfx) {
+			trimmed := strings.TrimPrefix(cur, pfx)
+			if trimmed != "" {
+				cur = trimmed
+			}
+			break
+		}
+	}
+
+	if len(pathRewrites) > 0 {
+		type kv struct {
+			from string
+			to   string
+		}
+		rules := make([]kv, 0, len(pathRewrites))
+		for k, v := range pathRewrites {
+			nk := strings.TrimPrefix(strings.ReplaceAll(strings.TrimSpace(k), "\\", "/"), "./")
+			if nk == "" {
+				continue
+			}
+			rules = append(rules, kv{from: nk, to: strings.ReplaceAll(strings.TrimSpace(v), "\\", "/")})
+		}
+		sort.Slice(rules, func(i, j int) bool {
+			if len(rules[i].from) != len(rules[j].from) {
+				return len(rules[i].from) > len(rules[j].from)
+			}
+			return rules[i].from < rules[j].from
+		})
+		for _, r := range rules {
+			if strings.HasPrefix(cur, r.from) {
+				rest := strings.TrimPrefix(cur, r.from)
+				to := r.to
+				if to != "" && !strings.HasSuffix(to, "/") && rest != "" && !strings.HasPrefix(rest, "/") {
+					if strings.HasSuffix(r.from, "/") {
+						to += "/"
+					}
+				}
+				joined := strings.TrimLeft(to+rest, "/")
+				if joined != "" {
+					cur = joined
+				}
+				break
+			}
+		}
+	}
+
+	mapped, err := decoder.SanitizeProtoRelPath(cur, true)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrIntraRepoPathConflict, err)
+	}
+	return mapped, nil
+}
+
+// MapAndValidateIntraRepoPaths 对仓内所有源文件应用裁剪与重写，并在出现多对一碰撞时返回冲突明细。
+func MapAndValidateIntraRepoPaths(
+	paths []string,
+	stripPrefixes []string,
+	pathRewrites map[string]string,
+) (map[string]string, []IntraRepoPathCollision, error) {
+	sortedPaths := append([]string(nil), paths...)
+	sort.Strings(sortedPaths)
+
+	mapped := make(map[string]string, len(sortedPaths))
+	reverse := make(map[string][]string, len(sortedPaths))
+	for _, p := range sortedPaths {
+		m, err := ApplyIntraRepoPathMapping(p, stripPrefixes, pathRewrites)
+		if err != nil {
+			return nil, nil, err
+		}
+		mapped[p] = m
+		reverse[m] = append(reverse[m], p)
+	}
+
+	var keys []string
+	for k, sources := range reverse {
+		if len(sources) > 1 {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	collisions := make([]IntraRepoPathCollision, 0, len(keys))
+	for _, k := range keys {
+		collisions = append(collisions, IntraRepoPathCollision{
+			MappedPath:  k,
+			SourcePaths: reverse[k],
+		})
+	}
+	if len(collisions) > 0 {
+		first := collisions[0]
+		return mapped, collisions, fmt.Errorf("%w: %v 同时映射到 %s",
+			ErrIntraRepoPathConflict, first.SourcePaths, first.MappedPath)
+	}
+	return mapped, nil, nil
+}
+
+func matchRepoSpecInDoc(repo models.GitRepo, doc *GovernanceConfigDoc) (RepoGovernanceSpec, bool) {
+	if doc == nil || len(doc.Repos) == 0 {
+		return RepoGovernanceSpec{}, false
+	}
+	if spec, ok := doc.Repos[repo.Name]; ok {
+		return spec, true
+	}
+	for _, spec := range doc.Repos {
+		if spec.PlatformRepoID > 0 && spec.PlatformRepoID == repo.PlatformRepoID {
+			return spec, true
+		}
+	}
+	return RepoGovernanceSpec{}, false
+}
+
+// MergeRepoGovernanceSpecFromModel 将 DB 中单仓治理字段合并导出为 RepoGovernanceSpec（用于生成 .json 视图）。
+func MergeRepoGovernanceSpecFromModel(repo models.GitRepo) (RepoGovernanceSpec, bool) {
+	normCfg := ParseRepoNormalizeConfig(repo.RepoNormalizeConfigJSON)
+	stripPrefixes := repo.StripPrefixes()
+	pathRewrites := repo.PathRewrites()
+	hasOverride := !repo.SyncEnabled ||
+		strings.TrimSpace(repo.ExportTargetSubsystem) != "" ||
+		strings.TrimSpace(repo.ExportTargetRepoDir) != "" ||
+		len(stripPrefixes) > 0 ||
+		len(pathRewrites) > 0 ||
+		len(repo.CollectGlobs()) > 0 ||
+		len(repo.ExcludeGlobs()) > 0 ||
+		len(normCfg.DisabledRules) > 0 ||
+		len(normCfg.RegexRewrites) > 0 ||
+		len(normCfg.ImportRewrites) > 0 ||
+		len(normCfg.ExemptFiles) > 0 ||
+		len(normCfg.QuarantinedFiles) > 0
+	if !hasOverride {
+		return RepoGovernanceSpec{}, false
+	}
+	enabled := repo.SyncEnabled
+	return RepoGovernanceSpec{
+		PlatformRepoID:        repo.PlatformRepoID,
+		SyncEnabled:           &enabled,
+		SyncStrategy:          repo.SyncStrategy,
+		ExportTargetSubsystem: repo.ExportTargetSubsystem,
+		ExportTargetRepoDir:   repo.ExportTargetRepoDir,
+		StripPrefixes:         stripPrefixes,
+		PathRewrites:          pathRewrites,
+		CollectGlobs:          repo.CollectGlobs(),
+		ExcludeGlobs:          repo.ExcludeGlobs(),
+		DisabledRules:         normCfg.DisabledRules,
+		RegexRewrites:         normCfg.RegexRewrites,
+		ImportRewrites:        normCfg.ImportRewrites,
+		ExemptFiles:           normCfg.ExemptFiles,
+		QuarantinedFiles:      normCfg.QuarantinedFiles,
+	}, true
+}
+
+// BuildEffectiveRepoAuxJSON 构造融合全局治理配置与单仓治理字段的规范 JSON，供 EffectiveNormalizerVersion 计算缓存键。
+func BuildEffectiveRepoAuxJSON(repo models.GitRepo, globalCfg *GovernanceConfigDoc) []byte {
+	payload := map[string]any{
+		"export_target_subsystem": repo.ExportTargetSubsystem,
+		"export_target_repo_dir":  repo.ExportTargetRepoDir,
+		"strip_prefixes":          repo.StripPrefixes(),
+		"path_rewrites":           repo.PathRewrites(),
+		"repo_normalize_config":   ParseRepoNormalizeConfig(repo.RepoNormalizeConfigJSON),
+	}
+	if globalCfg != nil {
+		payload["global"] = globalCfg.Global
+		if spec, ok := matchRepoSpecInDoc(repo, globalCfg); ok {
+			payload["doc_repo_override"] = spec
+		}
+	}
+	raw, _ := json.Marshal(payload)
+	return raw
+}
+
+// LoadActiveGovernanceConfig 读取当前生效的 proto-governance/v1 配置；若尚未保存过则返回内置默认配置。
+func LoadActiveGovernanceConfig(ctx context.Context, db *gorm.DB) (*GovernanceConfigSnapshot, error) {
+	doc := DefaultGovernanceConfig()
+	if db != nil {
+		var rec models.ProtoGovernanceConfig
+		err := db.WithContext(ctx).Where("is_active = true").Order("revision DESC, id DESC").First(&rec).Error
+		if err == nil {
+			var parsed GovernanceConfigDoc
+			if uErr := json.Unmarshal(rec.ConfigJSON, &parsed); uErr == nil {
+				doc = parsed
+			}
+			doc.Revision = rec.Revision
+			_, canonicalSHA, _ := MarshalGovernanceConfigCanonical(doc)
+			if rec.ConfigSHA256 != "" {
+				canonicalSHA = rec.ConfigSHA256
+			}
+			return &GovernanceConfigSnapshot{
+				Doc:          doc,
+				ConfigSHA256: canonicalSHA,
+				UpdatedBy:    rec.UpdatedBy,
+			}, nil
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
+
+		// 若表为空，自动补充已有单仓治理配置以便导出 .json 时完整体现当前状态
+		var repos []models.GitRepo
+		if err := db.WithContext(ctx).Order("id ASC").Find(&repos).Error; err == nil {
+			for _, r := range repos {
+				if spec, ok := MergeRepoGovernanceSpecFromModel(r); ok {
+					doc.Repos[r.Name] = spec
+				}
+			}
+		}
+	}
+	_, shaHex, _ := MarshalGovernanceConfigCanonical(doc)
+	return &GovernanceConfigSnapshot{
+		Doc:          doc,
+		ConfigSHA256: shaHex,
+	}, nil
+}
+
+// SaveGovernanceConfig 验证 proto-governance/v1、检测全局目录碰撞并持久化为新激活版本，同时回写匹配仓库字段。
+func SaveGovernanceConfig(
+	ctx context.Context,
+	db *gorm.DB,
+	doc GovernanceConfigDoc,
+	updatedBy string,
+) (*GovernanceConfigSnapshot, []models.GitRepo, []ExportTargetCollision, error) {
+	if db == nil {
+		return nil, nil, nil, errors.New("db 不能为空")
+	}
+	if err := ValidateGovernanceConfig(&doc); err != nil {
+		return nil, nil, nil, err
+	}
+
+	var repos []models.GitRepo
+	if err := db.WithContext(ctx).Order("id ASC").Find(&repos).Error; err != nil {
+		return nil, nil, nil, err
+	}
+	overridesByRepoID := make(map[uint64]*RepoGovernanceSpec)
+	matchedSpecByRepoID := make(map[uint64]RepoGovernanceSpec)
+	for _, r := range repos {
+		if spec, ok := matchRepoSpecInDoc(r, &doc); ok {
+			sp := spec
+			overridesByRepoID[r.ID] = &sp
+			matchedSpecByRepoID[r.ID] = sp
+		}
+	}
+
+	if cols, cErr := CheckGlobalExportTargetCollisions(ctx, db, overridesByRepoID); cErr != nil {
+		return nil, nil, cols, cErr
+	}
+
+	var snapshot *GovernanceConfigSnapshot
+	var affectedRepos []models.GitRepo
+
+	txErr := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var maxRev int
+		_ = tx.Model(&models.ProtoGovernanceConfig{}).
+			Select("COALESCE(MAX(revision), 0)").
+			Scan(&maxRev).Error
+		doc.Revision = maxRev + 1
+
+		canonBytes, shaHex, mErr := MarshalGovernanceConfigCanonical(doc)
+		if mErr != nil {
+			return mErr
+		}
+
+		if err := tx.Model(&models.ProtoGovernanceConfig{}).
+			Where("is_active = true").
+			Update("is_active", false).Error; err != nil {
+			return err
+		}
+
+		rec := models.ProtoGovernanceConfig{
+			Revision:     doc.Revision,
+			ConfigSHA256: shaHex,
+			ConfigJSON:   datatypes.JSON(canonBytes),
+			UpdatedBy:    updatedBy,
+			IsActive:     true,
+		}
+		if err := tx.Create(&rec).Error; err != nil {
+			return err
+		}
+
+		for _, r := range repos {
+			spec, ok := matchedSpecByRepoID[r.ID]
+			if !ok {
+				continue
+			}
+			updates := make(map[string]any)
+			if spec.SyncEnabled != nil && *spec.SyncEnabled != r.SyncEnabled {
+				updates["sync_enabled"] = *spec.SyncEnabled
+				r.SyncEnabled = *spec.SyncEnabled
+				if !*spec.SyncEnabled {
+					updates["proto_status"] = models.GitRepoProtoStatusExcluded
+					r.ProtoStatus = models.GitRepoProtoStatusExcluded
+				} else if r.ProtoStatus == models.GitRepoProtoStatusExcluded {
+					updates["proto_status"] = models.GitRepoProtoStatusPending
+					r.ProtoStatus = models.GitRepoProtoStatusPending
+				}
+			}
+			if spec.SyncStrategy != "" && spec.SyncStrategy != r.SyncStrategy {
+				updates["sync_strategy"] = spec.SyncStrategy
+				r.SyncStrategy = spec.SyncStrategy
+			}
+			if spec.ExportTargetSubsystem != r.ExportTargetSubsystem {
+				updates["export_target_subsystem"] = strings.TrimSpace(spec.ExportTargetSubsystem)
+				r.ExportTargetSubsystem = strings.TrimSpace(spec.ExportTargetSubsystem)
+			}
+			if spec.ExportTargetRepoDir != r.ExportTargetRepoDir {
+				updates["export_target_repo_dir"] = strings.TrimSpace(spec.ExportTargetRepoDir)
+				r.ExportTargetRepoDir = strings.TrimSpace(spec.ExportTargetRepoDir)
+			}
+			if b, err := json.Marshal(nonNilStringsSlice(spec.StripPrefixes)); err == nil {
+				updates["strip_prefixes_json"] = datatypes.JSON(b)
+				r.StripPrefixesJSON = datatypes.JSON(b)
+			}
+			if spec.PathRewrites != nil {
+				if b, err := json.Marshal(spec.PathRewrites); err == nil {
+					updates["path_rewrites_json"] = datatypes.JSON(b)
+					r.PathRewritesJSON = datatypes.JSON(b)
+				}
+			}
+			if len(spec.CollectGlobs) > 0 {
+				if b, err := json.Marshal(spec.CollectGlobs); err == nil {
+					updates["collect_globs_json"] = datatypes.JSON(b)
+					r.CollectGlobsJSON = datatypes.JSON(b)
+				}
+			}
+			mergedExclude := append([]string(nil), spec.ExcludeGlobs...)
+			mergedExclude = append(mergedExclude, spec.ExtraExcludeGlobs...)
+			if len(mergedExclude) > 0 {
+				if b, err := json.Marshal(mergedExclude); err == nil {
+					updates["exclude_globs_json"] = datatypes.JSON(b)
+					r.ExcludeGlobsJSON = datatypes.JSON(b)
+				}
+			}
+			normCfg := RepoNormalizeConfig{
+				DisabledRules:    nonNilStringsSlice(spec.DisabledRules),
+				RegexRewrites:    spec.RegexRewrites,
+				ImportRewrites:   spec.ImportRewrites,
+				ExemptFiles:      nonNilStringsSlice(spec.ExemptFiles),
+				QuarantinedFiles: nonNilStringsSlice(spec.QuarantinedFiles),
+			}
+			if b, err := json.Marshal(normCfg); err == nil {
+				updates["repo_normalize_config_json"] = datatypes.JSON(b)
+				r.RepoNormalizeConfigJSON = datatypes.JSON(b)
+			}
+			if len(updates) > 0 {
+				if err := tx.Model(&models.GitRepo{}).Where("id = ?", r.ID).Updates(updates).Error; err != nil {
+					return err
+				}
+				affectedRepos = append(affectedRepos, r)
+			}
+		}
+
+		snapshot = &GovernanceConfigSnapshot{
+			Doc:          doc,
+			ConfigSHA256: shaHex,
+			UpdatedBy:    updatedBy,
+		}
+		return nil
+	})
+	if txErr != nil {
+		return nil, nil, nil, txErr
+	}
+	return snapshot, affectedRepos, nil, nil
+}

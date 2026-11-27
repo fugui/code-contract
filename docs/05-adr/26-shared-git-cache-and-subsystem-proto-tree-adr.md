@@ -1,7 +1,7 @@
 # ADR-26：复用平台代码仓与共享宿主机 Git 缓存，构建「采集 → 清理整顿 → 解析 → 分仓编译」四段式跨仓 Proto 流水线与按子系统组织的只读聚合目录树
 
 - **文档编号**：`26-shared-git-cache-and-subsystem-proto-tree-adr.md`
-- **状态**：Implemented（M33~M36 已交付）/ Revised（r4，配套 [`ADR-27`](./27-proto-export-directory-and-normalization-governance-adr.md) 待实施）
+- **状态**：Implemented（M33~M36 初版 & r4 / M37~M39 全量交付，配套 [`ADR-27`](./27-proto-export-directory-and-normalization-governance-adr.md) 已落地）
 - **日期**：2026-11-27
 - **修订记录**：
   - r1：初稿，确立共享 `codes/` 缓存、无工作树直读、按子系统聚合目录树与两阶段编译。

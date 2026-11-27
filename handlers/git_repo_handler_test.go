@@ -214,37 +214,23 @@ service OrderService {
 	adminJWT := generateTestJWT(t, adminUser)
 	viewerJWT := generateTestJWT(t, normalUser)
 
-	// 1. 非管理员写接口必须返回 403
-	{
-		body, _ := json.Marshal(map[string]any{
-			"name":     "viewer-attempt",
-			"provider": "GITLAB",
-			"repo_url": gitSrv.URL + "/org/contracts.git",
-		})
-		req := httptest.NewRequest(http.MethodPost, "/api/git-repos", bytes.NewReader(body))
+	// 1. M37 已下线手工创建/删除/导入入口，均应返回 404
+	for _, tc := range []struct {
+		method string
+		path   string
+		token  string
+	}{
+		{http.MethodPost, "/api/git-repos", viewerJWT},
+		{http.MethodPost, "/api/git-repos", adminJWT},
+		{http.MethodDelete, "/api/git-repos/1", adminJWT},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, bytes.NewBufferString(`{}`))
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+viewerJWT)
+		req.Header.Set("Authorization", "Bearer "+tc.token)
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
-		if w.Code != http.StatusForbidden {
-			t.Fatalf("普通用户创建 GitRepo 期望 403，实际 %d: %s", w.Code, w.Body.String())
-		}
-	}
-
-	// 2. SSRF 防护拦截私有/回环地址（尚未放行 outbound_trusted_cidrs）以及目录穿越拦截
-	{
-		ssrfBody, _ := json.Marshal(map[string]any{
-			"name":     "ssrf-blocked-repo",
-			"provider": "GITLAB",
-			"repo_url": "http://169.254.169.254/org/contracts.git",
-		})
-		req := httptest.NewRequest(http.MethodPost, "/api/git-repos", bytes.NewReader(ssrfBody))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+adminJWT)
-		w := httptest.NewRecorder()
-		r.ServeHTTP(w, req)
-		if w.Code != http.StatusBadRequest {
-			t.Fatalf("未放行元数据地址期望 SSRF 拦截返回 400，实际 %d: %s", w.Code, w.Body.String())
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("已下线接口 %s %s 期望 404，实际 %d: %s", tc.method, tc.path, w.Code, w.Body.String())
 		}
 	}
 
@@ -260,97 +246,53 @@ service OrderService {
 		t.Fatalf("写入 outbound_trusted_cidrs 失败: %v", err)
 	}
 
-	// 路径穿越校验（.. 禁止）
-	{
-		badPathBody, _ := json.Marshal(map[string]any{
-			"name":     "traversal-repo",
-			"provider": "GITLAB",
-			"repo_url": gitSrv.URL + "/org/contracts.git",
-			"default_bundle": map[string]any{
-				"bundle_name":        "bad-bundle",
-				"subdir_path":        "../secrets",
-				"target_schema_name": "bad-schema",
-			},
-		})
-		req := httptest.NewRequest(http.MethodPost, "/api/git-repos", bytes.NewReader(badPathBody))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+adminJWT)
-		w := httptest.NewRecorder()
-		r.ServeHTTP(w, req)
-		if w.Code != http.StatusBadRequest {
-			t.Fatalf("路径穿越 subdir_path 期望返回 400，实际 %d: %s", w.Code, w.Body.String())
-		}
+	// 2. 从平台唯一真值源 repositories 对齐生成 contract_git_repos，并验证凭据加密落库与 GET 严格脱敏
+	dep := commonModels.Department{Name: "订单平台部"}
+	if err := db.Create(&dep).Error; err != nil {
+		t.Fatalf("创建部门失败: %v", err)
 	}
-
-	// 3. 管理员创建 Monorepo Git 仓库（内联默认 common-proto BASE_LIB Bundle）
-	var repoID uint64
-	var commonBundleID uint64
-	{
-		createBody, _ := json.Marshal(map[string]any{
-			"name":                 "dophi-monorepo",
-			"provider":             "GITLAB",
-			"repo_url":             gitSrv.URL + "/dophi/contracts.git",
-			"api_base_url":         gitSrv.URL,
-			"default_branch":       "main",
-			"auth_type":            "TOKEN",
-			"credential_plain":     secretToken,
-			"webhook_secret_plain": webhookSecret,
-			"sync_mode":            "MANUAL",
-			"auto_compile":         true,
-			"lint_on_sync":         true,
-			"default_bundle": map[string]any{
-				"bundle_name":        "common-base",
-				"subdir_path":        "common/proto",
-				"include_dirs":       []string{"."},
-				"file_globs":         []string{"*.proto"},
-				"target_schema_name": "common-proto",
-				"category":           "BASE_LIB",
-				"auto_compile":       true,
-				"auto_activate":      true,
-				"lint_on_sync":       true,
-			},
-		})
-		req := httptest.NewRequest(http.MethodPost, "/api/git-repos", bytes.NewReader(createBody))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+adminJWT)
-		w := httptest.NewRecorder()
-		r.ServeHTTP(w, req)
-		if w.Code != http.StatusCreated {
-			t.Fatalf("创建 GitRepo 期望 201，实际 %d: %s", w.Code, w.Body.String())
-		}
-		respRaw := w.Body.String()
-		if strings.Contains(respRaw, secretToken) || strings.Contains(respRaw, webhookSecret) ||
-			strings.Contains(respRaw, "credentials_enc") || strings.Contains(respRaw, "webhook_secret_enc") {
-			t.Fatalf("POST /api/git-repos 响应禁止包含任何明文或密文字段: %s", respRaw)
-		}
-		var created struct {
-			ID               uint64 `json:"id"`
-			HasCredentials   bool   `json:"has_credentials"`
-			CredentialHint   string `json:"credential_hint"`
-			HasWebhookSecret bool   `json:"has_webhook_secret"`
-			Bundles          []struct {
-				ID               uint64 `json:"id"`
-				TargetSchemaName string `json:"target_schema_name"`
-			} `json:"bundles"`
-		}
-		if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
-			t.Fatalf("解析创建响应失败: %v", err)
-		}
-		if created.ID == 0 || !created.HasCredentials || !created.HasWebhookSecret || !strings.Contains(created.CredentialHint, "****") {
-			t.Fatalf("脱敏元数据字段异常: %+v", created)
-		}
-		if len(created.Bundles) != 1 || created.Bundles[0].TargetSchemaName != "common-proto" {
-			t.Fatalf("内联默认 Bundle 未创建成功: %+v", created.Bundles)
-		}
-		repoID = created.ID
-		commonBundleID = created.Bundles[0].ID
+	repoURL := gitSrv.URL + "/dophi/contracts.git"
+	platRepo := commonModels.Repository{
+		DepartmentID: dep.ID,
+		Name:         "dophi-monorepo",
+		URL:          repoURL,
+		HTTPURL:      repoURL,
+		OwnerID:      adminUser.ID,
+		Branch:       "main",
+		ServiceGroup: "trade-core",
+		IsActive:     true,
 	}
-
-	// 验证数据库确实 AES 加密存储，且 GET /api/git-repos 也严格脱敏
-	var storedRepo models.GitRepo
-	if err := db.First(&storedRepo, repoID).Error; err != nil {
-		t.Fatalf("查询 storedRepo 失败: %v", err)
+	if err := db.Create(&platRepo).Error; err != nil {
+		t.Fatalf("创建平台 Repository 失败: %v", err)
 	}
+	storedRepo := models.GitRepo{
+		PlatformRepoID:  uint64(platRepo.ID),
+		SourceMode:      models.GitSourceModePlatformShared,
+		SyncStrategy:    models.GitSyncStrategyFetchAndRead,
+		ProtoStatus:     models.GitRepoProtoStatusPending,
+		SyncEnabled:     true,
+		SubsystemSlug:   "trade-core",
+		Name:            "dophi-monorepo",
+		Provider:        models.GitProviderGitLab,
+		RepoURL:         repoURL,
+		APIBaseURL:      gitSrv.URL,
+		DefaultBranch:   "main",
+		AuthType:        models.GitAuthToken,
+		SyncMode:        models.GitSyncManual,
+		AutoCompile:     true,
+		LintOnSync:      true,
+		PollIntervalSec: 1800,
+	}
+	if err := storedRepo.SetCredentials(secretToken); err != nil {
+		t.Fatalf("SetCredentials 失败: %v", err)
+	}
+	if err := storedRepo.SetWebhookSecret(webhookSecret); err != nil {
+		t.Fatalf("SetWebhookSecret 失败: %v", err)
+	}
+	if err := db.Create(&storedRepo).Error; err != nil {
+		t.Fatalf("创建对齐 GitRepo 失败: %v", err)
+	}
+	repoID := storedRepo.ID
 	if storedRepo.CredentialsEnc == "" || storedRepo.CredentialsEnc == secretToken || storedRepo.WebhookSecretEnc == webhookSecret {
 		t.Fatalf("数据库凭据未经过 AES-256-GCM 加密")
 	}
@@ -366,6 +308,56 @@ service OrderService {
 		listRaw := w.Body.String()
 		if strings.Contains(listRaw, secretToken) || strings.Contains(listRaw, webhookSecret) || strings.Contains(listRaw, storedRepo.CredentialsEnc) {
 			t.Fatalf("GET /api/git-repos 泄漏凭据/密文: %s", listRaw)
+		}
+		if !strings.Contains(listRaw, `"service_group":"trade-core"`) {
+			t.Fatalf("GET /api/git-repos 缺少平台只读元字段 service_group: %s", listRaw)
+		}
+	}
+
+	// 3. Bundle 目录穿越防御、创建 common-base & order-svc Bundle 与重复 target_schema_name 409
+	{
+		badPathBody, _ := json.Marshal(map[string]any{
+			"bundle_name":        "bad-bundle",
+			"subdir_path":        "../secrets",
+			"target_schema_name": "bad-schema",
+		})
+		req := httptest.NewRequest(http.MethodPost, "/api/git-repos/"+strconv.FormatUint(repoID, 10)+"/bundles", bytes.NewReader(badPathBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+adminJWT)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("路径穿越 subdir_path 期望返回 400，实际 %d: %s", w.Code, w.Body.String())
+		}
+	}
+	var commonBundleID uint64
+	{
+		bBody, _ := json.Marshal(map[string]any{
+			"bundle_name":        "common-base",
+			"subdir_path":        "common/proto",
+			"include_dirs":       []string{"."},
+			"file_globs":         []string{"*.proto"},
+			"target_schema_name": "common-proto",
+			"category":           "BASE_LIB",
+			"auto_compile":       true,
+			"auto_activate":      true,
+			"lint_on_sync":       true,
+		})
+		req := httptest.NewRequest(http.MethodPost, "/api/git-repos/"+strconv.FormatUint(repoID, 10)+"/bundles", bytes.NewReader(bBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+adminJWT)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("创建 common-base Bundle 期望 201，实际 %d: %s", w.Code, w.Body.String())
+		}
+		var bResp struct {
+			ID uint64 `json:"id"`
+		}
+		_ = json.Unmarshal(w.Body.Bytes(), &bResp)
+		commonBundleID = bResp.ID
+		if commonBundleID == 0 {
+			t.Fatalf("commonBundleID 为 0: %s", w.Body.String())
 		}
 	}
 
@@ -416,7 +408,33 @@ service OrderService {
 		}
 	}
 
-	// 5. PUT 更新描述时留空凭据，必须保持原有加密凭据不变
+	// 5. PUT 权限校验 + 禁止篡改平台 SSOT 字段 + 更新描述保留原有加密凭据不变
+	{
+		updBody, _ := json.Marshal(map[string]any{"description": "viewer forbidden"})
+		req := httptest.NewRequest(http.MethodPut, "/api/git-repos/"+strconv.FormatUint(repoID, 10), bytes.NewReader(updBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+viewerJWT)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("普通用户 PUT /api/git-repos/:id 期望 403，实际 %d", w.Code)
+		}
+	}
+	for _, forbiddenPayload := range []map[string]any{
+		{"name": "hijack-name"},
+		{"repo_url": "https://evil.example.com/hijack.git"},
+		{"credential_plain": "new-secret"},
+	} {
+		badBody, _ := json.Marshal(forbiddenPayload)
+		req := httptest.NewRequest(http.MethodPut, "/api/git-repos/"+strconv.FormatUint(repoID, 10), bytes.NewReader(badBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+adminJWT)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("修改平台 SSOT/凭据字段 %v 期望 400，实际 %d: %s", forbiddenPayload, w.Code, w.Body.String())
+		}
+	}
 	{
 		updBody, _ := json.Marshal(map[string]any{
 			"description": "updated monorepo desc",
@@ -437,12 +455,16 @@ service OrderService {
 		}
 	}
 
-	// 6. 订阅 SSE 并触发 POST /api/git-repos/:id/sync，断言 202 与 SSE git_sync.completed 事件
+	// 6. 订阅 SSE 并按 Bundle 触发 POST /api/git-repos/:id/sync，断言 202 与 SSE git_sync.completed 事件
 	subID, sseCh := handlers.GetGlobalSSEBroker().Subscribe()
 	defer handlers.GetGlobalSSEBroker().Unsubscribe(subID)
 
-	{
-		req := httptest.NewRequest(http.MethodPost, "/api/git-repos/"+strconv.FormatUint(repoID, 10)+"/sync", bytes.NewBufferString(`{"branch":"main"}`))
+	for _, bID := range []uint64{commonBundleID, orderBundleID} {
+		syncBody, _ := json.Marshal(map[string]any{
+			"branch":    "main",
+			"bundle_id": bID,
+		})
+		req := httptest.NewRequest(http.MethodPost, "/api/git-repos/"+strconv.FormatUint(repoID, 10)+"/sync", bytes.NewReader(syncBody))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+adminJWT)
 		w := httptest.NewRecorder()
@@ -459,21 +481,21 @@ service OrderService {
 		if syncAck.RepoID != repoID || syncAck.Status != models.GitSyncStatusRunning {
 			t.Fatalf("同步 202 响应异常: %+v", syncAck)
 		}
-	}
 
-	// 等待 SSE git_sync.completed 事件到达
-	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
-	defer cancel()
-	gotCompleted := false
-	for !gotCompleted {
-		select {
-		case evt := <-sseCh:
-			if evt.Event == "git_sync.completed" {
-				gotCompleted = true
+		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+		gotCompleted := false
+		for !gotCompleted {
+			select {
+			case evt := <-sseCh:
+				if evt.Event == "git_sync.completed" {
+					gotCompleted = true
+				}
+			case <-ctx.Done():
+				cancel()
+				t.Fatalf("超时未收到 Bundle %d 的 SSE git_sync.completed 推送事件", bID)
 			}
-		case <-ctx.Done():
-			t.Fatalf("超时未收到 SSE git_sync.completed 推送事件")
 		}
+		cancel()
 	}
 
 	// 验证 2 个 Bundle 各自编译生成了 GIT_SYNC ProtoSchema
@@ -594,26 +616,14 @@ service OrderService {
 		}
 	}
 	_ = commonBundleID
-
+	// 确认已下线 DELETE /api/git-repos/:id 返回 404 且不删除 ProtoFile / ProtoSchema
 	{
 		req := httptest.NewRequest(http.MethodDelete, "/api/git-repos/"+strconv.FormatUint(repoID, 10), nil)
 		req.Header.Set("Authorization", "Bearer "+adminJWT)
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
-		if w.Code != http.StatusOK {
-			t.Fatalf("DELETE /api/git-repos/:id 期望 200，实际 %d: %s", w.Code, w.Body.String())
-		}
-		var remainFiles int64
-		_ = db.Model(&models.ProtoFile{}).Where("git_repo_id = ?", repoID).Count(&remainFiles).Error
-		if remainFiles != 0 {
-			t.Fatalf("删除仓库后应级联删除 ProtoFile，实际剩余 %d", remainFiles)
-		}
-		var commonSchema models.ProtoSchema
-		if err := db.Where("name = ?", "common-proto").First(&commonSchema).Error; err != nil {
-			t.Fatalf("删除 GitRepo 后已入池 ProtoSchema 归档应保留: %v", err)
-		}
-		if commonSchema.GitRepoID != nil || commonSchema.SourceBundleID != nil {
-			t.Fatalf("删除 GitRepo 后 ProtoSchema 外键应置 NULL: %+v", commonSchema)
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("已下线 DELETE /api/git-repos/:id 期望 404，实际 %d: %s", w.Code, w.Body.String())
 		}
 	}
 }

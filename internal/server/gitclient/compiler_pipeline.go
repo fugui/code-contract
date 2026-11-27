@@ -227,16 +227,18 @@ func ComputeBlastRadius(ctx context.Context, db *gorm.DB, changedLogicalPaths []
 
 // PipelineOptions 控制四段式流水线运行。
 type PipelineOptions struct {
-	Branch             string
-	OperatorID         uint
-	ForceRecompile     bool
-	ForceRenormalize   bool
-	Normalizer         Normalizer
-	AuxConfigJSON      []byte
-	CodesDir           string
-	ProtosDir          string
-	SharedWriteEnabled bool
-	TriggerBlastRadius bool
+	Branch                string
+	OperatorID            uint
+	CachePolicy           string // CACHE_ONLY | FETCH_MISSING
+	SkipIfCommitUnchanged bool
+	ForceRecompile        bool
+	ForceRenormalize      bool
+	Normalizer            Normalizer
+	AuxConfigJSON         []byte
+	CodesDir              string
+	ProtosDir             string
+	SharedWriteEnabled    bool
+	TriggerBlastRadius    bool
 }
 
 // PipelineRunResult 为四段式流水线的完整产出摘要。
@@ -245,6 +247,8 @@ type PipelineRunResult struct {
 	RepoName             string             `json:"repo_name"`
 	Branch               string             `json:"branch"`
 	CommitSHA            string             `json:"commit_sha"`
+	ProtoStatus          string             `json:"proto_status"`
+	SkippedUnchanged     bool               `json:"skipped_unchanged"`
 	NormalizerVersion    string             `json:"normalizer_version"`
 	CollectedCount       int                `json:"collected_count"`
 	NormalizedCount      int                `json:"normalized_count"`
@@ -274,9 +278,9 @@ func RunFourStagePipeline(
 	}
 	// PLATFORM_SHARED 实时引用公共 repositories 的 URL/分支/子系统
 	var platRepo *models.Repository
-	if repo.SourceMode == models.GitSourceModePlatformShared && repo.PlatformRepoID != nil {
+	if repo.PlatformRepoID > 0 {
 		var pr models.Repository
-		if err := db.WithContext(ctx).First(&pr, *repo.PlatformRepoID).Error; err == nil {
+		if err := db.WithContext(ctx).First(&pr, repo.PlatformRepoID).Error; err == nil {
 			platRepo = &pr
 			effectiveURL := strings.TrimSpace(pr.URL)
 			if effectiveURL == "" {
@@ -293,7 +297,15 @@ func RunFourStagePipeline(
 
 	norm := opts.Normalizer
 	if norm == nil {
-		norm = NewPassthroughNormalizer()
+		var govDoc *GovernanceConfigDoc
+		if snap, gErr := LoadActiveGovernanceConfig(ctx, db); gErr == nil && snap != nil {
+			d := snap.Doc
+			govDoc = &d
+		}
+		if len(opts.AuxConfigJSON) == 0 {
+			opts.AuxConfigJSON = BuildEffectiveRepoAuxJSON(repo, govDoc)
+		}
+		norm = NewRuleBasedNormalizer(govDoc)
 	}
 	normVer := EffectiveNormalizerVersion(norm, opts.AuxConfigJSON)
 
@@ -337,22 +349,104 @@ func RunFourStagePipeline(
 		protosDir = config.AppConfig.Storage.GetProtosDir()
 	}
 
+	skipIfUnchanged := opts.SkipIfCommitUnchanged && !opts.ForceRecompile && !opts.ForceRenormalize &&
+		repo.ProtoStatus != "" && repo.ProtoStatus != models.GitRepoProtoStatusPending &&
+		repo.ProtoStatus != models.GitRepoProtoStatusNoLocalCache && repo.ProtoStatus != models.GitRepoProtoStatusSyncFailed
+
 	// Stage A: pg 白名单采集 + 增量 blob 读取
 	collectRes, err := CollectRepoStageA(ctx, &repo, opts.Branch, CollectConfig{
-		CodesDir:           codesDir,
-		SharedWriteEnabled: opts.SharedWriteEnabled,
-		MaxFileBytes:       config.AppConfig.ProtoCollect.MaxFileBytes,
-		MaxFilesPerRepo:    config.AppConfig.ProtoCollect.MaxFilesPerRepo,
-		KnownRawBlobSHAs:   knownSHAs,
+		CodesDir:              codesDir,
+		SharedWriteEnabled:    opts.SharedWriteEnabled,
+		CachePolicy:           opts.CachePolicy,
+		KnownCommitSHA:        repo.LastCollectedCommit,
+		SkipIfCommitUnchanged: skipIfUnchanged,
+		MaxFileBytes:          config.AppConfig.ProtoCollect.MaxFileBytes,
+		MaxFilesPerRepo:       config.AppConfig.ProtoCollect.MaxFilesPerRepo,
+		KnownRawBlobSHAs:      knownSHAs,
 	})
 	if err != nil {
 		now := time.Now().UTC()
+		if errors.Is(err, ErrLocalCacheMissing) {
+			_ = db.Model(&repo).Updates(map[string]any{
+				"proto_status":     models.GitRepoProtoStatusNoLocalCache,
+				"last_sync_status": models.GitSyncStatusIdle,
+				"last_sync_error":  "",
+			}).Error
+			return &PipelineRunResult{
+				RepoID:      repo.ID,
+				RepoName:    repo.Name,
+				Branch:      opts.Branch,
+				ProtoStatus: models.GitRepoProtoStatusNoLocalCache,
+			}, nil
+		}
 		_ = db.Model(&repo).Updates(map[string]any{
+			"proto_status":     models.GitRepoProtoStatusSyncFailed,
 			"last_sync_at":     &now,
 			"last_sync_status": models.GitSyncStatusFailed,
 			"last_sync_error":  err.Error(),
 		}).Error
 		return nil, err
+	}
+
+	if collectRes.SkippedUnchanged {
+		commitSHA := ""
+		if collectRes.CommitMeta != nil {
+			commitSHA = collectRes.CommitMeta.CommitSHA
+		}
+		return &PipelineRunResult{
+			RepoID:           repo.ID,
+			RepoName:         repo.Name,
+			Branch:           collectRes.ResolvedBranch,
+			CommitSHA:        commitSHA,
+			ProtoStatus:      repo.ProtoStatus,
+			SkippedUnchanged: true,
+		}, nil
+	}
+
+	// 500+ 仓静默分层：未命中任何全小写 pg/ 或白名单文件数为 0 -> 标 NO_PROTO，不建空 Bundle 与空目录
+	if len(collectRes.Files) == 0 {
+		commitSHA := ""
+		var commitTime *time.Time
+		if collectRes.CommitMeta != nil {
+			commitSHA = collectRes.CommitMeta.CommitSHA
+			if !collectRes.CommitMeta.CommittedAt.IsZero() {
+				ct := collectRes.CommitMeta.CommittedAt
+				commitTime = &ct
+			}
+		}
+		now := time.Now().UTC()
+		if len(existingFiles) > 0 {
+			_ = db.Model(&models.ProtoFile{}).
+				Where("git_repo_id = ? AND is_deleted = false", repo.ID).
+				Update("is_deleted", true).Error
+		}
+		updates := map[string]any{
+			"proto_status":          models.GitRepoProtoStatusNoProto,
+			"resolved_branch":       collectRes.ResolvedBranch,
+			"last_collected_commit": commitSHA,
+			"last_sync_commit":      commitSHA,
+			"last_sync_at":          &now,
+			"last_sync_status":      models.GitSyncStatusSuccess,
+			"last_sync_error":       "",
+		}
+		if collectRes.EffectiveSyncStrategy != models.GitSyncStrategyLocalCacheOnly {
+			updates["last_fetched_at"] = &now
+		}
+		if commitTime != nil {
+			updates["ref_commit_time"] = commitTime
+		}
+		_ = db.Model(&repo).Updates(updates).Error
+		treeMgr := NewProtoTreeManager(protosDir)
+		treeMgr.RemoveRepoTree(TreeKindRaw, repo.ID)
+		treeMgr.RemoveRepoTree(TreeKindClean, repo.ID)
+		return &PipelineRunResult{
+			RepoID:           repo.ID,
+			RepoName:         repo.Name,
+			Branch:           collectRes.ResolvedBranch,
+			CommitSHA:        commitSHA,
+			ProtoStatus:      models.GitRepoProtoStatusNoProto,
+			OutsideWhitelist: collectRes.OutsideWhitelistCount,
+		}, nil
 	}
 
 	// 补齐增量复用的 raw 字节
@@ -395,9 +489,9 @@ func ReNormalizeRepo(
 		return nil, err
 	}
 	var platRepo *models.Repository
-	if repo.SourceMode == models.GitSourceModePlatformShared && repo.PlatformRepoID != nil {
+	if repo.PlatformRepoID > 0 {
 		var pr models.Repository
-		if err := db.WithContext(ctx).First(&pr, *repo.PlatformRepoID).Error; err == nil {
+		if err := db.WithContext(ctx).First(&pr, repo.PlatformRepoID).Error; err == nil {
 			platRepo = &pr
 		}
 	}
@@ -484,7 +578,15 @@ func ReNormalizeRepo(
 
 	norm := opts.Normalizer
 	if norm == nil {
-		norm = NewPassthroughNormalizer()
+		var govDoc *GovernanceConfigDoc
+		if snap, gErr := LoadActiveGovernanceConfig(ctx, db); gErr == nil && snap != nil {
+			d := snap.Doc
+			govDoc = &d
+		}
+		if len(opts.AuxConfigJSON) == 0 {
+			opts.AuxConfigJSON = BuildEffectiveRepoAuxJSON(repo, govDoc)
+		}
+		norm = NewRuleBasedNormalizer(govDoc)
 	}
 	normVer := EffectiveNormalizerVersion(norm, opts.AuxConfigJSON)
 	protosDir := opts.ProtosDir
@@ -581,6 +683,7 @@ func executeStagesBToD(
 
 	type processedFile struct {
 		CollectedFile
+		MappedRelPath  string
 		CleanContent   []byte
 		CleanSHA256    string
 		LineCount      int
@@ -596,12 +699,29 @@ func executeStagesBToD(
 		LinePreserving bool
 	}
 
+	rawPathsForMap := make([]string, 0, len(collectRes.Files))
+	for _, cf := range collectRes.Files {
+		rawPathsForMap = append(rawPathsForMap, cf.RepoFilePath)
+	}
+	mappedPaths, pathCols, _ := MapAndValidateIntraRepoPaths(rawPathsForMap, repo.StripPrefixes(), repo.PathRewrites())
+	collidingSourcePaths := make(map[string]string)
+	for _, col := range pathCols {
+		for _, src := range col.SourcePaths {
+			collidingSourcePaths[src] = col.MappedPath
+		}
+	}
+
 	processed := make(map[string]*processedFile, len(collectRes.Files))
 	allRepoImports := make([]string, 0)
 
 	for _, cf := range collectRes.Files {
+		mp := mappedPaths[cf.RepoFilePath]
+		if mp == "" {
+			mp = cf.RepoFilePath
+		}
 		pf := &processedFile{
 			CollectedFile:  cf,
+			MappedRelPath:  mp,
 			PipelineStatus: cf.Status,
 			StatusReason:   cf.StatusReason,
 			LinePreserving: true,
@@ -657,19 +777,38 @@ func executeStagesBToD(
 			}
 		}
 
-		// Stage B 后置语法门禁（仅解析不链接）
-		gate := ParseProtoSyntaxOnly(cf.RepoFilePath, nf.CleanContent)
-		if !gate.Passed {
+		if colTarget, isCol := collidingSourcePaths[cf.RepoFilePath]; isCol {
 			pf.PipelineStatus = models.ProtoPipelineQuarantined
-			pf.StatusReason = "PARSE_FAILED: " + gate.ErrorSummary
-			pf.Diagnostics = append(pf.Diagnostics, gate.Diagnostics...)
+			pf.StatusReason = fmt.Sprintf("INTRA_REPO_PATH_CONFLICT: 裁剪重写后路径 %s 存在多源文件碰撞", colTarget)
+			processed[cf.RepoFilePath] = pf
+			continue
+		}
+
+		var normErrMsg string
+		for _, d := range nf.Diagnostics {
+			if d.Severity == "ERROR" {
+				normErrMsg = d.RuleID + ": " + d.Message
+				break
+			}
+		}
+		if normErrMsg != "" {
+			pf.PipelineStatus = models.ProtoPipelineQuarantined
+			pf.StatusReason = normErrMsg
 		} else {
-			pf.PipelineStatus = models.ProtoPipelineNormalized
-			pf.StatusReason = ""
-			pf.PackageName = gate.PackageName
-			pf.Imports = gate.Imports
-			pf.Symbols = gate.Symbols
-			allRepoImports = append(allRepoImports, gate.Imports...)
+			// Stage B 后置语法门禁（仅解析不链接）
+			gate := ParseProtoSyntaxOnly(cf.RepoFilePath, nf.CleanContent)
+			if !gate.Passed {
+				pf.PipelineStatus = models.ProtoPipelineQuarantined
+				pf.StatusReason = "PARSE_FAILED: " + gate.ErrorSummary
+				pf.Diagnostics = append(pf.Diagnostics, gate.Diagnostics...)
+			} else {
+				pf.PipelineStatus = models.ProtoPipelineNormalized
+				pf.StatusReason = ""
+				pf.PackageName = gate.PackageName
+				pf.Imports = gate.Imports
+				pf.Symbols = gate.Symbols
+				allRepoImports = append(allRepoImports, gate.Imports...)
+			}
 		}
 		processed[cf.RepoFilePath] = pf
 	}
@@ -748,16 +887,35 @@ func executeStagesBToD(
 	}
 
 	inferredIncByBundle := make(map[uint64][]string, len(bundles))
+	hasIntraMapping := len(repo.StripPrefixes()) > 0 || len(repo.PathRewrites()) > 0
 	for _, b := range bundles {
 		pfs := bundleFiles[b.ID]
 		if len(pfs) == 0 {
 			continue
 		}
+		subClean, _ := SanitizeSubdirPath(b.SubdirPath)
+		useMappedForLogical := hasIntraMapping
+		if useMappedForLogical {
+			for _, inc := range b.IncludeDirs() {
+				trimmedInc := strings.Trim(strings.TrimSpace(inc), "/")
+				if trimmedInc != "" && trimmedInc != "." && trimmedInc != subClean && trimmedInc != "pg" {
+					useMappedForLogical = false
+					break
+				}
+			}
+		}
+
 		inFiles := make([]AnalyzedInputFile, 0, len(pfs))
 		for _, pf := range pfs {
+			candidatePath := pf.RepoFilePath
+			pgDir := pf.PGDir
+			if useMappedForLogical && pf.MappedRelPath != "" {
+				candidatePath = pf.MappedRelPath
+				pgDir = ""
+			}
 			inFiles = append(inFiles, AnalyzedInputFile{
-				RepoFilePath:  pf.RepoFilePath,
-				PGDir:         pf.PGDir,
+				RepoFilePath:  candidatePath,
+				PGDir:         pgDir,
 				PackageName:   pf.PackageName,
 				Imports:       pf.Imports,
 				Symbols:       pf.Symbols,
@@ -767,15 +925,22 @@ func executeStagesBToD(
 		logicalMap, incDirs := InferLogicalPathsAndIncludeDirs(b, inFiles, allRepoImports)
 		inferredIncByBundle[b.ID] = incDirs
 		for _, pf := range pfs {
-			if lp, ok := logicalMap[pf.RepoFilePath]; ok && lp != "" {
+			lookupKey := pf.RepoFilePath
+			if useMappedForLogical && pf.MappedRelPath != "" {
+				lookupKey = pf.MappedRelPath
+			}
+			if lp, ok := logicalMap[lookupKey]; ok && lp != "" {
 				pf.LogicalPath = lp
+			} else if useMappedForLogical && pf.MappedRelPath != "" {
+				pf.LogicalPath = pf.MappedRelPath
 			} else {
 				pf.LogicalPath = pf.RepoFilePath
 			}
 		}
 	}
 
-	// 准备 clean 版本目录（写入 .tmp，待 DB 提交后原子切换）
+	// 准备 clean 版本目录（写入 .tmp，待 DB 提交后按方案 A 目标目录原子切换）
+	cleanSubSlug, cleanRepoSlug := ResolveEffectiveExportTarget(*repo, nil)
 	cleanFilesMap := make(map[string][]byte)
 	cleanHashes := make(map[string]string)
 	var quarantinedPaths []string
@@ -790,13 +955,17 @@ func executeStagesBToD(
 
 	for _, rp := range sortedRepoPaths {
 		pf := processed[rp]
+		cleanKey := pf.MappedRelPath
+		if cleanKey == "" {
+			cleanKey = rp
+		}
 		if pf.PipelineStatus == models.ProtoPipelineQuarantined {
 			quarantinedCnt++
 			quarantinedPaths = append(quarantinedPaths, rp)
 		} else {
 			normalizedCnt++
-			cleanFilesMap[rp] = pf.CleanContent
-			cleanHashes[rp] = pf.CleanSHA256
+			cleanFilesMap[cleanKey] = pf.CleanContent
+			cleanHashes[cleanKey] = pf.CleanSHA256
 		}
 		var lm map[int]int
 		if len(pf.LineMapJSON) > 0 {
@@ -813,7 +982,7 @@ func executeStagesBToD(
 		})
 	}
 
-	stagedCleanDir, cleanVerName, err := treeMgr.StageVersionDir(TreeKindClean, repo.ID, subSlug, repoSlug, ProtoMetaManifest{
+	stagedCleanDir, cleanVerName, err := treeMgr.StageVersionDir(TreeKindClean, repo.ID, cleanSubSlug, cleanRepoSlug, ProtoMetaManifest{
 		Branch:            collectRes.ResolvedBranch,
 		CommitSHA:         commitSHA,
 		NormalizerVersion: normVer,
@@ -1057,6 +1226,7 @@ func executeStagesBToD(
 		}
 
 		repoUpdates := map[string]any{
+			"proto_status":          models.GitRepoProtoStatusHasProto,
 			"subsystem_slug":        subSlug,
 			"resolved_branch":       collectRes.ResolvedBranch,
 			"last_collected_commit": commitSHA,
@@ -1084,7 +1254,9 @@ func executeStagesBToD(
 	} else {
 		stagedRawDir = ""
 	}
-	if _, err := treeMgr.CommitAndSwitchVersion(TreeKindClean, repo.ID, subSlug, repoSlug, stagedCleanDir, cleanVerName); err != nil {
+	if !repo.SyncEnabled {
+		treeMgr.RemoveRepoTree(TreeKindClean, repo.ID)
+	} else if _, err := treeMgr.CommitAndSwitchVersion(TreeKindClean, repo.ID, cleanSubSlug, cleanRepoSlug, stagedCleanDir, cleanVerName); err != nil {
 		log.Printf("[ProtoTree] 原子切换 clean 链接警告 (repo#%d): %v", repo.ID, err)
 	} else {
 		stagedCleanDir = ""
@@ -1235,6 +1407,7 @@ func executeStagesBToD(
 		RepoName:          repo.Name,
 		Branch:            collectRes.ResolvedBranch,
 		CommitSHA:         commitSHA,
+		ProtoStatus:       models.GitRepoProtoStatusHasProto,
 		NormalizerVersion: normVer,
 		CollectedCount:    len(collectRes.Files),
 		NormalizedCount:   normalizedCnt,

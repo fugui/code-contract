@@ -52,44 +52,60 @@ type GitProtoBundleDTO struct {
 	UpdatedAt        time.Time  `json:"updated_at"`
 }
 
-// GitRepoResponseDTO 严格脱敏后的 GitRepo 接口输出模型（绝不返回任何明文或加密凭据）
+// GitRepoResponseDTO 严格脱敏后的 GitRepo 接口输出模型（融合只读 code-bench 平台元数据与契约治理字段）
 type GitRepoResponseDTO struct {
-	ID                  uint64              `json:"id"`
-	PlatformRepoID      *uint64             `json:"platform_repo_id,omitempty"`
-	SourceMode          string              `json:"source_mode"`
-	SyncStrategy        string              `json:"sync_strategy"`
-	SubsystemSlug       string              `json:"subsystem_slug"`
-	ResolvedBranch      string              `json:"resolved_branch"`
-	LastFetchedAt       *time.Time          `json:"last_fetched_at,omitempty"`
-	RefCommitTime       *time.Time          `json:"ref_commit_time,omitempty"`
-	LastCollectedCommit string              `json:"last_collected_commit"`
-	IsStale             bool                `json:"is_stale"`
-	NormalizedCount     int                 `json:"normalized_count"`
-	QuarantinedCount    int                 `json:"quarantined_count"`
-	ExternalCopyCount   int                 `json:"external_copy_count"`
-	Name                string              `json:"name"`
-	Provider            string              `json:"provider"`
-	RepoURL             string              `json:"repo_url"`
-	APIBaseURL          string              `json:"api_base_url"`
-	DefaultBranch       string              `json:"default_branch"`
-	AuthType            string              `json:"auth_type"`
-	HasCredentials      bool                `json:"has_credentials"`
-	CredentialHint      string              `json:"credential_hint"`
-	HasWebhookSecret    bool                `json:"has_webhook_secret"`
-	SyncMode            string              `json:"sync_mode"`
-	PollIntervalSec     int                 `json:"poll_interval_sec"`
-	AutoCompile         bool                `json:"auto_compile"`
-	AutoActivate        bool                `json:"auto_activate"`
-	LintOnSync          bool                `json:"lint_on_sync"`
-	LastSyncAt          *time.Time          `json:"last_sync_at,omitempty"`
-	LastSyncCommit      string              `json:"last_sync_commit"`
-	LastSyncStatus      string              `json:"last_sync_status"`
-	LastSyncError       string              `json:"last_sync_error"`
-	Description         string              `json:"description"`
-	CreatedBy           uint                `json:"created_by"`
-	CreatedAt           time.Time           `json:"created_at"`
-	UpdatedAt           time.Time           `json:"updated_at"`
-	Bundles             []GitProtoBundleDTO `json:"bundles"`
+	ID                    uint64              `json:"id"`
+	PlatformRepoID        uint64              `json:"platform_repo_id"`
+	SourceMode            string              `json:"source_mode"`
+	SyncStrategy          string              `json:"sync_strategy"`
+	ProtoStatus           string              `json:"proto_status"`
+	SyncEnabled           bool                `json:"sync_enabled"`
+	SubsystemSlug         string              `json:"subsystem_slug"`
+	ExportTargetSubsystem string              `json:"export_target_subsystem"`
+	ExportTargetRepoDir   string              `json:"export_target_repo_dir"`
+	EffectiveExportDir    string              `json:"effective_export_dir"`
+	HasExportOverride     bool                `json:"has_export_override"`
+	StripPrefixes         []string            `json:"strip_prefixes,omitempty"`
+	PathRewrites          map[string]string   `json:"path_rewrites,omitempty"`
+	RepoNormalizeConfig   datatypes.JSON      `json:"repo_normalize_config,omitempty"`
+	ServiceGroup          string              `json:"service_group"`
+	DepartmentID          uint                `json:"department_id"`
+	DepartmentName        string              `json:"department_name"`
+	OwnerID               uint                `json:"owner_id"`
+	OwnerName             string              `json:"owner_name"`
+	IsPlatformActive      bool                `json:"is_platform_active"`
+	ResolvedBranch        string              `json:"resolved_branch"`
+	LastFetchedAt         *time.Time          `json:"last_fetched_at,omitempty"`
+	RefCommitTime         *time.Time          `json:"ref_commit_time,omitempty"`
+	LastCollectedCommit   string              `json:"last_collected_commit"`
+	IsStale               bool                `json:"is_stale"`
+	WhitelistCount        int                 `json:"whitelist_count"`
+	NormalizedCount       int                 `json:"normalized_count"`
+	QuarantinedCount      int                 `json:"quarantined_count"`
+	ExternalCopyCount     int                 `json:"external_copy_count"`
+	Name                  string              `json:"name"`
+	Provider              string              `json:"provider"`
+	RepoURL               string              `json:"repo_url"`
+	APIBaseURL            string              `json:"api_base_url"`
+	DefaultBranch         string              `json:"default_branch"`
+	AuthType              string              `json:"auth_type"`
+	HasCredentials        bool                `json:"has_credentials"`
+	CredentialHint        string              `json:"credential_hint"`
+	HasWebhookSecret      bool                `json:"has_webhook_secret"`
+	SyncMode              string              `json:"sync_mode"`
+	PollIntervalSec       int                 `json:"poll_interval_sec"`
+	AutoCompile           bool                `json:"auto_compile"`
+	AutoActivate          bool                `json:"auto_activate"`
+	LintOnSync            bool                `json:"lint_on_sync"`
+	LastSyncAt            *time.Time          `json:"last_sync_at,omitempty"`
+	LastSyncCommit        string              `json:"last_sync_commit"`
+	LastSyncStatus        string              `json:"last_sync_status"`
+	LastSyncError         string              `json:"last_sync_error"`
+	Description           string              `json:"description"`
+	CreatedBy             uint                `json:"created_by"`
+	CreatedAt             time.Time           `json:"created_at"`
+	UpdatedAt             time.Time           `json:"updated_at"`
+	Bundles               []GitProtoBundleDTO `json:"bundles"`
 }
 
 type bundleUpsertPayload struct {
@@ -114,49 +130,21 @@ type bundleUpsertPayload struct {
 	Description      string   `json:"description"`
 }
 
-type gitRepoCreateRequest struct {
-	Name               string                `json:"name"`
-	Provider           string                `json:"provider"`
-	RepoURL            string                `json:"repo_url"`
-	APIBaseURL         string                `json:"api_base_url"`
-	WebBaseURL         string                `json:"web_base_url"` // 兼容契约别名
-	DefaultBranch      string                `json:"default_branch"`
-	AuthType           string                `json:"auth_type"`
-	CredentialPlain    string                `json:"credential_plain"`
-	WebhookSecretPlain string                `json:"webhook_secret_plain"`
-	SyncMode           string                `json:"sync_mode"`
-	PollIntervalSec    int                   `json:"poll_interval_sec"`
-	AutoCompile        *bool                 `json:"auto_compile"`
-	AutoActivate       *bool                 `json:"auto_activate"`
-	LintOnSync         *bool                 `json:"lint_on_sync"`
-	Description        string                `json:"description"`
-	DefaultBundle      *bundleUpsertPayload  `json:"default_bundle"`
-	Bundles            []bundleUpsertPayload `json:"bundles"`
-	// 单仓顶层内联便捷参数
-	TargetSchemaName string   `json:"target_schema_name"`
-	TargetCategory   string   `json:"target_category"`
-	SubdirPath       string   `json:"subdir_path"`
-	ProtoRootDir     string   `json:"proto_root_dir"`
-	IncludeDirs      []string `json:"include_dirs"`
-	ProtoIncludeDirs []string `json:"proto_include_dirs"`
-}
-
 type gitRepoUpdateRequest struct {
+	SyncEnabled     *bool   `json:"sync_enabled"`
+	SyncStrategy    *string `json:"sync_strategy"`
+	SyncMode        *string `json:"sync_mode"`
+	PollIntervalSec *int    `json:"poll_interval_sec"`
+	AutoCompile     *bool   `json:"auto_compile"`
+	AutoActivate    *bool   `json:"auto_activate"`
+	LintOnSync      *bool   `json:"lint_on_sync"`
+	Description     *string `json:"description"`
+	// 以下平台真值或独立凭据字段在 r4 中禁止从契约端篡改，仅用于校验拦截
 	Name               *string `json:"name"`
-	Provider           *string `json:"provider"`
 	RepoURL            *string `json:"repo_url"`
-	APIBaseURL         *string `json:"api_base_url"`
-	WebBaseURL         *string `json:"web_base_url"`
 	DefaultBranch      *string `json:"default_branch"`
-	AuthType           *string `json:"auth_type"`
 	CredentialPlain    *string `json:"credential_plain"`
 	WebhookSecretPlain *string `json:"webhook_secret_plain"`
-	SyncMode           *string `json:"sync_mode"`
-	PollIntervalSec    *int    `json:"poll_interval_sec"`
-	AutoCompile        *bool   `json:"auto_compile"`
-	AutoActivate       *bool   `json:"auto_activate"`
-	LintOnSync         *bool   `json:"lint_on_sync"`
-	Description        *string `json:"description"`
 }
 
 type triggerGitSyncRequest struct {
@@ -210,48 +198,67 @@ func toGitRepoResponseDTO(repo models.GitRepo, bundles []models.GitProtoBundle) 
 	for _, b := range bundles {
 		bundleDTOs = append(bundleDTOs, toGitProtoBundleDTO(b))
 	}
-	sourceMode := repo.SourceMode
-	if sourceMode == "" {
-		sourceMode = models.GitSourceModeExternalStandalone
+	subSlug := strings.TrimSpace(repo.SubsystemSlug)
+	if subSlug == "" {
+		subSlug = gitclient.UnassignedSubsystemSlug
 	}
-	syncStrategy := repo.SyncStrategy
-	if syncStrategy == "" {
-		syncStrategy = models.GitSyncStrategyFetchAndRead
+	effSub := strings.TrimSpace(repo.ExportTargetSubsystem)
+	if effSub == "" {
+		effSub = subSlug
 	}
+	effRepoDir := strings.TrimSpace(repo.ExportTargetRepoDir)
+	if effRepoDir == "" {
+		effRepoDir = gitclient.NormalizeSlug(repo.Name, nil, fmt.Sprintf("repo:%d", repo.ID), false)
+	}
+	hasOverride := strings.TrimSpace(repo.ExportTargetSubsystem) != "" ||
+		strings.TrimSpace(repo.ExportTargetRepoDir) != "" ||
+		len(redacted.StripPrefixes) > 0 ||
+		len(redacted.PathRewrites) > 0
+
 	return GitRepoResponseDTO{
-		ID:                  redacted.ID,
-		PlatformRepoID:      repo.PlatformRepoID,
-		SourceMode:          sourceMode,
-		SyncStrategy:        syncStrategy,
-		SubsystemSlug:       repo.SubsystemSlug,
-		ResolvedBranch:      repo.ResolvedBranch,
-		LastFetchedAt:       repo.LastFetchedAt,
-		RefCommitTime:       repo.RefCommitTime,
-		LastCollectedCommit: repo.LastCollectedCommit,
-		IsStale:             computeRepoIsStale(repo),
-		Name:                redacted.Name,
-		Provider:            redacted.Provider,
-		RepoURL:             redacted.RepoURL,
-		APIBaseURL:          redacted.APIBaseURL,
-		DefaultBranch:       redacted.DefaultBranch,
-		AuthType:            redacted.AuthType,
-		HasCredentials:      redacted.HasCredentials,
-		CredentialHint:      redacted.CredentialHint,
-		HasWebhookSecret:    redacted.HasWebhookSecret,
-		SyncMode:            redacted.SyncMode,
-		PollIntervalSec:     redacted.PollIntervalSec,
-		AutoCompile:         redacted.AutoCompile,
-		AutoActivate:        redacted.AutoActivate,
-		LintOnSync:          redacted.LintOnSync,
-		LastSyncAt:          redacted.LastSyncAt,
-		LastSyncCommit:      redacted.LastSyncCommit,
-		LastSyncStatus:      redacted.LastSyncStatus,
-		LastSyncError:       redacted.LastSyncError,
-		Description:         redacted.Description,
-		CreatedBy:           redacted.CreatedBy,
-		CreatedAt:           redacted.CreatedAt,
-		UpdatedAt:           redacted.UpdatedAt,
-		Bundles:             bundleDTOs,
+		ID:                    redacted.ID,
+		PlatformRepoID:        redacted.PlatformRepoID,
+		SourceMode:            redacted.SourceMode,
+		SyncStrategy:          redacted.SyncStrategy,
+		ProtoStatus:           redacted.ProtoStatus,
+		SyncEnabled:           redacted.SyncEnabled,
+		SubsystemSlug:         subSlug,
+		ExportTargetSubsystem: repo.ExportTargetSubsystem,
+		ExportTargetRepoDir:   repo.ExportTargetRepoDir,
+		EffectiveExportDir:    "clean/" + effSub + "/" + effRepoDir,
+		HasExportOverride:     hasOverride,
+		StripPrefixes:         redacted.StripPrefixes,
+		PathRewrites:          redacted.PathRewrites,
+		RepoNormalizeConfig:   repo.RepoNormalizeConfigJSON,
+		IsPlatformActive:      true,
+		ResolvedBranch:        repo.ResolvedBranch,
+		LastFetchedAt:         repo.LastFetchedAt,
+		RefCommitTime:         repo.RefCommitTime,
+		LastCollectedCommit:   repo.LastCollectedCommit,
+		IsStale:               computeRepoIsStale(repo),
+		Name:                  redacted.Name,
+		Provider:              redacted.Provider,
+		RepoURL:               redacted.RepoURL,
+		APIBaseURL:            redacted.APIBaseURL,
+		DefaultBranch:         redacted.DefaultBranch,
+		AuthType:              redacted.AuthType,
+		HasCredentials:        redacted.HasCredentials,
+		CredentialHint:        redacted.CredentialHint,
+		HasWebhookSecret:      redacted.HasWebhookSecret,
+		SyncMode:              redacted.SyncMode,
+		PollIntervalSec:       redacted.PollIntervalSec,
+		AutoCompile:           redacted.AutoCompile,
+		AutoActivate:          redacted.AutoActivate,
+		LintOnSync:            redacted.LintOnSync,
+		LastSyncAt:            redacted.LastSyncAt,
+		LastSyncCommit:        redacted.LastSyncCommit,
+		LastSyncStatus:        redacted.LastSyncStatus,
+		LastSyncError:         redacted.LastSyncError,
+		Description:           redacted.Description,
+		CreatedBy:             redacted.CreatedBy,
+		CreatedAt:             redacted.CreatedAt,
+		UpdatedAt:             redacted.UpdatedAt,
+		Bundles:               bundleDTOs,
 	}
 }
 
@@ -523,23 +530,41 @@ func loadRepoWithBundles(db *gorm.DB, repoID uint64) (*models.GitRepo, []models.
 }
 
 // ListGitRepos GET /api/git-repos
-// 标准分页查询已纳管的 Git 仓库及其 1:N Monorepo Bundles（严格脱敏）
+// 标准分页查询已对齐的平台共享 Git 仓库及其 1:N Monorepo Bundles、只读平台元数据与文件统计
 func ListGitRepos(c *gin.Context) {
 	page, pageSize := parseStandardPagination(c)
 	q := models.DB.Model(&models.GitRepo{})
 
 	if provider := strings.TrimSpace(c.Query("provider")); provider != "" {
-		q = q.Where("provider = ?", strings.ToUpper(provider))
+		q = q.Where("contract_git_repos.provider = ?", strings.ToUpper(provider))
 	}
 	if syncStatus := strings.TrimSpace(c.Query("last_sync_status")); syncStatus != "" {
-		q = q.Where("last_sync_status = ?", strings.ToUpper(syncStatus))
+		q = q.Where("contract_git_repos.last_sync_status = ?", strings.ToUpper(syncStatus))
+	}
+	if protoStatus := strings.TrimSpace(c.Query("proto_status")); protoStatus != "" {
+		q = q.Where("contract_git_repos.proto_status = ?", strings.ToUpper(protoStatus))
+	}
+	if rawEnabled := strings.TrimSpace(c.Query("sync_enabled")); rawEnabled != "" {
+		if parsed, err := strconv.ParseBool(rawEnabled); err == nil {
+			q = q.Where("contract_git_repos.sync_enabled = ?", parsed)
+		} else {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "非法的 sync_enabled 参数"})
+			return
+		}
+	}
+	if sg := strings.TrimSpace(c.Query("service_group")); sg != "" {
+		if sg == gitclient.UnassignedSubsystemSlug {
+			q = q.Where("EXISTS (SELECT 1 FROM repositories r WHERE r.id = contract_git_repos.platform_repo_id AND (r.service_group = '' OR r.service_group IS NULL))")
+		} else {
+			q = q.Where("EXISTS (SELECT 1 FROM repositories r WHERE r.id = contract_git_repos.platform_repo_id AND (r.service_group = ? OR contract_git_repos.subsystem_slug = ? OR contract_git_repos.export_target_subsystem = ?))", sg, sg, sg)
+		}
 	}
 	if search := strings.TrimSpace(c.Query("search")); search != "" {
 		like := "%" + search + "%"
-		q = q.Where("name ILIKE ? OR repo_url ILIKE ? OR description ILIKE ?", like, like, like)
+		q = q.Where("contract_git_repos.name ILIKE ? OR contract_git_repos.repo_url ILIKE ? OR contract_git_repos.description ILIKE ? OR contract_git_repos.export_target_subsystem ILIKE ? OR contract_git_repos.export_target_repo_dir ILIKE ?",
+			like, like, like, like, like)
 	}
 	if subIDRaw := strings.TrimSpace(c.Query("subsystem_id")); subIDRaw != "" {
-		// 预留按子系统关联或忽略非法过滤参数
 		if _, err := strconv.ParseUint(subIDRaw, 10, 64); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "非法的 subsystem_id 参数"})
 			return
@@ -554,13 +579,15 @@ func ListGitRepos(c *gin.Context) {
 
 	var repos []models.GitRepo
 	offset := (page - 1) * pageSize
-	if err := q.Order("id DESC").Offset(offset).Limit(pageSize).Find(&repos).Error; err != nil {
+	if err := q.Order("contract_git_repos.id DESC").Offset(offset).Limit(pageSize).Find(&repos).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	bundlesByRepo := make(map[uint64][]models.GitProtoBundle, len(repos))
+	platByID := make(map[uint64]models.Repository, len(repos))
 	type repoFileStat struct {
+		WhitelistCount    int
 		NormalizedCount   int
 		QuarantinedCount  int
 		ExternalCopyCount int
@@ -568,8 +595,20 @@ func ListGitRepos(c *gin.Context) {
 	statsByRepo := make(map[uint64]*repoFileStat, len(repos))
 	if len(repos) > 0 {
 		repoIDs := make([]uint64, 0, len(repos))
+		platIDs := make([]uint, 0, len(repos))
 		for _, r := range repos {
 			repoIDs = append(repoIDs, r.ID)
+			if r.PlatformRepoID > 0 {
+				platIDs = append(platIDs, uint(r.PlatformRepoID))
+			}
+		}
+		if len(platIDs) > 0 {
+			var plats []models.Repository
+			if err := models.DB.Preload("Department").Preload("Owner").Where("id IN ?", platIDs).Find(&plats).Error; err == nil {
+				for _, p := range plats {
+					platByID[uint64(p.ID)] = p
+				}
+			}
 		}
 		var allBundles []models.GitProtoBundle
 		if err := models.DB.Where("git_repo_id IN ?", repoIDs).Order("id ASC").Find(&allBundles).Error; err != nil {
@@ -594,6 +633,7 @@ func ListGitRepos(c *gin.Context) {
 					st = &repoFileStat{}
 					statsByRepo[fr.GitRepoID] = st
 				}
+				st.WhitelistCount++
 				switch fr.PipelineStatus {
 				case models.ProtoPipelineNormalized:
 					st.NormalizedCount++
@@ -610,7 +650,26 @@ func ListGitRepos(c *gin.Context) {
 	items := make([]GitRepoResponseDTO, 0, len(repos))
 	for _, repo := range repos {
 		dto := toGitRepoResponseDTO(repo, bundlesByRepo[repo.ID])
+		if p, ok := platByID[repo.PlatformRepoID]; ok {
+			dto.ServiceGroup = p.ServiceGroup
+			dto.DepartmentID = p.DepartmentID
+			dto.DepartmentName = p.Department.Name
+			dto.OwnerID = p.OwnerID
+			dto.OwnerName = p.Owner.Username
+			dto.IsPlatformActive = p.IsActive
+			effURL := strings.TrimSpace(p.URL)
+			if effURL == "" {
+				effURL = strings.TrimSpace(p.HTTPURL)
+			}
+			if effURL != "" {
+				dto.RepoURL = effURL
+			}
+			if strings.TrimSpace(p.Branch) != "" {
+				dto.DefaultBranch = p.Branch
+			}
+		}
 		if st := statsByRepo[repo.ID]; st != nil {
+			dto.WhitelistCount = st.WhitelistCount
 			dto.NormalizedCount = st.NormalizedCount
 			dto.QuarantinedCount = st.QuarantinedCount
 			dto.ExternalCopyCount = st.ExternalCopyCount
@@ -631,194 +690,8 @@ func ListGitRepos(c *gin.Context) {
 	})
 }
 
-// CreateGitRepo POST /api/git-repos
-// 创建 Git 仓库绑定，支持内联默认 Bundle 或多 Bundles（AdminOnly，AES 加密，SSRF 阻断）
-func CreateGitRepo(c *gin.Context) {
-	var req gitRepoCreateRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请求载荷 JSON 格式非法: " + err.Error()})
-		return
-	}
-
-	name := strings.TrimSpace(req.Name)
-	if name == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "仓库名称 name 不能为空"})
-		return
-	}
-	provider, err := normalizeGitProvider(req.Provider)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	authType, err := normalizeGitAuthType(req.AuthType)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	syncMode, err := normalizeGitSyncMode(req.SyncMode)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	apiBase := strings.TrimSpace(req.APIBaseURL)
-	if apiBase == "" {
-		apiBase = strings.TrimSpace(req.WebBaseURL)
-	}
-
-	dialer, err := loadSafeDialerFromSettings(models.DB)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	if err := validateGitRepoEndpointURL(c.Request.Context(), dialer, req.RepoURL, apiBase); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	var repoNameCount int64
-	if err := models.DB.Model(&models.GitRepo{}).Where("name = ?", name).Count(&repoNameCount).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	if repoNameCount > 0 {
-		c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("Git 仓库名称 %q 已存在", name)})
-		return
-	}
-
-	defaultBranch := strings.TrimSpace(req.DefaultBranch)
-	if defaultBranch == "" {
-		defaultBranch = "main"
-	}
-	pollSec := req.PollIntervalSec
-	if pollSec <= 0 {
-		pollSec = 300
-	}
-	autoCompile := true
-	if req.AutoCompile != nil {
-		autoCompile = *req.AutoCompile
-	}
-	autoActivate := false
-	if req.AutoActivate != nil {
-		autoActivate = *req.AutoActivate
-	}
-	lintOnSync := true
-	if req.LintOnSync != nil {
-		lintOnSync = *req.LintOnSync
-	}
-
-	uid, _ := currentOperatorName(c)
-	repo := models.GitRepo{
-		Name:            name,
-		Provider:        provider,
-		RepoURL:         strings.TrimSpace(req.RepoURL),
-		APIBaseURL:      apiBase,
-		DefaultBranch:   defaultBranch,
-		AuthType:        authType,
-		SyncMode:        syncMode,
-		PollIntervalSec: pollSec,
-		AutoCompile:     autoCompile,
-		AutoActivate:    autoActivate,
-		LintOnSync:      lintOnSync,
-		LastSyncStatus:  models.GitSyncStatusIdle,
-		Description:     strings.TrimSpace(req.Description),
-		CreatedBy:       uid,
-	}
-
-	if strings.TrimSpace(req.CredentialPlain) != "" {
-		if err := repo.SetCredentials(req.CredentialPlain); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "加密存储认证凭据失败: " + err.Error()})
-			return
-		}
-	}
-	if strings.TrimSpace(req.WebhookSecretPlain) != "" {
-		if err := repo.SetWebhookSecret(req.WebhookSecretPlain); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "加密存储 Webhook 密钥失败: " + err.Error()})
-			return
-		}
-	}
-
-	bundlePayloads := make([]bundleUpsertPayload, 0, 1+len(req.Bundles))
-	if req.DefaultBundle != nil {
-		bundlePayloads = append(bundlePayloads, *req.DefaultBundle)
-	} else if strings.TrimSpace(req.TargetSchemaName) != "" {
-		bundlePayloads = append(bundlePayloads, bundleUpsertPayload{
-			TargetSchemaName: req.TargetSchemaName,
-			TargetCategory:   req.TargetCategory,
-			SubdirPath:       req.SubdirPath,
-			ProtoRootDir:     req.ProtoRootDir,
-			IncludeDirs:      req.IncludeDirs,
-			ProtoIncludeDirs: req.ProtoIncludeDirs,
-		})
-	}
-	bundlePayloads = append(bundlePayloads, req.Bundles...)
-
-	builtBundles := make([]*models.GitProtoBundle, 0, len(bundlePayloads))
-	seenTargets := make(map[string]struct{}, len(bundlePayloads))
-	seenNames := make(map[string]struct{}, len(bundlePayloads))
-	for _, bp := range bundlePayloads {
-		bModel, bErr := buildBundleModelFromPayload(&repo, bp)
-		if bErr != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": bErr.Error()})
-			return
-		}
-		if _, dup := seenTargets[bModel.TargetSchemaName]; dup {
-			c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("target_schema_name %q 在请求内重复", bModel.TargetSchemaName)})
-			return
-		}
-		seenTargets[bModel.TargetSchemaName] = struct{}{}
-		if _, dup := seenNames[bModel.BundleName]; dup {
-			c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("bundle_name %q 在同一仓库内重复", bModel.BundleName)})
-			return
-		}
-		seenNames[bModel.BundleName] = struct{}{}
-
-		var existTarget int64
-		if err := models.DB.Model(&models.GitProtoBundle{}).Where("target_schema_name = ?", bModel.TargetSchemaName).Count(&existTarget).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		if existTarget > 0 {
-			c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("target_schema_name %q 已被其他 Bundle 占用", bModel.TargetSchemaName)})
-			return
-		}
-		builtBundles = append(builtBundles, bModel)
-	}
-
-	if txErr := models.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(&repo).Error; err != nil {
-			return err
-		}
-		for _, bm := range builtBundles {
-			bm.GitRepoID = repo.ID
-			if err := tx.Create(bm).Error; err != nil {
-				return err
-			}
-		}
-		return nil
-	}); txErr != nil {
-		if isUniqueConstraintErr(txErr) {
-			c.JSON(http.StatusConflict, gin.H{"error": "Git 仓库名或 Bundle target_schema_name 发生唯一键冲突"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": txErr.Error()})
-		return
-	}
-
-	savedBundles := make([]models.GitProtoBundle, 0, len(builtBundles))
-	for _, bm := range builtBundles {
-		savedBundles = append(savedBundles, *bm)
-	}
-	dto := toGitRepoResponseDTO(repo, savedBundles)
-	recordAudit(c, "contract_git:create_repo", commonModels.AuditLevelP2,
-		fmt.Sprintf("新建 Git 仓库绑定 [%s]（含 %d 个 Proto Bundle）", repo.Name, len(savedBundles)),
-		"git_repo", repo.ID, repo.Name, nil, dto)
-
-	c.JSON(http.StatusCreated, dto)
-}
-
 // UpdateGitRepo PUT /api/git-repos/:id
-// 更新 Git 仓库连接信息；credential_plain / webhook_secret_plain 留空时严格保留原密文不变
+// 更新 contract 侧契约配置（严禁修改 code-bench 唯一真值源字段或写入独立凭据）
 func UpdateGitRepo(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil || id == 0 {
@@ -843,40 +716,32 @@ func UpdateGitRepo(c *gin.Context) {
 		return
 	}
 
-	if req.Name != nil {
-		trimmed := strings.TrimSpace(*req.Name)
-		if trimmed == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "仓库名称 name 不能为空"})
-			return
-		}
-		if trimmed != repo.Name {
-			var cnt int64
-			if err := models.DB.Model(&models.GitRepo{}).Where("name = ? AND id <> ?", trimmed, repo.ID).Count(&cnt).Error; err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-				return
-			}
-			if cnt > 0 {
-				c.JSON(http.StatusConflict, gin.H{"error": fmt.Sprintf("仓库名称 %q 已存在", trimmed)})
-				return
-			}
-			repo.Name = trimmed
-		}
+	if (req.RepoURL != nil && strings.TrimSpace(*req.RepoURL) != "" && strings.TrimSpace(*req.RepoURL) != repo.RepoURL) ||
+		(req.Name != nil && strings.TrimSpace(*req.Name) != "" && strings.TrimSpace(*req.Name) != repo.Name) ||
+		(req.DefaultBranch != nil && strings.TrimSpace(*req.DefaultBranch) != "" && strings.TrimSpace(*req.DefaultBranch) != repo.DefaultBranch) ||
+		(req.CredentialPlain != nil && strings.TrimSpace(*req.CredentialPlain) != "") ||
+		(req.WebhookSecretPlain != nil && strings.TrimSpace(*req.WebhookSecretPlain) != "") {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "code-bench repositories 为唯一真值源，禁止在契约平台修改仓库名称、URL、分支或维护独立 Git 凭据",
+		})
+		return
 	}
-	if req.Provider != nil {
-		p, pErr := normalizeGitProvider(*req.Provider)
-		if pErr != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": pErr.Error()})
+
+	if req.SyncStrategy != nil {
+		st := strings.ToUpper(strings.TrimSpace(*req.SyncStrategy))
+		if st != models.GitSyncStrategyLocalCacheOnly && st != models.GitSyncStrategyFetchAndRead {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "非法的 sync_strategy，允许 LOCAL_CACHE_ONLY / FETCH_AND_READ"})
 			return
 		}
-		repo.Provider = p
+		repo.SyncStrategy = st
 	}
-	if req.AuthType != nil {
-		a, aErr := normalizeGitAuthType(*req.AuthType)
-		if aErr != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": aErr.Error()})
-			return
+	if req.SyncEnabled != nil {
+		repo.SyncEnabled = *req.SyncEnabled
+		if !repo.SyncEnabled {
+			repo.ProtoStatus = models.GitRepoProtoStatusExcluded
+		} else if repo.ProtoStatus == models.GitRepoProtoStatusExcluded {
+			repo.ProtoStatus = models.GitRepoProtoStatusPending
 		}
-		repo.AuthType = a
 	}
 	if req.SyncMode != nil {
 		s, sErr := normalizeGitSyncMode(*req.SyncMode)
@@ -885,20 +750,6 @@ func UpdateGitRepo(c *gin.Context) {
 			return
 		}
 		repo.SyncMode = s
-	}
-	if req.RepoURL != nil {
-		repo.RepoURL = strings.TrimSpace(*req.RepoURL)
-	}
-	if req.APIBaseURL != nil {
-		repo.APIBaseURL = strings.TrimSpace(*req.APIBaseURL)
-	} else if req.WebBaseURL != nil {
-		repo.APIBaseURL = strings.TrimSpace(*req.WebBaseURL)
-	}
-	if req.DefaultBranch != nil {
-		b := strings.TrimSpace(*req.DefaultBranch)
-		if b != "" {
-			repo.DefaultBranch = b
-		}
 	}
 	if req.PollIntervalSec != nil && *req.PollIntervalSec > 0 {
 		repo.PollIntervalSec = *req.PollIntervalSec
@@ -916,108 +767,21 @@ func UpdateGitRepo(c *gin.Context) {
 		repo.Description = strings.TrimSpace(*req.Description)
 	}
 
-	dialer, dErr := loadSafeDialerFromSettings(models.DB)
-	if dErr != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": dErr.Error()})
-		return
-	}
-	if err := validateGitRepoEndpointURL(c.Request.Context(), dialer, repo.RepoURL, repo.APIBaseURL); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// 留空保留原有 AES 密文；非空则重新 AES-256-GCM 加密覆盖
-	if req.CredentialPlain != nil && strings.TrimSpace(*req.CredentialPlain) != "" {
-		if err := repo.SetCredentials(*req.CredentialPlain); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "加密凭据失败: " + err.Error()})
-			return
-		}
-	}
-	if req.WebhookSecretPlain != nil && strings.TrimSpace(*req.WebhookSecretPlain) != "" {
-		if err := repo.SetWebhookSecret(*req.WebhookSecretPlain); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "加密 Webhook 密钥失败: " + err.Error()})
-			return
-		}
-	}
-
 	if err := models.DB.Save(repo).Error; err != nil {
-		if isUniqueConstraintErr(err) {
-			c.JSON(http.StatusConflict, gin.H{"error": "仓库名称冲突"})
-			return
-		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+
+	if !repo.SyncEnabled {
+		gitclient.NewProtoTreeManager(config.AppConfig.Storage.GetProtosDir()).RemoveRepoTree(gitclient.TreeKindClean, repo.ID)
 	}
 
 	afterDTO := toGitRepoResponseDTO(*repo, bundles)
 	recordAudit(c, "contract_git:update_repo", commonModels.AuditLevelP2,
-		fmt.Sprintf("更新 Git 仓库绑定 [%s]", repo.Name),
+		fmt.Sprintf("更新 Git 仓库契约配置 [%s]", repo.Name),
 		"git_repo", repo.ID, repo.Name, beforeDTO, afterDTO)
 
 	c.JSON(http.StatusOK, afterDTO)
-}
-
-// DeleteGitRepo DELETE /api/git-repos/:id
-// 删除 Git 仓库及其 Bundle 与只读快照，但保全历史已编译 ProtoSchema（ON DELETE SET NULL）
-func DeleteGitRepo(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
-	if err != nil || id == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "非法的仓库 ID"})
-		return
-	}
-
-	repo, bundles, err := loadRepoWithBundles(models.DB, id)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": gitclient.ErrGitRepoNotFound.Error()})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	if _, running := activeGitRepoSyncs.Load(repo.ID); running || repo.LastSyncStatus == models.GitSyncStatusRunning {
-		c.JSON(http.StatusConflict, gin.H{
-			"err_code": "GIT_SYNC_IN_PROGRESS",
-			"error":    "当前仓库正在执行同步任务，请等待同步完成后再删除",
-		})
-		return
-	}
-
-	beforeDTO := toGitRepoResponseDTO(*repo, bundles)
-	if txErr := models.DB.Transaction(func(tx *gorm.DB) error {
-		// 显式保留所有历史 ProtoSchema 并置空来源外键，防止级联损坏历史档案
-		if err := tx.Model(&models.ProtoSchema{}).
-			Where("git_repo_id = ?", repo.ID).
-			Updates(map[string]any{"git_repo_id": nil, "source_bundle_id": nil}).Error; err != nil {
-			return err
-		}
-		if err := tx.Model(&models.ProtoFile{}).
-			Where("git_repo_id = ?", repo.ID).
-			Update("latest_version_id", nil).Error; err != nil {
-			return err
-		}
-		if err := tx.Where("proto_file_id IN (SELECT id FROM contract_proto_files WHERE git_repo_id = ?)", repo.ID).
-			Delete(&models.ProtoFileVersion{}).Error; err != nil {
-			return err
-		}
-		if err := tx.Where("git_repo_id = ?", repo.ID).Delete(&models.ProtoFile{}).Error; err != nil {
-			return err
-		}
-		if err := tx.Where("git_repo_id = ?", repo.ID).Delete(&models.GitProtoBundle{}).Error; err != nil {
-			return err
-		}
-		return tx.Delete(&models.GitRepo{}, repo.ID).Error
-	}); txErr != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": txErr.Error()})
-		return
-	}
-
-	recordAudit(c, "contract_git:delete_repo", commonModels.AuditLevelP1,
-		fmt.Sprintf("删除 Git 仓库绑定 [%s]（历史编译产物已保全归档）", repo.Name),
-		"git_repo", repo.ID, repo.Name, beforeDTO, nil)
-
-	c.JSON(http.StatusOK, gin.H{"message": "Git 仓库绑定已删除"})
 }
 
 // CreateGitRepoBundle POST /api/git-repos/:id/bundles
@@ -1302,16 +1066,6 @@ func TriggerGitRepoSync(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-	} else {
-		var bundleCount int64
-		if err := models.DB.Model(&models.GitProtoBundle{}).Where("git_repo_id = ?", repo.ID).Count(&bundleCount).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		if bundleCount == 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "该仓库尚未配置任何 Proto Bundle，请先添加 Bundle"})
-			return
-		}
 	}
 
 	branch := strings.TrimSpace(req.Branch)
@@ -1403,7 +1157,7 @@ func TriggerGitRepoSync(c *gin.Context) {
 				payload.CompiledSchemaID = bres.CompiledSchemaID
 				payload.LintReportID = bres.LintReportID
 			}
-		} else if repoSnapshot.SourceMode == models.GitSourceModePlatformShared {
+		} else {
 			sched := EnsureSyncScheduler(db, decReg, broker)
 			pres, pErr := sched.TriggerRepoSync(bgCtx, repoSnapshot.ID, gitclient.PipelineOptions{
 				Branch:             branch,
@@ -1415,22 +1169,6 @@ func TriggerGitRepoSync(c *gin.Context) {
 			if pres != nil {
 				payload.CommitSHA = pres.CommitSHA
 				for _, br := range pres.BundleResults {
-					payload.AddedFiles += br.AddedFiles
-					payload.ModifiedFiles += br.ModifiedFiles
-					payload.DeletedFiles += br.DeletedFiles
-					if br.CompiledSchemaID != nil && payload.CompiledSchemaID == nil {
-						scID := *br.CompiledSchemaID
-						payload.CompiledSchemaID = &scID
-					}
-				}
-			}
-		} else {
-			var res *gitclient.SyncRepoResult
-			res, syncErr = syncSvc.SyncRepo(bgCtx, repoSnapshot.ID, opts)
-			if res != nil {
-				payload.CommitSHA = res.CommitSHA
-				payload.Status = res.Status
-				for _, br := range res.BundleResults {
 					payload.AddedFiles += br.AddedFiles
 					payload.ModifiedFiles += br.ModifiedFiles
 					payload.DeletedFiles += br.DeletedFiles

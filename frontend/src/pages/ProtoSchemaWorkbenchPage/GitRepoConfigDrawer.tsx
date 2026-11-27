@@ -1,17 +1,29 @@
 import React, { useEffect, useState } from 'react';
-import { FolderGit2, KeyRound, Layers, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import {
+  AlertTriangle,
+  CheckCircle2,
+  FolderGit2,
+  Layers,
+  Play,
+  Plus,
+  RefreshCw,
+  Save,
+  Sliders,
+  Trash2,
+} from 'lucide-react';
 import { Drawer } from '@code/common';
 import * as schemaApi from '../../api/schema';
 import { useToast } from '../../utils/toast';
 import type {
-  GitAuthType,
   GitProtoBundleDTO,
-  GitProviderType,
   GitRepoBundleInput,
   GitRepoDTO,
-  GitSyncMode,
+  GitSyncStrategy,
   MRAutoPublishMode,
   ProtoCategory,
+  RegexRewriteRuleDTO,
+  RepoGovernanceDryRunResultDTO,
+  UpdateGitRepoGovernancePayload,
 } from '../../types';
 import './ProtoDocsAndCodeViewer.css';
 
@@ -20,25 +32,31 @@ export interface GitRepoConfigDrawerProps {
   isAdmin: boolean;
   repo?: GitRepoDTO | null;
   onClose: () => void;
-  onSaved: (repo: GitRepoDTO, created: boolean) => void;
-  onDeleted?: (repoId: number) => void;
+  onSaved: (repo: GitRepoDTO, created?: boolean) => void;
 }
 
-interface RepoFormState {
-  name: string;
-  provider: GitProviderType;
-  repo_url: string;
-  api_base_url: string;
-  default_branch: string;
-  auth_type: GitAuthType;
-  credential_plain: string;
-  webhook_secret_plain: string;
-  sync_mode: GitSyncMode;
-  poll_interval_sec: number;
-  auto_compile: boolean;
-  auto_activate: boolean;
-  lint_on_sync: boolean;
-  description: string;
+const BUILTIN_RULES: Array<{ id: string; label: string }> = [
+  { id: 'NORM-001', label: 'NORM-001 编码与 LF 换行' },
+  { id: 'NORM-002', label: 'NORM-002 Syntax 声明补齐' },
+  { id: 'NORM-003', label: 'NORM-003 Package 规范化' },
+  { id: 'NORM-004', label: 'NORM-004 非标宏/指令剥离' },
+  { id: 'NORM-005', label: 'NORM-005 Import 路径重写' },
+];
+
+interface GovernanceFormState {
+  sync_enabled: boolean;
+  sync_strategy: GitSyncStrategy;
+  export_target_subsystem: string;
+  export_target_repo_dir: string;
+  strip_prefixes_text: string;
+  path_rewrites_text: string;
+  collect_globs_text: string;
+  exclude_globs_text: string;
+  disabled_rules: string[];
+  regex_rewrites_json: string;
+  import_rewrites_text: string;
+  exempt_files_text: string;
+  quarantined_files_text: string;
 }
 
 interface BundleFormState {
@@ -57,29 +75,53 @@ interface BundleFormState {
   description: string;
 }
 
-function splitCommaList(raw: string): string[] {
+function splitCommaOrLineList(raw: string): string[] {
   return raw
-    .split(',')
+    .split(/[\n,]/)
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
 }
 
-function createInitialRepoForm(repo?: GitRepoDTO | null): RepoFormState {
+function formatKeyValueMap(rec?: Record<string, string>): string {
+  if (!rec) return '';
+  return Object.entries(rec)
+    .map(([k, v]) => `${k} = ${v}`)
+    .join('\n');
+}
+
+function parseKeyValueMap(raw: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const eqIdx = trimmed.indexOf('=');
+    if (eqIdx <= 0) continue;
+    const k = trimmed.slice(0, eqIdx).trim();
+    const v = trimmed.slice(eqIdx + 1).trim();
+    if (k) out[k] = v;
+  }
+  return out;
+}
+
+function createInitialGovForm(repo?: GitRepoDTO | null): GovernanceFormState {
+  const norm = repo?.repo_normalize_config;
   return {
-    name: repo?.name || '',
-    provider: (repo?.provider as GitProviderType) || 'GITLAB',
-    repo_url: repo?.repo_url || '',
-    api_base_url: repo?.api_base_url || '',
-    default_branch: repo?.default_branch || 'main',
-    auth_type: (repo?.auth_type as GitAuthType) || 'TOKEN',
-    credential_plain: '',
-    webhook_secret_plain: '',
-    sync_mode: (repo?.sync_mode as GitSyncMode) || 'MANUAL',
-    poll_interval_sec: repo?.poll_interval_sec ?? 300,
-    auto_compile: repo?.auto_compile ?? true,
-    auto_activate: repo?.auto_activate ?? false,
-    lint_on_sync: repo?.lint_on_sync ?? true,
-    description: repo?.description || '',
+    sync_enabled: repo?.sync_enabled ?? true,
+    sync_strategy: (repo?.sync_strategy as GitSyncStrategy) || 'LOCAL_CACHE_ONLY',
+    export_target_subsystem: repo?.export_target_subsystem || '',
+    export_target_repo_dir: repo?.export_target_repo_dir || '',
+    strip_prefixes_text: (repo?.strip_prefixes || []).join(', '),
+    path_rewrites_text: formatKeyValueMap(repo?.path_rewrites),
+    collect_globs_text: (repo?.collect_globs || []).join(', '),
+    exclude_globs_text: (repo?.exclude_globs || []).join(', '),
+    disabled_rules: norm?.disabled_rules ? [...norm.disabled_rules] : [],
+    regex_rewrites_json:
+      norm?.regex_rewrites && norm.regex_rewrites.length > 0
+        ? JSON.stringify(norm.regex_rewrites, null, 2)
+        : '[]',
+    import_rewrites_text: formatKeyValueMap(norm?.import_rewrites),
+    exempt_files_text: (norm?.exempt_files || []).join('\n'),
+    quarantined_files_text: (norm?.quarantined_files || []).join('\n'),
   };
 }
 
@@ -106,11 +148,11 @@ function toBundlePayload(form: BundleFormState): GitRepoBundleInput {
     bundle_name: form.bundle_name.trim() || 'default',
     target_schema_name: form.target_schema_name.trim(),
     category: form.category,
-    subdir_path: form.subdir_path.trim(),
-    include_dirs: splitCommaList(form.include_dirs_text),
-    entry_files: splitCommaList(form.entry_files_text),
-    file_globs: splitCommaList(form.file_globs_text),
-    exclude_globs: splitCommaList(form.exclude_globs_text),
+    subdir_path: form.subdir_path.trim() || '.',
+    include_dirs: splitCommaOrLineList(form.include_dirs_text),
+    entry_files: splitCommaOrLineList(form.entry_files_text),
+    file_globs: splitCommaOrLineList(form.file_globs_text),
+    exclude_globs: splitCommaOrLineList(form.exclude_globs_text),
     auto_compile: form.auto_compile,
     auto_activate: form.auto_activate,
     mr_auto_publish: form.mr_auto_publish,
@@ -125,120 +167,126 @@ export const GitRepoConfigDrawer: React.FC<GitRepoConfigDrawerProps> = ({
   repo,
   onClose,
   onSaved,
-  onDeleted,
 }) => {
   const toast = useToast();
-  const isEdit = Boolean(repo && repo.id > 0);
-
-  const [repoForm, setRepoForm] = useState<RepoFormState>(() => createInitialRepoForm(repo));
-  const [defaultBundleForm, setDefaultBundleForm] = useState<BundleFormState>(() =>
-    createInitialBundleForm(null)
-  );
+  const [form, setForm] = useState<GovernanceFormState>(() => createInitialGovForm(repo));
   const [submitting, setSubmitting] = useState(false);
-  const [confirmDeleteRepo, setConfirmDeleteRepo] = useState(false);
+  const [dryRunLoading, setDryRunLoading] = useState(false);
+  const [dryRunResult, setDryRunResult] = useState<RepoGovernanceDryRunResultDTO | null>(null);
+  const [expandedDiffPath, setExpandedDiffPath] = useState<string | null>(null);
 
-  // 编辑模式下的 1:N Bundle 子表单状态
   const [bundleEditorOpen, setBundleEditorOpen] = useState(false);
   const [editingBundle, setEditingBundle] = useState<GitProtoBundleDTO | null>(null);
   const [bundleForm, setBundleForm] = useState<BundleFormState>(() => createInitialBundleForm(null));
   const [bundleSaving, setBundleSaving] = useState(false);
-  const [confirmDeleteBundleId, setConfirmDeleteBundleId] = useState<number | null>(null);
 
   useEffect(() => {
-    setRepoForm(createInitialRepoForm(repo));
-    setConfirmDeleteRepo(false);
-    setBundleEditorOpen(false);
-    setEditingBundle(null);
-    setConfirmDeleteBundleId(null);
-    if (!repo) {
-      setDefaultBundleForm(createInitialBundleForm(null));
+    if (open) {
+      setForm(createInitialGovForm(repo));
+      setDryRunResult(null);
+      setExpandedDiffPath(null);
+      setBundleEditorOpen(false);
+      setEditingBundle(null);
     }
-  }, [repo, open]);
+  }, [open, repo]);
 
-  const handleSaveRepo = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!isAdmin) return;
-    if (!repoForm.name.trim() || !repoForm.repo_url.trim()) {
-      toast.warning('请填写仓库名称与 Git 克隆地址');
-      return;
+  const buildGovernancePayload = (): UpdateGitRepoGovernancePayload | null => {
+    let parsedRegex: RegexRewriteRuleDTO[] = [];
+    const trimmedRegex = form.regex_rewrites_json.trim();
+    if (trimmedRegex) {
+      try {
+        const val = JSON.parse(trimmedRegex) as RegexRewriteRuleDTO[];
+        if (!Array.isArray(val)) {
+          toast.warning('regex_rewrites 必须为 JSON 数组');
+          return null;
+        }
+        parsedRegex = val;
+      } catch (err) {
+        toast.warning(`regex_rewrites JSON 格式非法: ${(err as Error).message}`);
+        return null;
+      }
     }
 
-    setSubmitting(true);
+    const collectGlobs = splitCommaOrLineList(form.collect_globs_text);
+    const excludeGlobs = splitCommaOrLineList(form.exclude_globs_text);
+
+    return {
+      sync_enabled: form.sync_enabled,
+      sync_strategy: form.sync_strategy,
+      export_target_subsystem: form.export_target_subsystem.trim(),
+      export_target_repo_dir: form.export_target_repo_dir.trim(),
+      strip_prefixes: splitCommaOrLineList(form.strip_prefixes_text),
+      path_rewrites: parseKeyValueMap(form.path_rewrites_text),
+      ...(collectGlobs.length > 0 ? { collect_globs: collectGlobs } : {}),
+      ...(excludeGlobs.length > 0 ? { exclude_globs: excludeGlobs } : {}),
+      disabled_rules: form.disabled_rules,
+      regex_rewrites: parsedRegex,
+      import_rewrites: parseKeyValueMap(form.import_rewrites_text),
+      exempt_files: splitCommaOrLineList(form.exempt_files_text),
+      quarantined_files: splitCommaOrLineList(form.quarantined_files_text),
+    };
+  };
+
+  const handleDryRun = async () => {
+    if (!repo) return;
+    const payload = buildGovernancePayload();
+    if (!payload) return;
+    setDryRunLoading(true);
     try {
-      if (isEdit && repo) {
-        const updated = await schemaApi.updateGitRepo(repo.id, {
-          name: repoForm.name.trim(),
-          provider: repoForm.provider,
-          repo_url: repoForm.repo_url.trim(),
-          api_base_url: repoForm.api_base_url.trim(),
-          default_branch: repoForm.default_branch.trim() || 'main',
-          auth_type: repoForm.auth_type,
-          credential_plain: repoForm.credential_plain.trim() || undefined,
-          webhook_secret_plain: repoForm.webhook_secret_plain.trim() || undefined,
-          sync_mode: repoForm.sync_mode,
-          poll_interval_sec: Number(repoForm.poll_interval_sec) || 300,
-          auto_compile: repoForm.auto_compile,
-          auto_activate: repoForm.auto_activate,
-          lint_on_sync: repoForm.lint_on_sync,
-          description: repoForm.description.trim(),
-        });
-        toast.success(`Git 仓库 ${updated.name} 配置已更新`);
-        onSaved(updated, false);
+      const res = await schemaApi.dryRunGitRepoGovernance(repo.id, payload);
+      setDryRunResult(res);
+      if (res.global_collisions && res.global_collisions.length > 0) {
+        toast.warning('检测到全局目标导出目录碰撞 (409)，请修改目标子系统或目录名');
+      } else if (res.path_collisions && res.path_collisions.length > 0) {
+        toast.warning('检测到仓内路径裁剪后碰撞，请调整 strip_prefixes / path_rewrites');
       } else {
-        const schemaName = defaultBundleForm.target_schema_name.trim() || repoForm.name.trim();
-        const created = await schemaApi.createGitRepo({
-          name: repoForm.name.trim(),
-          provider: repoForm.provider,
-          repo_url: repoForm.repo_url.trim(),
-          api_base_url: repoForm.api_base_url.trim(),
-          default_branch: repoForm.default_branch.trim() || 'main',
-          auth_type: repoForm.auth_type,
-          credential_plain: repoForm.credential_plain.trim() || undefined,
-          webhook_secret_plain: repoForm.webhook_secret_plain.trim() || undefined,
-          sync_mode: repoForm.sync_mode,
-          poll_interval_sec: Number(repoForm.poll_interval_sec) || 300,
-          auto_compile: repoForm.auto_compile,
-          auto_activate: repoForm.auto_activate,
-          lint_on_sync: repoForm.lint_on_sync,
-          description: repoForm.description.trim(),
-          default_bundle: {
-            ...toBundlePayload(defaultBundleForm),
-            target_schema_name: schemaName,
-          },
-        });
-        toast.success(`Git 仓库 ${created.name} 已接入并完成脱敏加密存储`);
-        onSaved(created, true);
+        toast.success(
+          `Dry-Run 完成：语法通过率 ${res.raw_syntax_pass_rate.toFixed(0)}% → ${res.clean_syntax_pass_rate.toFixed(0)}%`
+        );
       }
     } catch (err) {
-      toast.error((err as Error).message || '保存 Git 仓库失败');
+      toast.error((err as Error).message || 'Dry-Run 试算失败');
     } finally {
-      setSubmitting(false);
+      setDryRunLoading(false);
     }
   };
 
-  const handleDeleteRepo = async () => {
+  const handleSaveGovernance = async (renormalizeAfter = false) => {
     if (!isAdmin || !repo) return;
+    const payload = buildGovernancePayload();
+    if (!payload) return;
     setSubmitting(true);
     try {
-      await schemaApi.deleteGitRepo(repo.id);
-      toast.success(`已删除仓库 ${repo.name}`);
-      onDeleted?.(repo.id);
+      const updated = await schemaApi.updateGitRepoGovernance(repo.id, payload);
+      if (renormalizeAfter) {
+        const res = await schemaApi.reNormalizeGitRepo(repo.id, true);
+        const refreshed = await schemaApi.getGitRepoDetail(repo.id);
+        toast.success(
+          `治理配置已保存并免网络重出树（通过 ${res.normalized_count} / 隔离 ${res.quarantined_count}）`
+        );
+        onSaved(refreshed, false);
+      } else {
+        toast.success(`仓库 [${updated.name}] 导出与清洗治理配置已保存`);
+        onSaved(updated, false);
+      }
       onClose();
     } catch (err) {
-      toast.error((err as Error).message || '删除仓库失败');
+      toast.error((err as Error).message || '保存治理配置失败');
     } finally {
       setSubmitting(false);
     }
   };
 
-  const openBundleEditor = (bundle?: GitProtoBundleDTO) => {
-    setEditingBundle(bundle ?? null);
-    setBundleForm(
-      bundle
-        ? createInitialBundleForm(bundle)
-        : createInitialBundleForm(null)
-    );
-    setBundleEditorOpen(true);
+  const toggleDisabledRule = (ruleId: string, enableRule: boolean) => {
+    setForm((prev) => {
+      const disabled = new Set(prev.disabled_rules);
+      if (enableRule) {
+        disabled.delete(ruleId);
+      } else {
+        disabled.add(ruleId);
+      }
+      return { ...prev, disabled_rules: Array.from(disabled) };
+    });
   };
 
   const handleSaveBundle = async () => {
@@ -247,7 +295,6 @@ export const GitRepoConfigDrawer: React.FC<GitRepoConfigDrawerProps> = ({
       toast.warning('请填写 Bundle 名称与目标 Schema 资产名称');
       return;
     }
-
     setBundleSaving(true);
     try {
       const payload = toBundlePayload(bundleForm);
@@ -275,7 +322,6 @@ export const GitRepoConfigDrawer: React.FC<GitRepoConfigDrawerProps> = ({
     try {
       await schemaApi.deleteGitRepoBundle(repo.id, bundleId);
       const refreshed = await schemaApi.getGitRepoDetail(repo.id);
-      setConfirmDeleteBundleId(null);
       toast.success('Bundle 映射已移除');
       onSaved(refreshed, false);
     } catch (err) {
@@ -289,366 +335,374 @@ export const GitRepoConfigDrawer: React.FC<GitRepoConfigDrawerProps> = ({
     <Drawer
       open={open}
       onClose={onClose}
-      title={isEdit && repo ? `Git 仓库与 Monorepo 包配置：${repo.name}` : '接入新 Git Proto 仓库'}
-      subtitle="凭据采用 AES-256-GCM 服务端加密存储，接口响应全程严格脱敏"
-      width={780}
+      title={repo ? `仓库导出与清洗治理：${repo.name}` : '仓库导出与清洗治理'}
+      subtitle="平台仓库元数据由 code-bench 只读同步，此面板管理 Clean 导出目录、路径裁剪、Stage B 规则与 Dry-Run 试算"
+      width={820}
     >
-      <div className="pgit-drawer-stack">
-        <form onSubmit={(e) => void handleSaveRepo(e)} className="pdoc-card">
-          <div className="pdoc-card__header">
-            <h4 className="pdoc-card__title">
-              <FolderGit2 size={16} /> 仓库连接与安全认证配置
-            </h4>
-            {isEdit && repo && (
+      {!repo ? (
+        <div className="pdoc-card">未选择仓库</div>
+      ) : (
+        <div className="pgit-drawer-stack" data-testid="git-repo-governance-drawer">
+          {/* 1. 只读平台 SSOT 元数据 */}
+          <div className="pdoc-card">
+            <div className="pdoc-card__header">
+              <h4 className="pdoc-card__title">
+                <FolderGit2 size={15} /> 平台唯一真值源（只读）
+              </h4>
               <div className="pdoc-meta-row">
-                {repo.has_credentials && repo.credential_hint && (
-                  <span className="pdoc-pill" title="脱敏凭据指纹">
-                    <KeyRound size={12} /> 凭据指纹: <code>{repo.credential_hint}</code>
-                  </span>
+                <span className="code-badge code-badge-neutral">
+                  Platform #{repo.platform_repo_id}
+                </span>
+                {repo.service_group && (
+                  <span className="code-badge code-badge-info">{repo.service_group}</span>
                 )}
-                {repo.has_webhook_secret && (
-                  <span className="code-badge code-badge-success">Webhook Secret 已配置</span>
+                {repo.proto_status && (
+                  <span className="code-badge code-badge-neutral">{repo.proto_status}</span>
                 )}
               </div>
-            )}
+            </div>
+            <div className="pgit-readonly-grid">
+              <div>
+                <span className="pgit-field__label">仓库名称</span>
+                <div className="pgit-readonly-val">{repo.name}</div>
+              </div>
+              <div>
+                <span className="pgit-field__label">默认基线分支</span>
+                <div className="pgit-readonly-val">
+                  <code>{repo.default_branch}</code>
+                </div>
+              </div>
+              <div className="pgit-field--wide">
+                <span className="pgit-field__label">Git 仓库地址</span>
+                <div className="pgit-readonly-val">
+                  <code>{repo.repo_url}</code>
+                </div>
+              </div>
+            </div>
           </div>
 
-          <div className="pgit-form-grid">
-            <label className="pgit-field">
-              <span className="pgit-field__label">仓库标识名 *</span>
-              <input
-                type="text"
-                className="pgit-input"
-                value={repoForm.name}
-                disabled={!isAdmin}
-                onChange={(e) => setRepoForm((prev) => ({ ...prev, name: e.target.value }))}
-                placeholder="例如 dophi-monorepo"
-              />
-            </label>
-
-            <label className="pgit-field">
-              <span className="pgit-field__label">Git 托管平台 *</span>
-              <select
-                className="pgit-input"
-                value={repoForm.provider}
-                disabled={!isAdmin}
-                onChange={(e) =>
-                  setRepoForm((prev) => ({
-                    ...prev,
-                    provider: e.target.value as GitProviderType,
-                  }))
-                }
-              >
-                <option value="GITLAB">GitLab / 自建 GitLab</option>
-                <option value="GITHUB">GitHub / GitHub Enterprise</option>
-                <option value="GITEA">Gitea / Forgejo</option>
-                <option value="CUSTOM_GIT">通用 Git（go-git MemFS 无状态拉取）</option>
-              </select>
-            </label>
-
-            <label className="pgit-field pgit-field--wide">
-              <span className="pgit-field__label">仓库 HTTPS / SSH URL *</span>
-              <input
-                type="text"
-                className="pgit-input"
-                value={repoForm.repo_url}
-                disabled={!isAdmin}
-                onChange={(e) => setRepoForm((prev) => ({ ...prev, repo_url: e.target.value }))}
-                placeholder="https://git.example.com/group/contracts.git"
-              />
-            </label>
-
-            <label className="pgit-field">
-              <span className="pgit-field__label">REST API Base URL（自建站点必填）</span>
-              <input
-                type="text"
-                className="pgit-input"
-                value={repoForm.api_base_url}
-                disabled={!isAdmin}
-                onChange={(e) =>
-                  setRepoForm((prev) => ({ ...prev, api_base_url: e.target.value }))
-                }
-                placeholder="https://git.example.com"
-              />
-            </label>
-
-            <label className="pgit-field">
-              <span className="pgit-field__label">默认基线分支</span>
-              <input
-                type="text"
-                className="pgit-input"
-                value={repoForm.default_branch}
-                disabled={!isAdmin}
-                onChange={(e) =>
-                  setRepoForm((prev) => ({ ...prev, default_branch: e.target.value }))
-                }
-                placeholder="main"
-              />
-            </label>
-
-            <label className="pgit-field">
-              <span className="pgit-field__label">认证方式</span>
-              <select
-                className="pgit-input"
-                value={repoForm.auth_type}
-                disabled={!isAdmin}
-                onChange={(e) =>
-                  setRepoForm((prev) => ({ ...prev, auth_type: e.target.value as GitAuthType }))
-                }
-              >
-                <option value="NONE">公开匿名仓库 (NONE)</option>
-                <option value="TOKEN">Access Token / PAT (TOKEN)</option>
-                <option value="BASIC">账号密码 Basic (username:password)</option>
-                <option value="SSH_KEY">SSH 私钥 (SSH_KEY)</option>
-              </select>
-            </label>
-
-            <label className="pgit-field">
-              <span className="pgit-field__label">同步触发策略</span>
-              <select
-                className="pgit-input"
-                value={repoForm.sync_mode}
-                disabled={!isAdmin}
-                onChange={(e) =>
-                  setRepoForm((prev) => ({ ...prev, sync_mode: e.target.value as GitSyncMode }))
-                }
-              >
-                <option value="WEBHOOK">Webhook 事件驱动</option>
-                <option value="POLLING">后台定时轮询 (Polling)</option>
-                <option value="MANUAL">仅手动同步 (Manual)</option>
-              </select>
-            </label>
-
-            {repoForm.auth_type !== 'NONE' && (
-              <label className="pgit-field pgit-field--wide">
-                <span className="pgit-field__label">
-                  访问凭据（Token / Basic / 私钥，提交后密文落库）
-                </span>
+          {/* 2. 方案 A 导出目录与仓内路径裁剪 */}
+          <div className="pdoc-card">
+            <div className="pdoc-card__header">
+              <h4 className="pdoc-card__title">
+                <Sliders size={15} /> 方案 A 导出目录治理（Raw 保持不变，仅调整 Clean 输出）
+              </h4>
+            </div>
+            <div className="pgit-form-grid">
+              <label className="pgit-checkbox-field">
                 <input
-                  type="password"
-                  className="pgit-input"
-                  value={repoForm.credential_plain}
-                  disabled={!isAdmin}
+                  type="checkbox"
+                  checked={form.sync_enabled}
+                  disabled={!isAdmin || submitting}
                   onChange={(e) =>
-                    setRepoForm((prev) => ({ ...prev, credential_plain: e.target.value }))
+                    setForm((prev) => ({ ...prev, sync_enabled: e.target.checked }))
                   }
-                  placeholder={
-                    isEdit && repo?.has_credentials
-                      ? `已保存加密凭据 (${repo.credential_hint || '已脱敏'})；留空则保持原凭据不变`
-                      : '输入 Git Token 或 Basic 凭据'
+                />
+                <span>启用契约同步与 Clean 导出（停用后自动归档为 EXCLUDED 并回收 Clean 软链）</span>
+              </label>
+
+              <label className="pgit-field">
+                <span className="pgit-field__label">缓存拉取策略</span>
+                <select
+                  className="pgit-input"
+                  value={form.sync_strategy}
+                  disabled={!isAdmin || submitting}
+                  onChange={(e) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      sync_strategy: e.target.value as GitSyncStrategy,
+                    }))
+                  }
+                >
+                  <option value="LOCAL_CACHE_ONLY">仅读取宿主机共享缓存 (LOCAL_CACHE_ONLY)</option>
+                  <option value="FETCH_AND_READ">允许缺失时自动拉取 (FETCH_AND_READ)</option>
+                </select>
+              </label>
+
+              <label className="pgit-field">
+                <span className="pgit-field__label">目标导出子系统 (export_target_subsystem)</span>
+                <input
+                  type="text"
+                  className="pgit-input"
+                  value={form.export_target_subsystem}
+                  disabled={!isAdmin || submitting}
+                  placeholder={`默认 ${repo.subsystem_slug || '_unassigned'}`}
+                  onChange={(e) =>
+                    setForm((prev) => ({ ...prev, export_target_subsystem: e.target.value }))
                   }
                 />
               </label>
-            )}
 
-            <label className="pgit-field">
-              <span className="pgit-field__label">Webhook Secret（留空不变）</span>
-              <input
-                type="password"
-                className="pgit-input"
-                value={repoForm.webhook_secret_plain}
-                disabled={!isAdmin}
-                onChange={(e) =>
-                  setRepoForm((prev) => ({ ...prev, webhook_secret_plain: e.target.value }))
-                }
-                placeholder={
-                  isEdit && repo?.has_webhook_secret ? '已配置密文 Secret，留空保持不变' : '可选'
-                }
-              />
-            </label>
+              <label className="pgit-field">
+                <span className="pgit-field__label">目标导出仓库目录名 (export_target_repo_dir)</span>
+                <input
+                  type="text"
+                  className="pgit-input"
+                  value={form.export_target_repo_dir}
+                  disabled={!isAdmin || submitting}
+                  placeholder={`默认 ${repo.name}`}
+                  onChange={(e) =>
+                    setForm((prev) => ({ ...prev, export_target_repo_dir: e.target.value }))
+                  }
+                />
+              </label>
 
-            <label className="pgit-field">
-              <span className="pgit-field__label">仓库描述备注</span>
-              <input
-                type="text"
-                className="pgit-input"
-                value={repoForm.description}
-                disabled={!isAdmin}
-                onChange={(e) =>
-                  setRepoForm((prev) => ({ ...prev, description: e.target.value }))
-                }
-                placeholder="团队 / 领域边界说明"
-              />
-            </label>
+              <label className="pgit-field pgit-field--wide">
+                <span className="pgit-field__label">剥离路径前缀 (strip_prefixes，逗号分隔)</span>
+                <input
+                  type="text"
+                  className="pgit-input"
+                  value={form.strip_prefixes_text}
+                  disabled={!isAdmin || submitting}
+                  placeholder="例如: server/pg/proto/, pg/"
+                  onChange={(e) =>
+                    setForm((prev) => ({ ...prev, strip_prefixes_text: e.target.value }))
+                  }
+                />
+              </label>
+
+              <label className="pgit-field pgit-field--wide">
+                <span className="pgit-field__label">仓内路径重写 (path_rewrites，每行 from = to)</span>
+                <textarea
+                  className="pgit-input"
+                  rows={2}
+                  value={form.path_rewrites_text}
+                  disabled={!isAdmin || submitting}
+                  placeholder="legacy/ = v1/"
+                  onChange={(e) =>
+                    setForm((prev) => ({ ...prev, path_rewrites_text: e.target.value }))
+                  }
+                />
+              </label>
+            </div>
           </div>
 
-          <div className="pgit-checkbox-row">
-            <label className="pgit-check">
-              <input
-                type="checkbox"
-                checked={repoForm.auto_compile}
-                disabled={!isAdmin}
-                onChange={(e) =>
-                  setRepoForm((prev) => ({ ...prev, auto_compile: e.target.checked }))
-                }
-              />
-              同步后纯内存自动编译描述符 (protocompile)
-            </label>
-            <label className="pgit-check">
-              <input
-                type="checkbox"
-                checked={repoForm.auto_activate}
-                disabled={!isAdmin}
-                onChange={(e) =>
-                  setRepoForm((prev) => ({ ...prev, auto_activate: e.target.checked }))
-                }
-              />
-              自动设为活跃版本
-            </label>
-            <label className="pgit-check">
-              <input
-                type="checkbox"
-                checked={repoForm.lint_on_sync}
-                disabled={!isAdmin}
-                onChange={(e) =>
-                  setRepoForm((prev) => ({ ...prev, lint_on_sync: e.target.checked }))
-                }
-              />
-              同步时自动触发 Lint 静态规范检查
-            </label>
-          </div>
-
-          {!isEdit && (
-            <div className="pgit-subpanel">
-              <h5 className="pdoc-section-title">初始默认 Bundle 映射（可在创建后继续追加 Monorepo 多包）</h5>
-              <div className="pgit-form-grid">
-                <label className="pgit-field">
-                  <span className="pgit-field__label">Bundle 名称</span>
-                  <input
-                    type="text"
-                    className="pgit-input"
-                    value={defaultBundleForm.bundle_name}
-                    onChange={(e) =>
-                      setDefaultBundleForm((prev) => ({ ...prev, bundle_name: e.target.value }))
-                    }
-                  />
-                </label>
-                <label className="pgit-field">
-                  <span className="pgit-field__label">目标 Schema 资产名称 *</span>
-                  <input
-                    type="text"
-                    className="pgit-input"
-                    value={defaultBundleForm.target_schema_name}
-                    onChange={(e) =>
-                      setDefaultBundleForm((prev) => ({
-                        ...prev,
-                        target_schema_name: e.target.value,
-                      }))
-                    }
-                    placeholder="默认同仓库名，如 order-proto"
-                  />
-                </label>
-                <label className="pgit-field">
-                  <span className="pgit-field__label">资产分层分类</span>
-                  <select
-                    className="pgit-input"
-                    value={defaultBundleForm.category}
-                    onChange={(e) =>
-                      setDefaultBundleForm((prev) => ({
-                        ...prev,
-                        category: e.target.value as ProtoCategory,
-                      }))
-                    }
-                  >
-                    <option value="BASE_LIB">BASE_LIB（基础模型库）</option>
-                    <option value="BUSINESS">BUSINESS（业务服务）</option>
-                    <option value="GATEWAY">GATEWAY（网关聚合）</option>
-                  </select>
-                </label>
-                <label className="pgit-field">
-                  <span className="pgit-field__label">Monorepo 子目录 (subdir_path)</span>
-                  <input
-                    type="text"
-                    className="pgit-input"
-                    value={defaultBundleForm.subdir_path}
-                    onChange={(e) =>
-                      setDefaultBundleForm((prev) => ({ ...prev, subdir_path: e.target.value }))
-                    }
-                    placeholder="留空为仓根，或填 services/order"
-                  />
-                </label>
-              </div>
-            </div>
-          )}
-
-          {isAdmin && (
-            <div className="pgit-drawer-actions">
-              <div>
-                {isEdit && repo && (
-                  confirmDeleteRepo ? (
-                    <div className="pdoc-meta-row">
-                      <button
-                        type="button"
-                        className="btn btn-danger"
-                        disabled={submitting}
-                        onClick={() => void handleDeleteRepo()}
-                      >
-                        确认移除仓库（保留历史已编译资产）
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-secondary"
-                        onClick={() => setConfirmDeleteRepo(false)}
-                      >
-                        取消
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      onClick={() => setConfirmDeleteRepo(true)}
-                    >
-                      <Trash2 size={14} /> 移除仓库
-                    </button>
-                  )
-                )}
-              </div>
-
-              <div className="pdoc-meta-row">
-                <button type="button" className="btn btn-secondary" onClick={onClose}>
-                  关闭
-                </button>
-                <button type="submit" className="btn btn-primary" disabled={submitting}>
-                  {submitting ? <RefreshCw size={14} className="pgit-spin" /> : null}
-                  {isEdit ? '保存仓库配置' : '创建并接入仓库'}
-                </button>
-              </div>
-            </div>
-          )}
-        </form>
-
-        {/* Monorepo 1:N Bundles 管理器 */}
-        {isEdit && repo && (
-          <section className="pdoc-card">
+          {/* 3. Stage B 清理规则覆写与文件级豁免/隔离 */}
+          <div className="pdoc-card">
             <div className="pdoc-card__header">
-              <div>
+              <h4 className="pdoc-card__title">Stage B 规则覆写与文件豁免/隔离</h4>
+            </div>
+            <div className="pgit-rule-chips" style={{ marginBottom: 10 }}>
+              {BUILTIN_RULES.map((rule) => {
+                const enabled = !form.disabled_rules.includes(rule.id);
+                return (
+                  <label key={rule.id} className="pgit-rule-chip">
+                    <input
+                      type="checkbox"
+                      checked={enabled}
+                      disabled={!isAdmin || submitting}
+                      onChange={(e) => toggleDisabledRule(rule.id, e.target.checked)}
+                    />
+                    <span>{rule.label}</span>
+                  </label>
+                );
+              })}
+            </div>
+
+            <div className="pgit-form-grid">
+              <label className="pgit-field pgit-field--wide">
+                <span className="pgit-field__label">专属正则替换 (regex_rewrites JSON 数组)</span>
+                <textarea
+                  className="pgit-json-editor"
+                  rows={4}
+                  value={form.regex_rewrites_json}
+                  disabled={!isAdmin || submitting}
+                  onChange={(e) =>
+                    setForm((prev) => ({ ...prev, regex_rewrites_json: e.target.value }))
+                  }
+                />
+              </label>
+
+              <label className="pgit-field">
+                <span className="pgit-field__label">Import 路径重写 (每行 old = new)</span>
+                <textarea
+                  className="pgit-input"
+                  rows={3}
+                  value={form.import_rewrites_text}
+                  disabled={!isAdmin || submitting}
+                  placeholder="legacy/base.proto = common/v1/base.proto"
+                  onChange={(e) =>
+                    setForm((prev) => ({ ...prev, import_rewrites_text: e.target.value }))
+                  }
+                />
+              </label>
+
+              <label className="pgit-field">
+                <span className="pgit-field__label">白名单豁免文件 (exempt_files，换行分隔)</span>
+                <textarea
+                  className="pgit-input"
+                  rows={3}
+                  value={form.exempt_files_text}
+                  disabled={!isAdmin || submitting}
+                  placeholder="pg/vendor/*.proto"
+                  onChange={(e) =>
+                    setForm((prev) => ({ ...prev, exempt_files_text: e.target.value }))
+                  }
+                />
+              </label>
+
+              <label className="pgit-field pgit-field--wide">
+                <span className="pgit-field__label">强制隔离文件 (quarantined_files，换行分隔)</span>
+                <textarea
+                  className="pgit-input"
+                  rows={2}
+                  value={form.quarantined_files_text}
+                  disabled={!isAdmin || submitting}
+                  placeholder="pg/deprecated/broken.proto"
+                  onChange={(e) =>
+                    setForm((prev) => ({ ...prev, quarantined_files_text: e.target.value }))
+                  }
+                />
+              </label>
+            </div>
+          </div>
+
+          {/* 4. Dry-Run 零网络预览结果 */}
+          {dryRunResult && (
+            <div className="pdoc-card" data-testid="repo-governance-dryrun-result">
+              <div className="pdoc-card__header">
                 <h4 className="pdoc-card__title">
-                  <Layers size={16} /> Monorepo 多包映射 (Bundles: {repo.bundles?.length || 0})
+                  {(!dryRunResult.global_collisions || dryRunResult.global_collisions.length === 0) &&
+                  (!dryRunResult.path_collisions || dryRunResult.path_collisions.length === 0) ? (
+                    <CheckCircle2 size={15} />
+                  ) : (
+                    <AlertTriangle size={15} />
+                  )}{' '}
+                  Dry-Run 预演对照
                 </h4>
-                <p className="pdoc-card__subtitle">
-                  单 Git 仓库可划分多个互不干扰的 Proto 编译单元，跨目录 Import 通过相对路径及 Tier-2 DBProvider 自动解析。
-                </p>
+                <span className="pdoc-meta-row">
+                  <code>{dryRunResult.before_target_dir}</code> →{' '}
+                  <code>{dryRunResult.after_target_dir}</code>
+                  <span className="code-badge code-badge-info">
+                    语法通过率 {dryRunResult.raw_syntax_pass_rate.toFixed(0)}% →{' '}
+                    {dryRunResult.clean_syntax_pass_rate.toFixed(0)}%
+                  </span>
+                </span>
               </div>
+
+              {dryRunResult.global_collisions && dryRunResult.global_collisions.length > 0 && (
+                <div className="pgit-error-banner">
+                  全局目录碰撞：
+                  {dryRunResult.global_collisions
+                    .map((c) => `clean/${c.target_subsystem}/${c.target_repo_dir} (${c.repo_names.join(', ')})`)
+                    .join('；')}
+                </div>
+              )}
+              {dryRunResult.path_collisions && dryRunResult.path_collisions.length > 0 && (
+                <div className="pgit-error-banner">
+                  仓内路径碰撞：
+                  {dryRunResult.path_collisions
+                    .map((c) => `${c.mapped_path} <- [${c.source_paths.join(', ')}]`)
+                    .join('；')}
+                </div>
+              )}
+
+              {dryRunResult.files.length > 0 && (
+                <div className="pgit-dryrun-list">
+                  {dryRunResult.files.map((f) => (
+                    <div key={f.raw_path} className="pgit-dryrun-file-item">
+                      <div className="pgit-dryrun-repo-row">
+                        <span>
+                          <code>{f.raw_path}</code> → <code>{f.clean_path}</code>
+                        </span>
+                        <span className="pdoc-meta-row">
+                          <span
+                            className={`code-badge ${
+                              f.clean_syntax_ok ? 'code-badge-success' : 'code-badge-danger'
+                            }`}
+                          >
+                            {f.clean_syntax_ok ? 'SYNTAX_OK' : f.status}
+                          </span>
+                          {f.unified_diff && (
+                            <button
+                              type="button"
+                              className="btn-secondary btn-xs"
+                              onClick={() =>
+                                setExpandedDiffPath((cur) =>
+                                  cur === f.raw_path ? null : f.raw_path
+                                )
+                              }
+                            >
+                              {expandedDiffPath === f.raw_path ? '收起 Diff' : '查看 Diff'}
+                            </button>
+                          )}
+                        </span>
+                      </div>
+                      {expandedDiffPath === f.raw_path && f.unified_diff && (
+                        <pre className="pgit-dual-code-pre">{f.unified_diff}</pre>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 5. Monorepo 编译 Bundle 单元（保留只读查与 Admin 微调） */}
+          <div className="pdoc-card">
+            <div className="pdoc-card__header">
+              <h4 className="pdoc-card__title">
+                <Layers size={15} /> 编译打包 Bundle 单元 ({repo.bundles?.length ?? 0})
+              </h4>
               {isAdmin && (
                 <button
                   type="button"
-                  className="btn btn-primary"
-                  onClick={() => openBundleEditor()}
+                  className="btn-secondary btn-sm"
+                  onClick={() => {
+                    setEditingBundle(null);
+                    setBundleForm(createInitialBundleForm(null));
+                    setBundleEditorOpen(true);
+                  }}
                 >
-                  <Plus size={14} /> 新增 Monorepo 包
+                  <Plus size={13} /> 新增 Bundle
                 </button>
               )}
             </div>
+            {(repo.bundles?.length ?? 0) === 0 ? (
+              <div className="pgit-empty-hint">
+                系统将在首次同步命中 pg/ 后自动生成默认 Bundle；也可手动补充精细切分单元。
+              </div>
+            ) : (
+              <div className="pgit-bundle-list">
+                {repo.bundles.map((b) => (
+                  <div key={b.id} className="pgit-bundle-row">
+                    <div>
+                      <strong>{b.bundle_name}</strong> · <code>{b.subdir_path}</code> →{' '}
+                      <code>{b.target_schema_name}</code> ({b.category})
+                    </div>
+                    {isAdmin && (
+                      <div className="pgit-toolbar-actions">
+                        <button
+                          type="button"
+                          className="btn-secondary btn-xs"
+                          onClick={() => {
+                            setEditingBundle(b);
+                            setBundleForm(createInitialBundleForm(b));
+                            setBundleEditorOpen(true);
+                          }}
+                        >
+                          编辑
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-secondary btn-xs"
+                          onClick={() => void handleDeleteBundle(b.id)}
+                          disabled={bundleSaving}
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
 
-            {bundleEditorOpen && isAdmin && (
-              <div className="pgit-subpanel">
-                <h5 className="pdoc-section-title">
-                  {editingBundle ? `编辑 Bundle：${editingBundle.bundle_name}` : '新增 Bundle 映射'}
-                </h5>
+            {bundleEditorOpen && (
+              <div className="pgit-subform-box">
                 <div className="pgit-form-grid">
                   <label className="pgit-field">
-                    <span className="pgit-field__label">Bundle 标识名 *</span>
+                    <span className="pgit-field__label">Bundle 名称</span>
                     <input
                       type="text"
                       className="pgit-input"
@@ -659,16 +713,24 @@ export const GitRepoConfigDrawer: React.FC<GitRepoConfigDrawerProps> = ({
                     />
                   </label>
                   <label className="pgit-field">
-                    <span className="pgit-field__label">目标 Schema 资产名 *</span>
+                    <span className="pgit-field__label">目标 Schema 名称</span>
                     <input
                       type="text"
                       className="pgit-input"
                       value={bundleForm.target_schema_name}
                       onChange={(e) =>
-                        setBundleForm((prev) => ({
-                          ...prev,
-                          target_schema_name: e.target.value,
-                        }))
+                        setBundleForm((prev) => ({ ...prev, target_schema_name: e.target.value }))
+                      }
+                    />
+                  </label>
+                  <label className="pgit-field">
+                    <span className="pgit-field__label">子目录 (subdir_path)</span>
+                    <input
+                      type="text"
+                      className="pgit-input"
+                      value={bundleForm.subdir_path}
+                      onChange={(e) =>
+                        setBundleForm((prev) => ({ ...prev, subdir_path: e.target.value }))
                       }
                     />
                   </label>
@@ -684,209 +746,68 @@ export const GitRepoConfigDrawer: React.FC<GitRepoConfigDrawerProps> = ({
                         }))
                       }
                     >
-                      <option value="BASE_LIB">BASE_LIB</option>
                       <option value="BUSINESS">BUSINESS</option>
-                      <option value="GATEWAY">GATEWAY</option>
-                    </select>
-                  </label>
-                  <label className="pgit-field">
-                    <span className="pgit-field__label">子目录 (subdir_path)</span>
-                    <input
-                      type="text"
-                      className="pgit-input"
-                      value={bundleForm.subdir_path}
-                      onChange={(e) =>
-                        setBundleForm((prev) => ({ ...prev, subdir_path: e.target.value }))
-                      }
-                      placeholder="例如 services/order"
-                    />
-                  </label>
-                  <label className="pgit-field">
-                    <span className="pgit-field__label">Include 路径（逗号分隔）</span>
-                    <input
-                      type="text"
-                      className="pgit-input"
-                      value={bundleForm.include_dirs_text}
-                      onChange={(e) =>
-                        setBundleForm((prev) => ({ ...prev, include_dirs_text: e.target.value }))
-                      }
-                      placeholder="., ../common/proto"
-                    />
-                  </label>
-                  <label className="pgit-field">
-                    <span className="pgit-field__label">入口 .proto（逗号分隔，空则扫描子目录）</span>
-                    <input
-                      type="text"
-                      className="pgit-input"
-                      value={bundleForm.entry_files_text}
-                      onChange={(e) =>
-                        setBundleForm((prev) => ({ ...prev, entry_files_text: e.target.value }))
-                      }
-                    />
-                  </label>
-                  <label className="pgit-field">
-                    <span className="pgit-field__label">包含通配符 (file_globs)</span>
-                    <input
-                      type="text"
-                      className="pgit-input"
-                      value={bundleForm.file_globs_text}
-                      onChange={(e) =>
-                        setBundleForm((prev) => ({ ...prev, file_globs_text: e.target.value }))
-                      }
-                    />
-                  </label>
-                  <label className="pgit-field">
-                    <span className="pgit-field__label">MR 合入自动发布策略</span>
-                    <select
-                      className="pgit-input"
-                      value={bundleForm.mr_auto_publish}
-                      onChange={(e) =>
-                        setBundleForm((prev) => ({
-                          ...prev,
-                          mr_auto_publish: e.target.value as MRAutoPublishMode,
-                        }))
-                      }
-                    >
-                      <option value="OFF">关闭 (OFF)</option>
-                      <option value="DRAFT_ONLY">仅草稿版本 (DRAFT_ONLY)</option>
-                      <option value="AUTO_ACTIVATE">自动激活上线 (AUTO_ACTIVATE)</option>
+                      <option value="BASE_LIB">BASE_LIB</option>
                     </select>
                   </label>
                 </div>
-
-                <div className="pgit-drawer-actions">
-                  <div className="pgit-checkbox-row">
-                    <label className="pgit-check">
-                      <input
-                        type="checkbox"
-                        checked={bundleForm.auto_compile}
-                        onChange={(e) =>
-                          setBundleForm((prev) => ({ ...prev, auto_compile: e.target.checked }))
-                        }
-                      />
-                      自动编译
-                    </label>
-                    <label className="pgit-check">
-                      <input
-                        type="checkbox"
-                        checked={bundleForm.auto_activate}
-                        onChange={(e) =>
-                          setBundleForm((prev) => ({ ...prev, auto_activate: e.target.checked }))
-                        }
-                      />
-                      自动激活
-                    </label>
-                  </div>
-                  <div className="pdoc-meta-row">
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      onClick={() => {
-                        setBundleEditorOpen(false);
-                        setEditingBundle(null);
-                      }}
-                    >
-                      取消
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-primary"
-                      disabled={bundleSaving}
-                      onClick={() => void handleSaveBundle()}
-                    >
-                      {bundleSaving ? '保存中...' : '保存 Bundle'}
-                    </button>
-                  </div>
+                <div className="pgit-toolbar-actions" style={{ marginTop: 8 }}>
+                  <button
+                    type="button"
+                    className="btn-secondary btn-sm"
+                    onClick={() => setBundleEditorOpen(false)}
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-primary btn-sm"
+                    disabled={bundleSaving}
+                    onClick={() => void handleSaveBundle()}
+                  >
+                    保存 Bundle
+                  </button>
                 </div>
               </div>
             )}
+          </div>
 
-            {repo.bundles && repo.bundles.length > 0 ? (
-              <table className="code-table">
-                <thead>
-                  <tr>
-                    <th>Bundle 名称</th>
-                    <th>目标资产</th>
-                    <th>分类</th>
-                    <th>子目录 & Include</th>
-                    <th>发布策略</th>
-                    <th>最近同步</th>
-                    {isAdmin && <th>操作</th>}
-                  </tr>
-                </thead>
-                <tbody>
-                  {repo.bundles.map((b) => (
-                    <tr key={b.id}>
-                      <td>
-                        <strong>{b.bundle_name}</strong>
-                      </td>
-                      <td>
-                        <code>{b.target_schema_name}</code>
-                      </td>
-                      <td>
-                        <span className="code-badge code-badge-info">{b.category}</span>
-                      </td>
-                      <td>
-                        <div><code>{b.subdir_path || '/'}</code></div>
-                        {b.include_dirs?.length > 0 && (
-                          <small className="pgit-muted">
-                            -I: {b.include_dirs.join(', ')}
-                          </small>
-                        )}
-                      </td>
-                      <td>
-                        <span className="pdoc-pill">{b.mr_auto_publish || 'OFF'}</span>
-                      </td>
-                      <td>
-                        {b.last_sync_commit ? (
-                          <code className="pgit-commit-pill">
-                            {b.last_sync_commit.slice(0, 7)}
-                          </code>
-                        ) : (
-                          '—'
-                        )}
-                      </td>
-                      {isAdmin && (
-                        <td>
-                          <div className="pdoc-meta-row">
-                            <button
-                              type="button"
-                              className="btn btn-secondary"
-                              onClick={() => openBundleEditor(b)}
-                            >
-                              编辑
-                            </button>
-                            {confirmDeleteBundleId === b.id ? (
-                              <button
-                                type="button"
-                                className="btn btn-danger"
-                                disabled={bundleSaving}
-                                onClick={() => void handleDeleteBundle(b.id)}
-                              >
-                                确认删除
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                className="btn btn-secondary"
-                                onClick={() => setConfirmDeleteBundleId(b.id)}
-                              >
-                                删除
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                      )}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : (
-              <p className="pdoc-card__subtitle">当前仓库尚未配置任何 Bundle 映射。</p>
+          {/* Footer actions */}
+          <div className="pgit-drawer-footer">
+            <button
+              type="button"
+              className="btn-secondary"
+              data-testid="repo-governance-dryrun-btn"
+              onClick={() => void handleDryRun()}
+              disabled={dryRunLoading || submitting}
+            >
+              <Play size={14} /> Dry-Run 预览
+            </button>
+            {isAdmin && (
+              <>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  data-testid="repo-governance-save-btn"
+                  onClick={() => void handleSaveGovernance(false)}
+                  disabled={submitting || dryRunLoading}
+                >
+                  <Save size={14} /> 保存治理配置
+                </button>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  data-testid="repo-governance-save-apply-btn"
+                  onClick={() => void handleSaveGovernance(true)}
+                  disabled={submitting || dryRunLoading}
+                >
+                  <RefreshCw size={14} /> 保存并免网络重出树
+                </button>
+              </>
             )}
-          </section>
-        )}
-      </div>
+          </div>
+        </div>
+      )}
     </Drawer>
   );
 };

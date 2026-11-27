@@ -113,6 +113,7 @@ func main() {
 		handlers.MakeSSEEventBroadcaster(handlers.GetGlobalSSEBroker()),
 		&config.AppConfig,
 	)
+	syncSched.SetJobBroadcaster(handlers.MakeSyncJobProgressBroadcaster(handlers.GetGlobalSSEBroker()))
 	handlers.InitGlobalSyncScheduler(syncSched)
 	syncSched.Start(rootCtx)
 

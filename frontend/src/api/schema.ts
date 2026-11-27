@@ -29,7 +29,6 @@ import type {
   ProtoFileDiffResponse,
   GitRepoDTO,
   GitProtoBundleDTO,
-  CreateGitRepoPayload,
   UpdateGitRepoPayload,
   GitRepoBundleInput,
   TriggerGitSyncResponse,
@@ -38,9 +37,15 @@ import type {
   MRCheckRunDTO,
   MRCheckRunDetailDTO,
   MRCheckRunListResponse,
-  PlatformDiscoverResponse,
-  PlatformRepoImportItemInput,
-  PlatformImportResponse,
+  ProtoSyncJobDTO,
+  GitReposSyncSummaryDTO,
+  SyncAllGitReposPayload,
+  GovernanceConfigDocDTO,
+  ProtoGovernanceConfigResponse,
+  RepoGovernanceDryRunResultDTO,
+  GlobalGovernanceDryRunResultDTO,
+  UpdateGitRepoGovernancePayload,
+  ApplyGovernanceResponse,
   BaselineReportDTO,
   ArchAssignmentSuggestionDTO,
   ProtoFilesTreeResponse,
@@ -546,6 +551,9 @@ export async function getCheckReportDetail(id: number) {
 
 export async function listGitRepos(params?: {
   provider?: string;
+  proto_status?: string;
+  service_group?: string;
+  sync_enabled?: boolean;
   last_sync_status?: string;
   search?: string;
   page?: number;
@@ -553,6 +561,9 @@ export async function listGitRepos(params?: {
 }) {
   const qs = new URLSearchParams();
   if (params?.provider) qs.set('provider', params.provider);
+  if (params?.proto_status) qs.set('proto_status', params.proto_status);
+  if (params?.service_group) qs.set('service_group', params.service_group);
+  if (params?.sync_enabled !== undefined) qs.set('sync_enabled', String(params.sync_enabled));
   if (params?.last_sync_status) qs.set('last_sync_status', params.last_sync_status);
   if (params?.search) qs.set('search', params.search);
   if (params?.page) qs.set('page', String(params.page));
@@ -565,23 +576,10 @@ export async function getGitRepoDetail(id: number | string) {
   return apiRequest<GitRepoDTO>(`/git-repos/${id}`);
 }
 
-export async function createGitRepo(payload: CreateGitRepoPayload) {
-  return apiRequest<GitRepoDTO>('/git-repos', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-}
-
 export async function updateGitRepo(id: number | string, payload: UpdateGitRepoPayload) {
   return apiRequest<GitRepoDTO>(`/git-repos/${id}`, {
     method: 'PUT',
     body: JSON.stringify(payload),
-  });
-}
-
-export async function deleteGitRepo(id: number | string) {
-  return apiRequest<{ deleted: boolean; id: number }>(`/git-repos/${id}`, {
-    method: 'DELETE',
   });
 }
 
@@ -684,40 +682,76 @@ export async function rerunMRCheckRun(id: number | string) {
 }
 
 // =====================================================================
-// ADR-26: 平台代码仓共享与四段式 Proto 流水线 API
+// ADR-26 r4 & ADR-27: 平台唯一真值源、500+ 全量双按钮同步与方案 A 治理 API
 // =====================================================================
 
-export async function discoverPlatformRepos(params?: {
-  department_id?: number;
-  service_group?: string;
-  search?: string;
-  probe_protos?: boolean;
-  page?: number;
-  page_size?: number;
-}) {
-  const qs = new URLSearchParams();
-  if (params?.department_id) qs.set('department_id', String(params.department_id));
-  if (params?.service_group) qs.set('service_group', params.service_group);
-  if (params?.search) qs.set('search', params.search);
-  if (params?.probe_protos !== undefined) qs.set('probe_protos', String(params.probe_protos));
-  if (params?.page) qs.set('page', String(params.page));
-  if (params?.page_size) qs.set('page_size', String(params.page_size));
-  const query = qs.toString();
-  return apiRequest<PlatformDiscoverResponse>(`/git-repos/platform-discover${query ? `?${query}` : ''}`);
-}
-
-export async function importPlatformRepos(items: PlatformRepoImportItemInput[]) {
-  return apiRequest<PlatformImportResponse>('/git-repos/platform-import', {
+export async function syncAllGitRepos(payload?: SyncAllGitReposPayload) {
+  return apiRequest<ProtoSyncJobDTO>('/git-repos/sync-all', {
     method: 'POST',
-    body: JSON.stringify({ items }),
+    body: JSON.stringify(payload ?? {}),
   });
 }
 
-export async function linkGitRepoPlatform(
+export async function getGitReposSyncSummary(align = false) {
+  return apiRequest<GitReposSyncSummaryDTO>(
+    `/git-repos/sync-summary${align ? '?align=true' : ''}`
+  );
+}
+
+export async function getProtoSyncJob(jobId: number | string) {
+  return apiRequest<ProtoSyncJobDTO>(`/git-repos/sync-jobs/${jobId}`);
+}
+
+export async function updateGitRepoGovernance(
   repoId: number | string,
-  payload?: { platform_repo_id?: number; sync_strategy?: string }
+  payload: UpdateGitRepoGovernancePayload
 ) {
-  return apiRequest<GitRepoDTO>(`/git-repos/${repoId}/link-platform`, {
+  return apiRequest<GitRepoDTO>(`/git-repos/${repoId}/governance`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function dryRunGitRepoGovernance(
+  repoId: number | string,
+  payload?: UpdateGitRepoGovernancePayload
+) {
+  return apiRequest<RepoGovernanceDryRunResultDTO>(`/git-repos/${repoId}/governance/dry-run`, {
+    method: 'POST',
+    body: JSON.stringify(payload ?? {}),
+  });
+}
+
+export async function getProtoGovernanceConfig() {
+  return apiRequest<ProtoGovernanceConfigResponse>('/proto-governance/config');
+}
+
+export async function updateProtoGovernanceConfig(doc: GovernanceConfigDocDTO) {
+  return apiRequest<{ doc: GovernanceConfigDocDTO; revision: number; config_sha256: string; affected_repos: number }>(
+    '/proto-governance/config',
+    {
+      method: 'PUT',
+      body: JSON.stringify(doc),
+    }
+  );
+}
+
+export async function dryRunProtoGovernance(payload: {
+  config: GovernanceConfigDocDTO;
+  repo_ids?: number[];
+}) {
+  return apiRequest<GlobalGovernanceDryRunResultDTO>('/proto-governance/dry-run', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function applyAndRenormalizeGovernance(payload?: {
+  config?: GovernanceConfigDocDTO;
+  repo_ids?: number[];
+  force_recompile?: boolean;
+}) {
+  return apiRequest<ApplyGovernanceResponse>('/proto-governance/apply-and-renormalize', {
     method: 'POST',
     body: JSON.stringify(payload ?? {}),
   });
@@ -754,6 +788,10 @@ export async function getGitReposArchSuggestions() {
 
 export async function getProtoFilesTree(params?: {
   view?: 'subsystem' | 'package';
+  summary_only?: boolean;
+  expand_repo_id?: number;
+  expand_package?: string;
+  subsystem?: string;
   git_repo_id?: number;
   pipeline_status?: string;
   include_external_copy?: boolean;
@@ -762,6 +800,10 @@ export async function getProtoFilesTree(params?: {
 }) {
   const qs = new URLSearchParams();
   if (params?.view) qs.set('view', params.view);
+  if (params?.summary_only !== undefined) qs.set('summary_only', String(params.summary_only));
+  if (params?.expand_repo_id) qs.set('expand_repo_id', String(params.expand_repo_id));
+  if (params?.expand_package) qs.set('expand_package', params.expand_package);
+  if (params?.subsystem) qs.set('subsystem', params.subsystem);
   if (params?.git_repo_id) qs.set('git_repo_id', String(params.git_repo_id));
   if (params?.pipeline_status) qs.set('pipeline_status', params.pipeline_status);
   if (params?.include_external_copy !== undefined) {

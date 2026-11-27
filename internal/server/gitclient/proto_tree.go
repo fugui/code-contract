@@ -287,6 +287,103 @@ func (m *ProtoTreeManager) CommitAndSwitchVersion(
 	return finalLink, nil
 }
 
+// RemoveRepoTree 清理指定仓库在 raw 或 clean 目录下的全部软链与版本目录（用于 NO_PROTO / EXCLUDED 静默收口）。
+func (m *ProtoTreeManager) RemoveRepoTree(kind string, repoID uint64) {
+	if m == nil || repoID == 0 {
+		return
+	}
+	if kind != TreeKindRaw && kind != TreeKindClean {
+		return
+	}
+	m.cleanupStaleRepoSymlinks(kind, repoID, "", "")
+	repoVerRoot := filepath.Join(m.ProtosDir, ".versions", kind, strconv.FormatUint(repoID, 10))
+	_ = os.RemoveAll(repoVerRoot)
+}
+
+// RelocateRepoCleanTree 零拷贝原子迁移仓库的 protos/clean/ 符号链接至新的目标导出目录（raw/ 与 .versions/ 保持零改写）。
+func (m *ProtoTreeManager) RelocateRepoCleanTree(repoID uint64, targetSubSlug, targetRepoSlug string) (bool, error) {
+	if m == nil || repoID == 0 {
+		return false, nil
+	}
+	if targetSubSlug == "" {
+		targetSubSlug = UnassignedSubsystemSlug
+	}
+	if targetRepoSlug == "" {
+		targetRepoSlug = fmt.Sprintf("repo-%d", repoID)
+	}
+	if err := m.ensureBaseDirs(); err != nil {
+		return false, err
+	}
+
+	needle := fmt.Sprintf("/.versions/%s/%d/", TreeKindClean, repoID)
+	activeVerName := ""
+
+	cleanRoot := filepath.Join(m.ProtosDir, TreeKindClean)
+	if subDirs, err := os.ReadDir(cleanRoot); err == nil {
+		for _, sd := range subDirs {
+			if !sd.IsDir() {
+				continue
+			}
+			sdPath := filepath.Join(cleanRoot, sd.Name())
+			entries, _ := os.ReadDir(sdPath)
+			for _, ent := range entries {
+				full := filepath.Join(sdPath, ent.Name())
+				target, rErr := os.Readlink(full)
+				if rErr == nil && strings.Contains(filepath.ToSlash(target), needle) {
+					activeVerName = filepath.Base(target)
+					break
+				}
+			}
+			if activeVerName != "" {
+				break
+			}
+		}
+	}
+
+	if activeVerName == "" {
+		repoVerRoot := filepath.Join(m.ProtosDir, ".versions", TreeKindClean, strconv.FormatUint(repoID, 10))
+		if verEntries, err := os.ReadDir(repoVerRoot); err == nil {
+			var latestMod time.Time
+			for _, ve := range verEntries {
+				if !ve.IsDir() {
+					continue
+				}
+				info, iErr := ve.Info()
+				mt := time.Time{}
+				if iErr == nil {
+					mt = info.ModTime()
+				}
+				if activeVerName == "" || mt.After(latestMod) || (mt.Equal(latestMod) && ve.Name() > activeVerName) {
+					activeVerName = ve.Name()
+					latestMod = mt
+				}
+			}
+		}
+	}
+
+	if activeVerName == "" {
+		return false, nil
+	}
+
+	subDir := filepath.Join(cleanRoot, targetSubSlug)
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		return false, err
+	}
+	relTarget := filepath.ToSlash(filepath.Join("..", "..", ".versions", TreeKindClean, strconv.FormatUint(repoID, 10), activeVerName))
+	finalLink := filepath.Join(subDir, targetRepoSlug)
+	tmpLink := filepath.Join(subDir, fmt.Sprintf(".tmp-%s-%d", targetRepoSlug, time.Now().UnixNano()))
+	_ = os.Remove(tmpLink)
+	if err := os.Symlink(relTarget, tmpLink); err != nil {
+		return false, fmt.Errorf("创建迁移临时符号链接失败: %w", err)
+	}
+	if err := os.Rename(tmpLink, finalLink); err != nil {
+		_ = os.Remove(tmpLink)
+		return false, fmt.Errorf("原子替换迁移符号链接失败: %w", err)
+	}
+	m.cleanupStaleRepoSymlinks(TreeKindClean, repoID, targetSubSlug, targetRepoSlug)
+	return true, nil
+}
+
 // WriteAndSwitchRepoTree 一步写入版本目录并原子切换软链（适合单阶段测试或对账重建）。
 func (m *ProtoTreeManager) WriteAndSwitchRepoTree(
 	kind string,
@@ -402,8 +499,8 @@ func (m *ProtoTreeManager) ReconcileAll(ctx context.Context, db *gorm.DB) (rebui
 	for _, r := range repos {
 		repoByID[r.ID] = r
 		rawSub := ""
-		if r.PlatformRepoID != nil {
-			if pr, ok := platMap[*r.PlatformRepoID]; ok {
+		if r.PlatformRepoID > 0 {
+			if pr, ok := platMap[r.PlatformRepoID]; ok {
 				rawSub = pr.ServiceGroup
 			}
 		}
@@ -421,8 +518,14 @@ func (m *ProtoTreeManager) ReconcileAll(ctx context.Context, db *gorm.DB) (rebui
 			continue
 		}
 
+		if !r.SyncEnabled {
+			m.RemoveRepoTree(TreeKindClean, r.ID)
+			continue
+		}
+
+		cleanSubSlug, cleanRepoSlug := ResolveEffectiveExportTarget(r, nil)
 		// 检查 clean 链接及 .proto-meta.json 是否与 DB 一致
-		cleanLink := filepath.Join(m.ProtosDir, TreeKindClean, subSlug, repoSlug)
+		cleanLink := filepath.Join(m.ProtosDir, TreeKindClean, cleanSubSlug, cleanRepoSlug)
 		if !m.isCleanTreeInSync(cleanLink, r.LastSyncCommit, pfiles) {
 			if rebuildErr := m.rebuildRepoTreesFromDB(ctx, db, r, subSlug, repoSlug, pfiles); rebuildErr != nil {
 				log.Printf("[ProtoTreeReconciler] 重建仓库 #%d (%s) 目录树失败: %v", r.ID, r.Name, rebuildErr)
@@ -599,13 +702,34 @@ func (m *ProtoTreeManager) rebuildRepoTreesFromDB(
 		return err
 	}
 
-	if _, err := m.WriteAndSwitchRepoTree(TreeKindClean, repo.ID, subSlug, repoSlug, ProtoMetaManifest{
+	if !repo.SyncEnabled {
+		m.RemoveRepoTree(TreeKindClean, repo.ID)
+		return nil
+	}
+
+	rawPaths := make([]string, 0, len(cleanFiles))
+	for rp := range cleanFiles {
+		rawPaths = append(rawPaths, rp)
+	}
+	mappedCleanPaths, _, _ := MapAndValidateIntraRepoPaths(rawPaths, repo.StripPrefixes(), repo.PathRewrites())
+	mappedCleanFiles := make(map[string][]byte, len(cleanFiles))
+	mappedCleanHashes := make(map[string]string, len(cleanHashes))
+	for rp, content := range cleanFiles {
+		mp := mappedCleanPaths[rp]
+		if mp == "" {
+			mp = rp
+		}
+		mappedCleanFiles[mp] = content
+		mappedCleanHashes[mp] = cleanHashes[rp]
+	}
+	cleanSubSlug, cleanRepoSlug := ResolveEffectiveExportTarget(repo, nil)
+	if _, err := m.WriteAndSwitchRepoTree(TreeKindClean, repo.ID, cleanSubSlug, cleanRepoSlug, ProtoMetaManifest{
 		Branch:            branch,
 		CommitSHA:         commit,
 		NormalizerVersion: normVer,
-		Files:             cleanHashes,
+		Files:             mappedCleanHashes,
 		QuarantinedFiles:  quarantined,
-	}, cleanFiles, &NormalizeReportManifest{
+	}, mappedCleanFiles, &NormalizeReportManifest{
 		GitRepoID:         repo.ID,
 		CommitSHA:         commit,
 		NormalizerVersion: normVer,
@@ -624,8 +748,8 @@ func loadPlatformRepoMetaMap(db *gorm.DB, repos []models.GitRepo) map[uint64]mod
 	}
 	var ids []uint
 	for _, r := range repos {
-		if r.PlatformRepoID != nil && *r.PlatformRepoID > 0 {
-			ids = append(ids, uint(*r.PlatformRepoID))
+		if r.PlatformRepoID > 0 {
+			ids = append(ids, uint(r.PlatformRepoID))
 		}
 	}
 	if len(ids) == 0 {

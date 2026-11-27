@@ -732,17 +732,58 @@ export interface GitProtoBundleDTO {
   updated_at: string;
 }
 
+export type GitRepoProtoStatus =
+  | 'PENDING'
+  | 'HAS_PROTO'
+  | 'NO_PROTO'
+  | 'NO_LOCAL_CACHE'
+  | 'EXCLUDED'
+  | 'SYNC_FAILED';
+
+export interface RegexRewriteRuleDTO {
+  id: string;
+  pattern: string;
+  replacement: string;
+  multiline?: boolean;
+}
+
+export interface RepoNormalizeConfigDTO {
+  disabled_rules?: string[];
+  regex_rewrites?: RegexRewriteRuleDTO[];
+  import_rewrites?: Record<string, string>;
+  exempt_files?: string[];
+  quarantined_files?: string[];
+}
+
 export interface GitRepoDTO {
   id: number;
-  platform_repo_id?: number | null;
-  source_mode?: 'PLATFORM_SHARED' | 'EXTERNAL_STANDALONE' | string;
+  platform_repo_id: number;
+  source_mode?: 'PLATFORM_SHARED' | string;
   sync_strategy?: 'FETCH_AND_READ' | 'LOCAL_CACHE_ONLY' | string;
+  proto_status?: GitRepoProtoStatus | string;
+  sync_enabled?: boolean;
   subsystem_slug?: string;
+  export_target_subsystem?: string;
+  export_target_repo_dir?: string;
+  effective_export_dir?: string;
+  has_export_override?: boolean;
+  strip_prefixes?: string[];
+  path_rewrites?: Record<string, string>;
+  repo_normalize_config?: RepoNormalizeConfigDTO;
+  collect_globs?: string[];
+  exclude_globs?: string[];
+  service_group?: string;
+  department_id?: number;
+  department_name?: string;
+  owner_id?: number;
+  owner_name?: string;
+  is_platform_active?: boolean;
   resolved_branch?: string;
   last_fetched_at?: string | null;
   ref_commit_time?: string | null;
   last_collected_commit?: string;
   is_stale?: boolean;
+  whitelist_count?: number;
   normalized_count?: number;
   quarantined_count?: number;
   external_copy_count?: number;
@@ -787,34 +828,9 @@ export interface GitRepoBundleInput {
   description?: string;
 }
 
-export interface CreateGitRepoPayload {
-  name: string;
-  provider: GitProviderType;
-  repo_url: string;
-  api_base_url?: string;
-  default_branch?: string;
-  auth_type?: GitAuthType;
-  credential_plain?: string;
-  webhook_secret_plain?: string;
-  sync_mode?: GitSyncMode;
-  poll_interval_sec?: number;
-  auto_compile?: boolean;
-  auto_activate?: boolean;
-  lint_on_sync?: boolean;
-  description?: string;
-  default_bundle?: GitRepoBundleInput;
-  bundles?: GitRepoBundleInput[];
-}
-
 export interface UpdateGitRepoPayload {
-  name?: string;
-  provider?: GitProviderType;
-  repo_url?: string;
-  api_base_url?: string;
-  default_branch?: string;
-  auth_type?: GitAuthType;
-  credential_plain?: string;
-  webhook_secret_plain?: string;
+  sync_strategy?: GitSyncStrategy | string;
+  sync_enabled?: boolean;
   sync_mode?: GitSyncMode;
   poll_interval_sec?: number;
   auto_compile?: boolean;
@@ -988,91 +1004,236 @@ export interface UnreadCountResponse {
 }
 
 // =====================================================================
-// ADR-26: 平台代码仓共享与四段式 Proto 流水线前端契约类型
+// ADR-26 r4 & ADR-27: 平台唯一真值源、500+ 同步作业、方案 A 治理与双视图懒加载类型契约
 // =====================================================================
 
-export type GitSourceMode = 'PLATFORM_SHARED' | 'EXTERNAL_STANDALONE';
+export type GitSourceMode = 'PLATFORM_SHARED';
 export type GitSyncStrategy = 'FETCH_AND_READ' | 'LOCAL_CACHE_ONLY';
+export type SyncJobScope = 'ALL' | 'DEPARTMENT' | 'SERVICE_GROUP' | 'FAILED_ONLY' | 'SELECTED';
+export type SyncCachePolicy = 'CACHE_ONLY' | 'FETCH_MISSING';
+export type SyncJobStatus = 'RUNNING' | 'COMPLETED' | 'PARTIAL_FAILED' | 'FAILED';
 
-export interface CandidateBundlePreviewDTO {
-  bundle_name: string;
-  target_schema_name: string;
-  category: ProtoCategory | string;
-  subdir_path: string;
+export interface SyncJobErrorItemDTO {
+  git_repo_id: number;
+  repo_name: string;
+  error: string;
 }
 
-export interface PlatformRepoPreviewDTO {
-  platform_repo_id: number;
+export interface ProtoSyncJobDTO {
+  id: number;
+  scope: SyncJobScope | string;
+  cache_policy: SyncCachePolicy | string;
+  status: SyncJobStatus | string;
+  total_repos: number;
+  processed_repos: number;
+  has_proto_count: number;
+  no_proto_count: number;
+  no_cache_count: number;
+  failed_count: number;
+  skipped_unchanged_count: number;
+  error_summary?: SyncJobErrorItemDTO[];
+  triggered_by: string;
+  started_at: string;
+  finished_at?: string | null;
+}
+
+export interface SyncJobProgressEventPayload {
+  job_id: number;
+  scope: string;
+  cache_policy: string;
+  status: string;
+  total_repos: number;
+  processed_repos: number;
+  has_proto_count: number;
+  no_proto_count: number;
+  no_cache_count: number;
+  failed_count: number;
+  skipped_unchanged_count: number;
+  error_summary?: SyncJobErrorItemDTO[];
+  started_at: string;
+  finished_at?: string | null;
+}
+
+export interface GitReposSyncSummaryDTO {
+  platform_active_total: number;
+  aligned_total: number;
+  pending_count: number;
+  has_proto_count: number;
+  no_proto_count: number;
+  no_local_cache_count: number;
+  excluded_count: number;
+  sync_failed_count: number;
+  shared_write_enabled: boolean;
+  service_groups: string[];
+  latest_job?: ProtoSyncJobDTO | null;
+}
+
+export interface SyncAllGitReposPayload {
+  scope?: SyncJobScope | string;
+  cache_policy?: SyncCachePolicy | string;
+  department_id?: number;
+  service_group?: string;
+  repo_ids?: number[];
+  force_recompile?: boolean;
+  sync?: boolean;
+}
+
+export interface BuiltinRuleMetaDTO {
+  id: string;
+  code: string;
   name: string;
-  url: string;
-  http_url: string;
-  branch: string;
-  department_id: number;
-  department_name: string;
-  service_group: string;
-  subsystem_slug: string;
-  owner_id: number;
-  already_imported: boolean;
-  git_repo_id?: number | null;
-  local_cache_present: boolean;
-  resolved_branch?: string;
-  pg_dirs: string[];
-  whitelist_proto_count: number;
-  outside_whitelist_count: number;
-  candidate_bundles: CandidateBundlePreviewDTO[];
-  probe_error?: string;
+  description: string;
+  default_enabled: boolean;
 }
 
-export interface PlatformDiscoverResponse {
-  items: PlatformRepoPreviewDTO[];
-  total: number;
-  page: number;
-  page_size: number;
-}
-
-export interface PlatformRepoImportBundleSpec {
-  bundle_name: string;
-  target_schema_name: string;
-  category: string;
-  subdir_path: string;
-  include_dirs?: string[];
-}
-
-export interface PlatformRepoImportItemInput {
-  platform_repo_id: number;
-  sync_strategy?: GitSyncStrategy | string;
+export interface GlobalGovernanceSectionDTO {
   collect_globs?: string[];
   exclude_globs?: string[];
-  bundles?: PlatformRepoImportBundleSpec[];
+  enabled_rules?: string[];
+  default_syntax?: string;
+  import_rewrites?: Record<string, string>;
+  regex_rewrites?: RegexRewriteRuleDTO[];
 }
 
-export interface PlatformImportResponse {
-  imported_count: number;
-  items: GitRepoDTO[];
+export interface RepoGovernanceSpecDTO {
+  platform_repo_id?: number;
+  sync_enabled?: boolean;
+  sync_strategy?: string;
+  export_target_subsystem?: string;
+  export_target_repo_dir?: string;
+  strip_prefixes?: string[];
+  path_rewrites?: Record<string, string>;
+  collect_globs?: string[];
+  exclude_globs?: string[];
+  extra_exclude_globs?: string[];
+  disabled_rules?: string[];
+  regex_rewrites?: RegexRewriteRuleDTO[];
+  import_rewrites?: Record<string, string>;
+  exempt_files?: string[];
+  quarantined_files?: string[];
+}
+
+export interface GovernanceConfigDocDTO {
+  schema_version: string;
+  revision: number;
+  global: GlobalGovernanceSectionDTO;
+  repos?: Record<string, RepoGovernanceSpecDTO>;
+}
+
+export interface ProtoGovernanceConfigResponse {
+  doc: GovernanceConfigDocDTO;
+  revision: number;
+  config_sha256: string;
+  builtin_rules: BuiltinRuleMetaDTO[];
+}
+
+export interface ExportTargetCollisionDTO {
+  target_subsystem: string;
+  target_repo_dir: string;
+  repo_ids: number[];
+  repo_names: string[];
+}
+
+export interface IntraRepoPathCollisionDTO {
+  mapped_path: string;
+  source_paths: string[];
+}
+
+export interface DryRunPathMappingDTO {
+  raw_path: string;
+  clean_path: string;
+  raw_syntax_ok: boolean;
+  clean_syntax_ok: boolean;
+  status: string;
+  status_reason?: string;
+  applied_rules?: string[];
+  line_preserving: boolean;
+  unified_diff?: string;
+}
+
+export interface RepoGovernanceDryRunResultDTO {
+  git_repo_id: number;
+  repo_name: string;
+  before_target_dir: string;
+  after_target_dir: string;
+  global_collisions?: ExportTargetCollisionDTO[];
+  path_collisions?: IntraRepoPathCollisionDTO[];
+  total_files: number;
+  raw_syntax_pass_count: number;
+  clean_syntax_pass_count: number;
+  quarantined_count: number;
+  raw_syntax_pass_rate: number;
+  clean_syntax_pass_rate: number;
+  files: DryRunPathMappingDTO[];
+}
+
+export interface GlobalGovernanceDryRunResultDTO {
+  schema_valid: boolean;
+  validation_error?: string;
+  global_collisions?: ExportTargetCollisionDTO[];
+  affected_repos: RepoGovernanceDryRunResultDTO[];
+}
+
+export interface UpdateGitRepoGovernancePayload {
+  sync_enabled?: boolean;
+  sync_strategy?: GitSyncStrategy | string;
+  export_target_subsystem?: string;
+  export_target_repo_dir?: string;
+  strip_prefixes?: string[];
+  path_rewrites?: Record<string, string>;
+  collect_globs?: string[];
+  exclude_globs?: string[];
+  disabled_rules?: string[];
+  regex_rewrites?: RegexRewriteRuleDTO[];
+  import_rewrites?: Record<string, string>;
+  exempt_files?: string[];
+  quarantined_files?: string[];
+}
+
+export interface ApplyGovernanceResponse {
+  revision: number;
+  config_sha256: string;
+  processed_count: number;
+  succeeded_count: number;
+  failed_count: number;
+  errors?: Record<string, string>;
 }
 
 export interface BaselineReportRepoItemDTO {
   git_repo_id: number;
   repo_name: string;
+  subsystem_slug?: string;
+  proto_status?: string;
   source_mode: string;
-  sync_strategy: string;
+  sync_strategy?: string;
   last_sync_status: string;
   whitelist_files: number;
   normalized_files: number;
   quarantined_files: number;
-  external_copy_files: number;
+  external_copies?: number;
+  external_copy_files?: number;
   compiled_bundles: number;
-  total_bundles: number;
-  compile_errors: string[];
+  bundle_count?: number;
+  total_bundles?: number;
+  compile_errors?: string[];
 }
 
 export interface BaselineReportDTO {
-  generated_at: string;
+  generated_at?: string;
   total_repos: number;
+  has_proto_repos?: number;
+  no_proto_repos?: number;
+  no_cache_repos?: number;
+  excluded_repos?: number;
+  failed_repos?: number;
   whitelist_files: number;
+  collected_files?: number;
   normalized_files: number;
   quarantined_files: number;
+  external_copy_files?: number;
   syntax_pass_rate: number;
+  total_bundles?: number;
+  compiled_bundles?: number;
   compile_pass_rate: number;
   error_distribution: Record<string, number>;
   repos: BaselineReportRepoItemDTO[];
@@ -1093,17 +1254,25 @@ export interface ArchAssignmentSuggestionDTO {
 
 export interface ProtoTreeRepoGroupDTO {
   subsystem_slug: string;
+  raw_subsystem_slug?: string;
+  export_target_repo_dir?: string;
   git_repo_id: number;
   git_repo_name: string;
   source_mode: string;
   sync_strategy: string;
   is_stale: boolean;
   last_sync_at?: string | null;
+  total_count?: number;
+  normalized_count?: number;
+  quarantined_count?: number;
   files: ProtoFileDTO[];
 }
 
 export interface ProtoTreePackageGroupDTO {
   package_name: string;
+  total_count?: number;
+  normalized_count?: number;
+  quarantined_count?: number;
   files: ProtoFileDTO[];
 }
 
@@ -1111,11 +1280,13 @@ export type ProtoFilesTreeResponse =
   | {
       view: 'subsystem';
       total: number;
+      summary_only?: boolean;
       groups: ProtoTreeRepoGroupDTO[];
     }
   | {
       view: 'package';
       total: number;
+      summary_only?: boolean;
       groups: ProtoTreePackageGroupDTO[];
     };
 

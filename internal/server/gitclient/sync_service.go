@@ -271,15 +271,13 @@ func fetchSnapshotViaLocalCache(
 	if strategy == models.GitSyncStrategyLocalCacheOnly {
 		_, fullRef, err = gitsync.ResolveLocalRef(ctx, localPath, "refs/remotes/origin", targetBranch)
 		if err != nil {
+			_, fullRef, err = gitsync.ResolveLocalRef(ctx, localPath, "refs/contract/heads", targetBranch)
+		}
+		if err != nil {
 			return nil, err
 		}
 	} else {
-		extraEnv, cleanupEnv, envErr := buildExternalGitAuthEnv(repo)
-		if envErr != nil {
-			return nil, envErr
-		}
-		defer cleanupEnv()
-		_, fullRef, err = gitsync.FetchBranchToRef(ctx, codesDir, localPath, repo.RepoURL, targetBranch, "refs/contract/heads", extraEnv...)
+		_, fullRef, err = gitsync.FetchBranchToRef(ctx, codesDir, localPath, repo.RepoURL, targetBranch, "refs/contract/heads")
 		if err != nil {
 			return nil, err
 		}
@@ -378,13 +376,8 @@ func listBranchesViaGitCLI(ctx context.Context, dialer *security.SafeDialer, rep
 	if err := validateRepoURLSSRF(ctx, dialer, repo.RepoURL); err != nil {
 		return nil, err
 	}
-	extraEnv, cleanupEnv, err := buildExternalGitAuthEnv(repo)
-	if err != nil {
-		return nil, err
-	}
-	defer cleanupEnv()
 
-	out, _, runErr := gitsync.ExecCommandWithProcessGroupEnv(ctx, "", extraEnv, "git", "ls-remote", "--heads", repo.RepoURL)
+	out, _, runErr := gitsync.ExecCommandWithProcessGroupEnv(ctx, "", nil, "git", "ls-remote", "--heads", repo.RepoURL)
 	if runErr != nil {
 		return nil, fmt.Errorf("枚举远端分支失败: %s: %w", gitsync.SanitizeGitOutput(string(out)), runErr)
 	}

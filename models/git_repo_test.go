@@ -25,13 +25,15 @@ func TestGitRepoBundleProtoFileAndVersionMigration_ConstraintsAndEncryption(t *t
 		t.Fatalf("SetupWithDB 失败: %v", err)
 	}
 
-	// 1. 校验 5 张 Git/Proto 实体表存在及 contract_ 前缀隔离
+	// 1. 校验 7 张 Git/Proto 实体表存在及 contract_ 前缀隔离
 	for _, m := range []tabler{
 		GitRepo{},
 		GitProtoBundle{},
 		ProtoFile{},
 		ProtoFileVersion{},
 		ProtoImportOwner{},
+		ProtoSyncJob{},
+		ProtoGovernanceConfig{},
 	} {
 		tbl := m.TableName()
 		if !strings.HasPrefix(tbl, config.TablePrefix) {
@@ -73,13 +75,16 @@ func TestGitRepoBundleProtoFileAndVersionMigration_ConstraintsAndEncryption(t *t
 
 	// 3. 校验 CredentialsEnc / WebhookSecretEnc AES-256-GCM 加密存储与 Redacted DTO 脱敏
 	repo := GitRepo{
-		Name:          "monorepo-order-billing",
-		Provider:      GitProviderGitLab,
-		RepoURL:       "http://127.0.0.1:8080/group/monorepo.git",
-		APIBaseURL:    "http://127.0.0.1:8080/api/v4",
-		DefaultBranch: "main",
-		AuthType:      GitAuthToken,
-		SyncMode:      GitSyncManual,
+		PlatformRepoID: 101,
+		SourceMode:     GitSourceModePlatformShared,
+		SyncStrategy:   GitSyncStrategyLocalCacheOnly,
+		Name:           "monorepo-order-billing",
+		Provider:       GitProviderGitLab,
+		RepoURL:        "http://127.0.0.1:8080/group/monorepo.git",
+		APIBaseURL:     "http://127.0.0.1:8080/api/v4",
+		DefaultBranch:  "main",
+		AuthType:       GitAuthToken,
+		SyncMode:       GitSyncManual,
 	}
 	plainToken := "glpat-supersecret-token-9876"
 	plainWebhook := "whsec-webhook-secret-5432"
@@ -137,12 +142,15 @@ func TestGitRepoBundleProtoFileAndVersionMigration_ConstraintsAndEncryption(t *t
 	}
 
 	repo2 := GitRepo{
-		Name:          "another-repo",
-		Provider:      GitProviderGitHub,
-		RepoURL:       "http://127.0.0.1:8080/group/another.git",
-		DefaultBranch: "main",
-		AuthType:      GitAuthNone,
-		SyncMode:      GitSyncManual,
+		PlatformRepoID: 102,
+		SourceMode:     GitSourceModePlatformShared,
+		SyncStrategy:   GitSyncStrategyLocalCacheOnly,
+		Name:           "another-repo",
+		Provider:       GitProviderGitHub,
+		RepoURL:        "http://127.0.0.1:8080/group/another.git",
+		DefaultBranch:  "main",
+		AuthType:       GitAuthNone,
+		SyncMode:       GitSyncManual,
 	}
 	if err := db.Create(&repo2).Error; err != nil {
 		t.Fatalf("创建 repo2 失败: %v", err)
@@ -255,11 +263,11 @@ func TestGitRepoBundleProtoFileAndVersionMigration_ConstraintsAndEncryption(t *t
 		t.Fatalf("删除 GitProtoBundle 后 SourceBundleID 应通过 ON DELETE SET NULL 置空，实际=%v", *refreshed.SourceBundleID)
 	}
 
-	// 7. 校验 ADR-26 platform_repo_id 部分唯一索引、ProtoImportOwner 唯一索引及存量回填
-	var platID1 uint64 = 1001
+	// 7. 校验 ADR-26 (r4) platform_repo_id NOT NULL UNIQUE、source_mode 唯一收口与 ProtoImportOwner 唯一索引
+	platID1 := uint64(1001)
 	platRepo1 := GitRepo{
 		Name:           "platform-order-svc",
-		PlatformRepoID: &platID1,
+		PlatformRepoID: platID1,
 		SourceMode:     GitSourceModePlatformShared,
 		SyncStrategy:   GitSyncStrategyLocalCacheOnly,
 		Provider:       GitProviderGitLab,
@@ -273,7 +281,7 @@ func TestGitRepoBundleProtoFileAndVersionMigration_ConstraintsAndEncryption(t *t
 	}
 	platRepoDup := GitRepo{
 		Name:           "platform-order-svc-dup",
-		PlatformRepoID: &platID1,
+		PlatformRepoID: platID1,
 		SourceMode:     GitSourceModePlatformShared,
 		SyncStrategy:   GitSyncStrategyFetchAndRead,
 		Provider:       GitProviderGitLab,
@@ -284,6 +292,22 @@ func TestGitRepoBundleProtoFileAndVersionMigration_ConstraintsAndEncryption(t *t
 	}
 	if err := db.Create(&platRepoDup).Error; err == nil {
 		t.Fatalf("重复 platform_repo_id 应被 uk_contract_git_repo_platform 拦截")
+	}
+	if err := db.Create(&GitRepo{
+		Name:           "invalid-zero-plat",
+		PlatformRepoID: 0,
+		SourceMode:     GitSourceModePlatformShared,
+		RepoURL:        "http://127.0.0.1:8080/trade/zero.git",
+	}).Error; err == nil {
+		t.Fatalf("platform_repo_id=0 应被 chk_contract_git_repo_platform_id 拦截")
+	}
+	if err := db.Create(&GitRepo{
+		Name:           "invalid-external-mode",
+		PlatformRepoID: 1002,
+		SourceMode:     "EXTERNAL_STANDALONE",
+		RepoURL:        "http://127.0.0.1:8080/trade/ext.git",
+	}).Error; err == nil {
+		t.Fatalf("EXTERNAL_STANDALONE 应被 chk_contract_git_repo_source_mode 拦截")
 	}
 
 	owner := ProtoImportOwner{
@@ -303,5 +327,101 @@ func TestGitRepoBundleProtoFileAndVersionMigration_ConstraintsAndEncryption(t *t
 		Source:         ImportOwnerSourceManual,
 	}).Error; err == nil {
 		t.Fatalf("重复 logical_path 应被 uk_contract_import_owner_path 拦截")
+	}
+}
+
+func TestADR26R4_MigrationAndUniquePlatformRepoID(t *testing.T) {
+	if os.Getenv("TEST_DB_DSN") == "" {
+		t.Skip("TEST_DB_DSN 未配置，跳过数据库隔离测试")
+	}
+	t.Setenv("CONTRACT_CRYPTO_KEY", "test-contract-crypto-key-r4-32bytes!")
+
+	db := testdb.SetupIsolatedDB(t, config.ServiceName)
+	if err := SetupWithDB(db); err != nil {
+		t.Fatalf("SetupWithDB 失败: %v", err)
+	}
+
+	// 模拟旧版数据库状态：允许空 platform_repo_id 与 EXTERNAL_STANDALONE，写入可匹配仓库与孤儿手工仓库
+	for _, ddl := range []string{
+		`ALTER TABLE contract_git_repos DROP CONSTRAINT IF EXISTS chk_contract_git_repo_source_mode;`,
+		`ALTER TABLE contract_git_repos DROP CONSTRAINT IF EXISTS chk_contract_git_repo_platform_id;`,
+		`ALTER TABLE contract_git_repos ALTER COLUMN platform_repo_id DROP NOT NULL;`,
+		`DROP INDEX IF EXISTS uk_contract_git_repo_platform;`,
+	} {
+		if err := db.Exec(ddl).Error; err != nil {
+			t.Fatalf("prepare legacy schema (%s) failed: %v", ddl, err)
+		}
+	}
+
+	plat := Repository{
+		Name:         "matched-plat-repo",
+		URL:          "https://git.internal.local/team/order-core.git",
+		Branch:       "main",
+		ServiceGroup: "trade",
+		IsActive:     true,
+	}
+	if err := db.Create(&plat).Error; err != nil {
+		t.Fatalf("create plat repo: %v", err)
+	}
+
+	if err := db.Exec(`
+		INSERT INTO contract_git_repos (platform_repo_id, source_mode, sync_strategy, name, provider, repo_url, default_branch, auth_type, credentials_enc, credential_hint, sync_mode, poll_interval_sec, auto_compile, auto_activate, lint_on_sync, last_sync_status, description, created_by, created_at, updated_at)
+		VALUES
+		(NULL, 'EXTERNAL_STANDALONE', 'FETCH_AND_READ', 'legacy-matched', 'GITLAB', 'https://git.internal.local/team/order-core', 'master', 'TOKEN', 'enc-secret', 'glpa****1234', 'MANUAL', 300, true, false, true, 'IDLE', '', 1, NOW(), NOW()),
+		(NULL, 'EXTERNAL_STANDALONE', 'FETCH_AND_READ', 'legacy-orphan', 'GITLAB', 'https://git.internal.local/team/ghost-orphan.git', 'main', 'TOKEN', 'enc-orphan', 'glpa****9999', 'MANUAL', 300, true, false, true, 'IDLE', '', 1, NOW(), NOW())
+	`).Error; err != nil {
+		t.Fatalf("insert legacy rows failed: %v", err)
+	}
+
+	var matchedID, orphanID uint64
+	_ = db.Table("contract_git_repos").Select("id").Where("name = ?", "legacy-matched").Scan(&matchedID).Error
+	_ = db.Table("contract_git_repos").Select("id").Where("name = ?", "legacy-orphan").Scan(&orphanID).Error
+
+	sc := ProtoSchema{
+		Name:            "orphan-preserved-schema",
+		Category:        ProtoCategoryBusiness,
+		Version:         1,
+		VersionTag:      "v1",
+		SourceType:      ProtoSourceGitSync,
+		GitRepoID:       &orphanID,
+		FileName:        "orphan.pb",
+		FileSHA256:      "abc",
+		FileSize:        2,
+		DescriptorBytes: []byte{0x0a, 0x00},
+	}
+	if err := db.Create(&sc).Error; err != nil {
+		t.Fatalf("create orphan schema: %v", err)
+	}
+
+	// 再次执行 SetupWithDB：验证自动归并 + 孤儿仓归档清理 + 强约束收口
+	if err := SetupWithDB(db); err != nil {
+		t.Fatalf("re-run SetupWithDB migration failed: %v", err)
+	}
+
+	var migrated GitRepo
+	if err := db.First(&migrated, matchedID).Error; err != nil {
+		t.Fatalf("load migrated matched repo failed: %v", err)
+	}
+	if migrated.PlatformRepoID != uint64(plat.ID) || migrated.SourceMode != GitSourceModePlatformShared || migrated.CredentialsEnc != "" || migrated.AuthType != GitAuthNone {
+		t.Fatalf("expected legacy-matched auto-linked and credentials cleared, got %+v", migrated)
+	}
+
+	var orphanCnt int64
+	_ = db.Table("contract_git_repos").Where("id = ?", orphanID).Count(&orphanCnt).Error
+	if orphanCnt != 0 {
+		t.Fatalf("expected unmatched orphan repo deleted after backup, got count=%d", orphanCnt)
+	}
+
+	var backup MigBackup
+	if err := db.Where("migration_key = ? AND entity_id = ?", "ADR26_R4_ORPHAN_GIT_REPO", orphanID).First(&backup).Error; err != nil {
+		t.Fatalf("expected orphan backup in contract_mig_backups: %v", err)
+	}
+
+	var preservedSchema ProtoSchema
+	if err := db.First(&preservedSchema, sc.ID).Error; err != nil {
+		t.Fatalf("expected orphan schema preserved: %v", err)
+	}
+	if preservedSchema.GitRepoID != nil {
+		t.Fatalf("expected orphan schema git_repo_id nullified, got %v", *preservedSchema.GitRepoID)
 	}
 }

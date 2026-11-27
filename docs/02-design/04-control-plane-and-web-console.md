@@ -1691,4 +1691,18 @@ export interface DiscoveryProcessGroupDTO {
 
 | 审计子模块 (`module`) | 动作标识 (`action`) | 风险等级 | `before` / `after` 快照策略 |
 | :--- | :--- | :---: | :--- |
-| `contract_git` | `import_platform_repos` / `link_platform_repo` / `re_normalize` / `upsert_import_owner` / `delete_import_owner` / `resolve_proto_conflict` | `P1` (冲突裁决/归属指认/关联清理凭据) / `P2` | 记录操作仓/路径/权威提供方 ID 与来源；严禁写入任何解密凭证 |
+| `contract_git` | `sync_all_repos` / `re_normalize` / `update_repo_governance` / `update_governance_config` / `apply_governance_renormalize` / `upsert_import_owner` / `delete_import_owner` / `resolve_proto_conflict` | `P1` (冲突裁决/归属指认/全局配置变更) / `P2` | 记录操作仓/路径/目录覆写/规则版本摘要与任务 ID；严禁写入任何解密凭证 |
+
+---
+
+### 4.16 500+ 平台仓全量同步、导出目录治理与双子标签 IA (`ADR-26 r4 / ADR-27` / M37~M39)
+
+1. **`/contract/proto-sources` 双子标签信息架构 (`?view=sources|governance`)**：
+   - **子标签 1「源码浏览」（默认 `?view=sources`）**：保留全部既有深链（`?file_id=`、`?repo_id=`、`?bundle_id=`、`#L<n>`）；移除 `+ 接入 Git 仓库`、`平台仓导入` 与 `关联平台仓` 入口；仓库过滤器仅列出 `proto_status = HAS_PROTO` 且 `sync_enabled = true` 的仓库并提供子系统筛选与关键字搜索；双视图树支持 `summary_only=true` 摘要懒加载与按节点展开文件明细。
+   - **子标签 2「仓库导出与治理」（`?view=governance`）**：
+     - 顶部 6 态汇总卡（平台活跃仓总数、`HAS_PROTO`、`NO_PROTO`、`NO_LOCAL_CACHE`、`SYNC_FAILED`、`EXCLUDED`）+ 双按钮异步同步控制（主按钮 **「仅同步已有缓存」** `CACHE_ONLY` vs 二次确认次按钮 **「缺失时自动拉取」** `FETCH_MISSING`，当 `shared_write_enabled=false` 时禁用次按钮并提示）+ SSE `proto_sync_job.progress` 实时进度条与可折叠失败明细；
+     - 全局治理操作区：**「全局清理规则配置」**、**「导出治理 JSON」**、**「导入治理 JSON（含 Dry-Run 校验）」**、**「基线试编译报告」**；
+     - 下方 500+ 仓标准分页台账（`useSearchParams` 同步 `page`/`pageSize`/筛选条件，`15/25/50/100` 默认 `25`），提供状态分面筛选 Tab 与单仓操作（`目录与清理治理`、`免网络重清洗`、`启用/停用采集`）。
+2. **方案 A 导出治理与 Stage B 闭环**：
+   - **单仓契约治理抽屉 (`GitRepoConfigDrawer`)**：平台仓名、URL、分支、`service_group`、部门、负责人一律只读展示（移除独立建仓、删仓与凭据表单）；支持配置 `sync_enabled`、`export_target_subsystem`、`export_target_repo_dir`、`strip_prefixes`、`path_rewrites`、`collect_globs`、`exclude_globs` 与仓级规则覆写，并内置 **Dry-Run 对比预览**（零网络、零写盘返回目录对照、碰撞告警、Unified Diff 与语法通过率对比）与「保存并免网络重出树」。
+   - **全局治理与辅助 `.json` 抽屉 (`GlobalGovernanceConfigDrawer`)**：支持维护内置规则 `NORM-001`~`NORM-005` 开关与全局 `import_rewrites`，双向导入/导出 `proto-governance/v1` `.json`，执行全局 Dry-Run 校验（含 409 目标目录碰撞拦截）与一键免网络批量重出树。
