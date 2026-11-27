@@ -278,7 +278,8 @@ describe('M23-P3 / M27 LivingProtoDocsPane & ProtoDocsWorkbenchPage (/proto-docs
     );
 
     expect(docsPageHtml).toContain('全注释参考文档');
-    expect(docsPageHtml).toContain('契约认领与方法目录');
+    expect(docsPageHtml).toContain('契约目录与五态雷达');
+    expect(docsPageHtml).toContain('跨包依赖关系图');
     expect(docsPageHtml).toContain('BillingService');
     expect(docsPageHtml).not.toContain('上传描述集 (.pb)');
     expect(docsPageHtml).not.toContain('描述集资产台账');
@@ -288,8 +289,15 @@ describe('M23-P3 / M27 LivingProtoDocsPane & ProtoDocsWorkbenchPage (/proto-docs
         <ProtoDocsWorkbenchPage initialCatalogGroups={[]} initialCatalogTotal={0} />
       </MemoryRouter>
     );
-    expect(catalogPageHtml).toContain('契约认领与方法目录');
+    expect(catalogPageHtml).toContain('契约目录与五态雷达');
     expect(catalogPageHtml).not.toContain('上传描述集 (.pb)');
+
+    const graphPageHtml = renderToString(
+      <MemoryRouter initialEntries={['/proto-docs?docs_view=graph']}>
+        <ProtoDocsWorkbenchPage />
+      </MemoryRouter>
+    );
+    expect(graphPageHtml).toContain('跨包依赖关系图');
 
     const redirectHtml = renderToString(
       <MemoryRouter initialEntries={['/schemas?tab=catalog&service_name=demo.billing.v1.BillingService']}>
@@ -297,7 +305,7 @@ describe('M23-P3 / M27 LivingProtoDocsPane & ProtoDocsWorkbenchPage (/proto-docs
       </MemoryRouter>
     );
     expect(redirectHtml).toContain(
-      'data-target="/proto-docs?service_name=demo.billing.v1.BillingService&amp;docs_view=catalog-ops"'
+      'data-target="/proto-docs?service_name=demo.billing.v1.BillingService&amp;docs_view=catalog"'
     );
   });
 });

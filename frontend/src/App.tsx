@@ -48,11 +48,12 @@ import TrafficDebugWorkbenchPage from './pages/TrafficDebugWorkbenchPage';
 import ReplayWorkbenchPage from './pages/ReplayWorkbenchPage';
 import TopologyWorkbenchPage from './pages/TopologyWorkbenchPage';
 import ArchitectureWorkbenchPage from './pages/ArchitectureWorkbenchPage';
-import ProtoSchemaWorkbenchPage, {
+import {
   ProtoDocsWorkbenchPage,
   ProtoSourcesWorkbenchPage,
   ProtoGovernanceWorkbenchPage,
 } from './pages/ProtoSchemaWorkbenchPage';
+import ProtoPipelineWorkbenchPage from './pages/ProtoPipelineWorkbenchPage';
 import AgentManagementPage from './pages/AgentManagementPage';
 import AdminSettingsPage from './pages/AdminSettingsPage';
 import { GoldenSuitesWorkbenchPage } from './pages/GoldenSuitesWorkbenchPage';
@@ -116,16 +117,40 @@ export const ArchitectureRouteWrapper: React.FC<{ isEmbedded?: boolean }> = ({ i
 
 const GOV_TAB_REDIRECT_MAP: Record<string, string> = {
   'mr-gates': 'mr-gates',
+  lint: 'rules',
+  'lint-governance': 'rules',
   'lint-rules': 'rules',
   'lint-vocab': 'vocab',
   'lint-report': 'report',
 };
 
 /**
- * /schemas 路由包装器：
- * 无损兼容历史上散落在通知中心、Markdown 链接及大盘中的 /schemas?tab=* 深链，
- * 自动带参并保留 #L<n> hash 重定向至 /proto-docs、/proto-sources 或 /proto-governance；
- * 仅当无 tab 参数或 tab=assets|graph 时留在本页渲染描述集与跨包依赖工作台。
+ * /proto-sources 路由包装器（ADR-29）：
+ * 生产路由中将旧版 ?view=governance 无损重定向至 /proto-pipeline 四阶段流水线工作台，
+ * 同时保留 ?view=sources 与默认源码浏览视图。
+ */
+export const ProtoSourcesRouteWrapper: React.FC<{ isEmbedded?: boolean }> = ({ isEmbedded }) => {
+  const location = useLocation();
+  const searchParams = new URLSearchParams(location.search);
+  if (searchParams.get('view') === 'governance') {
+    const nextParams = new URLSearchParams(location.search);
+    nextParams.delete('view');
+    const qs = nextParams.toString();
+    const target = `${resolveModulePath(`/proto-pipeline${qs ? `?${qs}` : ''}`, Boolean(isEmbedded))}${location.hash || ''}`;
+    return (
+      <>
+        <div data-testid="legacy-redirect" data-target={target} style={{ display: 'none' }} />
+        <Navigate to={target} replace />
+      </>
+    );
+  }
+  return <ProtoSourcesWorkbenchPage />;
+};
+
+/**
+ * /schemas 路由包装器（ADR-19 / ADR-29）：
+ * 全量无损重定向历史上散落在通知中心、拓扑详情、Markdown 链接及大盘中的 /schemas* 深链至新四菜单 IA，
+ * 自动带参并保留 #L<n> hash；默认或 ?tab=assets 统一映射至 /proto-pipeline?stage=publish。
  */
 export const SchemasRouteWrapper: React.FC<{ isEmbedded?: boolean }> = ({ isEmbedded }) => {
   const location = useLocation();
@@ -134,14 +159,18 @@ export const SchemasRouteWrapper: React.FC<{ isEmbedded?: boolean }> = ({ isEmbe
   const nextParams = new URLSearchParams(location.search);
   const hash = location.hash || '';
 
-  let baseRedirectPath: string | null = null;
-  if (tab === 'docs' || tab === 'catalog') {
+  let baseRedirectPath = '/proto-pipeline';
+  if (tab === 'docs' || tab === 'catalog' || tab === 'catalog-ops' || tab === 'unified-catalog') {
     nextParams.delete('tab');
-    if (tab === 'catalog') {
-      nextParams.set('docs_view', 'catalog-ops');
+    if (tab === 'catalog' || tab === 'catalog-ops' || tab === 'unified-catalog') {
+      nextParams.set('docs_view', 'catalog');
     } else if (!nextParams.get('docs_view')) {
       nextParams.set('docs_view', 'reference');
     }
+    baseRedirectPath = '/proto-docs';
+  } else if (tab === 'graph') {
+    nextParams.delete('tab');
+    nextParams.set('docs_view', 'graph');
     baseRedirectPath = '/proto-docs';
   } else if (tab === 'sources') {
     nextParams.delete('tab');
@@ -150,20 +179,23 @@ export const SchemasRouteWrapper: React.FC<{ isEmbedded?: boolean }> = ({ isEmbe
     nextParams.delete('tab');
     nextParams.set('gov_tab', GOV_TAB_REDIRECT_MAP[tab]);
     baseRedirectPath = '/proto-governance';
+  } else {
+    if (tab === 'assets') {
+      nextParams.delete('tab');
+    }
+    if (!nextParams.get('stage')) {
+      nextParams.set('stage', 'publish');
+    }
   }
 
-  if (baseRedirectPath) {
-    const qs = nextParams.toString();
-    const target = `${resolveModulePath(`${baseRedirectPath}${qs ? `?${qs}` : ''}`, Boolean(isEmbedded))}${hash}`;
-    return (
-      <>
-        <div data-testid="legacy-redirect" data-target={target} style={{ display: 'none' }} />
-        <Navigate to={target} replace />
-      </>
-    );
-  }
-
-  return <ProtoSchemaWorkbenchPage />;
+  const qs = nextParams.toString();
+  const target = `${resolveModulePath(`${baseRedirectPath}${qs ? `?${qs}` : ''}`, Boolean(isEmbedded))}${hash}`;
+  return (
+    <>
+      <div data-testid="legacy-redirect" data-target={target} style={{ display: 'none' }} />
+      <Navigate to={target} replace />
+    </>
+  );
 };
 
 const renderNavIcon = (path: string) => {
@@ -186,10 +218,10 @@ const renderNavIcon = (path: string) => {
       return <BookOpen size={16} />;
     case '/proto-sources':
       return <Code2 size={16} />;
+    case '/proto-pipeline':
+      return <FileCode size={16} />;
     case '/proto-governance':
       return <ShieldCheck size={16} />;
-    case '/schemas':
-      return <FileCode size={16} />;
     case '/golden-suites':
       return <Sparkles size={16} />;
     case '/agents':
@@ -241,8 +273,10 @@ export const EmbeddedRoutes: React.FC = () => {
       <Route path={`${MODULE_BASE_PATH}/architecture`} element={<ArchitectureRouteWrapper isEmbedded />} />
       <Route path="/proto-docs" element={<ProtoDocsWorkbenchPage />} />
       <Route path={`${MODULE_BASE_PATH}/proto-docs`} element={<ProtoDocsWorkbenchPage />} />
-      <Route path="/proto-sources" element={<ProtoSourcesWorkbenchPage />} />
-      <Route path={`${MODULE_BASE_PATH}/proto-sources`} element={<ProtoSourcesWorkbenchPage />} />
+      <Route path="/proto-sources" element={<ProtoSourcesRouteWrapper isEmbedded />} />
+      <Route path={`${MODULE_BASE_PATH}/proto-sources`} element={<ProtoSourcesRouteWrapper isEmbedded />} />
+      <Route path="/proto-pipeline" element={<ProtoPipelineWorkbenchPage />} />
+      <Route path={`${MODULE_BASE_PATH}/proto-pipeline`} element={<ProtoPipelineWorkbenchPage />} />
       <Route path="/proto-governance" element={<ProtoGovernanceWorkbenchPage />} />
       <Route path={`${MODULE_BASE_PATH}/proto-governance`} element={<ProtoGovernanceWorkbenchPage />} />
       <Route path="/schemas" element={<SchemasRouteWrapper isEmbedded />} />
@@ -387,7 +421,8 @@ export const StandaloneShell: React.FC<{ onLogout: () => void }> = ({ onLogout }
             <Route path="/topology" element={<TopologyWorkbenchPage />} />
             <Route path="/architecture" element={<ArchitectureRouteWrapper />} />
             <Route path="/proto-docs" element={<ProtoDocsWorkbenchPage />} />
-            <Route path="/proto-sources" element={<ProtoSourcesWorkbenchPage />} />
+            <Route path="/proto-sources" element={<ProtoSourcesRouteWrapper />} />
+            <Route path="/proto-pipeline" element={<ProtoPipelineWorkbenchPage />} />
             <Route path="/proto-governance" element={<ProtoGovernanceWorkbenchPage />} />
             <Route path="/schemas" element={<SchemasRouteWrapper />} />
             <Route path="/agents" element={<AgentManagementPage />} />

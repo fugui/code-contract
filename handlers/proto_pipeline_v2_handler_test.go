@@ -355,3 +355,85 @@ message PipeMeta { int64 trace_id = 1; }
 		t.Fatalf("PREVIEW confirm 期望 200 COMPLETED，实测 %d: %s", wConf.Code, wConf.Body.String())
 	}
 }
+
+// TestSC33_EndToEnd_SandboxPublishToDocsAndSources 验证 SC-33 端到端全链路：
+// 阶段 ③+④ 一键发布成功后，消费侧 /api/proto-docs/tree、服务详情、/api/catalog/services、
+// 跨包依赖图、/api/proto-files 均可立即检出活跃符号与文件正文，同时废止的外部上传接口维持 404。
+func TestSC33_EndToEnd_SandboxPublishToDocsAndSources(t *testing.T) {
+	r, db := setupRouterAndDB(t)
+	oldCodes := config.AppConfig.Storage.CodesDir
+	oldProtos := config.AppConfig.Storage.ProtosDir
+	oldSharedWrite := config.AppConfig.Storage.SharedWriteEnabled
+	config.AppConfig.Storage.CodesDir = t.TempDir()
+	config.AppConfig.Storage.ProtosDir = t.TempDir()
+	config.AppConfig.Storage.SharedWriteEnabled = true
+	config.ApplyProtoPipelineDefaults(&config.AppConfig.ProtoPipeline)
+	defer func() {
+		config.AppConfig.Storage.CodesDir = oldCodes
+		config.AppConfig.Storage.ProtosDir = oldProtos
+		config.AppConfig.Storage.SharedWriteEnabled = oldSharedWrite
+	}()
+
+	admin := createTestUserInDB(t, db, "sc33_admin", config.AdminRole)
+	viewer := createTestUserInDB(t, db, "sc33_viewer", "user")
+	adminToken := generateTestJWT(t, admin)
+	viewerToken := generateTestJWT(t, viewer)
+
+	doReq := func(method, path, token string, payload any) *httptest.ResponseRecorder {
+		var body []byte
+		if payload != nil {
+			body, _ = json.Marshal(payload)
+		}
+		req := httptest.NewRequest(method, path, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w
+	}
+
+	seedHandlerPipelineFixture(t, db)
+
+	// 1. 触发端到端阶段 ③+④ 流水线同步执行
+	wRun := doReq(http.MethodPost, "/api/proto-pipeline/run", adminToken, map[string]any{
+		"from_stage": "RECONCILE",
+		"sync":       true,
+	})
+	if wRun.Code != http.StatusOK || !bytes.Contains(wRun.Body.Bytes(), []byte(`"COMPLETED"`)) {
+		t.Fatalf("SC-33 一键流水线执行期望 200 COMPLETED，实测 %d: %s", wRun.Code, wRun.Body.String())
+	}
+
+	// 2. 消费侧文档树与服务参考详情立即可见
+	wTree := doReq(http.MethodGet, "/api/proto-docs/tree", viewerToken, nil)
+	if wTree.Code != http.StatusOK || !bytes.Contains(wTree.Body.Bytes(), []byte("pipe.biz.v1.PipeOrderService")) {
+		t.Fatalf("GET /api/proto-docs/tree 期望包含 pipe.biz.v1.PipeOrderService，实测 %d: %s", wTree.Code, wTree.Body.String())
+	}
+	wDetail := doReq(http.MethodGet, "/api/proto-docs/services/pipe.biz.v1.PipeOrderService", viewerToken, nil)
+	if wDetail.Code != http.StatusOK || !bytes.Contains(wDetail.Body.Bytes(), []byte("CreatePipeReq")) {
+		t.Fatalf("GET /api/proto-docs/services/... 期望返回 200 且含 CreatePipeReq，实测 %d: %s", wDetail.Code, wDetail.Body.String())
+	}
+
+	// 3. 统一契约目录与跨包依赖关系图立即可见
+	wCat := doReq(http.MethodGet, "/api/catalog/services", viewerToken, nil)
+	if wCat.Code != http.StatusOK {
+		t.Fatalf("GET /api/catalog/services 期望 200，实测 %d: %s", wCat.Code, wCat.Body.String())
+	}
+	wGraph := doReq(http.MethodGet, "/api/proto-schemas/dependencies-graph", viewerToken, nil)
+	if wGraph.Code != http.StatusOK {
+		t.Fatalf("GET /api/proto-schemas/dependencies-graph 期望 200，实测 %d: %s", wGraph.Code, wGraph.Body.String())
+	}
+
+	// 4. 源码定位可检出对应 .proto 文件及内容
+	wFiles := doReq(http.MethodGet, "/api/proto-files?page=1&page_size=20", viewerToken, nil)
+	if wFiles.Code != http.StatusOK || !bytes.Contains(wFiles.Body.Bytes(), []byte("pipe/biz.proto")) {
+		t.Fatalf("GET /api/proto-files 期望检出 pipe/biz.proto，实测 %d: %s", wFiles.Code, wFiles.Body.String())
+	}
+
+	// 5. 全站自封闭复核：已下线的外部上传/在线直编入口保持 404
+	if w := doReq(http.MethodPost, "/api/proto-schemas", adminToken, map[string]any{}); w.Code != http.StatusNotFound {
+		t.Fatalf("POST /api/proto-schemas 应保持 404，实测 %d", w.Code)
+	}
+	if w := doReq(http.MethodPost, "/api/proto-schemas/compile", adminToken, map[string]any{}); w.Code != http.StatusNotFound {
+		t.Fatalf("POST /api/proto-schemas/compile 应保持 404，实测 %d", w.Code)
+	}
+}

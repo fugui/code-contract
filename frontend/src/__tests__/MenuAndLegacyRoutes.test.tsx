@@ -33,11 +33,11 @@ export function testMenuStructure_FiveGroupsFourteenItems_DiscoveryFirstInArchTw
   expect(contractMenuConfig.groups[1].items[2].label).toBe('架构元素');
 
   const group2Paths = contractMenuConfig.groups[2].items.map((i) => i.path);
-  expect(group2Paths).toEqual(['/proto-docs', '/proto-sources', '/proto-governance', '/schemas']);
-  expect(contractMenuConfig.groups[2].items[0].label).toBe('接口参考文档');
-  expect(contractMenuConfig.groups[2].items[1].label).toBe('源码与 Git 仓');
-  expect(contractMenuConfig.groups[2].items[2].label).toBe('MR 门禁与规范');
-  expect(contractMenuConfig.groups[2].items[3].label).toBe('描述集与依赖');
+  expect(group2Paths).toEqual(['/proto-docs', '/proto-sources', '/proto-pipeline', '/proto-governance']);
+  expect(contractMenuConfig.groups[2].items[0].label).toBe('接口文档与目录');
+  expect(contractMenuConfig.groups[2].items[1].label).toBe('Proto 源码库');
+  expect(contractMenuConfig.groups[2].items[2].label).toBe('契约同步与发布');
+  expect(contractMenuConfig.groups[2].items[3].label).toBe('规范与 MR 门禁');
 
   const group3Paths = contractMenuConfig.groups[3].items.map((i) => i.path);
   expect(group3Paths).toEqual(['/record', '/debug', '/replay', '/golden-suites']);
@@ -107,7 +107,7 @@ export function testLegacyDeepLinks_LosslessRedirect(): void {
     expect(getRedirectTarget(html)).toBe('/contract/record?page=1');
   }
 
-  // 5. ADR-19: /schemas?tab=docs|catalog|sources|mr-gates|lint-* 无损重映射至独立工作台路由（含 Hash）
+  // 5. ADR-19 / ADR-29: /schemas* 与 /proto-sources?view=governance 全量无损重映射至四菜单 IA（含 Hash）
   const schemaRedirectCases: Array<{ from: string; expectedEmbeddedTarget: string }> = [
     {
       from: '/schemas?tab=docs&service_name=demo.billing.v1.BillingService',
@@ -115,7 +115,11 @@ export function testLegacyDeepLinks_LosslessRedirect(): void {
     },
     {
       from: '/schemas?tab=catalog&claimed_status=UNCLAIMED',
-      expectedEmbeddedTarget: '/contract/proto-docs?claimed_status=UNCLAIMED&docs_view=catalog-ops',
+      expectedEmbeddedTarget: '/contract/proto-docs?claimed_status=UNCLAIMED&docs_view=catalog',
+    },
+    {
+      from: '/schemas?tab=graph',
+      expectedEmbeddedTarget: '/contract/proto-docs?docs_view=graph',
     },
     {
       from: '/schemas?tab=sources&file_id=501#L42',
@@ -137,6 +141,22 @@ export function testLegacyDeepLinks_LosslessRedirect(): void {
       from: '/schemas?tab=lint-report',
       expectedEmbeddedTarget: '/contract/proto-governance?gov_tab=report',
     },
+    {
+      from: '/schemas',
+      expectedEmbeddedTarget: '/contract/proto-pipeline?stage=publish',
+    },
+    {
+      from: '/schemas?tab=assets&schema_id=9',
+      expectedEmbeddedTarget: '/contract/proto-pipeline?schema_id=9&stage=publish',
+    },
+    {
+      from: '/schemas?active_only=true&search=Sync',
+      expectedEmbeddedTarget: '/contract/proto-pipeline?active_only=true&search=Sync&stage=publish',
+    },
+    {
+      from: '/proto-sources?view=governance&repo_id=3',
+      expectedEmbeddedTarget: '/contract/proto-pipeline?repo_id=3',
+    },
   ];
 
   for (const testCase of schemaRedirectCases) {
@@ -156,21 +176,25 @@ export function testLegacyDeepLinks_LosslessRedirect(): void {
       </MemoryRouter>
     );
     expect(getRedirectTarget(html)).toBe('/proto-sources?file_id=88#L19');
+
+    const assetsHtml = renderToString(
+      <MemoryRouter initialEntries={['/schemas?tab=assets&schema_id=12']}>
+        <SchemasRouteWrapper />
+      </MemoryRouter>
+    );
+    expect(getRedirectTarget(assetsHtml)).toBe('/proto-pipeline?schema_id=12&stage=publish');
   }
 
-  // 7. /schemas（无 tab）、/schemas?tab=assets、/schemas?tab=graph 及 /schemas?active_only=true&search=Sync 留在本页渲染，不触发重定向
-  for (const stayPath of ['/schemas', '/schemas?tab=assets', '/schemas?tab=graph', '/schemas?active_only=true&search=Sync']) {
-    const html = renderToString(
-      <MemoryRouter initialEntries={[stayPath]}>
+  // 7. /proto-pipeline 直达工作台挂载校验
+  {
+    const pipelineHtml = renderToString(
+      <MemoryRouter initialEntries={['/proto-pipeline']}>
         <EmbeddedRoutes />
       </MemoryRouter>
     );
-    expect(getRedirectTarget(html)).toBeNull();
-    expect(html).toContain('proto-schemas-workbench-page');
-    expect(html).toContain('描述集资产台账');
-    expect(html).toContain('跨包依赖关系图');
-    const tabMatches = html.match(/role="tab"/g) ?? [];
-    expect(tabMatches.length).toBe(2);
+    expect(getRedirectTarget(pipelineHtml)).toBeNull();
+    expect(pipelineHtml).toContain('proto-pipeline-workbench-page');
+    expect(pipelineHtml).not.toContain('上传描述集 (.pb)');
   }
 
   // 8. 独立路由 /proto-docs、/proto-sources、/proto-governance 正常直达，且不再渲染全局 .pb 上传按钮

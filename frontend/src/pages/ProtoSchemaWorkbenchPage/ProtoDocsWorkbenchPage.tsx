@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { BookOpen, ListTree, Radar } from 'lucide-react';
+import { BookOpen, ListTree, Network } from 'lucide-react';
 import { usePaginationState } from '@code/common';
 import { useModuleUser } from '../../context/ModuleUserContext';
 import { useModulePath } from '../../hooks/useModulePath';
@@ -20,9 +20,10 @@ import { OperationDocDrawer } from './OperationDocDrawer';
 import { SchemaAssetInspectDrawer } from './SchemaAssetInspectDrawer';
 import { ProtoSourceAnchorDrawer, useSourceAnchorDrawer } from './ProtoSourceAnchorDrawer';
 import { UnifiedCatalogPane } from './UnifiedCatalogPane';
+import { ProtoDependenciesGraphPane } from './ProtoDependenciesGraphPane';
 import './ProtoDocsAndCodeViewer.css';
 
-export type ProtoDocsViewMode = 'reference' | 'catalog-ops' | 'unified-catalog';
+export type ProtoDocsViewMode = 'reference' | 'catalog' | 'graph';
 
 export interface ProtoDocsWorkbenchPageProps {
   initialTree?: ProtoDocTreeResponse;
@@ -60,14 +61,20 @@ export const ProtoDocsWorkbenchPage: React.FC<ProtoDocsWorkbenchPageProps> = ({
   const searchQueryParam = searchParams.get('search') || '';
 
   const docsView: ProtoDocsViewMode =
-    rawDocsView === 'unified-catalog' ||
-    rawView === 'unified-catalog' ||
-    (!rawDocsView && !rawView && Boolean(radarStateQuery))
-      ? 'unified-catalog'
-      : rawDocsView === 'catalog-ops' ||
-        rawDocsView === 'catalog' ||
-        (!rawDocsView && (claimedStatusQuery === 'UNCLAIMED' || legacyTab === 'catalog'))
-      ? 'catalog-ops'
+    rawDocsView === 'graph' || rawView === 'graph' || legacyTab === 'graph'
+      ? 'graph'
+      : rawDocsView === 'catalog' ||
+        rawDocsView === 'catalog-ops' ||
+        rawDocsView === 'unified-catalog' ||
+        rawView === 'catalog' ||
+        rawView === 'catalog-ops' ||
+        rawView === 'unified-catalog' ||
+        (!rawDocsView &&
+          !rawView &&
+          (claimedStatusQuery === 'UNCLAIMED' ||
+            legacyTab === 'catalog' ||
+            Boolean(radarStateQuery)))
+      ? 'catalog'
       : 'reference';
 
   const setDocsView = (mode: ProtoDocsViewMode) => {
@@ -76,7 +83,7 @@ export const ProtoDocsWorkbenchPage: React.FC<ProtoDocsWorkbenchPageProps> = ({
       next.set('docs_view', mode);
       next.delete('view');
       next.delete('tab');
-      if (mode !== 'unified-catalog') {
+      if (mode !== 'catalog') {
         next.delete('state');
       }
       return next;
@@ -136,7 +143,7 @@ export const ProtoDocsWorkbenchPage: React.FC<ProtoDocsWorkbenchPageProps> = ({
   }, [schemaIdQuery, orphanOnly, serviceNameQuery, searchQueryParam, catalogPage, catalogPageSize, toast]);
 
   useEffect(() => {
-    if (docsView !== 'catalog-ops') {
+    if (docsView !== 'catalog') {
       return;
     }
     if (initialCatalogGroups === undefined) {
@@ -195,7 +202,7 @@ export const ProtoDocsWorkbenchPage: React.FC<ProtoDocsWorkbenchPageProps> = ({
 
   const navigateToAssetManager = (schemaId: string | number) => {
     setInspectDrawerOpen(false);
-    navigate(resolvePath(`/schemas?tab=assets&schema_id=${schemaId}`));
+    navigate(resolvePath(`/proto-pipeline?stage=publish&schema_id=${schemaId}`));
   };
 
   return (
@@ -224,21 +231,22 @@ export const ProtoDocsWorkbenchPage: React.FC<ProtoDocsWorkbenchPageProps> = ({
           <button
             type="button"
             role="tab"
-            aria-selected={docsView === 'catalog-ops'}
-            className={`code-pill-btn ${docsView === 'catalog-ops' ? 'code-pill-btn--active' : ''}`}
-            onClick={() => setDocsView('catalog-ops')}
+            data-testid="pdoc-tab-unified-catalog"
+            aria-selected={docsView === 'catalog'}
+            className={`code-pill-btn ${docsView === 'catalog' ? 'code-pill-btn--active' : ''}`}
+            onClick={() => setDocsView('catalog')}
           >
-            <ListTree size={14} /> 契约认领与方法目录
+            <ListTree size={14} /> 契约目录与五态雷达
           </button>
           <button
             type="button"
             role="tab"
-            data-testid="pdoc-tab-unified-catalog"
-            aria-selected={docsView === 'unified-catalog'}
-            className={`code-pill-btn ${docsView === 'unified-catalog' ? 'code-pill-btn--active' : ''}`}
-            onClick={() => setDocsView('unified-catalog')}
+            data-testid="pdoc-tab-graph"
+            aria-selected={docsView === 'graph'}
+            className={`code-pill-btn ${docsView === 'graph' ? 'code-pill-btn--active' : ''}`}
+            onClick={() => setDocsView('graph')}
           >
-            <Radar size={14} /> 统一契约目录与五态雷达
+            <Network size={14} /> 跨包依赖关系图
           </button>
         </div>
       </div>
@@ -252,60 +260,63 @@ export const ProtoDocsWorkbenchPage: React.FC<ProtoDocsWorkbenchPageProps> = ({
           initialSearch={searchQueryParam}
           onJumpToSource={(sid, fp, line) => void sourceAnchorDrawer.openBySchemaFile(sid, fp, line)}
         />
-      ) : docsView === 'unified-catalog' ? (
-        <UnifiedCatalogPane
-          initialState={radarStateQuery}
-          isAdmin={isAdmin}
-          onStateChange={(nextState) => {
-            setSearchParams((prev) => {
-              const next = new URLSearchParams(prev);
-              next.set('docs_view', 'unified-catalog');
-              if (nextState) next.set('state', nextState);
-              else next.delete('state');
-              return next;
-            });
-          }}
-        />
+      ) : docsView === 'graph' ? (
+        <ProtoDependenciesGraphPane onNavigateToSchemaAsset={navigateToAssetManager} />
       ) : (
-        <OperationMappingTable
-          serviceGroups={catalogGroups}
-          totalServices={totalCatalogServices}
-          page={catalogPage}
-          pageSize={catalogPageSize}
-          onPageChange={setCatalogPage}
-          onPageSizeChange={setCatalogPageSize}
-          searchKeyword={searchQueryParam}
-          loading={catalogLoading}
-          onSelectOperation={(op) => {
-            setSelectedOp(op);
-            setDocDrawerOpen(true);
-          }}
-          onInspectSchema={(sid) => void handleInspectSchemaById(sid)}
-          orphanOnly={orphanOnly}
-          onOrphanOnlyChange={(val) => {
-            setOrphanOnly(val);
-            setSearchParams((prev) => {
-              const next = new URLSearchParams(prev);
-              if (val) next.set('claimed_status', 'UNCLAIMED');
-              else next.delete('claimed_status');
-              next.set('page', '1');
-              return next;
-            });
-            setCatalogPage(1);
-          }}
-          selectedSchemaId={schemaIdQuery}
-          onSelectSchemaId={(sid) => {
-            setSearchParams((prev) => {
-              const next = new URLSearchParams(prev);
-              if (sid) next.set('schema_id', sid);
-              else next.delete('schema_id');
-              next.set('page', '1');
-              return next;
-            });
-            setCatalogPage(1);
-          }}
-          availableSchemas={availableSchemas}
-        />
+        <div className="pdoc-catalog-unified-stack" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <UnifiedCatalogPane
+            initialState={radarStateQuery}
+            isAdmin={isAdmin}
+            onStateChange={(nextState) => {
+              setSearchParams((prev) => {
+                const next = new URLSearchParams(prev);
+                next.set('docs_view', 'catalog');
+                if (nextState) next.set('state', nextState);
+                else next.delete('state');
+                return next;
+              });
+            }}
+          />
+          <OperationMappingTable
+            serviceGroups={catalogGroups}
+            totalServices={totalCatalogServices}
+            page={catalogPage}
+            pageSize={catalogPageSize}
+            onPageChange={setCatalogPage}
+            onPageSizeChange={setCatalogPageSize}
+            searchKeyword={searchQueryParam}
+            loading={catalogLoading}
+            onSelectOperation={(op) => {
+              setSelectedOp(op);
+              setDocDrawerOpen(true);
+            }}
+            onInspectSchema={(sid) => void handleInspectSchemaById(sid)}
+            orphanOnly={orphanOnly}
+            onOrphanOnlyChange={(val) => {
+              setOrphanOnly(val);
+              setSearchParams((prev) => {
+                const next = new URLSearchParams(prev);
+                if (val) next.set('claimed_status', 'UNCLAIMED');
+                else next.delete('claimed_status');
+                next.set('page', '1');
+                return next;
+              });
+              setCatalogPage(1);
+            }}
+            selectedSchemaId={schemaIdQuery}
+            onSelectSchemaId={(sid) => {
+              setSearchParams((prev) => {
+                const next = new URLSearchParams(prev);
+                if (sid) next.set('schema_id', sid);
+                else next.delete('schema_id');
+                next.set('page', '1');
+                return next;
+              });
+              setCatalogPage(1);
+            }}
+            availableSchemas={availableSchemas}
+          />
+        </div>
       )}
 
       <OperationDocDrawer
@@ -339,7 +350,6 @@ export const ProtoDocsWorkbenchPage: React.FC<ProtoDocsWorkbenchPageProps> = ({
         onActivate={async (s) => navigateToAssetManager(s.id)}
         onDeactivate={async (s) => navigateToAssetManager(s.id)}
         onDelete={async (s) => navigateToAssetManager(s.id)}
-        onUploadNewVersion={(s) => navigateToAssetManager(s.id)}
         onNavigateToCatalog={(sid) => {
           setInspectDrawerOpen(false);
           setSearchParams((prev) => {

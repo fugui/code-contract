@@ -475,7 +475,7 @@ export const DashboardWorkbenchPage: React.FC<DashboardWorkbenchPageProps> = ({
   };
 
   const handleNavigateSchemas = () => {
-    navigate(resolvePath('/proto-docs?docs_view=catalog-ops&claimed_status=UNCLAIMED'));
+    navigate(resolvePath('/proto-docs?docs_view=catalog&claimed_status=UNCLAIMED'));
   };
 
   const handleNavigateMrGates = () => {
@@ -581,8 +581,8 @@ export const DashboardWorkbenchPage: React.FC<DashboardWorkbenchPageProps> = ({
                 navigate(
                   resolvePath(
                     state
-                      ? `/proto-docs?view=unified-catalog&state=${encodeURIComponent(state)}`
-                      : '/proto-docs?view=unified-catalog'
+                      ? `/proto-docs?docs_view=catalog&state=${encodeURIComponent(state)}`
+                      : '/proto-docs?docs_view=catalog'
                   )
                 )
               }

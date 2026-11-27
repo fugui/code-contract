@@ -1,7 +1,8 @@
 import React from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { Code2, Settings2 } from 'lucide-react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { Code2, GitMerge, Settings2 } from 'lucide-react';
 import { useModuleUser } from '../../context/ModuleUserContext';
+import { useModulePath } from '../../hooks/useModulePath';
 import {
   GitSourcesWorkbenchPane,
   type GitSourcesWorkbenchPaneProps,
@@ -19,6 +20,7 @@ export type ProtoSourcesSubView = 'sources' | 'governance';
  */
 export const ProtoSourcesWorkbenchPage: React.FC<ProtoSourcesWorkbenchPageProps> = (props) => {
   const [searchParams, setSearchParams] = useSearchParams();
+  const resolvePath = useModulePath();
   const { user } = useModuleUser();
   const defaultIsAdmin = Boolean(user?.is_module_admin || user?.is_super_admin);
   const isAdmin = props.isAdmin ?? defaultIsAdmin;
@@ -60,6 +62,14 @@ export const ProtoSourcesWorkbenchPage: React.FC<ProtoSourcesWorkbenchPageProps>
         >
           <Settings2 size={15} /> 仓库导出与治理
         </button>
+        <Link
+          to={resolvePath('/proto-pipeline')}
+          className="psrc-subtab-btn"
+          style={{ marginLeft: 'auto', textDecoration: 'none' }}
+          data-testid="proto-sources-pipeline-link"
+        >
+          <GitMerge size={15} /> 前往流水线治理 ↗
+        </Link>
       </div>
 
       {activeView === 'governance' ? (
