@@ -12,7 +12,7 @@ export interface SchemaAssetInspectContentProps {
   onActivate: (schema: ProtoSchemaLedgerItemDTO) => Promise<void>;
   onDeactivate: (schema: ProtoSchemaLedgerItemDTO) => Promise<void>;
   onDelete: (schema: ProtoSchemaLedgerItemDTO) => Promise<void>;
-  onUploadNewVersion: (schema: ProtoSchemaLedgerItemDTO) => void;
+  onUploadNewVersion?: (schema: ProtoSchemaLedgerItemDTO) => void;
   onNavigateToCatalog: (schemaId: string | number) => void;
 }
 
@@ -22,7 +22,6 @@ export const SchemaAssetInspectContent: React.FC<SchemaAssetInspectContentProps>
   onActivate,
   onDeactivate,
   onDelete,
-  onUploadNewVersion,
   onNavigateToCatalog,
 }) => {
   const [activeTab, setActiveTab] = useState<'files' | 'dependencies' | 'history'>('files');
@@ -101,16 +100,6 @@ export const SchemaAssetInspectContent: React.FC<SchemaAssetInspectContentProps>
         </div>
 
         <div style={{ display: 'flex', gap: '8px' }}>
-          {isAdmin && (
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => onUploadNewVersion(schema)}
-              style={{ padding: '4px 10px', fontSize: '12px' }}
-            >
-              ⬆️ 上传新版本
-            </button>
-          )}
           <button
             type="button"
             className="btn btn-secondary"
@@ -499,7 +488,7 @@ export interface SchemaAssetInspectDrawerProps {
   onActivate: (schema: ProtoSchemaLedgerItemDTO) => Promise<void>;
   onDeactivate: (schema: ProtoSchemaLedgerItemDTO) => Promise<void>;
   onDelete: (schema: ProtoSchemaLedgerItemDTO) => Promise<void>;
-  onUploadNewVersion: (schema: ProtoSchemaLedgerItemDTO) => void;
+  onUploadNewVersion?: (schema: ProtoSchemaLedgerItemDTO) => void;
   onNavigateToCatalog: (schemaId: string | number) => void;
 }
 
@@ -511,7 +500,6 @@ export const SchemaAssetInspectDrawer: React.FC<SchemaAssetInspectDrawerProps> =
   onActivate,
   onDeactivate,
   onDelete,
-  onUploadNewVersion,
   onNavigateToCatalog,
 }) => {
   if (!open || !schema) return null;
@@ -529,7 +517,6 @@ export const SchemaAssetInspectDrawer: React.FC<SchemaAssetInspectDrawerProps> =
         onActivate={onActivate}
         onDeactivate={onDeactivate}
         onDelete={onDelete}
-        onUploadNewVersion={onUploadNewVersion}
         onNavigateToCatalog={onNavigateToCatalog}
       />
     </Drawer>

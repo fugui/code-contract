@@ -53,6 +53,7 @@ export const PRODUCTION_USERVICE_PRESET_GLOBAL: GlobalGovernanceSectionDTO = {
     max_r7_rounds: 10,
     enable_r8_quarantine: true,
     max_r8_rounds: 150,
+    block_on_unresolved_conflict: false,
   },
 };
 
@@ -157,6 +158,22 @@ export const GlobalGovernanceConfigDrawer: React.FC<GlobalGovernanceConfigDrawer
       global: {
         ...doc.global,
         strip_pg_segment: checked,
+      },
+    };
+    setJsonText(JSON.stringify(next, null, 2));
+  };
+
+  const handleBlockOnConflictChange = (checked: boolean) => {
+    const doc = parseCurrentDoc();
+    if (!doc) return;
+    const next: GovernanceConfigDocDTO = {
+      ...doc,
+      global: {
+        ...doc.global,
+        pool_reconcile: {
+          ...(doc.global?.pool_reconcile || {}),
+          block_on_unresolved_conflict: checked,
+        },
       },
     };
     setJsonText(JSON.stringify(next, null, 2));
@@ -326,6 +343,7 @@ export const GlobalGovernanceConfigDrawer: React.FC<GlobalGovernanceConfigDrawer
   let parsedEnabledRules: string[] = [];
   let parsedDefaultSyntax = 'auto';
   let parsedStripPG = true;
+  let parsedBlockOnConflict = false;
   let parsedExcludeSubsystems = '';
   let parsedSharedBaseHints = '';
   let parsedImplicitImportCount = 0;
@@ -334,6 +352,7 @@ export const GlobalGovernanceConfigDrawer: React.FC<GlobalGovernanceConfigDrawer
     parsedEnabledRules = cur.global?.enabled_rules || [];
     parsedDefaultSyntax = cur.global?.default_syntax || 'auto';
     parsedStripPG = cur.global?.strip_pg_segment !== false;
+    parsedBlockOnConflict = Boolean(cur.global?.pool_reconcile?.block_on_unresolved_conflict);
     parsedExcludeSubsystems = (cur.global?.exclude_subsystems || []).join(', ');
     parsedSharedBaseHints = (cur.global?.shared_base_sources || [])
       .map((s) => s.path_hint)
@@ -461,6 +480,20 @@ export const GlobalGovernanceConfigDrawer: React.FC<GlobalGovernanceConfigDrawer
                   onChange={(e) => handleStripPGChange(e.target.checked)}
                 />
                 <span>剥离路径中 standalone /pg 段（保留 raw/ 不变）</span>
+              </span>
+            </label>
+
+            <label className="pgit-field">
+              <span className="pgit-field__label">跨仓冲突发布拦截（ADR-29）</span>
+              <span className="pgit-check">
+                <input
+                  type="checkbox"
+                  data-testid="toggle-block-on-conflict"
+                  checked={parsedBlockOnConflict}
+                  disabled={!isAdmin || busy}
+                  onChange={(e) => handleBlockOnConflictChange(e.target.checked)}
+                />
+                <span>存在未人工裁决的内容不等价冲突时，阻断涉及契约包发布生效</span>
               </span>
             </label>
 

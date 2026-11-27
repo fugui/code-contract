@@ -17,7 +17,6 @@ import type {
 import { SchemaPoolSummaryBar } from './SchemaPoolSummaryBar';
 import { SchemaAssetLedgerTable } from './SchemaAssetLedgerTable';
 import { SchemaAssetInspectDrawer } from './SchemaAssetInspectDrawer';
-import { SchemaUploadModal, type SchemaUploadMode } from './SchemaUploadModal';
 import { SchemaConflictModal } from './SchemaConflictModal';
 import { BreakingChangeAlertDrawer } from '../ProtoSchemasPage/BreakingChangeAlertDrawer';
 import { ProtoDependenciesGraphPane } from './ProtoDependenciesGraphPane';
@@ -70,12 +69,6 @@ export const ProtoSchemaWorkbenchPage: React.FC = () => {
   const [assetLoading, setAssetLoading] = useState(false);
 
   // 弹窗与抽屉受控状态
-  const [uploadModalOpen, setUploadModalOpen] = useState(false);
-  const [uploadModalMode, setUploadModalMode] = useState<SchemaUploadMode>('upload');
-  const [targetSchemaForNewVer, setTargetSchemaForNewVer] = useState<ProtoSchemaLedgerItemDTO | null>(
-    null
-  );
-
   const [inspectDrawerOpen, setInspectDrawerOpen] = useState(false);
   const [inspectSchema, setInspectSchema] = useState<ProtoSchemaLedgerItemDTO | null>(null);
 
@@ -376,20 +369,7 @@ export const ProtoSchemaWorkbenchPage: React.FC = () => {
 
   return (
     <div className="code-proto-schema-workbench" data-testid="proto-schemas-workbench-page">
-      <SchemaPoolSummaryBar
-        summary={poolSummary}
-        isAdmin={isAdmin}
-        onUploadClick={() => {
-          setUploadModalMode('upload');
-          setTargetSchemaForNewVer(null);
-          setUploadModalOpen(true);
-        }}
-        onCompileClick={() => {
-          setUploadModalMode('compile');
-          setTargetSchemaForNewVer(null);
-          setUploadModalOpen(true);
-        }}
-      />
+      <SchemaPoolSummaryBar summary={poolSummary} />
 
       <div className="pdoc-top-tabs">
         <div className="pdoc-top-tabs__list" role="tablist" aria-label="描述集资产与依赖视图">
@@ -417,13 +397,16 @@ export const ProtoSchemaWorkbenchPage: React.FC = () => {
         </div>
 
         <div className="pschema-quicklinks">
+          <Link to={resolvePath('/proto-pipeline')} className="btn btn-primary">
+            <span>前往契约流水线</span>
+          </Link>
           <Link to={resolvePath('/proto-docs')} className="btn btn-secondary">
             <BookOpen size={14} />
-            <span>接口参考文档</span>
+            <span>接口文档与目录</span>
           </Link>
           <Link to={resolvePath('/proto-governance')} className="btn btn-secondary">
             <ShieldCheck size={14} />
-            <span>MR 门禁与规范</span>
+            <span>规范与变更门禁</span>
           </Link>
         </div>
       </div>
@@ -448,11 +431,6 @@ export const ProtoSchemaWorkbenchPage: React.FC = () => {
           loading={assetLoading}
           isAdmin={isAdmin}
           onInspect={handleInspectSchema}
-          onUploadNewVersion={(s) => {
-            setUploadModalMode('upload');
-            setTargetSchemaForNewVer(s);
-            setUploadModalOpen(true);
-          }}
           onActivate={(s) => void handleActivateSchema(s)}
           onDeactivate={(s) => void handleDeactivateSchema(s)}
           onBatchActivate={(ids) => void handleBatchActivate(ids)}
@@ -464,34 +442,6 @@ export const ProtoSchemaWorkbenchPage: React.FC = () => {
       {activeTab === 'graph' && (
         <ProtoDependenciesGraphPane onNavigateToSchemaAsset={handleNavigateToSchemaAsset} />
       )}
-
-      <SchemaUploadModal
-        open={uploadModalOpen}
-        onClose={() => {
-          setUploadModalOpen(false);
-          setTargetSchemaForNewVer(null);
-        }}
-        initialName={targetSchemaForNewVer ? targetSchemaForNewVer.name : ''}
-        initialCategory={targetSchemaForNewVer ? targetSchemaForNewVer.category : 'BUSINESS'}
-        initialMode={uploadModalMode}
-        onSuccess={() => {
-          void loadAssetLedger();
-        }}
-        onConflict={(cData) => {
-          setConflictData(cData);
-          setConflictModalOpen(true);
-        }}
-        onBreakingChange={(bData, onOverrideSubmit) => {
-          setBreakingDrawerData({
-            schemaId: null,
-            batchIds: null,
-            breakingRules: bData.breaking_rules || [],
-            affectedDependents: bData.affected_dependents || [],
-            onCustomOverride: onOverrideSubmit,
-          });
-          setBreakingDrawerOpen(true);
-        }}
-      />
 
       <SchemaConflictModal
         open={conflictModalOpen}
@@ -527,11 +477,6 @@ export const ProtoSchemaWorkbenchPage: React.FC = () => {
         onDeactivate={handleDeactivateSchema}
         onDelete={async (s) => {
           handleDeleteSchema(s);
-        }}
-        onUploadNewVersion={(s) => {
-          setInspectDrawerOpen(false);
-          setTargetSchemaForNewVer(s);
-          setUploadModalOpen(true);
         }}
         onNavigateToCatalog={handleNavigateToCatalog}
       />

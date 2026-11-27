@@ -86,32 +86,6 @@ export async function listProtoSchemas(params?: {
   return apiRequest<ProtoSchemaLedgerListResponse>(`/proto-schemas${qs ? `?${qs}` : ''}`);
 }
 
-export async function uploadProtoSchema(formData: FormData) {
-  const token = localStorage.getItem(AUTH_TOKEN_KEY) ?? '';
-  const isEmbedded = typeof window !== 'undefined' && Boolean(window.__POWERED_BY_PORTAL__);
-  const baseUrl = isEmbedded ? `${MODULE_BASE_PATH}/api/proto-schemas` : '/api/proto-schemas';
-
-  const res = await fetch(baseUrl, {
-    method: 'POST',
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: formData,
-  });
-
-  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  if (!res.ok) {
-    const err = new Error(typeof data.error === 'string' ? data.error : '上传 Proto 描述集失败');
-    (err as unknown as { responseData?: unknown }).responseData = data;
-    throw err;
-  }
-  return data as unknown as {
-    schema: ProtoSchemaLedgerItemDTO;
-    operations: ProtoOperation[];
-    inherited_ignore_op_count?: number;
-  };
-}
-
 export async function updateProtoSchema(
   id: string | number,
   data: {
@@ -163,21 +137,6 @@ export async function batchActivateProtoSchemas(ids: (string | number)[], option
 export async function deleteProtoSchema(id: string | number) {
   return apiRequest<{ message: string }>(`/proto-schemas/${id}`, {
     method: 'DELETE',
-  });
-}
-
-export async function compileProtoSchema(payload: import('../types').CompileProtoSchemaPayload) {
-  return apiRequest<{
-    schema: import('../types').ProtoSchemaLedgerItemDTO;
-    operations: import('../types').ProtoOperation[];
-    proto_files: string[];
-    external_imports: string[];
-    resolved_dependencies?: import('../types').ResolvedSchemaDependencyDTO[];
-    inherited_ignore_op_count?: number;
-    forced_breaking?: boolean;
-  }>('/proto-schemas/compile', {
-    method: 'POST',
-    body: JSON.stringify(payload),
   });
 }
 
@@ -909,4 +868,85 @@ export async function promotePoolAutoFixes(payload: PromoteAutoFixesRequest) {
     method: 'POST',
     body: JSON.stringify(payload),
   });
+}
+
+// =====================================================================
+// ADR-29: 四阶段一体化 Proto 契约流水线与单仓拓扑发布 API
+// =====================================================================
+
+export async function fetchProtoPipelineOverview() {
+  return apiRequest<import('../types').PipelineOverviewDTO>('/proto-pipeline/overview');
+}
+
+export async function runProtoPipeline(payload?: import('../types').RunProtoPipelinePayload) {
+  return apiRequest<{
+    pipeline_run: import('../types').ProtoPipelineRunDTO;
+    lock_holder?: import('../types').PipelineLockHolderDTO | null;
+  }>('/proto-pipeline/run', {
+    method: 'POST',
+    body: JSON.stringify(payload ?? {}),
+  });
+}
+
+export async function fetchProtoPipelineRun(runId: number | string) {
+  return apiRequest<{
+    pipeline_run: import('../types').ProtoPipelineRunDTO;
+    lock_holder?: import('../types').PipelineLockHolderDTO | null;
+    sync_job?: ProtoSyncJobDTO;
+    reconcile_run?: import('../types').PoolReconcileRunDTO;
+    publish_run?: import('../types').ProtoPublishRunDTO;
+    publish_details?: import('../types').PublishRunDetailsDTO;
+  }>(`/proto-pipeline/runs/${runId}`);
+}
+
+export async function publishProtoPipeline(payload?: import('../types').PublishProtoPipelinePayload) {
+  return apiRequest<{
+    run: import('../types').ProtoPublishRunDTO;
+    details: import('../types').PublishRunDetailsDTO;
+  }>('/proto-pipeline/publish', {
+    method: 'POST',
+    body: JSON.stringify(payload ?? {}),
+  });
+}
+
+export async function fetchLatestProtoPublishRun() {
+  return apiRequest<{
+    run: import('../types').ProtoPublishRunDTO | null;
+    details: import('../types').PublishRunDetailsDTO | null;
+  }>('/proto-pipeline/publish-runs/latest');
+}
+
+export async function fetchProtoPublishRun(runId: number | string) {
+  return apiRequest<{
+    run: import('../types').ProtoPublishRunDTO;
+    details: import('../types').PublishRunDetailsDTO;
+  }>(`/proto-pipeline/publish-runs/${runId}`);
+}
+
+export async function approvePublishRunBreaking(
+  runId: number | string,
+  payload: { schema_ids: number[]; breaking_reason: string }
+) {
+  return apiRequest<import('../types').ApproveBreakingResponse>(
+    `/proto-pipeline/publish-runs/${runId}/approve-breaking`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+export async function confirmPreviewPublishRun(runId: number | string) {
+  return apiRequest<{
+    run: import('../types').ProtoPublishRunDTO;
+    details: import('../types').PublishRunDetailsDTO;
+  }>(`/proto-pipeline/publish-runs/${runId}/confirm`, {
+    method: 'POST',
+  });
+}
+
+export async function fetchArchivedExternalSchemas() {
+  return apiRequest<{ items: import('../types').ArchivedExternalSchemaDTO[] }>(
+    '/proto-pipeline/archived-external-schemas'
+  );
 }

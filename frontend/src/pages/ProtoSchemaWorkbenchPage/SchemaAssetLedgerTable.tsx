@@ -3,10 +3,11 @@ import { Pagination } from '@code/common';
 import type { ProtoCategory, ProtoSchemaLedgerItemDTO, ProtoSourceType } from '../../types';
 
 const SOURCE_TYPE_META: Record<ProtoSourceType, { label: string; tone: string }> = {
-  UPLOAD_PB: { label: '📦 手动上传 .pb', tone: 'var(--color-text-secondary)' },
-  ONLINE_COMPILE: { label: '⚡ 在线源码编译', tone: 'var(--color-primary)' },
+  UPLOAD_PB: { label: '📦 归档上传 (.pb)', tone: 'var(--color-text-secondary)' },
+  ONLINE_COMPILE: { label: '⚡ 归档直编', tone: 'var(--color-text-secondary)' },
   GIT_SYNC: { label: '🔗 Git 同步', tone: 'var(--color-success)' },
-  GIT_MR_AUTO: { label: '🤖 MR 自动发布', tone: 'var(--color-warning)' },
+  GIT_MR_AUTO: { label: '🤖 MR 自动同步', tone: 'var(--color-warning)' },
+  GIT_PIPELINE: { label: '🚀 契约流水线发布', tone: 'var(--color-primary)' },
 };
 
 export interface SchemaAssetLedgerTableProps {
@@ -28,7 +29,7 @@ export interface SchemaAssetLedgerTableProps {
   loading: boolean;
   isAdmin: boolean;
   onInspect: (schema: ProtoSchemaLedgerItemDTO) => void;
-  onUploadNewVersion: (schema: ProtoSchemaLedgerItemDTO) => void;
+  onUploadNewVersion?: (schema: ProtoSchemaLedgerItemDTO) => void;
   onActivate: (schema: ProtoSchemaLedgerItemDTO) => void;
   onDeactivate: (schema: ProtoSchemaLedgerItemDTO) => void;
   onBatchActivate: (selectedIds: (string | number)[]) => void;
@@ -55,7 +56,6 @@ export const SchemaAssetLedgerTable: React.FC<SchemaAssetLedgerTableProps> = ({
   loading,
   isAdmin,
   onInspect,
-  onUploadNewVersion,
   onActivate,
   onDeactivate,
   onBatchActivate,
@@ -571,18 +571,6 @@ export const SchemaAssetLedgerTable: React.FC<SchemaAssetLedgerTableProps> = ({
                           >
                             🔍 透视
                           </button>
-
-                          {isAdmin && (
-                            <button
-                              type="button"
-                              className="btn btn-secondary"
-                              onClick={() => onUploadNewVersion(s)}
-                              style={{ fontSize: '11px', padding: '3px 8px' }}
-                              title="基于同名上传生成新版本"
-                            >
-                              ⬆️ 新版
-                            </button>
-                          )}
 
                           {isAdmin && !s.is_active && (
                             <button

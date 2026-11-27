@@ -172,7 +172,8 @@ describe('M22-P3 ProtoDependenciesGraphPane (/schemas?tab=graph)', () => {
       </MemoryRouter>
     );
     expect(pageHtml).toContain('跨包依赖关系图');
-    expect(pageHtml).toContain('在线源码直编 (.proto)');
+    expect(pageHtml).not.toContain('在线源码直编 (.proto)');
+    expect(pageHtml).toContain('前往契约流水线');
     expect(pageHtml).toContain('proto-graph-pane');
 
     const ledgerItems: ProtoSchemaLedgerItemDTO[] = [
@@ -226,7 +227,7 @@ describe('M22-P3 ProtoDependenciesGraphPane (/schemas?tab=graph)', () => {
         />
       </MemoryRouter>
     );
-    expect(tableHtml).toContain('在线源码编译');
+    expect(tableHtml).toContain('归档直编');
     expect(tableHtml).toContain('data-schema-id="20"');
     expect(tableHtml).toContain('按来源筛选');
   });

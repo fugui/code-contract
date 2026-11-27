@@ -176,13 +176,7 @@ describe('SchemaAssetLedgerWorkbench Suite (M11-P3)', () => {
   ];
 
   it('renders SchemaPoolSummaryBar metrics and warning badges', () => {
-    const html = renderToString(
-      <SchemaPoolSummaryBar
-        summary={mockPoolSummary}
-        isAdmin={true}
-        onUploadClick={vi.fn()}
-      />
-    );
+    const html = renderToString(<SchemaPoolSummaryBar summary={mockPoolSummary} />);
 
     // 1. 验证全局描述集与基础库数量展示
     expect(html).toContain('12');
@@ -199,8 +193,9 @@ describe('SchemaAssetLedgerWorkbench Suite (M11-P3)', () => {
     expect(html).toContain('1 项缺失外部依赖');
     expect(html).toContain('3 个未认领服务');
 
-    // 4. 验证管理员上传入口
-    expect(html).toContain('上传描述集 (.pb)');
+    // 4. ADR-29 清理手传/直编自闭环入口后，提示统一由契约流水线发布生效
+    expect(html).not.toContain('上传描述集 (.pb)');
+    expect(html).toContain('由契约流水线统一编译发布生效');
   });
 
   it('renders SchemaAssetLedgerTable category tabs, badges and operations', () => {
@@ -248,9 +243,9 @@ describe('SchemaAssetLedgerWorkbench Suite (M11-P3)', () => {
     expect(html).toContain('✅ 1 项就绪');
     expect(html).toContain('⚠️ 缺 1 项依赖');
 
-    // 4. 验证操作按钮
+    // 4. 验证操作按钮（ADR-29 已移除手传新版入口，保留透视查看）
     expect(html).toContain('🔍 透视');
-    expect(html).toContain('⬆️ 新版');
+    expect(html).not.toContain('⬆️ 新版');
   });
 
   it('renders SchemaConflictModal for 409 method overlap conflict', () => {

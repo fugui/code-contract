@@ -20,7 +20,7 @@ export interface ProtoPoolSummaryDTO {
   unresolved_dep_count: number;
 }
 
-export type ProtoSourceType = 'UPLOAD_PB' | 'ONLINE_COMPILE' | 'GIT_SYNC' | 'GIT_MR_AUTO';
+export type ProtoSourceType = 'UPLOAD_PB' | 'ONLINE_COMPILE' | 'GIT_SYNC' | 'GIT_MR_AUTO' | 'GIT_PIPELINE';
 
 export interface ProtoSchemaLedgerItemDTO {
   id: string | number;
@@ -120,23 +120,6 @@ export interface AffectedDependent {
   module_name: string;
   arch_process_code: string;
   owner_name: string;
-}
-
-export interface CompileProtoFileItem {
-  path: string;
-  content: string;
-}
-
-export interface CompileProtoSchemaPayload {
-  name: string;
-  version_tag?: string;
-  category: ProtoCategory;
-  include_dirs?: string[];
-  files: CompileProtoFileItem[];
-  auto_activate?: boolean;
-  allow_breaking?: boolean;
-  breaking_reason?: string;
-  description?: string;
 }
 
 export interface CompileDiagnosticDTO {
@@ -1080,6 +1063,7 @@ export interface SyncAllGitReposPayload {
   service_group?: string;
   repo_ids?: number[];
   force_recompile?: boolean;
+  skip_compile?: boolean;
   sync?: boolean;
 }
 
@@ -1104,6 +1088,7 @@ export interface PoolReconcileConfigDTO {
   max_r7_rounds?: number;
   enable_r8_quarantine?: boolean;
   max_r8_rounds?: number;
+  block_on_unresolved_conflict?: boolean;
 }
 
 export interface PoolStripCollisionDTO {
@@ -1540,4 +1525,242 @@ export interface PromoteAutoFixesResponse {
   promoted_import_rewrites: number;
   promoted_manual_owners: number;
   governance_revision: number;
+}
+
+// =====================================================================
+// ADR-29: 四阶段一体化 Proto 契约流水线、单仓拓扑发布与归档迁移 DTO
+// =====================================================================
+
+export interface PipelineLockHolderDTO {
+  job_type: string;
+  job_id?: number;
+  holder: string;
+  acquired_at: string;
+}
+
+export interface ProtoPipelineRunDTO {
+  id: number;
+  from_stage: 'COLLECT_NORMALIZE' | 'RECONCILE' | 'PUBLISH' | string;
+  current_stage: string;
+  status: 'RUNNING' | 'COMPLETED' | 'PARTIAL_BLOCKED' | 'FAILED' | string;
+  trigger_source: 'MANUAL' | 'MR_MERGE' | 'SCHEDULE' | string;
+  sync_job_id?: number | null;
+  reconcile_run_id?: number | null;
+  publish_run_id?: number | null;
+  cache_policy?: string;
+  force_recompile?: boolean;
+  error_message?: string;
+  triggered_by?: string;
+  duration_ms: number;
+  started_at: string;
+  finished_at?: string | null;
+}
+
+export interface PublishBreakingItemDTO {
+  bundle_id: number;
+  bundle_name: string;
+  target_schema_name: string;
+  schema_id: number;
+  version: number;
+  breaking_rules: BreakingRuleViolation[];
+  affected_dependents?: AffectedDependent[];
+}
+
+export interface PublishConflictRiskItemDTO {
+  bundle_id: number;
+  bundle_name: string;
+  target_schema_name: string;
+  logical_paths: string[];
+  blocked: boolean;
+}
+
+export interface PublishBundleResultItemDTO {
+  bundle_id: number;
+  git_repo_id: number;
+  repo_name: string;
+  subsystem_slug: string;
+  bundle_name: string;
+  target_schema_name: string;
+  category: ProtoCategory;
+  layer: number;
+  status:
+    | 'PENDING'
+    | 'PUBLISHED'
+    | 'SKIPPED_UNCHANGED'
+    | 'BLOCKED_BREAKING'
+    | 'BLOCKED_CONFLICT'
+    | 'PENDING_UPSTREAM'
+    | 'FAILED'
+    | string;
+  schema_id?: number | null;
+  active_schema_id?: number | null;
+  auto_resolved_risk?: boolean;
+  blocked_by_bundles?: string[];
+  reason?: string;
+}
+
+export interface PublishRunDetailsDTO {
+  publish_mode: 'AUTO' | 'PREVIEW' | string;
+  pool_reconcile_run_id: number;
+  input_fingerprint: string;
+  block_on_unresolved_conflict: boolean;
+  estimated_seconds: number;
+  auto_deactivated_archive_ids?: number[];
+  breaking_items?: PublishBreakingItemDTO[];
+  conflict_risks?: PublishConflictRiskItemDTO[];
+  pending_upstream_items?: PublishBundleResultItemDTO[];
+  bundle_results: PublishBundleResultItemDTO[];
+  layer_batches?: number[][];
+}
+
+export interface ProtoPublishRunDTO {
+  id: number;
+  pool_reconcile_run_id: number;
+  publish_mode: 'AUTO' | 'PREVIEW' | string;
+  status:
+    | 'RUNNING'
+    | 'COMPLETED'
+    | 'PARTIAL_BLOCKED'
+    | 'PREVIEW_READY'
+    | 'REJECTED_STALE'
+    | 'FAILED'
+    | string;
+  total_bundles: number;
+  published_count: number;
+  skipped_count: number;
+  breaking_blocked_count: number;
+  conflict_blocked_count: number;
+  pending_upstream_count: number;
+  failed_count: number;
+  fanout_count: number;
+  error_message?: string;
+  triggered_by?: string;
+  duration_ms: number;
+  started_at: string;
+  finished_at?: string | null;
+}
+
+export interface PipelineStage1SummaryDTO {
+  platform_active_total: number;
+  has_proto_count: number;
+  no_proto_count: number;
+  no_local_cache_count: number;
+  excluded_count: number;
+  sync_failed_count: number;
+  shared_write_enabled: boolean;
+  latest_sync_at?: string | null;
+  latest_sync_job?: ProtoSyncJobDTO | null;
+}
+
+export interface PipelineStage2SummaryDTO {
+  total_files: number;
+  normalized_count: number;
+  quarantined_count: number;
+  uservice_count: number;
+  unassigned_repos: number;
+}
+
+export interface PipelineStage3SummaryDTO {
+  latest_run?: PoolReconcileRunDTO | null;
+  conflict_count: number;
+  unresolved_conflict_count: number;
+  auto_fix_count: number;
+  quarantined_count: number;
+  harvested_base_count: number;
+}
+
+export interface PipelineStage4SummaryDTO {
+  latest_run?: ProtoPublishRunDTO | null;
+  active_schema_count: number;
+  active_service_count: number;
+  active_operation_count: number;
+  breaking_blocked_count: number;
+  pending_upstream_count: number;
+  conflict_blocked_count: number;
+  archived_active_count: number;
+  publish_mode: 'AUTO' | 'PREVIEW' | string;
+}
+
+export interface PipelineOverviewDTO {
+  lock_holder?: PipelineLockHolderDTO | null;
+  latest_pipeline_run?: ProtoPipelineRunDTO | null;
+  publish_mode: 'AUTO' | 'PREVIEW' | string;
+  fanout_warn_threshold: number;
+  block_on_unresolved_conflict: boolean;
+  governance_revision: number;
+  governance_config_sha256: string;
+  normalize_stale: boolean;
+  normalize_stale_reasons?: string[];
+  reconcile_stale: boolean;
+  reconcile_stale_reasons?: string[];
+  publish_stale: boolean;
+  publish_stale_reasons?: string[];
+  stage1: PipelineStage1SummaryDTO;
+  stage2: PipelineStage2SummaryDTO;
+  stage3: PipelineStage3SummaryDTO;
+  stage4: PipelineStage4SummaryDTO;
+}
+
+export interface PipelineProgressEventPayload {
+  pipeline_run_id: number;
+  from_stage: string;
+  current_stage: string;
+  status: string;
+  trigger_source: string;
+  sync_job_id?: number;
+  reconcile_run_id?: number;
+  publish_run_id?: number;
+  message: string;
+  error_message?: string;
+  started_at: string;
+  finished_at?: string | null;
+}
+
+export interface PublishProgressEventPayload {
+  run_id: number;
+  stage: string;
+  status: string;
+  message: string;
+  total_bundles: number;
+  processed_bundles: number;
+  published_count: number;
+  skipped_count: number;
+  breaking_blocked_count: number;
+  conflict_blocked_count: number;
+  pending_upstream_count: number;
+  failed_count: number;
+}
+
+export interface ArchivedExternalSchemaDTO {
+  schema_id: number;
+  name: string;
+  version: number;
+  source_type: string;
+  category: ProtoCategory;
+  is_active: boolean;
+  created_at: string;
+  total_services: number;
+  covered_services: number;
+  coverage_ratio: number;
+  uncovered_names?: string[];
+}
+
+export interface RunProtoPipelinePayload {
+  from_stage?: 'COLLECT_NORMALIZE' | 'RECONCILE' | 'PUBLISH';
+  cache_policy?: SyncCachePolicy;
+  force_recompile?: boolean;
+  sync?: boolean;
+}
+
+export interface PublishProtoPipelinePayload {
+  bundle_ids?: number[];
+  subsystem?: string;
+  force_recompile?: boolean;
+  publish_mode?: 'AUTO' | 'PREVIEW';
+}
+
+export interface ApproveBreakingResponse {
+  approved_schemas: ProtoSchemaLedgerItemDTO[];
+  downstream_publish_run?: ProtoPublishRunDTO | null;
+  auto_deactivated_archive_ids?: number[];
 }

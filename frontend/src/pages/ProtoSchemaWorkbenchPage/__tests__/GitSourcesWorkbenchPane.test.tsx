@@ -420,7 +420,7 @@ describe('M25 GitSourcesWorkbenchPane & DeepLink & Source Badges', () => {
       </MemoryRouter>
     );
 
-    expect(tableHtml).toContain('手动上传 .pb');
+    expect(tableHtml).toContain('归档上传 (.pb)');
     expect(tableHtml).toContain('Git 同步');
     expect(tableHtml).toContain('1a2b3c4');
 

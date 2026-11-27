@@ -1,0 +1,295 @@
+/* ============================================================================
+ * ADR-29: 四阶段一体化 Proto 契约流水线工作台 (/proto-pipeline)
+ * 严格使用 --color-* 与 --z-index-* 语义化 Design Tokens，适配双模主题
+ * ============================================================================ */
+
+.ppipe-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.ppipe-header-card {
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--radius-lg, 12px);
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ppipe-header-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.ppipe-title-wrap h2 {
+  margin: 0 0 4px 0;
+  font-size: 18px;
+  color: var(--color-text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ppipe-subtitle {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.ppipe-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ppipe-lock-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: var(--radius-md, 8px);
+  background: var(--color-warning-bg, var(--color-bg-muted));
+  border: 1px solid var(--color-warning);
+  color: var(--color-text-primary);
+  font-size: 13px;
+}
+
+.ppipe-progress-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: var(--radius-md, 8px);
+  background: var(--color-bg-muted);
+  border: 1px solid var(--color-primary);
+  color: var(--color-text-primary);
+  font-size: 13px;
+}
+
+.ppipe-stepper {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+@media (max-width: 960px) {
+  .ppipe-stepper {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.ppipe-step-btn {
+  text-align: left;
+  padding: 12px 14px;
+  border-radius: var(--radius-md, 8px);
+  background: var(--color-bg-muted);
+  border: 1px solid var(--color-border-primary);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--color-text-primary);
+}
+
+.ppipe-step-btn:hover {
+  border-color: var(--color-primary);
+}
+
+.ppipe-step-btn--active {
+  background: var(--color-bg-surface);
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px var(--color-primary);
+}
+
+.ppipe-step-btn__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.ppipe-step-num {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-primary);
+}
+
+.ppipe-step-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.ppipe-step-desc {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.ppipe-stale-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--color-warning-bg, var(--color-bg-surface));
+  color: var(--color-warning);
+  border: 1px solid var(--color-warning);
+}
+
+.ppipe-ok-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--color-bg-surface);
+  color: var(--color-success);
+  border: 1px solid var(--color-success);
+}
+
+.ppipe-panel-card {
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--radius-lg, 12px);
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.ppipe-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.ppipe-panel-header h3 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--color-text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ppipe-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.ppipe-kpi-item {
+  background: var(--color-bg-muted);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--radius-md, 8px);
+  padding: 10px 12px;
+}
+
+.ppipe-kpi-label {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.ppipe-kpi-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin-top: 2px;
+}
+
+.ppipe-alert {
+  padding: 10px 14px;
+  border-radius: var(--radius-md, 8px);
+  border: 1px solid var(--color-border-primary);
+  background: var(--color-bg-muted);
+  font-size: 13px;
+  color: var(--color-text-primary);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.ppipe-alert--warning {
+  border-color: var(--color-warning);
+}
+
+.ppipe-alert--danger {
+  border-color: var(--color-danger);
+}
+
+.ppipe-alert--success {
+  border-color: var(--color-success);
+}
+
+.ppipe-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--radius-md, 8px);
+}
+
+.ppipe-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.ppipe-table th,
+.ppipe-table td {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--color-border-primary);
+  text-align: left;
+  color: var(--color-text-primary);
+}
+
+.ppipe-table th {
+  background: var(--color-bg-muted);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.ppipe-textarea {
+  width: 100%;
+  min-height: 84px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md, 8px);
+  border: 1px solid var(--color-border-primary);
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  font-size: 13px;
+}
+
+.ppipe-inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.ppipe-subtabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}

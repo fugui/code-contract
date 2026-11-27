@@ -3,16 +3,10 @@ import type { ProtoPoolSummaryDTO } from '../../types';
 
 export interface SchemaPoolSummaryBarProps {
   summary: ProtoPoolSummaryDTO | null;
-  isAdmin: boolean;
-  onUploadClick: () => void;
-  onCompileClick?: () => void;
 }
 
 export const SchemaPoolSummaryBar: React.FC<SchemaPoolSummaryBarProps> = ({
   summary,
-  isAdmin,
-  onUploadClick,
-  onCompileClick,
 }) => {
   const activeSchemas = summary?.active_schema_count ?? 0;
   const activeBaseLibs = summary?.active_base_lib_count ?? 0;
@@ -154,42 +148,11 @@ export const SchemaPoolSummaryBar: React.FC<SchemaPoolSummaryBarProps> = ({
         )}
       </div>
 
-      {isAdmin && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          {onCompileClick && (
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={onCompileClick}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '6px 14px',
-                fontSize: '13px',
-              }}
-            >
-              <span>⚡</span>
-              <span>在线源码直编 (.proto)</span>
-            </button>
-          )}
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={onUploadClick}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              padding: '6px 14px',
-              fontSize: '13px',
-            }}
-          >
-            <span>⬆️</span>
-            <span>上传描述集 (.pb)</span>
-          </button>
-        </div>
-      )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <span style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+          由契约流水线统一编译发布生效
+        </span>
+      </div>
     </div>
   );
 };

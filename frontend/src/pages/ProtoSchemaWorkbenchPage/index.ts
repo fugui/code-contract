@@ -1,4 +1,3 @@
-export * from './SchemaUploadModal';
 export * from './SchemaConflictModal';
 export * from './SchemaPoolSummaryBar';
 export * from './SchemaAssetLedgerTable';
