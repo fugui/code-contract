@@ -1,0 +1,3 @@
+package protodoc
+
+var ResolveRepoSubsystemSlugForTest = resolveRepoSubsystemSlug

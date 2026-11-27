@@ -1,5 +1,18 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { BookOpen, FileWarning, FolderTree, Search } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  BookOpen,
+  ChevronDown,
+  ChevronRight,
+  FileCode2,
+  FileWarning,
+  Folder,
+  FolderGit2,
+  FolderOpen,
+  FolderTree,
+  Package,
+  Search,
+  SlidersHorizontal,
+} from 'lucide-react';
 import { EmptyState } from '@code/common';
 import { getProtoDocsTree, getProtoServiceDocDetail } from '../../api/schema';
 import { useToast } from '../../utils/toast';
@@ -8,6 +21,13 @@ import type {
   ProtoDocTreeResponse,
   ProtoServiceDocDetailDTO,
 } from '../../types';
+import {
+  buildDocPackageTree,
+  buildDocSubsystemTree,
+  findAncestorKeysForService,
+  type DocServiceLeaf,
+  type DocTreeViewMode,
+} from './docTreeBuilder';
 import { ServiceReferenceDocView } from './ServiceReferenceDocView';
 import './ProtoDocsAndCodeViewer.css';
 
@@ -17,10 +37,13 @@ export interface LivingProtoDocsPaneProps {
   initialServiceName?: string;
   initialSchemaId?: number | string;
   initialSearch?: string;
+  initialViewMode?: DocTreeViewMode;
   onJumpToSource: (schemaId: number, filePath: string, line: number) => void;
 }
 
-function findFirstService(nodes: ProtoDocTreeNodeDTO[]): { serviceName: string; schemaId?: number } | null {
+function findFirstService(
+  nodes: ProtoDocTreeNodeDTO[]
+): { serviceName: string; schemaId?: number } | null {
   for (const n of nodes) {
     if (n.node_type === 'SERVICE' && n.service_name) {
       return { serviceName: n.service_name, schemaId: n.schema_id };
@@ -48,6 +71,7 @@ export const LivingProtoDocsPane: React.FC<LivingProtoDocsPaneProps> = ({
   initialServiceName = '',
   initialSchemaId = '',
   initialSearch = '',
+  initialViewMode = 'subsystem',
   onJumpToSource,
 }) => {
   const toast = useToast();
@@ -56,6 +80,8 @@ export const LivingProtoDocsPane: React.FC<LivingProtoDocsPaneProps> = ({
   const [searchInput, setSearchInput] = useState(() => normalizeInitialServiceQuery(initialSearch));
   const [categoryFilter, setCategoryFilter] = useState('');
   const [includeDeprecated, setIncludeDeprecated] = useState(true);
+  const [viewMode, setViewMode] = useState<DocTreeViewMode>(initialViewMode);
+  const [collapsedKeys, setCollapsedKeys] = useState<Set<string>>(() => new Set());
 
   const [selectedService, setSelectedService] = useState<string>(
     initialServiceName || initialDetail?.service_name || ''
@@ -124,131 +150,324 @@ export const LivingProtoDocsPane: React.FC<LivingProtoDocsPaneProps> = ({
     };
   }, [initialDetail, selectedSchemaId, selectedService, toast]);
 
+  const subsystems = useMemo(
+    () => buildDocSubsystemTree(tree?.items ?? []),
+    [tree]
+  );
+  const packageBranches = useMemo(
+    () => buildDocPackageTree(tree?.items ?? []),
+    [tree]
+  );
+
+  // 选中服务或深链跳转时，自动展开所在分支
+  useEffect(() => {
+    if (!selectedService || subsystems.length === 0) return;
+    const ancestorKeys = findAncestorKeysForService(
+      subsystems,
+      selectedService,
+      selectedSchemaId
+    );
+    if (ancestorKeys.length === 0) return;
+    setCollapsedKeys((prev) => {
+      let changed = false;
+      for (const k of ancestorKeys) {
+        if (prev.has(k)) {
+          changed = true;
+          break;
+        }
+      }
+      if (!changed) return prev;
+      const next = new Set(prev);
+      for (const k of ancestorKeys) {
+        next.delete(k);
+      }
+      return next;
+    });
+  }, [subsystems, selectedService, selectedSchemaId]);
+
   const handleSelectService = (svcName: string, schemaId?: number) => {
     setSelectedService(svcName);
     setSelectedSchemaId(schemaId ?? '');
   };
 
-  const renderTreeNodes = (nodes: ProtoDocTreeNodeDTO[]): React.ReactNode => {
-    return nodes.map((node) => {
-      if (node.node_type === 'SUBSYSTEM') {
-        return (
-          <div key={node.node_key} className="pdoc-tree-group">
-            <div className="pdoc-tree-group__label">
-              <span>{node.label}</span>
-              <span>{node.method_count ?? 0} RPC</span>
-            </div>
-            {node.children && renderTreeNodes(node.children)}
-          </div>
-        );
-      }
-      if (node.node_type === 'SCHEMA') {
-        return (
-          <div key={node.node_key} className="pdoc-tree-group">
-            <div className="pdoc-tree-schema__label">
-              <span className="code-badge code-badge-info">{node.category || 'PROTO'}</span>
-              <span>{node.label}</span>
-            </div>
-            {node.children && renderTreeNodes(node.children)}
-          </div>
-        );
-      }
-      if (node.node_type === 'PACKAGE') {
-        return (
-          <div key={node.node_key} className="pdoc-tree-group">
-            <div className="pdoc-tree-pkg__label">{node.label}</div>
-            {node.children && renderTreeNodes(node.children)}
-          </div>
-        );
-      }
-      if (node.node_type === 'SERVICE' && node.service_name) {
-        const isActive = selectedService === node.service_name;
-        const btnCls = [
-          'pdoc-tree-svc-btn',
-          isActive ? 'pdoc-tree-svc-btn--active' : '',
-          node.is_deprecated ? 'pdoc-tree-svc-btn--deprecated' : '',
-        ]
-          .filter(Boolean)
-          .join(' ');
-        return (
+  const toggleNode = (key: string) => {
+    setCollapsedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const hasSearch = searchInput.trim().length > 0;
+  const activeFilterCount = (categoryFilter ? 1 : 0) + (!includeDeprecated ? 1 : 0);
+
+  const isServiceActive = (leaf: DocServiceLeaf): boolean => {
+    if (selectedService !== leaf.serviceName) return false;
+    if (
+      selectedSchemaId !== '' &&
+      selectedSchemaId !== undefined &&
+      leaf.schemaId !== undefined
+    ) {
+      return Number(selectedSchemaId) === leaf.schemaId;
+    }
+    return true;
+  };
+
+  const renderServiceRow = (leaf: DocServiceLeaf, depth: number) => {
+    const active = isServiceActive(leaf);
+    const cls = [
+      'pgit-tree-row',
+      'pgit-tree-row--file',
+      active ? 'pgit-tree-row--active' : '',
+      leaf.isDeprecated ? 'pdoc-tree-row--deprecated' : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+    const title = leaf.summary
+      ? `${leaf.serviceName} — ${leaf.summary}`
+      : leaf.serviceName;
+
+    return (
+      <button
+        key={leaf.key}
+        type="button"
+        className={cls}
+        style={{ paddingLeft: 10 + depth * 14 }}
+        onClick={() => handleSelectService(leaf.serviceName, leaf.schemaId)}
+        title={title}
+      >
+        <span className="pgit-tree-row__main">
+          <FileCode2 size={13} />
+          <span className="pgit-tree-row__label">{leaf.label}</span>
+        </span>
+        <span className="pgit-tree-count">{leaf.methodCount}</span>
+      </button>
+    );
+  };
+
+  const renderSubsystemTree = () => {
+    if (subsystems.length === 0) {
+      return (
+        <EmptyState
+          icon={<FileWarning size={28} />}
+          title="暂无匹配文档符号"
+          description="请上传/在线编译或激活描述集后自动生成全注释参考文档。"
+        />
+      );
+    }
+
+    return subsystems.map((sub) => {
+      const subOpen = hasSearch || !collapsedKeys.has(sub.key);
+      return (
+        <div key={sub.key} className="pgit-tree-branch">
           <button
-            key={node.node_key}
             type="button"
-            className={btnCls}
-            onClick={() => handleSelectService(node.service_name ?? '', node.schema_id)}
-            title={node.service_name}
+            className="pgit-tree-row pgit-tree-row--subsystem"
+            onClick={() => toggleNode(sub.key)}
+            title={`${sub.label} · ${sub.serviceCount} 服务 · ${sub.methodCount} 方法`}
           >
-            <span className="pdoc-tree-svc-btn__name">{node.label}</span>
-            <span className="pdoc-pill">{node.method_count ?? 0}</span>
+            <span className="pgit-tree-row__main">
+              {subOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+              {subOpen ? <FolderOpen size={14} /> : <Folder size={14} />}
+              <span className="pgit-tree-row__label">{sub.label}</span>
+            </span>
+            <span className="pgit-tree-count">{sub.serviceCount}</span>
           </button>
-        );
-      }
-      return null;
+
+          {subOpen &&
+            sub.schemas.map((schema) => {
+              const schemaOpen = hasSearch || !collapsedKeys.has(schema.key);
+              const schemaTitle = [
+                schema.category || 'PROTO',
+                schema.label,
+                schema.singlePackageName,
+              ]
+                .filter(Boolean)
+                .join(' · ');
+
+              return (
+                <div key={schema.key} className="pgit-tree-branch">
+                  <button
+                    type="button"
+                    className="pgit-tree-row pgit-tree-row--repo"
+                    style={{ paddingLeft: 24 }}
+                    onClick={() => toggleNode(schema.key)}
+                    title={schemaTitle}
+                  >
+                    <span className="pgit-tree-row__main">
+                      {schemaOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                      <FolderGit2 size={13} />
+                      <span className="pgit-tree-row__label">{schema.label}</span>
+                    </span>
+                    <span className="pgit-tree-count">{schema.serviceCount}</span>
+                  </button>
+
+                  {schemaOpen &&
+                    (schema.directServices !== null
+                      ? schema.directServices.map((leaf) => renderServiceRow(leaf, 2))
+                      : schema.packages.map((pkg) => {
+                          const pkgOpen = hasSearch || !collapsedKeys.has(pkg.key);
+                          return (
+                            <div key={pkg.key} className="pgit-tree-branch">
+                              <button
+                                type="button"
+                                className="pgit-tree-row pgit-tree-row--folder"
+                                style={{ paddingLeft: 38 }}
+                                onClick={() => toggleNode(pkg.key)}
+                                title={pkg.packageName}
+                              >
+                                <span className="pgit-tree-row__main">
+                                  {pkgOpen ? (
+                                    <ChevronDown size={13} />
+                                  ) : (
+                                    <ChevronRight size={13} />
+                                  )}
+                                  <Package size={13} />
+                                  <span className="pgit-tree-row__label">{pkg.packageName}</span>
+                                </span>
+                                <span className="pgit-tree-count">{pkg.serviceCount}</span>
+                              </button>
+
+                              {pkgOpen &&
+                                pkg.services.map((leaf) => renderServiceRow(leaf, 3))}
+                            </div>
+                          );
+                        }))}
+                </div>
+              );
+            })}
+        </div>
+      );
+    });
+  };
+
+  const renderPackageTree = () => {
+    if (packageBranches.length === 0) {
+      return (
+        <EmptyState
+          icon={<FileWarning size={28} />}
+          title="暂无匹配文档符号"
+          description="请上传/在线编译或激活描述集后自动生成全注释参考文档。"
+        />
+      );
+    }
+
+    return packageBranches.map((pkg) => {
+      const pkgOpen = hasSearch || !collapsedKeys.has(pkg.key);
+      return (
+        <div key={pkg.key} className="pgit-tree-branch">
+          <button
+            type="button"
+            className="pgit-tree-row pgit-tree-row--subsystem"
+            onClick={() => toggleNode(pkg.key)}
+            title={`${pkg.packageName} · ${pkg.serviceCount} 服务 · ${pkg.methodCount} 方法`}
+          >
+            <span className="pgit-tree-row__main">
+              {pkgOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+              <Package size={13} />
+              <span className="pgit-tree-row__label">{pkg.packageName}</span>
+            </span>
+            <span className="pgit-tree-count">{pkg.serviceCount}</span>
+          </button>
+
+          {pkgOpen && pkg.services.map((leaf) => renderServiceRow(leaf, 1))}
+        </div>
+      );
     });
   };
 
   return (
     <div className="pdoc-workbench" data-testid="living-proto-docs-pane">
-      <aside className="pdoc-tree-panel" aria-label="活体文档服务树">
-        <div className="pdoc-tree-panel__header">
-          <h3 className="pdoc-tree-panel__title">
-            <FolderTree size={14} /> 活体接口参考目录
-          </h3>
-          {tree && (
-            <div className="pdoc-tree-panel__stats">
-              <span>{tree.total_services} 服务</span>
-              <span>{tree.total_methods} 方法</span>
-            </div>
-          )}
-        </div>
+      <aside className="pgit-tree-panel" aria-label="活体文档服务树">
+        <div className="pgit-tree-header">
+          <div className="pdoc-tree-summary-bar">
+            <h3 className="pdoc-tree-panel__title">
+              <FolderTree size={13} />
+              <span>活体接口参考目录</span>
+            </h3>
+            {tree && (
+              <div className="pdoc-tree-summary-bar__stats">
+                <span>{tree.total_services} 服务</span>
+                <span>{tree.total_methods} 方法</span>
+              </div>
+            )}
+          </div>
 
-        <div className="pdoc-tree-panel__filters">
-          <div className="code-search-box">
+          <div className="pgit-search-box">
             <Search size={14} />
             <input
               type="text"
-              className="code-input"
+              className="pdoc-tree-search"
               placeholder="搜索服务、方法、注释、@error_code..."
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
             />
           </div>
 
-          <div className="pdoc-tree-panel__filter-row">
-            <select
-              className="code-select"
-              value={categoryFilter}
-              onChange={(e) => setCategoryFilter(e.target.value)}
-              aria-label="契约分类筛选"
-            >
-              <option value="">全部分类</option>
-              <option value="BUSINESS">BUSINESS 业务契约</option>
-              <option value="GATEWAY">GATEWAY 网关契约</option>
-              <option value="BASE_LIB">BASE_LIB 公共依赖库</option>
-            </select>
+          <div className="pgit-tree-mode-row">
+            <div className="code-tab-pills" role="group" aria-label="文档目录树视图模式">
+              <button
+                type="button"
+                data-testid="doc-tree-mode-subsystem"
+                className={`code-pill-btn ${viewMode === 'subsystem' ? 'code-pill-btn--active' : ''}`}
+                onClick={() => setViewMode('subsystem')}
+              >
+                按子系统
+              </button>
+              <button
+                type="button"
+                data-testid="doc-tree-mode-package"
+                className={`code-pill-btn ${viewMode === 'package' ? 'code-pill-btn--active' : ''}`}
+                onClick={() => setViewMode('package')}
+              >
+                按包名
+              </button>
+            </div>
 
-            <label className="pdoc-meta-row">
-              <input
-                type="checkbox"
-                checked={includeDeprecated}
-                onChange={(e) => setIncludeDeprecated(e.target.checked)}
-              />
-              <span>显示已废弃</span>
-            </label>
+            <details className="pgit-filter-details">
+              <summary className="pgit-filter-summary">
+                <SlidersHorizontal size={12} />
+                <span>筛选</span>
+                {activeFilterCount > 0 && (
+                  <span className="pgit-tree-count">{activeFilterCount}</span>
+                )}
+              </summary>
+              <div className="pgit-filter-body">
+                <select
+                  className="code-select"
+                  value={categoryFilter}
+                  onChange={(e) => setCategoryFilter(e.target.value)}
+                  aria-label="契约分类筛选"
+                >
+                  <option value="">全部分类</option>
+                  <option value="BUSINESS">BUSINESS 业务契约</option>
+                  <option value="GATEWAY">GATEWAY 网关契约</option>
+                  <option value="BASE_LIB">BASE_LIB 公共依赖库</option>
+                </select>
+
+                <label className="pgit-check">
+                  <input
+                    type="checkbox"
+                    checked={includeDeprecated}
+                    onChange={(e) => setIncludeDeprecated(e.target.checked)}
+                  />
+                  <span>显示已废弃</span>
+                </label>
+              </div>
+            </details>
           </div>
         </div>
 
-        {loadingTree ? (
-          <p className="pdoc-card__subtitle">正在聚合活体文档索引...</p>
-        ) : tree && tree.items.length > 0 ? (
-          <div className="pdoc-tree-list">{renderTreeNodes(tree.items)}</div>
-        ) : (
-          <EmptyState
-            icon={<FileWarning size={28} />}
-            title="暂无匹配文档符号"
-            description="请上传/在线编译或激活描述集后自动生成全注释参考文档。"
-          />
-        )}
+        <div className="pgit-tree-scroll">
+          {loadingTree ? (
+            <div className="pdoc-empty">正在聚合活体文档索引...</div>
+          ) : viewMode === 'subsystem' ? (
+            renderSubsystemTree()
+          ) : (
+            renderPackageTree()
+          )}
+        </div>
       </aside>
 
       <main className="pdoc-detail">

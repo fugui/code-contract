@@ -139,6 +139,17 @@ func resolveServiceSubsystemMap(db *gorm.DB, serviceNames []string) map[string]s
 	return out
 }
 
+func resolveRepoSubsystemSlug(repo models.GitRepo) string {
+	slug := strings.TrimSpace(repo.ExportTargetSubsystem)
+	if slug == "" {
+		slug = strings.TrimSpace(repo.SubsystemSlug)
+	}
+	if slug == "" || slug == "_unassigned" {
+		return ""
+	}
+	return slug
+}
+
 // BuildDocTree 按子系统 -> 制品包 -> Package -> Service -> Method 聚合构造活体文档导航树
 func BuildDocTree(db *gorm.DB, query DocTreeQuery) (*ProtoDocTreeResponse, error) {
 	if db == nil {
@@ -246,31 +257,81 @@ func BuildDocTree(db *gorm.DB, query DocTreeQuery) (*ProtoDocTreeResponse, error
 	}
 	subMap := resolveServiceSubsystemMap(db, svcNames)
 
-	type subBucket struct {
-		ID      uint64
-		Name    string
-		Schemas map[uint64]*schemaBucket
+	repoIDSet := make(map[uint64]struct{})
+	repoIDs := make([]uint64, 0)
+	for _, sc := range schemas {
+		if sc.GitRepoID != nil && *sc.GitRepoID > 0 {
+			if _, exists := repoIDSet[*sc.GitRepoID]; !exists {
+				repoIDSet[*sc.GitRepoID] = struct{}{}
+				repoIDs = append(repoIDs, *sc.GitRepoID)
+			}
+		}
 	}
-	subBuckets := make(map[uint64]*subBucket)
-	getOrCreateSub := func(subID uint64, subName string) *subBucket {
-		if b, ok := subBuckets[subID]; ok {
+	repoSlugBySchemaID := make(map[uint64]string)
+	if len(repoIDs) > 0 {
+		var repos []models.GitRepo
+		if err := db.Select("id", "subsystem_slug", "export_target_subsystem").
+			Where("id IN ?", repoIDs).
+			Find(&repos).Error; err == nil {
+			repoSlugByID := make(map[uint64]string, len(repos))
+			for _, r := range repos {
+				if slug := resolveRepoSubsystemSlug(r); slug != "" {
+					repoSlugByID[r.ID] = slug
+				}
+			}
+			for _, sc := range schemas {
+				if sc.GitRepoID != nil && *sc.GitRepoID > 0 {
+					if slug := repoSlugByID[*sc.GitRepoID]; slug != "" {
+						repoSlugBySchemaID[sc.ID] = slug
+					}
+				}
+			}
+		}
+	}
+
+	type subBucket struct {
+		Key        string
+		ID         uint64
+		Name       string
+		IsRepoSlug bool
+		Schemas    map[uint64]*schemaBucket
+	}
+	subBuckets := make(map[string]*subBucket)
+	getOrCreateSub := func(key string, subID uint64, subName string, isRepoSlug bool) *subBucket {
+		if b, ok := subBuckets[key]; ok {
 			return b
 		}
-		b := &subBucket{ID: subID, Name: subName, Schemas: make(map[uint64]*schemaBucket)}
-		subBuckets[subID] = b
+		b := &subBucket{
+			Key:        key,
+			ID:         subID,
+			Name:       subName,
+			IsRepoSlug: isRepoSlug,
+			Schemas:    make(map[uint64]*schemaBucket),
+		}
+		subBuckets[key] = b
 		return b
+	}
+	resolveBucketMeta := func(schemaID uint64, serviceFullName string) (key string, subID uint64, subName string, isRepoSlug bool) {
+		if serviceFullName != "" {
+			if info, ok := subMap[serviceFullName]; ok {
+				return fmt.Sprintf("sub:%d", info.SubsystemID), info.SubsystemID, info.SubsystemName, false
+			}
+		}
+		if slug := repoSlugBySchemaID[schemaID]; slug != "" {
+			return "sub:slug:" + slug, 0, slug, true
+		}
+		return "sub:0", 0, "未认领公共与基础契约", false
 	}
 
 	for _, sc := range schemas {
 		svcs := servicesBySchema[sc.ID]
 		// 若该制品没有 SERVICE（如纯 BASE_LIB 公共类型包），在未限定 search 或命中制品搜索时保留入口展示
 		if len(svcs) == 0 && (trimmedSearch == "" || searchMatchedSchemas[sc.ID]) {
-			subID := uint64(0)
-			subName := "未认领公共与基础契约"
+			subKey, subID, subName, isRepoSlug := resolveBucketMeta(sc.ID, "")
 			if query.SubsystemID != nil && *query.SubsystemID != subID {
 				continue
 			}
-			sb := getOrCreateSub(subID, subName)
+			sb := getOrCreateSub(subKey, subID, subName, isRepoSlug)
 			schBucket := getOrCreateSchemaBucket(sb.Schemas, sc, hasSourceMap[sc.ID])
 			pkg := "base"
 			schBucket.addEmptyPackageIfNeeded(pkg)
@@ -283,12 +344,7 @@ func BuildDocTree(db *gorm.DB, query DocTreeQuery) (*ProtoDocTreeResponse, error
 				continue
 			}
 
-			subID := uint64(0)
-			subName := "未认领公共与基础契约"
-			if info, ok := subMap[svc.FullName]; ok {
-				subID = info.SubsystemID
-				subName = info.SubsystemName
-			}
+			subKey, subID, subName, isRepoSlug := resolveBucketMeta(sc.ID, svc.FullName)
 			if trimmedSearch != "" {
 				subMatch := strings.Contains(strings.ToLower(subName), strings.ToLower(trimmedSearch))
 				schemaMatch := strings.Contains(strings.ToLower(sc.Name), strings.ToLower(trimmedSearch))
@@ -305,7 +361,7 @@ func BuildDocTree(db *gorm.DB, query DocTreeQuery) (*ProtoDocTreeResponse, error
 				continue
 			}
 
-			sb := getOrCreateSub(subID, subName)
+			sb := getOrCreateSub(subKey, subID, subName, isRepoSlug)
 			schBucket := getOrCreateSchemaBucket(sb.Schemas, sc, hasSourceMap[sc.ID])
 
 			methods := methodsBySvcKey[svcKey]
@@ -336,29 +392,38 @@ func BuildDocTree(db *gorm.DB, query DocTreeQuery) (*ProtoDocTreeResponse, error
 		}
 	}
 
-	subIDs := make([]uint64, 0, len(subBuckets))
-	for id := range subBuckets {
-		subIDs = append(subIDs, id)
+	subKeys := make([]string, 0, len(subBuckets))
+	for k := range subBuckets {
+		subKeys = append(subKeys, k)
 	}
-	sort.Slice(subIDs, func(i, j int) bool {
-		if subIDs[i] == 0 {
-			return false
+	bucketRank := func(b *subBucket) int {
+		if b.ID > 0 {
+			return 0
 		}
-		if subIDs[j] == 0 {
-			return true
+		if b.IsRepoSlug {
+			return 1
 		}
-		return subBuckets[subIDs[i]].Name < subBuckets[subIDs[j]].Name
+		return 2
+	}
+	sort.Slice(subKeys, func(i, j int) bool {
+		bi := subBuckets[subKeys[i]]
+		bj := subBuckets[subKeys[j]]
+		ri, rj := bucketRank(bi), bucketRank(bj)
+		if ri != rj {
+			return ri < rj
+		}
+		return bi.Name < bj.Name
 	})
 
-	for _, id := range subIDs {
-		sb := subBuckets[id]
+	for _, key := range subKeys {
+		sb := subBuckets[key]
 		var subIDPtr *uint64
-		if id > 0 {
-			v := id
+		if sb.ID > 0 {
+			v := sb.ID
 			subIDPtr = &v
 		}
 		subNode := ProtoDocTreeNodeDTO{
-			NodeKey:       fmt.Sprintf("sub:%d", id),
+			NodeKey:       sb.Key,
 			NodeType:      "SUBSYSTEM",
 			Label:         sb.Name,
 			SubsystemID:   subIDPtr,

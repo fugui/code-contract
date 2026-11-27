@@ -276,6 +276,116 @@ describe('M23-P3 / M27 LivingProtoDocsPane & ProtoDocsWorkbenchPage (/proto-docs
     expect(cleanHtml).toContain('查看实测事务');
     expect(cleanHtml).toContain('发起流量采集');
     expect(cleanHtml).toContain('关联黄金用例');
+    expect(cleanHtml).toContain('pgit-tree-panel');
+    expect(cleanHtml).toContain('doc-tree-mode-subsystem');
+    expect(cleanHtml).toContain('doc-tree-mode-package');
+    expect(cleanHtml).toContain('筛选');
+    expect(cleanHtml).toContain('pdoc-tree-row--deprecated');
+    // 单包制品自动压缩掉中间 Package 行
+    expect(cleanHtml).not.toContain('pgit-tree-row--folder');
+  });
+
+  it('renders collapsible multi-package layer in subsystem mode and flat packages in package mode', () => {
+    const multiPkgTree: ProtoDocTreeResponse = {
+      total_services: 2,
+      total_methods: 5,
+      deprecated_count: 0,
+      items: [
+        {
+          node_key: 'sub:slug:sandbox-fab',
+          node_type: 'SUBSYSTEM',
+          label: 'sandbox-fab',
+          has_source_info: true,
+          method_count: 5,
+          children: [
+            {
+              node_key: 'schema:201',
+              node_type: 'SCHEMA',
+              label: 'fab-suite (v1)',
+              schema_id: 201,
+              schema_name: 'fab-suite',
+              category: 'BUSINESS',
+              has_source_info: true,
+              method_count: 5,
+              children: [
+                {
+                  node_key: 'pkg:201:fab.motion',
+                  node_type: 'PACKAGE',
+                  label: 'fab.motion',
+                  schema_id: 201,
+                  has_source_info: true,
+                  children: [
+                    {
+                      node_key: 'svc:201:fab.motion.StageMotionService',
+                      node_type: 'SERVICE',
+                      label: 'StageMotionService',
+                      schema_id: 201,
+                      service_name: 'fab.motion.StageMotionService',
+                      method_count: 4,
+                      has_source_info: true,
+                    },
+                  ],
+                },
+                {
+                  node_key: 'pkg:201:fab.optics',
+                  node_type: 'PACKAGE',
+                  label: 'fab.optics',
+                  schema_id: 201,
+                  has_source_info: true,
+                  children: [
+                    {
+                      node_key: 'svc:201:fab.optics.OpticsAlignService',
+                      node_type: 'SERVICE',
+                      label: 'OpticsAlignService',
+                      schema_id: 201,
+                      service_name: 'fab.optics.OpticsAlignService',
+                      method_count: 1,
+                      has_source_info: true,
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    const subModeHtml = renderToString(
+      <MemoryRouter>
+        <LivingProtoDocsPane
+          initialTree={multiPkgTree}
+          initialServiceName="fab.motion.StageMotionService"
+          initialSchemaId={201}
+          initialViewMode="subsystem"
+          onJumpToSource={vi.fn()}
+        />
+      </MemoryRouter>
+    );
+    expect(subModeHtml).toContain('sandbox-fab');
+    expect(subModeHtml).toContain('fab-suite (v1)');
+    expect(subModeHtml).toContain('pgit-tree-row--folder');
+    expect(subModeHtml).toContain('fab.motion');
+    expect(subModeHtml).toContain('fab.optics');
+    expect(subModeHtml).toContain('StageMotionService');
+    expect(subModeHtml).toContain('OpticsAlignService');
+
+    const pkgModeHtml = renderToString(
+      <MemoryRouter>
+        <LivingProtoDocsPane
+          initialTree={multiPkgTree}
+          initialServiceName="fab.motion.StageMotionService"
+          initialSchemaId={201}
+          initialViewMode="package"
+          onJumpToSource={vi.fn()}
+        />
+      </MemoryRouter>
+    );
+    expect(pkgModeHtml).not.toContain('sandbox-fab');
+    expect(pkgModeHtml).not.toContain('fab-suite (v1)');
+    expect(pkgModeHtml).toContain('fab.motion');
+    expect(pkgModeHtml).toContain('fab.optics');
+    expect(pkgModeHtml).toContain('StageMotionService');
   });
 
   it('mounts ProtoDocsWorkbenchPage (契约库 3-tab), ProtoCatalogWorkbenchPage & lossless legacy redirects', () => {

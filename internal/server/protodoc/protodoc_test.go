@@ -571,3 +571,139 @@ service PaymentService {
 		t.Errorf("Markdown 导出不应泄露原始二进制字段名/字节流")
 	}
 }
+
+func TestResolveRepoSubsystemSlug_FallbackRules(t *testing.T) {
+	cases := []struct {
+		name string
+		repo models.GitRepo
+		want string
+	}{
+		{
+			name: "优先取 ExportTargetSubsystem",
+			repo: models.GitRepo{
+				ExportTargetSubsystem: " trade ",
+				SubsystemSlug:         "legacy-trade",
+			},
+			want: "trade",
+		},
+		{
+			name: "ExportTargetSubsystem 为空时回退 SubsystemSlug",
+			repo: models.GitRepo{
+				ExportTargetSubsystem: "   ",
+				SubsystemSlug:         " sandbox-common ",
+			},
+			want: "sandbox-common",
+		},
+		{
+			name: "忽略 _unassigned 占位符",
+			repo: models.GitRepo{
+				ExportTargetSubsystem: "",
+				SubsystemSlug:         "_unassigned",
+			},
+			want: "",
+		},
+		{
+			name: "两者皆空返回空串",
+			repo: models.GitRepo{},
+			want: "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := protodoc.ResolveRepoSubsystemSlugForTest(tc.repo)
+			if got != tc.want {
+				t.Fatalf("ResolveRepoSubsystemSlugForTest(%+v) = %q, want %q", tc.repo, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBuildDocTree_GitRepoSubsystemFallbackAndOrdering(t *testing.T) {
+	db := setupIsolatedProtoDocDB(t)
+
+	sub := models.Subsystem{Code: "SUB_CORE", Name: "核心交易子系统"}
+	if err := db.Create(&sub).Error; err != nil {
+		t.Fatalf("创建 Subsystem 失败: %v", err)
+	}
+	fg := models.FunctionalGroup{SubsystemID: sub.ID, Code: "FG_CORE", Name: "交易组", Path: "/FG_CORE"}
+	if err := db.Create(&fg).Error; err != nil {
+		t.Fatalf("创建 FunctionalGroup 失败: %v", err)
+	}
+	mod := models.Module{SubsystemID: sub.ID, GroupID: fg.ID, Code: "MOD_ORDER", Name: "订单模块", ModuleKind: models.ModuleKindBusiness}
+	if err := db.Create(&mod).Error; err != nil {
+		t.Fatalf("创建 Module 失败: %v", err)
+	}
+	if err := db.Create(&models.ModuleService{
+		ModuleID:    models.Uint64Ptr(mod.ID),
+		ServiceName: "demo.order.v1.OrderCoreService",
+	}).Error; err != nil {
+		t.Fatalf("创建 ModuleService 失败: %v", err)
+	}
+
+	repoWithSlug := models.GitRepo{
+		PlatformRepoID:        9001,
+		Name:                  "sandbox-account-svc",
+		RepoURL:               "https://git.example.com/sandbox/account.git",
+		SubsystemSlug:         "sandbox-account",
+		ExportTargetSubsystem: "sandbox-domain",
+	}
+	repoUnassigned := models.GitRepo{
+		PlatformRepoID: 9002,
+		Name:           "sandbox-misc-svc",
+		RepoURL:        "https://git.example.com/sandbox/misc.git",
+		SubsystemSlug:  "_unassigned",
+	}
+	if err := db.Create(&repoWithSlug).Error; err != nil {
+		t.Fatalf("创建 repoWithSlug 失败: %v", err)
+	}
+	if err := db.Create(&repoUnassigned).Error; err != nil {
+		t.Fatalf("创建 repoUnassigned 失败: %v", err)
+	}
+
+	makeSchema := func(name, pkg, svc string, gitRepoID *uint64) *models.ProtoSchema {
+		src := "syntax = \"proto3\";\npackage " + pkg + ";\nmessage Req { string id = 1; }\nmessage Rsp { bool ok = 1; }\nservice " + svc + " { rpc Ping(Req) returns (Rsp); }\n"
+		sc, _ := compileTestProtoSchema(t, name, map[string]string{svc + ".proto": src})
+		sc.ID = 0
+		sc.GitRepoID = gitRepoID
+		if err := db.Create(sc).Error; err != nil {
+			t.Fatalf("创建 Schema %s 失败: %v", name, err)
+		}
+		if _, err := protodoc.RebuildForSchema(db, sc); err != nil {
+			t.Fatalf("RebuildForSchema %s 失败: %v", name, err)
+		}
+		return sc
+	}
+
+	makeSchema("order-core-pb", "demo.order.v1", "OrderCoreService", &repoWithSlug.ID)
+	makeSchema("account-pb", "demo.account.v1", "AccountService", &repoWithSlug.ID)
+	makeSchema("misc-pb", "demo.misc.v1", "MiscService", &repoUnassigned.ID)
+
+	tree, err := protodoc.BuildDocTree(db, protodoc.DocTreeQuery{IncludeDeprecated: true})
+	if err != nil {
+		t.Fatalf("BuildDocTree 失败: %v", err)
+	}
+	if len(tree.Items) != 3 {
+		t.Fatalf("预期 3 个子系统分组，实际 %d: %+v", len(tree.Items), tree.Items)
+	}
+	if tree.Items[0].Label != "核心交易子系统" || !strings.HasPrefix(tree.Items[0].NodeKey, "sub:") || strings.HasPrefix(tree.Items[0].NodeKey, "sub:slug:") || tree.Items[0].SubsystemID == nil {
+		t.Errorf("第 1 组应为已认领架构子系统，实际=%+v", tree.Items[0])
+	}
+	if tree.Items[1].Label != "sandbox-domain" || tree.Items[1].NodeKey != "sub:slug:sandbox-domain" || tree.Items[1].SubsystemID != nil {
+		t.Errorf("第 2 组应为 GitRepo clean 子系统回退组 sandbox-domain，实际=%+v", tree.Items[1])
+	}
+	if tree.Items[2].Label != "未认领公共与基础契约" || tree.Items[2].NodeKey != "sub:0" {
+		t.Errorf("第 3 组应为未认领兜底组，实际=%+v", tree.Items[2])
+	}
+
+	searchTree, err := protodoc.BuildDocTree(db, protodoc.DocTreeQuery{
+		IncludeDeprecated: true,
+		Search:            "sandbox-domain",
+	})
+	if err != nil {
+		t.Fatalf("BuildDocTree search 失败: %v", err)
+	}
+	if len(searchTree.Items) != 1 || searchTree.Items[0].Label != "sandbox-domain" {
+		t.Fatalf("按仓库子系统名搜索应命中 sandbox-domain，实际=%+v", searchTree.Items)
+	}
+}
