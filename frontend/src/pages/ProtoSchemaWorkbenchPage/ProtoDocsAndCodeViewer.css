@@ -2374,6 +2374,11 @@
   .pgit-split-shell {
     grid-template-columns: 1fr;
   }
+
+  .pgit-tree-panel {
+    position: static;
+    max-height: 360px;
+  }
 }
 
 .pgit-tree-panel {
@@ -2384,7 +2389,7 @@
   flex-direction: column;
   position: sticky;
   top: 16px;
-  max-height: calc(100vh - 148px);
+  max-height: calc(100vh - 112px);
   overflow: hidden;
 }
 

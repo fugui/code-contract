@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BookOpen,
   ChevronDown,
@@ -91,6 +91,7 @@ export const LivingProtoDocsPane: React.FC<LivingProtoDocsPaneProps> = ({
   );
   const [detail, setDetail] = useState<ProtoServiceDocDetailDTO | null>(initialDetail ?? null);
   const [loadingDetail, setLoadingDetail] = useState(false);
+  const detailRef = useRef<HTMLElement | null>(null);
 
   const loadTree = useCallback(async () => {
     if (typeof getProtoDocsTree !== 'function') return;
@@ -186,8 +187,12 @@ export const LivingProtoDocsPane: React.FC<LivingProtoDocsPaneProps> = ({
   }, [subsystems, selectedService, selectedSchemaId]);
 
   const handleSelectService = (svcName: string, schemaId?: number) => {
+    const isChanged = svcName !== selectedService || (schemaId ?? '') !== selectedSchemaId;
     setSelectedService(svcName);
     setSelectedSchemaId(schemaId ?? '');
+    if (isChanged && typeof detailRef.current?.scrollIntoView === 'function') {
+      detailRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
   };
 
   const toggleNode = (key: string) => {
@@ -470,7 +475,7 @@ export const LivingProtoDocsPane: React.FC<LivingProtoDocsPaneProps> = ({
         </div>
       </aside>
 
-      <main className="pdoc-detail">
+      <main ref={detailRef} className="pdoc-detail">
         {loadingDetail ? (
           <div className="pdoc-card">
             <p className="pdoc-card__subtitle">正在解码服务契约详情、Enum 字典与黄金样本...</p>
