@@ -86,7 +86,7 @@ func RunArchivedSchemaReminderCheck(
 		body := fmt.Sprintf(
 			"历史归档描述集 **%s (v%d)**（来源 `%s`）已生效满 %d 天，目前仍有 %d/%d 个服务未被平台 Git 流水线生效资产覆盖。\n\n"+
 				"- 未覆盖服务：`%s`\n\n"+
-				"请前往 [契约同步与发布](/proto-pipeline?stage=publish) 检查对应 Git 仓并同步发布后，再停用该归档版本。",
+				"请前往 [契约入库流水线](/proto-pipeline?stage=publish) 检查对应 Git 仓并同步发布后，再停用该归档版本。",
 			item.Name, item.Version, item.SourceType, reminderDays, len(item.UncoveredNames), item.TotalServices, uncoveredStr,
 		)
 		if _, dErr := notifier.DispatchSync(ctx, notify.DispatchInput{

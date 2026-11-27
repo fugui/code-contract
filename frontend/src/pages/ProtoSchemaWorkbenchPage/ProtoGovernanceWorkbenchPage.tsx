@@ -98,13 +98,15 @@ export const ProtoGovernanceWorkbenchPage: React.FC<ProtoGovernanceWorkbenchPage
   const sourceAnchorDrawer = useSourceAnchorDrawer();
 
   const handleOpenSources = (schemaName?: string) => {
-    const query = schemaName ? `?search=${encodeURIComponent(schemaName)}` : '';
-    navigate(resolvePath(`/proto-sources${query}`));
+    const query = schemaName
+      ? `?docs_view=sources&search=${encodeURIComponent(schemaName)}`
+      : '?docs_view=sources';
+    navigate(resolvePath(`/proto-docs${query}`));
   };
 
   const handleJumpToSource = async (protoFile: string, line: number) => {
     await sourceAnchorDrawer.openByFilePath(protoFile, line, () => {
-      navigate(resolvePath(`/proto-sources?search=${encodeURIComponent(protoFile)}`));
+      navigate(resolvePath(`/proto-docs?docs_view=sources&search=${encodeURIComponent(protoFile)}`));
     });
   };
 

@@ -39,12 +39,12 @@ const SourceWorkbenchDeepLink: React.FC<{ fileId?: number; line: number }> = ({
   const hash = line > 0 ? `#L${line}` : '';
   return (
     <Link
-      to={resolvePortalAwarePath(`/proto-sources?tab=sources&file_id=${fileId}${hash}`)}
+      to={resolvePortalAwarePath(`/proto-docs?docs_view=sources&file_id=${fileId}${hash}`)}
       className="pdoc-source-link pdoc-source-link--workbench"
-      title="在源码与 Git 仓工作台打开并定位行号"
+      title="在契约库「契约源码」视图打开并定位行号"
     >
       <ExternalLink size={12} />
-      工作台源码
+      契约库源码
     </Link>
   );
 };
@@ -408,6 +408,47 @@ export const ServiceReferenceDocView: React.FC<ServiceReferenceDocViewProps> = (
           )}
           <span className="pdoc-pill">来源：{detail.source_type || 'UPLOAD_PB'}</span>
           <span className="pdoc-pill">方法数：{detail.methods.length}</span>
+        </div>
+
+        {/* 契约使用与生态联动栏（架构对齐 & 流量核验快捷入口） */}
+        <div className="pdoc-ecology-bar" data-testid="service-ecology-links">
+          <span className="pdoc-ecology-bar__label">契约联动：</span>
+          {detail.lineage.implementations.length > 0 ? (
+            <Link
+              to={resolvePortalAwarePath(
+                `/proto-catalog?service_name=${encodeURIComponent(detail.service_name)}`
+              )}
+              className="pdoc-deep-link"
+            >
+              已认领实现 ({detail.lineage.implementations.length}) <ExternalLink size={12} />
+            </Link>
+          ) : (
+            <Link
+              to={resolvePortalAwarePath(
+                `/proto-catalog?service_name=${encodeURIComponent(detail.service_name)}&claimed_status=UNCLAIMED`
+              )}
+              className="pdoc-deep-link"
+            >
+              去认领架构模块 <ExternalLink size={12} />
+            </Link>
+          )}
+          <Link
+            to={resolvePortalAwarePath(`/debug?search=${encodeURIComponent(detail.service_name)}`)}
+            className="pdoc-deep-link"
+          >
+            查看实测事务 <ExternalLink size={12} />
+          </Link>
+          <Link to={resolvePortalAwarePath('/record')} className="pdoc-deep-link">
+            发起流量采集 <ExternalLink size={12} />
+          </Link>
+          <Link
+            to={resolvePortalAwarePath(
+              `/golden-suites?search=${encodeURIComponent(detail.service_name)}`
+            )}
+            className="pdoc-deep-link"
+          >
+            关联黄金用例 <ExternalLink size={12} />
+          </Link>
         </div>
 
         {detail.error_codes && detail.error_codes.length > 0 && (

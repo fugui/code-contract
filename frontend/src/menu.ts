@@ -11,7 +11,7 @@ export const DEFAULT_ENTRY_PATH = `${MODULE_BASE_PATH}/dashboard`;
 export const DEFAULT_STANDALONE_PATH = '/dashboard';
 
 // 标准侧边栏菜单契约（由 CodeBench 宿主在运行时通过 remoteEntry.js -> ./menu 动态拉取）
-// 按照 ADR-14、ADR-19 与 ADR-24 演进为「全局概览 ➔ 架构数字孪生 ➔ Proto 契约治理 ➔ 契约核验与回归 ➔ 环境与治理」5 组 14 项结构 (F-15, F-25, F-36)
+// 按「两条主线（契约库与构建、契约使用：架构对齐/流量核验）+ 独立开发合规线」演进为 6 组 14 项结构
 export const contractMenuConfig: ContractMenuConfig = {
   moduleKey: MODULE_KEY,
   moduleName: MODULE_TITLE,
@@ -28,8 +28,33 @@ export const contractMenuConfig: ContractMenuConfig = {
       ],
     },
     {
-      title: '架构数字孪生',
+      title: '契约库与构建',
       items: [
+        {
+          path: '/proto-pipeline',
+          label: '契约入库流水线',
+          icon: 'M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4',
+        },
+        {
+          path: '/proto-docs',
+          label: '契约库',
+          icon: 'M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253',
+        },
+      ],
+    },
+    {
+      title: '架构与契约对齐',
+      items: [
+        {
+          path: '/proto-catalog',
+          label: '契约认领与雷达',
+          icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4',
+        },
+        {
+          path: '/architecture',
+          label: '架构元素',
+          icon: 'M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10',
+        },
         {
           path: '/discovery',
           label: '现网发现',
@@ -40,44 +65,14 @@ export const contractMenuConfig: ContractMenuConfig = {
           label: '架构拓扑',
           icon: 'M13 10V3L4 14h7v7l9-11h-7z',
         },
-        {
-          path: '/architecture',
-          label: '架构元素',
-          icon: 'M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10',
-        },
       ],
     },
     {
-      title: 'Proto 契约治理',
-      items: [
-        {
-          path: '/proto-docs',
-          label: '接口文档与目录',
-          icon: 'M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253',
-        },
-        {
-          path: '/proto-sources',
-          label: 'Proto 源码库',
-          icon: 'M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4',
-        },
-        {
-          path: '/proto-pipeline',
-          label: '契约同步与发布',
-          icon: 'M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4',
-        },
-        {
-          path: '/proto-governance',
-          label: '规范与 MR 门禁',
-          icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z',
-        },
-      ],
-    },
-    {
-      title: '契约核验与回归',
+      title: '流量核验与回归',
       items: [
         {
           path: '/record',
-          label: '契约采集',
+          label: '流量采集',
           icon: 'M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z',
         },
         {
@@ -98,7 +93,17 @@ export const contractMenuConfig: ContractMenuConfig = {
       ],
     },
     {
-      title: '环境与治理',
+      title: '开发合规',
+      items: [
+        {
+          path: '/proto-governance',
+          label: '规范与 MR 门禁',
+          icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z',
+        },
+      ],
+    },
+    {
+      title: '系统与环境',
       items: [
         {
           path: '/agents',

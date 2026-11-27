@@ -3,7 +3,8 @@ import { renderToString } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { LivingProtoDocsPane } from '../LivingProtoDocsPane';
 import { ProtoDocsWorkbenchPage } from '../ProtoDocsWorkbenchPage';
-import { SchemasRouteWrapper } from '../../../App';
+import { ProtoCatalogWorkbenchPage } from '../ProtoCatalogWorkbenchPage';
+import { ProtoDocsRouteWrapper, SchemasRouteWrapper } from '../../../App';
 import type { ProtoDocTreeResponse, ProtoServiceDocDetailDTO } from '../../../types';
 
 vi.mock('../../../api/schema', () => ({
@@ -16,6 +17,7 @@ vi.mock('../../../api/schema', () => ({
   exportProtoDocsMarkdown: vi.fn(),
   getProtoSchemaSources: vi.fn().mockResolvedValue({ files: [] }),
   listProtoFiles: vi.fn().mockResolvedValue({ items: [], total: 0, page: 1, page_size: 25 }),
+  listGitRepos: vi.fn().mockResolvedValue({ items: [], total: 0 }),
 }));
 
 vi.mock('../../../utils/toast', () => ({
@@ -268,29 +270,37 @@ describe('M23-P3 / M27 LivingProtoDocsPane & ProtoDocsWorkbenchPage (/proto-docs
     expect(html).toContain('/topology?focus=mod_22');
     expect(html).toContain('/architecture?tree=logical&amp;module_id=22');
     expect(html).toContain('导出 Markdown');
+    const cleanHtml = html.replace(/<!-- -->/g, '');
+    expect(cleanHtml).toContain('service-ecology-links');
+    expect(cleanHtml).toContain('已认领实现 (1)');
+    expect(cleanHtml).toContain('查看实测事务');
+    expect(cleanHtml).toContain('发起流量采集');
+    expect(cleanHtml).toContain('关联黄金用例');
   });
 
-  it('mounts ProtoDocsWorkbenchPage without asset summary bloat and redirects legacy ?tab=catalog seamlessly', () => {
+  it('mounts ProtoDocsWorkbenchPage (契约库 3-tab), ProtoCatalogWorkbenchPage & lossless legacy redirects', () => {
     const docsPageHtml = renderToString(
       <MemoryRouter initialEntries={['/proto-docs?service_name=demo.billing.v1.BillingService']}>
         <ProtoDocsWorkbenchPage initialTree={mockTree} initialDetail={mockDetail} />
       </MemoryRouter>
     );
 
+    expect(docsPageHtml).toContain('契约库');
     expect(docsPageHtml).toContain('全注释参考文档');
-    expect(docsPageHtml).toContain('契约目录与五态雷达');
+    expect(docsPageHtml).toContain('契约源码');
     expect(docsPageHtml).toContain('跨包依赖关系图');
     expect(docsPageHtml).toContain('BillingService');
     expect(docsPageHtml).not.toContain('上传描述集 (.pb)');
     expect(docsPageHtml).not.toContain('描述集资产台账');
 
-    const catalogPageHtml = renderToString(
-      <MemoryRouter initialEntries={['/proto-docs?docs_view=catalog-ops&claimed_status=UNCLAIMED']}>
-        <ProtoDocsWorkbenchPage initialCatalogGroups={[]} initialCatalogTotal={0} />
+    const sourcesTabHtml = renderToString(
+      <MemoryRouter initialEntries={['/proto-docs?docs_view=sources']}>
+        <ProtoDocsWorkbenchPage />
       </MemoryRouter>
     );
-    expect(catalogPageHtml).toContain('契约目录与五态雷达');
-    expect(catalogPageHtml).not.toContain('上传描述集 (.pb)');
+    expect(sourcesTabHtml).toContain('git-sources-workbench');
+    expect(sourcesTabHtml).toContain('在流水线中治理');
+    expect(sourcesTabHtml).not.toContain('冲突仲裁');
 
     const graphPageHtml = renderToString(
       <MemoryRouter initialEntries={['/proto-docs?docs_view=graph']}>
@@ -299,13 +309,37 @@ describe('M23-P3 / M27 LivingProtoDocsPane & ProtoDocsWorkbenchPage (/proto-docs
     );
     expect(graphPageHtml).toContain('跨包依赖关系图');
 
+    const catalogRadarHtml = renderToString(
+      <MemoryRouter initialEntries={['/proto-catalog']}>
+        <ProtoCatalogWorkbenchPage initialRadarData={{ radar: { shadow_live_count: 1, unclaimed_orphan_count: 2, phantom_proto_count: 0, vanished_claimed_count: 0, placement_drift_count: 0, total_catalog_services: 3, authority_scope_only: true }, total: 0, page: 1, page_size: 25, items: [] }} />
+      </MemoryRouter>
+    );
+    expect(catalogRadarHtml).toContain('proto-catalog-workbench-page');
+    expect(catalogRadarHtml).toContain('五态健康雷达');
+    expect(catalogRadarHtml).toContain('服务方法认领目录');
+    expect(catalogRadarHtml).toContain('unified-catalog-pane');
+
+    const catalogMethodsHtml = renderToString(
+      <MemoryRouter initialEntries={['/proto-catalog?claimed_status=UNCLAIMED']}>
+        <ProtoCatalogWorkbenchPage initialCatalogGroups={[]} initialCatalogTotal={0} />
+      </MemoryRouter>
+    );
+    expect(catalogMethodsHtml).toContain('服务方法认领目录');
+
+    const docsRedirectHtml = renderToString(
+      <MemoryRouter initialEntries={['/proto-docs?docs_view=catalog-ops&claimed_status=UNCLAIMED']}>
+        <ProtoDocsRouteWrapper />
+      </MemoryRouter>
+    );
+    expect(docsRedirectHtml).toContain('data-target="/proto-catalog?claimed_status=UNCLAIMED"');
+
     const redirectHtml = renderToString(
       <MemoryRouter initialEntries={['/schemas?tab=catalog&service_name=demo.billing.v1.BillingService']}>
         <SchemasRouteWrapper />
       </MemoryRouter>
     );
     expect(redirectHtml).toContain(
-      'data-target="/proto-docs?service_name=demo.billing.v1.BillingService&amp;docs_view=catalog"'
+      'data-target="/proto-catalog?service_name=demo.billing.v1.BillingService"'
     );
   });
 });

@@ -1,9 +1,22 @@
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, FileCheck2, Play, ShieldAlert, Wrench } from 'lucide-react';
+import {
+  AlertTriangle,
+  ChevronDown,
+  ChevronRight,
+  Code2,
+  FileCheck2,
+  Play,
+  ShieldAlert,
+  Wrench,
+} from 'lucide-react';
 import * as schemaApi from '../../api/schema';
 import { useToast } from '../../utils/toast';
 import { PoolReconcileReportDrawer } from '../ProtoSchemaWorkbenchPage/PoolReconcileReportDrawer';
 import { ProtoConflictArbitrationDrawer } from '../ProtoSchemaWorkbenchPage/ProtoConflictArbitrationDrawer';
+import {
+  ProtoSourceAnchorDrawer,
+  useSourceAnchorDrawer,
+} from '../ProtoSchemaWorkbenchPage/ProtoSourceAnchorDrawer';
 import type {
   PipelineOverviewDTO,
   PoolReconcileProgressEventPayload,
@@ -16,6 +29,7 @@ export interface StageReconcilePaneProps {
   locked: boolean;
   poolProgress: PoolReconcileProgressEventPayload | null;
   onRefresh: () => void;
+  initialReconcileResp?: PoolReconcileResponse | null;
 }
 
 export const StageReconcilePane: React.FC<StageReconcilePaneProps> = ({
@@ -24,14 +38,22 @@ export const StageReconcilePane: React.FC<StageReconcilePaneProps> = ({
   locked,
   poolProgress,
   onRefresh,
+  initialReconcileResp = null,
 }) => {
   const toast = useToast();
-  const [reconcileResp, setReconcileResp] = useState<PoolReconcileResponse | null>(null);
-  const [subTab, setSubTab] = useState<'conflicts' | 'auto_fixes' | 'quarantined'>('conflicts');
+  const sourceAnchorDrawer = useSourceAnchorDrawer();
+  const [reconcileResp, setReconcileResp] = useState<PoolReconcileResponse | null>(
+    initialReconcileResp
+  );
+  const [subTab, setSubTab] = useState<'conflicts' | 'auto_fixes' | 'quarantined' | 'harvested'>(
+    'conflicts'
+  );
   const [running, setRunning] = useState(false);
   const [reportDrawerOpen, setReportDrawerOpen] = useState(false);
   const [conflictDrawerOpen, setConflictDrawerOpen] = useState(false);
   const [promoting, setPromoting] = useState(false);
+  const [resolvingKey, setResolvingKey] = useState<string | null>(null);
+  const [collapsedConflicts, setCollapsedConflicts] = useState<Set<string>>(new Set());
 
   const loadLatestRun = async () => {
     try {
@@ -43,8 +65,9 @@ export const StageReconcilePane: React.FC<StageReconcilePaneProps> = ({
   };
 
   useEffect(() => {
+    if (initialReconcileResp !== null) return;
     void loadLatestRun();
-  }, [overview?.stage3.latest_run?.id]);
+  }, [initialReconcileResp, overview?.stage3.latest_run?.id]);
 
   const handleRunReconcile = async () => {
     if (!isAdmin || locked) return;
@@ -58,6 +81,31 @@ export const StageReconcilePane: React.FC<StageReconcilePaneProps> = ({
       toast.error((err as Error).message || '触发全池收敛失败');
     } finally {
       setRunning(false);
+    }
+  };
+
+  const handleResolveInlineConflict = async (
+    logicalPath: string,
+    ownerGitRepoId: number,
+    ownerBundleId: number
+  ) => {
+    if (!isAdmin || locked) return;
+    const key = `${logicalPath}:${ownerGitRepoId}:${ownerBundleId}`;
+    setResolvingKey(key);
+    try {
+      await schemaApi.resolveProtoConflict({
+        kind: 'IMPORT',
+        logical_path: logicalPath,
+        owner_git_repo_id: ownerGitRepoId,
+        owner_bundle_id: ownerBundleId,
+      });
+      toast.success(`已将 [${logicalPath}] 权威提供方设为所选仓库，请重新全池收敛验证`);
+      await loadLatestRun();
+      onRefresh();
+    } catch (err) {
+      toast.error((err as Error).message || '冲突裁决失败');
+    } finally {
+      setResolvingKey(null);
     }
   };
 
@@ -83,7 +131,9 @@ export const StageReconcilePane: React.FC<StageReconcilePaneProps> = ({
         run_id: reconcileResp.run?.id,
         fixes,
       });
-      toast.success(`已将 ${res.promoted_import_rewrites} 条自动修复规则固化至全局配置 rev #${res.governance_revision}`);
+      toast.success(
+        `已将 ${res.promoted_import_rewrites} 条自动修复规则固化至全局配置 rev #${res.governance_revision}`
+      );
       onRefresh();
     } catch (err) {
       toast.error((err as Error).message || '固化规则失败');
@@ -92,10 +142,20 @@ export const StageReconcilePane: React.FC<StageReconcilePaneProps> = ({
     }
   };
 
+  const toggleConflictExpand = (logicalPath: string) => {
+    setCollapsedConflicts((prev) => {
+      const next = new Set(prev);
+      if (next.has(logicalPath)) next.delete(logicalPath);
+      else next.add(logicalPath);
+      return next;
+    });
+  };
+
   const stage3 = overview?.stage3;
   const conflicts = reconcileResp?.report?.conflicts || [];
   const autoFixes = reconcileResp?.report?.auto_fixes || [];
   const quarantined = reconcileResp?.report?.quarantined || [];
+  const harvested = reconcileResp?.report?.harvested || [];
 
   return (
     <div className="ppipe-panel-card" data-testid="stage-reconcile-pane">
@@ -109,7 +169,7 @@ export const StageReconcilePane: React.FC<StageReconcilePaneProps> = ({
             className="btn btn-secondary btn-sm"
             onClick={() => setConflictDrawerOpen(true)}
           >
-            <ShieldAlert size={14} /> 人工仲裁同名冲突
+            <ShieldAlert size={14} /> 权威归属台账
           </button>
           <button
             type="button"
@@ -175,9 +235,11 @@ export const StageReconcilePane: React.FC<StageReconcilePaneProps> = ({
         </div>
       </div>
 
-      <div className="ppipe-subtabs">
+      <div className="ppipe-subtabs" role="tablist" aria-label="阶段 ③ 收敛明细视图">
         <button
           type="button"
+          role="tab"
+          aria-selected={subTab === 'conflicts'}
           className={`btn btn-sm ${subTab === 'conflicts' ? 'btn-primary' : 'btn-secondary'}`}
           onClick={() => setSubTab('conflicts')}
         >
@@ -185,6 +247,8 @@ export const StageReconcilePane: React.FC<StageReconcilePaneProps> = ({
         </button>
         <button
           type="button"
+          role="tab"
+          aria-selected={subTab === 'auto_fixes'}
           className={`btn btn-sm ${subTab === 'auto_fixes' ? 'btn-primary' : 'btn-secondary'}`}
           onClick={() => setSubTab('auto_fixes')}
         >
@@ -192,10 +256,21 @@ export const StageReconcilePane: React.FC<StageReconcilePaneProps> = ({
         </button>
         <button
           type="button"
+          role="tab"
+          aria-selected={subTab === 'quarantined'}
           className={`btn btn-sm ${subTab === 'quarantined' ? 'btn-primary' : 'btn-secondary'}`}
           onClick={() => setSubTab('quarantined')}
         >
           异常隔离清单 ({quarantined.length})
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={subTab === 'harvested'}
+          className={`btn btn-sm ${subTab === 'harvested' ? 'btn-primary' : 'btn-secondary'}`}
+          onClick={() => setSubTab('harvested')}
+        >
+          共享基座收割 ({harvested.length})
         </button>
         {isAdmin && subTab === 'auto_fixes' && autoFixes.length > 0 && (
           <button
@@ -211,14 +286,14 @@ export const StageReconcilePane: React.FC<StageReconcilePaneProps> = ({
 
       {subTab === 'conflicts' && (
         <div className="ppipe-table-wrap">
-          <table className="ppipe-table">
+          <table className="ppipe-table" data-testid="stage-reconcile-conflicts-table">
             <thead>
               <tr>
                 <th>标准逻辑路径</th>
                 <th>胜出仓库（自动兜底 / 人工裁决）</th>
                 <th>内容一致性</th>
                 <th>候选数</th>
-                <th>胜出依据</th>
+                <th>胜出依据与操作</th>
               </tr>
             </thead>
             <tbody>
@@ -229,17 +304,92 @@ export const StageReconcilePane: React.FC<StageReconcilePaneProps> = ({
                   </td>
                 </tr>
               ) : (
-                conflicts.slice(0, 50).map((c) => (
-                  <tr key={c.logical_path}>
-                    <td>
-                      <code>{c.logical_path}</code>
-                    </td>
-                    <td>{c.winner_repo_name}</td>
-                    <td>{c.content_identical ? '内容等价' : '存在符号/字段差异'}</td>
-                    <td>{c.candidates?.length || 0}</td>
-                    <td>{c.reason}</td>
-                  </tr>
-                ))
+                conflicts.slice(0, 50).map((c) => {
+                  const isExpanded = !collapsedConflicts.has(c.logical_path);
+                  return (
+                    <React.Fragment key={c.logical_path}>
+                      <tr>
+                        <td>
+                          <code>{c.logical_path}</code>
+                        </td>
+                        <td>{c.winner_repo_name}</td>
+                        <td>{c.content_identical ? '内容等价' : '存在符号/字段差异'}</td>
+                        <td>{c.candidates?.length || 0}</td>
+                        <td>
+                          <div className="ppipe-actions-row">
+                            <span>{c.reason}</span>
+                            {c.candidates && c.candidates.length > 0 && (
+                              <button
+                                type="button"
+                                className="btn btn-secondary btn-xs"
+                                onClick={() => toggleConflictExpand(c.logical_path)}
+                              >
+                                {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                                {isExpanded ? '收起候选' : '展开裁决'}
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                      {isExpanded && c.candidates && c.candidates.length > 0 && (
+                        <tr>
+                          <td colSpan={5}>
+                            <div className="ppipe-candidate-list">
+                              {c.candidates.map((cand) => {
+                                const rKey = `${c.logical_path}:${cand.git_repo_id}:${cand.bundle_id}`;
+                                const uniqueSyms =
+                                  cand.unique_symbols ||
+                                  c.symbol_diff?.[cand.repo_name] ||
+                                  [];
+                                return (
+                                  <div
+                                    key={`${cand.proto_file_id}-${cand.bundle_id}`}
+                                    className="ppipe-candidate-row"
+                                  >
+                                    <div className="ppipe-candidate-meta">
+                                      <div>
+                                        <strong>{cand.repo_name}</strong>{' '}
+                                        {cand.is_winner && (
+                                          <span className="code-badge code-badge-success">当前胜出</span>
+                                        )}
+                                      </div>
+                                      <div>
+                                        仓内路径：<code>{cand.repo_file_path}</code> · SHA256：
+                                        <code>{cand.content_sha256.slice(0, 8)}</code>
+                                      </div>
+                                      {uniqueSyms.length > 0 && (
+                                        <div>独有符号：{uniqueSyms.join(', ')}</div>
+                                      )}
+                                    </div>
+                                    {isAdmin && (
+                                      <button
+                                        type="button"
+                                        className={`btn btn-xs ${
+                                          cand.is_winner ? 'btn-secondary' : 'btn-primary'
+                                        }`}
+                                        data-testid={`inline-resolve-conflict-${cand.git_repo_id}-${cand.bundle_id}`}
+                                        disabled={locked || resolvingKey === rKey}
+                                        onClick={() =>
+                                          void handleResolveInlineConflict(
+                                            c.logical_path,
+                                            cand.git_repo_id,
+                                            cand.bundle_id
+                                          )
+                                        }
+                                      >
+                                        {resolvingKey === rKey ? '裁决中...' : '设为权威提供方'}
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -297,12 +447,13 @@ export const StageReconcilePane: React.FC<StageReconcilePaneProps> = ({
                 <th>根因隔离</th>
                 <th>错误数</th>
                 <th>原因摘要</th>
+                <th>源码定位</th>
               </tr>
             </thead>
             <tbody>
               {quarantined.length === 0 ? (
                 <tr>
-                  <td colSpan={5} style={{ textAlign: 'center', color: 'var(--color-text-secondary)' }}>
+                  <td colSpan={6} style={{ textAlign: 'center', color: 'var(--color-text-secondary)' }}>
                     全池编译健康，无被隔离文件
                   </td>
                 </tr>
@@ -316,6 +467,54 @@ export const StageReconcilePane: React.FC<StageReconcilePaneProps> = ({
                     <td>{q.is_root_cause ? '是（根因）' : '受连带影响'}</td>
                     <td>{q.error_count}</td>
                     <td>{q.reason}</td>
+                    <td>
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-xs"
+                        onClick={() =>
+                          void sourceAnchorDrawer.openByFilePath(q.logical_path || q.repo_file_path, 1)
+                        }
+                      >
+                        <Code2 size={12} /> 定位源码
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {subTab === 'harvested' && (
+        <div className="ppipe-table-wrap" data-testid="stage-reconcile-harvested-table">
+          <table className="ppipe-table">
+            <thead>
+              <tr>
+                <th>逻辑导入路径</th>
+                <th>基座源绝对路径</th>
+                <th>来源优先级</th>
+                <th>触发方式</th>
+              </tr>
+            </thead>
+            <tbody>
+              {harvested.length === 0 ? (
+                <tr>
+                  <td colSpan={4} style={{ textAlign: 'center', color: 'var(--color-text-secondary)' }}>
+                    本次收敛未触发额外共享基座收割
+                  </td>
+                </tr>
+              ) : (
+                harvested.slice(0, 100).map((hb) => (
+                  <tr key={`${hb.logical_path}-${hb.source_abs_path}`}>
+                    <td>
+                      <code>{hb.logical_path}</code>
+                    </td>
+                    <td>
+                      <code>{hb.source_abs_path}</code>
+                    </td>
+                    <td>P{hb.source_priority}</td>
+                    <td>{hb.triggered_by}</td>
                   </tr>
                 ))
               )}
@@ -345,6 +544,8 @@ export const StageReconcilePane: React.FC<StageReconcilePaneProps> = ({
           onRefresh();
         }}
       />
+
+      <ProtoSourceAnchorDrawer drawer={sourceAnchorDrawer} />
     </div>
   );
 };

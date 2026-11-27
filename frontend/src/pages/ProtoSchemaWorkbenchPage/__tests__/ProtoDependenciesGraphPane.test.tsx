@@ -173,7 +173,7 @@ describe('M22-P3 ProtoDependenciesGraphPane (/schemas?tab=graph)', () => {
     );
     expect(pageHtml).toContain('跨包依赖关系图');
     expect(pageHtml).not.toContain('在线源码直编 (.proto)');
-    expect(pageHtml).toContain('前往契约流水线');
+    expect(pageHtml).toContain('前往契约入库流水线');
     expect(pageHtml).toContain('proto-graph-pane');
 
     const ledgerItems: ProtoSchemaLedgerItemDTO[] = [

@@ -398,15 +398,15 @@ export const ProtoSchemaWorkbenchPage: React.FC = () => {
 
         <div className="pschema-quicklinks">
           <Link to={resolvePath('/proto-pipeline')} className="btn btn-primary">
-            <span>前往契约流水线</span>
+            <span>前往契约入库流水线</span>
           </Link>
           <Link to={resolvePath('/proto-docs')} className="btn btn-secondary">
             <BookOpen size={14} />
-            <span>接口文档与目录</span>
+            <span>契约库</span>
           </Link>
           <Link to={resolvePath('/proto-governance')} className="btn btn-secondary">
             <ShieldCheck size={14} />
-            <span>规范与变更门禁</span>
+            <span>规范与 MR 门禁</span>
           </Link>
         </div>
       </div>

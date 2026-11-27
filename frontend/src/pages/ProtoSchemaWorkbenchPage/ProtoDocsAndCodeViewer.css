@@ -2439,3 +2439,21 @@
   flex-direction: column;
   gap: 8px;
 }
+
+.pdoc-ecology-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--color-bg-muted);
+  border: 1px solid var(--color-border-primary);
+  font-size: 12px;
+}
+
+.pdoc-ecology-bar__label {
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}

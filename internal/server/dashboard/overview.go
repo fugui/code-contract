@@ -553,7 +553,7 @@ func GetOverview(ctx context.Context, db *gorm.DB, subsystemID *uint64) (*Dashbo
 	if archLoss > 0 {
 		hints = append(hints, hintItem{
 			lostScore: archLoss,
-			hint:      fmt.Sprintf("检测到 %d 条架构漂移违规调用边，请前往【架构拓扑】或【契约采集】排查未声明依赖并补齐 DEPEND 契约", overview.DriftRadar.ActiveViolationEdges),
+			hint:      fmt.Sprintf("检测到 %d 条架构漂移违规调用边，请前往【架构拓扑】或【流量采集】排查未声明依赖并补齐 DEPEND 契约", overview.DriftRadar.ActiveViolationEdges),
 		})
 	}
 

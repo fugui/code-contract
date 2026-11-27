@@ -335,7 +335,7 @@ describe('M25 GitSourcesWorkbenchPane & DeepLink & Source Badges', () => {
     expect(htmlDiffAndConsistency).toContain('仅远端新增 (remote_only)');
   });
 
-  it('资产台账渲染 UPLOAD_PB / GIT_SYNC 来源徽章与短 Commit SHA，文档详情渲染 ?tab=sources 深链', () => {
+  it('资产台账渲染 UPLOAD_PB / GIT_SYNC 来源徽章与短 Commit SHA，文档详情渲染契约库源码深链', () => {
     const ledgerItems: ProtoSchemaLedgerItemDTO[] = [
       {
         id: 1,
@@ -462,6 +462,6 @@ describe('M25 GitSourcesWorkbenchPane & DeepLink & Source Badges', () => {
       </MemoryRouter>
     );
 
-    expect(docHtml).toContain('tab=sources&amp;file_id=501#L42');
+    expect(docHtml).toContain('/proto-docs?docs_view=sources&amp;file_id=501#L42');
   });
 });

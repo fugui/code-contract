@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
   Code2,
+  ExternalLink,
   FileDiff,
   FolderGit2,
   GitBranch,
@@ -20,6 +21,7 @@ import {
 import { Pagination, usePaginationState } from '@code/common';
 import * as schemaApi from '../../api/schema';
 import { subscribeServerEvents } from '../../api/sse';
+import { useModulePath } from '../../hooks/useModulePath';
 import { useToast } from '../../utils/toast';
 import type {
   GitConsistencyReportDTO,
@@ -41,6 +43,7 @@ import './ProtoDocsAndCodeViewer.css';
 
 export interface GitSourcesWorkbenchPaneProps {
   isAdmin?: boolean;
+  readOnlyConsumer?: boolean;
   initialSchemaName?: string;
   initialFileId?: number;
   initialHighlightLine?: number;
@@ -87,6 +90,7 @@ function renderRepoSyncBadge(status?: string) {
 
 export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = ({
   isAdmin = false,
+  readOnlyConsumer = false,
   initialSchemaName = '',
   initialFileId,
   initialHighlightLine,
@@ -106,6 +110,7 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
 }) => {
   const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
+  const resolvePath = useModulePath();
   const toast = useToast();
 
   const { page, pageSize, setPage, setPageSize } = usePaginationState({
@@ -660,13 +665,15 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
           </div>
 
           <div className="pdoc-meta-row">
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => setConflictDrawerOpen(true)}
-            >
-              <Scale size={14} /> 冲突仲裁
-            </button>
+            {!readOnlyConsumer && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setConflictDrawerOpen(true)}
+              >
+                <Scale size={14} /> 冲突仲裁
+              </button>
+            )}
 
             {selectedRepo && (
               <button
@@ -678,7 +685,7 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
               </button>
             )}
 
-            {isAdmin && selectedRepo && (
+            {!readOnlyConsumer && isAdmin && selectedRepo && (
               <button
                 type="button"
                 className="btn btn-secondary"
@@ -689,7 +696,7 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
               </button>
             )}
 
-            {isAdmin && selectedRepo && (
+            {!readOnlyConsumer && isAdmin && selectedRepo && (
               <button
                 type="button"
                 className="btn btn-secondary"
@@ -701,7 +708,7 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
               </button>
             )}
 
-            {isAdmin && selectedRepo && (
+            {!readOnlyConsumer && isAdmin && selectedRepo && (
               <button
                 type="button"
                 className="btn btn-secondary"
@@ -709,6 +716,20 @@ export const GitSourcesWorkbenchPane: React.FC<GitSourcesWorkbenchPaneProps> = (
               >
                 <Settings2 size={14} /> 导出与治理配置
               </button>
+            )}
+
+            {readOnlyConsumer && (
+              <Link
+                to={resolvePath(
+                  selectedRepoId
+                    ? `/proto-pipeline?stage=normalize&repo_id=${selectedRepoId}`
+                    : '/proto-pipeline?stage=normalize'
+                )}
+                className="btn btn-secondary"
+                data-testid="git-sources-pipeline-govern-link"
+              >
+                在流水线中治理 <ExternalLink size={14} />
+              </Link>
             )}
           </div>
         </div>

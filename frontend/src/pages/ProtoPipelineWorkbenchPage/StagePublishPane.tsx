@@ -1,23 +1,32 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
   Archive,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Layers,
   Play,
   ShieldCheck,
   Trash2,
 } from 'lucide-react';
-import { Modal, useConfirm } from '@code/common';
+import { Modal, useConfirm, usePaginationState } from '@code/common';
 import * as schemaApi from '../../api/schema';
 import { useModulePath } from '../../hooks/useModulePath';
 import { useToast } from '../../utils/toast';
+import { SchemaAssetLedgerTable } from '../ProtoSchemaWorkbenchPage/SchemaAssetLedgerTable';
+import { SchemaAssetInspectDrawer } from '../ProtoSchemaWorkbenchPage/SchemaAssetInspectDrawer';
+import { SchemaConflictModal } from '../ProtoSchemaWorkbenchPage/SchemaConflictModal';
+import { BreakingChangeAlertDrawer } from '../ProtoSchemasPage/BreakingChangeAlertDrawer';
 import type {
+  AffectedDependent,
   ArchivedExternalSchemaDTO,
+  BreakingRuleViolation,
+  ConflictOrBrokenResponse,
   PipelineOverviewDTO,
   ProtoPublishRunDTO,
+  ProtoSchemaLedgerItemDTO,
   PublishBreakingItemDTO,
   PublishProgressEventPayload,
   PublishRunDetailsDTO,
@@ -32,6 +41,8 @@ export interface StagePublishPaneProps {
   initialPublishRun?: ProtoPublishRunDTO | null;
   initialPublishDetails?: PublishRunDetailsDTO | null;
   initialArchivedSchemas?: ArchivedExternalSchemaDTO[];
+  initialSubTab?: 'results' | 'ledger';
+  initialLedgerSchemas?: ProtoSchemaLedgerItemDTO[];
 }
 
 function renderBundleStatusBadge(status: string) {
@@ -62,11 +73,15 @@ export const StagePublishPane: React.FC<StagePublishPaneProps> = ({
   initialPublishRun = null,
   initialPublishDetails = null,
   initialArchivedSchemas = [],
+  initialSubTab = 'results',
+  initialLedgerSchemas,
 }) => {
   const resolvePath = useModulePath();
+  const navigate = useNavigate();
   const toast = useToast();
   const confirmDialog = useConfirm();
 
+  const [subTab, setSubTab] = useState<'results' | 'ledger'>(initialSubTab);
   const [publishRun, setPublishRun] = useState<ProtoPublishRunDTO | null>(initialPublishRun);
   const [publishDetails, setPublishDetails] = useState<PublishRunDetailsDTO | null>(
     initialPublishDetails
@@ -85,6 +100,35 @@ export const StagePublishPane: React.FC<StagePublishPaneProps> = ({
   const [breakingReason, setBreakingReason] = useState('');
   const [approving, setApproving] = useState(false);
 
+  // 生效契约库版本台账状态
+  const {
+    page: ledgerPage,
+    pageSize: ledgerPageSize,
+    setPage: setLedgerPage,
+    setPageSize: setLedgerPageSize,
+  } = usePaginationState({ defaultPageSize: 25 });
+  const [ledgerSchemas, setLedgerSchemas] = useState<ProtoSchemaLedgerItemDTO[]>(
+    initialLedgerSchemas ?? []
+  );
+  const [ledgerTotal, setLedgerTotal] = useState<number>(initialLedgerSchemas?.length ?? 0);
+  const [ledgerLoading, setLedgerLoading] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState('');
+  const [activeStatusFilter, setActiveStatusFilter] = useState('ALL');
+  const [sourceTypeFilter, setSourceTypeFilter] = useState('');
+  const [ledgerSearch, setLedgerSearch] = useState('');
+  const [inspectDrawerOpen, setInspectDrawerOpen] = useState(false);
+  const [inspectSchema, setInspectSchema] = useState<ProtoSchemaLedgerItemDTO | null>(null);
+  const [conflictModalOpen, setConflictModalOpen] = useState(false);
+  const [conflictData, setConflictData] = useState<ConflictOrBrokenResponse | null>(null);
+  const [breakingDrawerOpen, setBreakingDrawerOpen] = useState(false);
+  const [breakingDrawerData, setBreakingDrawerData] = useState<{
+    schemaId: string | number | null;
+    batchIds: (string | number)[] | null;
+    breakingRules: BreakingRuleViolation[];
+    affectedDependents: AffectedDependent[];
+  } | null>(null);
+  const [isOverriding, setIsOverriding] = useState(false);
+
   const loadPublishState = useCallback(async () => {
     try {
       const [latestRes, archRes] = await Promise.all([
@@ -99,9 +143,41 @@ export const StagePublishPane: React.FC<StagePublishPaneProps> = ({
     }
   }, []);
 
+  const loadLedgerSchemas = useCallback(async () => {
+    setLedgerLoading(true);
+    try {
+      const res = await schemaApi.listProtoSchemas({
+        category: selectedCategory || undefined,
+        active_only:
+          activeStatusFilter === 'ACTIVE'
+            ? true
+            : activeStatusFilter === 'INACTIVE'
+              ? false
+              : undefined,
+        source_type: sourceTypeFilter || undefined,
+        search: ledgerSearch || undefined,
+        latest_only: true,
+        page: ledgerPage,
+        page_size: ledgerPageSize,
+      });
+      setLedgerSchemas(res.items ?? []);
+      setLedgerTotal(res.total ?? 0);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '加载生效契约版本台账失败');
+    } finally {
+      setLedgerLoading(false);
+    }
+  }, [selectedCategory, activeStatusFilter, sourceTypeFilter, ledgerSearch, ledgerPage, ledgerPageSize, toast]);
+
   useEffect(() => {
+    if (initialPublishRun !== null || initialPublishDetails !== null) return;
     void loadPublishState();
-  }, [loadPublishState, overview?.stage4.latest_run?.id]);
+  }, [loadPublishState, initialPublishRun, initialPublishDetails, overview?.stage4.latest_run?.id]);
+
+  useEffect(() => {
+    if (subTab !== 'ledger' || initialLedgerSchemas !== undefined) return;
+    void loadLedgerSchemas();
+  }, [subTab, initialLedgerSchemas, loadLedgerSchemas]);
 
   const handlePublishNow = async () => {
     if (!isAdmin || locked) return;
@@ -124,6 +200,9 @@ export const StagePublishPane: React.FC<StagePublishPaneProps> = ({
         );
       }
       await loadPublishState();
+      if (subTab === 'ledger') {
+        await loadLedgerSchemas();
+      }
       onRefresh();
     } catch (err) {
       toast.error((err as Error).message || '拓扑编译发布失败');
@@ -229,6 +308,138 @@ export const StagePublishPane: React.FC<StagePublishPaneProps> = ({
     }
   };
 
+  const handleActivateLedgerSchema = async (s: ProtoSchemaLedgerItemDTO) => {
+    try {
+      const res = await schemaApi.activateProtoSchema(s.id);
+      toast.success(`描述集 [${s.name} v${s.version}] 激活成功，生效 ${res.activated_operations} 个服务契约`);
+      await loadLedgerSchemas();
+      if (inspectDrawerOpen && inspectSchema?.name === s.name) {
+        setInspectSchema(res.schema);
+      }
+      onRefresh();
+    } catch (err: unknown) {
+      const respData = (err as unknown as { responseData?: ConflictOrBrokenResponse })?.responseData;
+      if (
+        respData &&
+        (respData.code === 'BREAKING_CHANGE_DETECTED' ||
+          (respData.breaking_rules && respData.breaking_rules.length > 0))
+      ) {
+        setBreakingDrawerData({
+          schemaId: s.id,
+          batchIds: null,
+          breakingRules: respData.breaking_rules || [],
+          affectedDependents: respData.affected_dependents || [],
+        });
+        setBreakingDrawerOpen(true);
+        return;
+      }
+      if (respData && (respData.conflicts || respData.broken_dependents)) {
+        setConflictData(respData);
+        setConflictModalOpen(true);
+        return;
+      }
+      toast.error(err instanceof Error ? err.message : '激活描述集失败');
+    }
+  };
+
+  const handleDeactivateLedgerSchema = async (s: ProtoSchemaLedgerItemDTO) => {
+    try {
+      const res = await schemaApi.deactivateProtoSchema(s.id);
+      toast.success(`描述集 [${s.name} v${s.version}] 已停用`);
+      await loadLedgerSchemas();
+      if (inspectDrawerOpen && inspectSchema?.name === s.name) {
+        setInspectSchema(res.schema);
+      }
+      onRefresh();
+    } catch (err: unknown) {
+      const respData = (err as unknown as { responseData?: ConflictOrBrokenResponse })?.responseData;
+      if (respData && (respData.conflicts || respData.broken_dependents)) {
+        setConflictData(respData);
+        setConflictModalOpen(true);
+        return;
+      }
+      toast.error(err instanceof Error ? err.message : '停用描述集失败');
+    }
+  };
+
+  const handleBatchActivateLedger = async (selectedIds: (string | number)[]) => {
+    try {
+      const res = await schemaApi.batchActivateProtoSchemas(selectedIds);
+      toast.success(res.message || `成功批量激活 ${res.activated_count} 个描述集`);
+      await loadLedgerSchemas();
+      onRefresh();
+    } catch (err: unknown) {
+      const respData = (err as unknown as { responseData?: ConflictOrBrokenResponse })?.responseData;
+      if (
+        respData &&
+        (respData.code === 'BREAKING_CHANGE_DETECTED' ||
+          (respData.breaking_rules && respData.breaking_rules.length > 0))
+      ) {
+        setBreakingDrawerData({
+          schemaId: null,
+          batchIds: selectedIds,
+          breakingRules: respData.breaking_rules || [],
+          affectedDependents: respData.affected_dependents || [],
+        });
+        setBreakingDrawerOpen(true);
+        return;
+      }
+      if (respData && (respData.conflicts || respData.broken_dependents)) {
+        setConflictData(respData);
+        setConflictModalOpen(true);
+        return;
+      }
+      toast.error(err instanceof Error ? err.message : '批量激活失败');
+    }
+  };
+
+  const handleDeleteLedgerSchema = async (s: ProtoSchemaLedgerItemDTO) => {
+    const ok = await confirmDialog({
+      title: '确认物理删除描述集',
+      content: `确定彻底删除描述集「${s.name} v${s.version}」吗？仅未激活的资产允许删除。`,
+      confirmText: '确认删除',
+      cancelText: '取消',
+    });
+    if (!ok) return;
+    try {
+      await schemaApi.deleteProtoSchema(s.id);
+      toast.success(`已删除描述集 ${s.name} v${s.version}`);
+      setInspectDrawerOpen(false);
+      await loadLedgerSchemas();
+      onRefresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '删除描述集失败');
+    }
+  };
+
+  const handleConfirmBreakingOverride = async (reason: string) => {
+    if (!breakingDrawerData) return;
+    setIsOverriding(true);
+    try {
+      if (breakingDrawerData.batchIds && breakingDrawerData.batchIds.length > 0) {
+        const res = await schemaApi.batchActivateProtoSchemas(breakingDrawerData.batchIds, {
+          allow_breaking: true,
+          breaking_reason: reason,
+        });
+        toast.success(res.message || `已强制放行并激活 ${res.activated_count} 个描述集`);
+      } else if (breakingDrawerData.schemaId) {
+        await schemaApi.activateProtoSchema(breakingDrawerData.schemaId, {
+          allow_breaking: true,
+          breaking_reason: reason,
+        });
+        toast.success('已强制放行并激活该契约版本');
+      }
+      setBreakingDrawerOpen(false);
+      setBreakingDrawerData(null);
+      await loadLedgerSchemas();
+      onRefresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '强制放行失败');
+    } finally {
+      setIsOverriding(false);
+    }
+  };
+
   const stage4 = overview?.stage4;
   const breakingItems = publishDetails?.breaking_items || [];
   const conflictRisks = publishDetails?.conflict_risks || [];
@@ -242,7 +453,7 @@ export const StagePublishPane: React.FC<StagePublishPaneProps> = ({
         </h3>
         <div className="ppipe-actions-row">
           <Link to={resolvePath('/proto-docs')} className="btn btn-secondary btn-sm">
-            查看生效接口文档与目录
+            进入契约库消费文档
           </Link>
           <span className="pdoc-pill">
             发布模式：<strong>{overview?.publish_mode || 'AUTO'}</strong>
@@ -381,9 +592,33 @@ export const StagePublishPane: React.FC<StagePublishPaneProps> = ({
         </div>
       )}
 
-      {bundleResults.length > 0 && (
+      {/* 中部视图切换：本次拓扑发布结果 vs 生效契约库版本台账 */}
+      <div className="ppipe-subtabs" role="tablist" aria-label="阶段 ④ 发布与契约库版本视图">
+        <button
+          type="button"
+          role="tab"
+          data-testid="stage4-subtab-results"
+          aria-selected={subTab === 'results'}
+          className={`btn btn-sm ${subTab === 'results' ? 'btn-primary' : 'btn-secondary'}`}
+          onClick={() => setSubTab('results')}
+        >
+          本次拓扑发布结果 ({bundleResults.length})
+        </button>
+        <button
+          type="button"
+          role="tab"
+          data-testid="stage4-subtab-ledger"
+          aria-selected={subTab === 'ledger'}
+          className={`btn btn-sm ${subTab === 'ledger' ? 'btn-primary' : 'btn-secondary'}`}
+          onClick={() => setSubTab('ledger')}
+        >
+          <Layers size={14} /> 生效契约库版本台账
+        </button>
+      </div>
+
+      {subTab === 'results' ? (
         <div className="ppipe-table-wrap">
-          <table className="ppipe-table">
+          <table className="ppipe-table" data-testid="stage4-publish-results-table">
             <thead>
               <tr>
                 <th>拓扑层</th>
@@ -395,32 +630,82 @@ export const StagePublishPane: React.FC<StagePublishPaneProps> = ({
               </tr>
             </thead>
             <tbody>
-              {bundleResults.map((br) => (
-                <tr key={br.bundle_id}>
-                  <td>L{br.layer}</td>
-                  <td>
-                    <strong>{br.bundle_name}</strong>
-                    <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>
-                      {br.repo_name}
-                    </div>
-                  </td>
-                  <td>
-                    <code>{br.target_schema_name}</code>
-                  </td>
-                  <td>{br.category}</td>
-                  <td>{renderBundleStatusBadge(br.status)}</td>
-                  <td>
-                    {br.reason || '-'}
-                    {br.blocked_by_bundles && br.blocked_by_bundles.length > 0 && (
-                      <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>
-                        阻塞上游：{br.blocked_by_bundles.join(', ')}
-                      </div>
-                    )}
+              {bundleResults.length === 0 ? (
+                <tr>
+                  <td colSpan={6} style={{ textAlign: 'center', color: 'var(--color-text-secondary)' }}>
+                    暂无最近一次拓扑发布记录，可点击右上角「发布当前已收敛工作区」生成契约资产
                   </td>
                 </tr>
-              ))}
+              ) : (
+                bundleResults.map((br) => (
+                  <tr key={br.bundle_id}>
+                    <td>L{br.layer}</td>
+                    <td>
+                      <strong>{br.bundle_name}</strong>
+                      <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>
+                        {br.repo_name}
+                      </div>
+                    </td>
+                    <td>
+                      <code>{br.target_schema_name}</code>
+                    </td>
+                    <td>{br.category}</td>
+                    <td>{renderBundleStatusBadge(br.status)}</td>
+                    <td>
+                      {br.reason || '-'}
+                      {br.blocked_by_bundles && br.blocked_by_bundles.length > 0 && (
+                        <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>
+                          阻塞上游：{br.blocked_by_bundles.join(', ')}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
+        </div>
+      ) : (
+        <div data-testid="stage4-schema-ledger-panel">
+          <SchemaAssetLedgerTable
+            schemas={ledgerSchemas}
+            total={ledgerTotal}
+            page={ledgerPage}
+            pageSize={ledgerPageSize}
+            onPageChange={setLedgerPage}
+            onPageSizeChange={setLedgerPageSize}
+            selectedCategory={selectedCategory}
+            onCategoryChange={(cat) => {
+              setSelectedCategory(cat);
+              setLedgerPage(1);
+            }}
+            activeStatusFilter={activeStatusFilter}
+            onStatusFilterChange={(st) => {
+              setActiveStatusFilter(st);
+              setLedgerPage(1);
+            }}
+            sourceTypeFilter={sourceTypeFilter}
+            onSourceTypeFilterChange={(src) => {
+              setSourceTypeFilter(src);
+              setLedgerPage(1);
+            }}
+            searchKeyword={ledgerSearch}
+            onSearchChange={(kw) => {
+              setLedgerSearch(kw);
+              setLedgerPage(1);
+            }}
+            loading={ledgerLoading}
+            isAdmin={isAdmin}
+            onInspect={(s) => {
+              setInspectSchema(s);
+              setInspectDrawerOpen(true);
+            }}
+            onActivate={(s) => void handleActivateLedgerSchema(s)}
+            onDeactivate={(s) => void handleDeactivateLedgerSchema(s)}
+            onBatchActivate={(ids) => void handleBatchActivateLedger(ids)}
+            onDelete={(s) => void handleDeleteLedgerSchema(s)}
+            onDownload={(s) => void schemaApi.downloadProtoSchema(s.id, s.file_name)}
+          />
         </div>
       )}
 
@@ -515,6 +800,45 @@ export const StagePublishPane: React.FC<StagePublishPaneProps> = ({
           </div>
         )}
       </div>
+
+      <SchemaAssetInspectDrawer
+        open={inspectDrawerOpen}
+        onClose={() => {
+          setInspectDrawerOpen(false);
+          setInspectSchema(null);
+        }}
+        schema={inspectSchema}
+        isAdmin={isAdmin}
+        onActivate={handleActivateLedgerSchema}
+        onDeactivate={handleDeactivateLedgerSchema}
+        onDelete={handleDeleteLedgerSchema}
+        onNavigateToCatalog={(sid) => {
+          setInspectDrawerOpen(false);
+          navigate(resolvePath(`/proto-docs?docs_view=reference&schema_id=${sid}`));
+        }}
+      />
+
+      <SchemaConflictModal
+        open={conflictModalOpen}
+        onClose={() => {
+          setConflictModalOpen(false);
+          setConflictData(null);
+        }}
+        conflictData={conflictData}
+      />
+
+      <BreakingChangeAlertDrawer
+        isOpen={breakingDrawerOpen}
+        onClose={() => {
+          setBreakingDrawerOpen(false);
+          setBreakingDrawerData(null);
+        }}
+        breakingRules={breakingDrawerData?.breakingRules || []}
+        affectedDependents={breakingDrawerData?.affectedDependents || []}
+        isAdmin={isAdmin}
+        onConfirmOverride={handleConfirmBreakingOverride}
+        isSubmitting={isOverriding}
+      />
 
       <Modal
         open={breakingModalOpen}

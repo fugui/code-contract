@@ -199,7 +199,22 @@ describe('ADR-26 Platform Shared Repo, Dual View, Raw/Clean LineMap & Conflict A
     expect(html).toContain('原L2');
   });
 
-  it('ProtoSourcesWorkbenchPage renders dual subtabs ?view=sources|governance & ProtoExportGovernancePane 6-state ledger', () => {
+  it('ProtoSourcesWorkbenchPage renders pure read-only consumer view without governance tab or write actions', () => {
+    const pageHtml = renderToString(
+      <MemoryRouter initialEntries={['/proto-sources']}>
+        <ProtoSourcesWorkbenchPage isAdmin />
+      </MemoryRouter>
+    );
+    expect(pageHtml).toContain('proto-sources-workbench-page');
+    expect(pageHtml).toContain('在流水线中治理');
+    expect(pageHtml).not.toContain('仓库导出与治理');
+    expect(pageHtml).not.toContain('冲突仲裁');
+    expect(pageHtml).not.toContain('重跑清洗');
+    expect(pageHtml).not.toContain('立即同步');
+    expect(pageHtml).not.toContain('导出与治理配置');
+    expect(pageHtml).not.toContain('平台仓导入');
+    expect(pageHtml).not.toContain('接入 Git 仓库');
+
     const summary: GitReposSyncSummaryDTO = {
       platform_active_total: 520,
       aligned_total: 520,
@@ -241,18 +256,8 @@ describe('ADR-26 Platform Shared Repo, Dual View, Raw/Clean LineMap & Conflict A
       whitelist_count: 6,
     };
 
-    const pageHtml = renderToString(
-      <MemoryRouter initialEntries={['/proto-sources?view=governance']}>
-        <ProtoSourcesWorkbenchPage isAdmin />
-      </MemoryRouter>
-    );
-    expect(pageHtml).toContain('源码浏览');
-    expect(pageHtml).toContain('仓库导出与治理');
-    expect(pageHtml).not.toContain('平台仓导入');
-    expect(pageHtml).not.toContain('接入 Git 仓库');
-
     const govPaneHtml = renderToString(
-      <MemoryRouter initialEntries={['/proto-sources?view=governance']}>
+      <MemoryRouter initialEntries={['/proto-pipeline?stage=collect']}>
         <ProtoExportGovernancePane
           isAdmin
           initialSummary={summary}

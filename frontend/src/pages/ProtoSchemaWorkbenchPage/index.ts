@@ -17,6 +17,7 @@ export * from './LintRuleAndVocabDrawer';
 export * from './ProtoSourceAnchorDrawer';
 export * from '../ProtoSchemasPage/BreakingChangeAlertDrawer';
 export * from './ProtoDocsWorkbenchPage';
+export * from './ProtoCatalogWorkbenchPage';
 export * from './ProtoSourcesWorkbenchPage';
 export * from './ProtoGovernanceWorkbenchPage';
 export * from './ProtoSchemaWorkbenchPage';
