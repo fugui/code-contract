@@ -2802,3 +2802,254 @@
   border: none;
   border-radius: 0;
 }
+
+/* ============================================================================
+ * 跨包依赖图节点选中态与只读速览抽屉 (.pggraph-inspect-*)
+ * ============================================================================ */
+
+.code-proto-graph-node {
+  transition: box-shadow 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
+}
+
+.code-proto-graph-node:hover {
+  box-shadow: var(--shadow-md, var(--shadow-lg));
+}
+
+.code-proto-graph-node--selected {
+  background: var(--color-bg-subtle);
+}
+
+.pggraph-inspect-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  color: var(--color-text-primary);
+}
+
+.pggraph-inspect-meta-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--color-bg-muted);
+  border: 1px solid var(--color-border-primary);
+}
+
+.pggraph-inspect-badges {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pggraph-inspect-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--color-bg-surface);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border-primary);
+}
+
+.pggraph-inspect-badge--category {
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.pggraph-inspect-badge--active {
+  color: var(--color-success);
+  border-color: var(--color-success);
+}
+
+.pggraph-inspect-stats {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.pggraph-inspect-stats__claim {
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.pggraph-inspect-actions-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pggraph-inspect-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--color-bg-muted);
+  border: 1px solid var(--color-border-primary);
+  color: var(--color-text-secondary);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.pggraph-inspect-notice svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--color-primary);
+}
+
+.pggraph-inspect-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.pggraph-inspect-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pggraph-inspect-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pggraph-inspect-section__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.pggraph-inspect-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pggraph-inspect-list-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border-primary);
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.pggraph-inspect-list-item:hover {
+  border-color: var(--color-primary);
+  background: var(--color-bg-hover, var(--color-bg-muted));
+}
+
+.pggraph-inspect-list-item__main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.pggraph-inspect-list-item__name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  word-break: break-all;
+}
+
+.pggraph-inspect-list-item__sub {
+  font-size: 11.5px;
+  color: var(--color-text-muted);
+  word-break: break-all;
+}
+
+.pggraph-inspect-list-item__mono {
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  color: var(--color-text-primary);
+  word-break: break-all;
+}
+
+.pggraph-inspect-list-item__right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.pggraph-inspect-claim-pill {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  background: var(--color-bg-muted);
+  color: var(--color-text-muted);
+}
+
+.pggraph-inspect-claim-pill--claimed {
+  color: var(--color-success);
+  font-weight: 600;
+}
+
+.pggraph-inspect-ver {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+}
+
+.pggraph-inspect-link-hint {
+  font-size: 11.5px;
+  color: var(--color-primary);
+  flex-shrink: 0;
+  font-weight: 500;
+}
+
+.pggraph-inspect-relations {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pggraph-inspect-relation-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pggraph-inspect-muted {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.pggraph-inspect-admin-footer {
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border-primary);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.pggraph-inspect-admin-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+

@@ -3,13 +3,20 @@ import { renderToString } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import {
   ProtoDependenciesGraphPane,
+  SOURCE_TYPE_LABEL,
+  computeSchemaNodeRelations,
   filterProtoGraphByCategory,
   layoutProtoDependenciesGraph,
   getSchemaNodeNavigationTarget,
 } from '../ProtoDependenciesGraphPane';
+import { ProtoGraphNodeInspectContent } from '../ProtoGraphNodeInspectDrawer';
 import { ProtoSchemaWorkbenchPage } from '../ProtoSchemaWorkbenchPage';
 import { SchemaAssetLedgerTable } from '../SchemaAssetLedgerTable';
-import type { ProtoDependenciesGraphDTO, ProtoSchemaLedgerItemDTO } from '../../../types';
+import type {
+  ProtoDependenciesGraphDTO,
+  ProtoSchemaLedgerItemDTO,
+  ProtoSchemaSummaryDTO,
+} from '../../../types';
 
 vi.mock('../../../utils/toast', () => ({
   useToast: () => ({
@@ -230,5 +237,118 @@ describe('M22-P3 ProtoDependenciesGraphPane (/schemas?tab=graph)', () => {
     expect(tableHtml).toContain('归档直编');
     expect(tableHtml).toContain('data-schema-id="20"');
     expect(tableHtml).toContain('按来源筛选');
+  });
+
+  it('computes upstream/downstream relations and maps GIT_PIPELINE source label', () => {
+    expect(SOURCE_TYPE_LABEL.GIT_PIPELINE).toBe('流水线发布');
+
+    const relations = computeSchemaNodeRelations(sampleGraph, 20);
+    expect(relations.upstream).toHaveLength(1);
+    expect(relations.upstream[0].node.name).toBe('common-base');
+    expect(relations.upstream[0].matchedProtos).toEqual(['common/base.proto']);
+
+    expect(relations.downstream).toHaveLength(1);
+    expect(relations.downstream[0].node.name).toBe('edge-bff');
+    expect(relations.downstream[0].matchedProtos).toEqual(['trade/order.proto']);
+  });
+
+  it('renders ProtoGraphNodeInspectContent differently for service packages vs zero-service base libs', () => {
+    const bizSummary: ProtoSchemaSummaryDTO = {
+      schema: {
+        id: '20',
+        name: 'trade-core',
+        version: 2,
+        category: 'BUSINESS',
+        source_type: 'GIT_PIPELINE',
+        git_repo_id: 77,
+        is_active: true,
+      },
+      proto_files: ['trade/order.proto'],
+      services_summary: [
+        {
+          service_name: 'trade.order.v1.OrderService',
+          proto_file: 'trade/order.proto',
+          proto_package: 'trade.order.v1',
+          proto_service: 'OrderService',
+          claimed_module_id: 5,
+          claimed_module_name: '交易核心域',
+          is_claimed: true,
+          operation_count: 6,
+          unary_count: 6,
+          stream_count: 0,
+        },
+      ],
+      claimed_ratio: 1,
+    };
+
+    const bizViewerHtml = renderToString(
+      <ProtoGraphNodeInspectContent
+        node={{ ...sampleGraph.nodes[1], source_type: 'GIT_PIPELINE', git_repo_id: 77 }}
+        graph={sampleGraph}
+        isAdmin={false}
+        initialSummary={bizSummary}
+        onOpenDocs={vi.fn()}
+        onOpenSources={vi.fn()}
+        onPreviewSourceFile={vi.fn()}
+        onSwitchNode={vi.fn()}
+        onOpenPipeline={vi.fn()}
+      />
+    );
+    expect(bizViewerHtml).toContain('流水线发布');
+    expect(bizViewerHtml).toContain('查看全注释参考文档');
+    expect(bizViewerHtml).toContain('查看契约源码');
+    expect(bizViewerHtml).toContain('trade.order.v1.OrderService');
+    expect(bizViewerHtml).toContain('trade/order.proto');
+    expect(bizViewerHtml).toContain('common-base');
+    expect(bizViewerHtml).toContain('edge-bff');
+    expect(bizViewerHtml).not.toContain('前往入库流水线管理版本');
+
+    const bizAdminHtml = renderToString(
+      <ProtoGraphNodeInspectContent
+        node={{ ...sampleGraph.nodes[1], source_type: 'GIT_PIPELINE', git_repo_id: 77 }}
+        graph={sampleGraph}
+        isAdmin={true}
+        initialSummary={bizSummary}
+        onOpenDocs={vi.fn()}
+        onOpenSources={vi.fn()}
+        onPreviewSourceFile={vi.fn()}
+        onSwitchNode={vi.fn()}
+        onOpenPipeline={vi.fn()}
+      />
+    );
+    expect(bizAdminHtml).toContain('前往入库流水线管理版本');
+
+    const baseSummary: ProtoSchemaSummaryDTO = {
+      schema: {
+        id: '10',
+        name: 'common-base',
+        version: 3,
+        category: 'BASE_LIB',
+        source_type: 'GIT_PIPELINE',
+        git_repo_id: 11,
+        is_active: true,
+      },
+      proto_files: ['common/base.proto', 'common/types.proto'],
+      services_summary: [],
+      claimed_ratio: 0,
+    };
+
+    const baseHtml = renderToString(
+      <ProtoGraphNodeInspectContent
+        node={{ ...sampleGraph.nodes[0], source_type: 'GIT_PIPELINE', git_repo_id: 11 }}
+        graph={sampleGraph}
+        isAdmin={false}
+        initialSummary={baseSummary}
+        onOpenDocs={vi.fn()}
+        onOpenSources={vi.fn()}
+        onPreviewSourceFile={vi.fn()}
+        onSwitchNode={vi.fn()}
+      />
+    );
+    expect(baseHtml).toContain('该契约包不含 RPC Service，请在契约源码中查阅公共 Message / Enum 定义。');
+    expect(baseHtml).toContain('查看契约源码');
+    expect(baseHtml).not.toContain('查看全注释参考文档');
+    expect(baseHtml).toContain('common/base.proto');
+    expect(baseHtml).toContain('common/types.proto');
   });
 });

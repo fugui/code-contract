@@ -1,12 +1,18 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { BookOpen, Code2, Network } from 'lucide-react';
 import { useModuleUser } from '../../context/ModuleUserContext';
 import { useModulePath } from '../../hooks/useModulePath';
-import type { ProtoDocTreeResponse, ProtoServiceDocDetailDTO } from '../../types';
+import type {
+  ProtoDependenciesGraphDTO,
+  ProtoDependencyNodeDTO,
+  ProtoDocTreeResponse,
+  ProtoServiceDocDetailDTO,
+} from '../../types';
 import { LivingProtoDocsPane } from './LivingProtoDocsPane';
 import { GitSourcesWorkbenchPane } from './GitSourcesWorkbenchPane';
 import { ProtoDependenciesGraphPane } from './ProtoDependenciesGraphPane';
+import { ProtoGraphNodeInspectDrawer } from './ProtoGraphNodeInspectDrawer';
 import { ProtoSourceAnchorDrawer, useSourceAnchorDrawer } from './ProtoSourceAnchorDrawer';
 import './ProtoDocsAndCodeViewer.css';
 
@@ -57,8 +63,60 @@ export const ProtoDocsWorkbenchPage: React.FC<ProtoDocsWorkbenchPageProps> = ({
   };
 
   const sourceAnchorDrawer = useSourceAnchorDrawer();
+  const [inspectedGraphNode, setInspectedGraphNode] = useState<ProtoDependencyNodeDTO | null>(null);
+  const [inspectedGraphData, setInspectedGraphData] = useState<ProtoDependenciesGraphDTO | null>(
+    null
+  );
 
-  const navigateToAssetManager = (schemaId: string | number) => {
+  useEffect(() => {
+    if (docsView !== 'graph') {
+      setInspectedGraphNode(null);
+    }
+  }, [docsView]);
+
+  const handleOpenDocsFromGraph = (schemaId: string | number, serviceName?: string) => {
+    setInspectedGraphNode(null);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set('docs_view', 'reference');
+      next.set('schema_id', String(schemaId));
+      if (serviceName) {
+        next.set('service_name', serviceName);
+      } else {
+        next.delete('service_name');
+      }
+      next.delete('view');
+      next.delete('tab');
+      next.delete('repo_id');
+      next.delete('file_id');
+      next.delete('search');
+      return next;
+    });
+  };
+
+  const handleOpenSourcesFromGraph = (node: ProtoDependencyNodeDTO, firstProtoFile?: string) => {
+    if (node.git_repo_id && node.git_repo_id > 0) {
+      const targetRepoId = String(node.git_repo_id);
+      setInspectedGraphNode(null);
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.set('docs_view', 'sources');
+        next.set('repo_id', targetRepoId);
+        next.delete('view');
+        next.delete('tab');
+        next.delete('schema_id');
+        next.delete('service_name');
+        next.delete('file_id');
+        next.delete('search');
+        return next;
+      });
+      return;
+    }
+    void sourceAnchorDrawer.openBySchemaFile(Number(node.id), firstProtoFile || '', 1);
+  };
+
+  const handleOpenPipeline = (schemaId: string | number) => {
+    setInspectedGraphNode(null);
     navigate(resolvePath(`/proto-pipeline?stage=publish&schema_id=${schemaId}`));
   };
 
@@ -126,8 +184,27 @@ export const ProtoDocsWorkbenchPage: React.FC<ProtoDocsWorkbenchPageProps> = ({
           initialSchemaName={searchQueryParam}
         />
       ) : (
-        <ProtoDependenciesGraphPane onNavigateToSchemaAsset={navigateToAssetManager} />
+        <ProtoDependenciesGraphPane
+          selectedSchemaId={inspectedGraphNode?.id ?? null}
+          onSelectNode={(node, graph) => {
+            setInspectedGraphNode(node);
+            setInspectedGraphData(graph);
+          }}
+        />
       )}
+
+      <ProtoGraphNodeInspectDrawer
+        open={Boolean(inspectedGraphNode)}
+        onClose={() => setInspectedGraphNode(null)}
+        node={inspectedGraphNode}
+        graph={inspectedGraphData}
+        isAdmin={isAdmin}
+        onOpenDocs={handleOpenDocsFromGraph}
+        onOpenSources={handleOpenSourcesFromGraph}
+        onPreviewSourceFile={(sid, fp) => void sourceAnchorDrawer.openBySchemaFile(sid, fp, 1)}
+        onSwitchNode={(targetNode) => setInspectedGraphNode(targetNode)}
+        onOpenPipeline={isAdmin ? handleOpenPipeline : undefined}
+      />
 
       <ProtoSourceAnchorDrawer drawer={sourceAnchorDrawer} />
     </div>

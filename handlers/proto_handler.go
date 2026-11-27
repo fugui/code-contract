@@ -934,15 +934,16 @@ func GetProtoDependenciesGraph(c *gin.Context) {
 	_ = q.Order("id ASC").Find(&schemas).Error
 
 	type NodeDTO struct {
-		ID             uint64 `json:"id"`
-		Name           string `json:"name"`
-		Version        int    `json:"version"`
-		Category       string `json:"category"`
-		SourceType     string `json:"source_type"`
-		ProtoFileCount int    `json:"proto_file_count"`
-		ServiceCount   int    `json:"service_count"`
-		OperationCount int    `json:"operation_count"`
-		IsActive       bool   `json:"is_active"`
+		ID             uint64  `json:"id"`
+		Name           string  `json:"name"`
+		Version        int     `json:"version"`
+		Category       string  `json:"category"`
+		SourceType     string  `json:"source_type"`
+		GitRepoID      *uint64 `json:"git_repo_id,omitempty"`
+		ProtoFileCount int     `json:"proto_file_count"`
+		ServiceCount   int     `json:"service_count"`
+		OperationCount int     `json:"operation_count"`
+		IsActive       bool    `json:"is_active"`
 	}
 
 	type EdgeDTO struct {
@@ -964,6 +965,7 @@ func GetProtoDependenciesGraph(c *gin.Context) {
 			Version:        s.Version,
 			Category:       s.Category,
 			SourceType:     srcType,
+			GitRepoID:      s.GitRepoID,
 			ProtoFileCount: s.ProtoFileCount,
 			ServiceCount:   s.ServiceCount,
 			OperationCount: s.OperationCount,

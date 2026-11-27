@@ -15,6 +15,7 @@ export * from './GitRepoConfigDrawer';
 export * from './GitConsistencyDrawer';
 export * from './LintRuleAndVocabDrawer';
 export * from './ProtoSourceAnchorDrawer';
+export * from './ProtoGraphNodeInspectDrawer';
 export * from '../ProtoSchemasPage/BreakingChangeAlertDrawer';
 export * from './ProtoDocsWorkbenchPage';
 export * from './ProtoCatalogWorkbenchPage';

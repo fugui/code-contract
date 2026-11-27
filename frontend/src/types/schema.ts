@@ -135,6 +135,7 @@ export interface ProtoDependencyNodeDTO {
   version: number;
   category: ProtoCategory;
   source_type?: ProtoSourceType;
+  git_repo_id?: number;
   proto_file_count: number;
   service_count: number;
   operation_count: number;

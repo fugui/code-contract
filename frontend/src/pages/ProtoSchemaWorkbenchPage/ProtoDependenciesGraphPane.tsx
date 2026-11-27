@@ -19,6 +19,7 @@ import type { ProtoCategory, ProtoDependenciesGraphDTO, ProtoDependencyNodeDTO }
 
 export interface ProtoGraphNodeData extends Record<string, unknown> {
   schemaNode: ProtoDependencyNodeDTO;
+  isSelected?: boolean;
 }
 
 export type ProtoSchemaFlowNode = Node<ProtoGraphNodeData, 'protoSchemaNode'>;
@@ -26,9 +27,21 @@ export type ProtoSchemaFlowEdge = Edge;
 
 export type ProtoCategoryFilter = 'ALL' | ProtoCategory;
 
+export interface SchemaNodeRelationItem {
+  node: ProtoDependencyNodeDTO;
+  matchedProtos: string[];
+}
+
+export interface SchemaNodeRelations {
+  upstream: SchemaNodeRelationItem[];
+  downstream: SchemaNodeRelationItem[];
+}
+
 export interface ProtoDependenciesGraphPaneProps {
   initialGraph?: ProtoDependenciesGraphDTO;
-  onNavigateToSchemaAsset: (schemaId: string | number) => void;
+  onNavigateToSchemaAsset?: (schemaId: string | number) => void;
+  onSelectNode?: (node: ProtoDependencyNodeDTO, graph: ProtoDependenciesGraphDTO) => void;
+  selectedSchemaId?: string | number | null;
 }
 
 const NODE_WIDTH = 240;
@@ -36,7 +49,7 @@ const NODE_HEIGHT = 104;
 
 const elkInstance = new ELK();
 
-const CATEGORY_META: Record<
+export const CATEGORY_META: Record<
   ProtoCategory,
   { label: string; icon: string; badgeBg: string; badgeColor: string; borderColor: string }
 > = {
@@ -63,11 +76,12 @@ const CATEGORY_META: Record<
   },
 };
 
-const SOURCE_TYPE_LABEL: Record<string, string> = {
+export const SOURCE_TYPE_LABEL: Record<string, string> = {
   UPLOAD_PB: '二进制 .pb',
   ONLINE_COMPILE: '源码直编',
   GIT_SYNC: 'Git 同步',
   GIT_MR_AUTO: 'Git MR 门禁',
+  GIT_PIPELINE: '流水线发布',
 };
 
 /**
@@ -100,10 +114,50 @@ export function getSchemaNodeNavigationTarget(nodeId: string): { tab: 'assets'; 
 }
 
 /**
+ * 计算指定契约包节点在跨包依赖图中的上游（本包引用）与下游（被谁引用）关系
+ */
+export function computeSchemaNodeRelations(
+  graph: ProtoDependenciesGraphDTO,
+  schemaId: string | number
+): SchemaNodeRelations {
+  const nodes = graph.nodes || [];
+  const edges = graph.edges || [];
+  const targetId = String(schemaId);
+  const nodeMap = new Map<string, ProtoDependencyNodeDTO>();
+  for (const n of nodes) {
+    nodeMap.set(String(n.id), n);
+  }
+
+  const upstream: SchemaNodeRelationItem[] = [];
+  const downstream: SchemaNodeRelationItem[] = [];
+
+  for (const edge of edges) {
+    const fromId = String(edge.from_schema_id);
+    const toId = String(edge.to_schema_id);
+    const matchedProtos = edge.matched_protos || [];
+    if (fromId === targetId) {
+      const targetNode = nodeMap.get(toId);
+      if (targetNode) {
+        upstream.push({ node: targetNode, matchedProtos });
+      }
+    }
+    if (toId === targetId) {
+      const sourceNode = nodeMap.get(fromId);
+      if (sourceNode) {
+        downstream.push({ node: sourceNode, matchedProtos });
+      }
+    }
+  }
+
+  return { upstream, downstream };
+}
+
+/**
  * 使用既有 ELK 引擎对 Proto 描述集跨包 import 有向图执行分栏层次布局
  */
 export async function layoutProtoDependenciesGraph(
-  graph: ProtoDependenciesGraphDTO
+  graph: ProtoDependenciesGraphDTO,
+  selectedSchemaId?: string | number | null
 ): Promise<{ nodes: ProtoSchemaFlowNode[]; edges: ProtoSchemaFlowEdge[] }> {
   const rawNodes = graph.nodes || [];
   const rawEdges = graph.edges || [];
@@ -156,6 +210,9 @@ export async function layoutProtoDependenciesGraph(
     });
   }
 
+  const selectedKey =
+    selectedSchemaId !== undefined && selectedSchemaId !== null ? String(selectedSchemaId) : null;
+
   const flowNodes: ProtoSchemaFlowNode[] = rawNodes.map((n, index) => {
     const id = `schema_${n.id}`;
     const pos = positionMap.get(id) ?? {
@@ -168,7 +225,10 @@ export async function layoutProtoDependenciesGraph(
       position: pos,
       width: NODE_WIDTH,
       height: NODE_HEIGHT,
-      data: { schemaNode: n },
+      data: {
+        schemaNode: n,
+        isSelected: selectedKey !== null && String(n.id) === selectedKey,
+      },
     };
   });
 
@@ -208,13 +268,13 @@ export async function layoutProtoDependenciesGraph(
 }
 
 const ProtoSchemaGraphNodeCard: React.FC<NodeProps<ProtoSchemaFlowNode>> = ({ data }) => {
-  const { schemaNode } = data;
+  const { schemaNode, isSelected } = data;
   const catMeta = CATEGORY_META[schemaNode.category] || CATEGORY_META.BUSINESS;
   const srcLabel = schemaNode.source_type ? SOURCE_TYPE_LABEL[schemaNode.source_type] || schemaNode.source_type : '';
 
   return (
     <div
-      className="code-proto-graph-node"
+      className={`code-proto-graph-node ${isSelected ? 'code-proto-graph-node--selected' : ''}`}
       data-testid={`proto-graph-node-${schemaNode.id}`}
       style={{
         width: `${NODE_WIDTH}px`,
@@ -222,8 +282,9 @@ const ProtoSchemaGraphNodeCard: React.FC<NodeProps<ProtoSchemaFlowNode>> = ({ da
         padding: '10px 12px',
         borderRadius: '8px',
         background: 'var(--color-bg-surface)',
-        border: `1.5px solid ${catMeta.borderColor}`,
-        boxShadow: 'var(--shadow-sm)',
+        border: `1.5px solid ${isSelected ? 'var(--color-primary)' : catMeta.borderColor}`,
+        outline: isSelected ? '2px solid var(--color-primary)' : undefined,
+        boxShadow: isSelected ? 'var(--shadow-lg, var(--shadow-sm))' : 'var(--shadow-sm)',
         color: 'var(--color-text-primary)',
         cursor: 'pointer',
         display: 'flex',
@@ -316,6 +377,8 @@ const protoNodeTypes = {
 export const ProtoDependenciesGraphPane: React.FC<ProtoDependenciesGraphPaneProps> = ({
   initialGraph,
   onNavigateToSchemaAsset,
+  onSelectNode,
+  selectedSchemaId,
 }) => {
   const toast = useToast();
   const [graph, setGraph] = useState<ProtoDependenciesGraphDTO>(
@@ -362,6 +425,19 @@ export const ProtoDependenciesGraphPane: React.FC<ProtoDependenciesGraphPaneProp
       cancelled = true;
     };
   }, [filteredGraph]);
+
+  const renderedFlowNodes = useMemo(() => {
+    const selectedKey =
+      selectedSchemaId !== undefined && selectedSchemaId !== null ? String(selectedSchemaId) : null;
+    if (selectedKey === null) return flowNodes;
+    return flowNodes.map((n) => ({
+      ...n,
+      data: {
+        ...n.data,
+        isSelected: String(n.data.schemaNode.id) === selectedKey,
+      },
+    }));
+  }, [flowNodes, selectedSchemaId]);
 
   const filterButtons: Array<{ value: ProtoCategoryFilter; label: string }> = [
     { value: 'ALL', label: `全部 (${graph.nodes.length})` },
@@ -470,7 +546,7 @@ export const ProtoDependenciesGraphPane: React.FC<ProtoDependenciesGraphPaneProp
             当前筛选条件下暂无描述集依赖关系节点
           </p>
           <p style={{ fontSize: '12px' }}>
-            点击任意节点将自动下钻至对应描述集资产台账；可切换分类或上传带外部 import 的描述集。
+            点击任意节点可查看契约包详情并跳转参考文档或契约源码；可切换分类筛选依赖视图。
           </p>
           <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', marginTop: '12px', flexWrap: 'wrap' }}>
             {graph.nodes.map((n) => (
@@ -500,7 +576,7 @@ export const ProtoDependenciesGraphPane: React.FC<ProtoDependenciesGraphPaneProp
           </div>
 
           <ReactFlow
-            nodes={flowNodes}
+            nodes={renderedFlowNodes}
             edges={flowEdges}
             nodeTypes={protoNodeTypes}
             fitView
@@ -508,8 +584,17 @@ export const ProtoDependenciesGraphPane: React.FC<ProtoDependenciesGraphPaneProp
             nodesConnectable={false}
             proOptions={{ hideAttribution: true }}
             onNodeClick={(_, node) => {
+              if (onSelectNode) {
+                const hit = graph.nodes.find(
+                  (n) => `schema_${n.id}` === node.id || String(n.id) === node.id
+                );
+                if (hit) {
+                  onSelectNode(hit, graph);
+                  return;
+                }
+              }
               const target = getSchemaNodeNavigationTarget(node.id);
-              onNavigateToSchemaAsset(target.schema_id);
+              onNavigateToSchemaAsset?.(target.schema_id);
             }}
           >
             <Controls showInteractive={false} />

@@ -422,6 +422,20 @@ func TestSC33_EndToEnd_SandboxPublishToDocsAndSources(t *testing.T) {
 	if wGraph.Code != http.StatusOK {
 		t.Fatalf("GET /api/proto-schemas/dependencies-graph 期望 200，实测 %d: %s", wGraph.Code, wGraph.Body.String())
 	}
+	var graphResp struct {
+		Nodes []struct {
+			ID         uint64  `json:"id"`
+			Name       string  `json:"name"`
+			SourceType string  `json:"source_type"`
+			GitRepoID  *uint64 `json:"git_repo_id"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal(wGraph.Body.Bytes(), &graphResp); err != nil {
+		t.Fatalf("解析 dependencies-graph 失败: %v", err)
+	}
+	if len(graphResp.Nodes) == 0 || graphResp.Nodes[0].GitRepoID == nil || *graphResp.Nodes[0].GitRepoID == 0 {
+		t.Fatalf("dependencies-graph 节点应返回 git_repo_id，实测: %s", wGraph.Body.String())
+	}
 
 	// 4. 源码定位可检出对应 .proto 文件及内容
 	wFiles := doReq(http.MethodGet, "/api/proto-files?page=1&page_size=20", viewerToken, nil)
