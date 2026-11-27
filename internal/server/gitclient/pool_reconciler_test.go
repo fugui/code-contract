@@ -385,6 +385,7 @@ service TrackService {
 		ClosureOnly:      true,
 		StripPGSegment:   true,
 		CodesDir:         tmpRoot,
+		ProtosDir:        filepath.Join(tmpRoot, "protos"),
 		GovernanceConfig: &govDoc,
 	})
 	if err != nil {
