@@ -84,8 +84,9 @@ const sampleOverview: PipelineOverviewDTO = {
     active_schema_count: 7,
     active_service_count: 18,
     active_operation_count: 55,
-    breaking_blocked_count: 1,
-    pending_upstream_count: 2,
+    breaking_blocked_count: 0,
+    open_breaking_audit_count: 2,
+    pending_upstream_count: 0,
     conflict_blocked_count: 0,
     archived_active_count: 1,
     publish_mode: 'AUTO',
@@ -98,6 +99,7 @@ const sampleBreakingDetails: PublishRunDetailsDTO = {
   input_fingerprint: 'fp-123',
   block_on_unresolved_conflict: false,
   estimated_seconds: 2,
+  breaking_audit_count: 1,
   breaking_items: [
     {
       bundle_id: 1,
@@ -281,7 +283,7 @@ describe('ProtoPipelineWorkbenchPage Suite (ADR-29 M44)', () => {
     expect(html).not.toContain('立即执行全池收敛');
   });
 
-  it('renders StagePublishPane PREVIEW_READY confirm banner, breaking approval panel & archived migration', () => {
+  it('renders StagePublishPane PREVIEW_READY confirm banner, non-blocking breaking audit notice & archived migration', () => {
     const html = renderToString(
       <MemoryRouter>
         <ConfirmProvider>
@@ -302,10 +304,11 @@ describe('ProtoPipelineWorkbenchPage Suite (ADR-29 M44)', () => {
     const cleanHtml = html.replace(/<!-- -->/g, '');
     expect(cleanHtml).toContain('confirm-preview-publish-btn');
     expect(cleanHtml).toContain('确认切入生效池');
-    expect(cleanHtml).toContain('open-breaking-approve-btn');
-    expect(cleanHtml).toContain('审批放行并自动补发下游');
-    expect(cleanHtml).toContain('订单核心模块');
-    expect(cleanHtml).toContain('等待上游放行');
+    expect(cleanHtml).not.toContain('open-breaking-approve-btn');
+    expect(cleanHtml).not.toContain('破坏性变更待审清单');
+    expect(cleanHtml).toContain('breaking-audit-notice');
+    expect(cleanHtml).toContain('/proto-governance?gov_tab=breaking-audit');
+    expect(cleanHtml).toContain('待确认破坏性审计');
     expect(cleanHtml).toContain('历史归档外部来源迁移清单');
     expect(cleanHtml).toContain('生效中 1');
   });

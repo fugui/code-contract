@@ -1617,6 +1617,7 @@ export interface PublishRunDetailsDTO {
   block_on_unresolved_conflict: boolean;
   estimated_seconds: number;
   auto_deactivated_archive_ids?: number[];
+  breaking_audit_count?: number;
   breaking_items?: PublishBreakingItemDTO[];
   conflict_risks?: PublishConflictRiskItemDTO[];
   pending_upstream_items?: PublishBundleResultItemDTO[];
@@ -1686,6 +1687,7 @@ export interface PipelineStage4SummaryDTO {
   active_service_count: number;
   active_operation_count: number;
   breaking_blocked_count: number;
+  open_breaking_audit_count?: number;
   pending_upstream_count: number;
   conflict_blocked_count: number;
   archived_active_count: number;
@@ -1774,4 +1776,47 @@ export interface ApproveBreakingResponse {
   approved_schemas: ProtoSchemaLedgerItemDTO[];
   downstream_publish_run?: ProtoPublishRunDTO | null;
   auto_deactivated_archive_ids?: number[];
+}
+
+export type BreakingAuditSource =
+  | 'PIPELINE_PUBLISH'
+  | 'MANUAL_ACTIVATE'
+  | 'BATCH_ACTIVATE'
+  | 'AUTO_ACTIVATE'
+  | string;
+
+export type BreakingAuditStatus = 'OPEN' | 'ACKNOWLEDGED' | string;
+
+export interface BreakingChangeEventDTO {
+  id: number;
+  source: BreakingAuditSource;
+  publish_run_id?: number | null;
+  git_repo_id?: number | null;
+  bundle_id?: number | null;
+  bundle_name: string;
+  schema_name: string;
+  from_schema_id?: number | null;
+  from_version: number;
+  to_schema_id: number;
+  to_version: number;
+  breaking_count: number;
+  affected_count: number;
+  breaking_rules: BreakingRuleViolation[];
+  affected_dependents: AffectedDependent[];
+  status: BreakingAuditStatus;
+  triggered_by: string;
+  acknowledged_by?: number | null;
+  acknowledged_by_name: string;
+  acknowledge_note: string;
+  acknowledged_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BreakingChangeEventListResponse {
+  items: BreakingChangeEventDTO[];
+  total: number;
+  open_count: number;
+  page: number;
+  page_size: number;
 }

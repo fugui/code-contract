@@ -111,14 +111,15 @@ type PipelineStage3Summary struct {
 }
 
 type PipelineStage4Summary struct {
-	LatestRun            *models.ProtoPublishRun `json:"latest_run,omitempty"`
-	ActiveSchemaCount    int64                   `json:"active_schema_count"`
-	ActiveServiceCount   int64                   `json:"active_service_count"`
-	ActiveOperationCount int64                   `json:"active_operation_count"`
-	BreakingBlockedCount int64                   `json:"breaking_blocked_count"`
-	PendingUpstreamCount int64                   `json:"pending_upstream_count"`
-	ConflictBlockedCount int64                   `json:"conflict_blocked_count"`
-	ArchivedActiveCount  int64                   `json:"archived_active_count"`
+	LatestRun              *models.ProtoPublishRun `json:"latest_run,omitempty"`
+	ActiveSchemaCount      int64                   `json:"active_schema_count"`
+	ActiveServiceCount     int64                   `json:"active_service_count"`
+	ActiveOperationCount   int64                   `json:"active_operation_count"`
+	BreakingBlockedCount   int64                   `json:"breaking_blocked_count"`
+	OpenBreakingAuditCount int64                   `json:"open_breaking_audit_count"`
+	PendingUpstreamCount   int64                   `json:"pending_upstream_count"`
+	ConflictBlockedCount   int64                   `json:"conflict_blocked_count"`
+	ArchivedActiveCount    int64                   `json:"archived_active_count"`
 }
 
 // RunFullProtoPipeline 持全局流水线锁按序执行 ① 采集清洗 -> ③ 全池收敛 -> ④ 拓扑编译发布 (ADR-29 §2.3.4)。
@@ -440,6 +441,7 @@ func BuildPipelineOverview(ctx context.Context, db *gorm.DB, cfg *config.Config)
 	_ = db.WithContext(ctx).Model(&models.ProtoOperation{}).Where("is_active = true").Distinct("service_name").Count(&out.Stage4.ActiveServiceCount).Error
 	_ = db.WithContext(ctx).Model(&models.ProtoOperation{}).Where("is_active = true").Count(&out.Stage4.ActiveOperationCount).Error
 	_ = db.WithContext(ctx).Model(&models.GitProtoBundle{}).Where("last_publish_status = ?", models.BundlePublishStatusBlockedBreaking).Count(&out.Stage4.BreakingBlockedCount).Error
+	_ = db.WithContext(ctx).Model(&models.BreakingChangeEvent{}).Where("status = ?", models.BreakingAuditStatusOpen).Count(&out.Stage4.OpenBreakingAuditCount).Error
 	_ = db.WithContext(ctx).Model(&models.GitProtoBundle{}).Where("last_publish_status = ?", models.BundlePublishStatusPendingUpstream).Count(&out.Stage4.PendingUpstreamCount).Error
 	_ = db.WithContext(ctx).Model(&models.GitProtoBundle{}).Where("last_publish_status = ?", models.BundlePublishStatusBlockedConflict).Count(&out.Stage4.ConflictBlockedCount).Error
 	_ = db.WithContext(ctx).Model(&models.ProtoSchema{}).

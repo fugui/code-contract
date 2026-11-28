@@ -112,6 +112,7 @@ type PublishRunDetails struct {
 	BlockOnConflict      bool                      `json:"block_on_unresolved_conflict"`
 	EstimatedSeconds     int                       `json:"estimated_seconds"`
 	AutoDeactivatedIDs   []uint64                  `json:"auto_deactivated_archive_ids,omitempty"`
+	BreakingAuditCount   int                       `json:"breaking_audit_count,omitempty"`
 	BreakingItems        []PublishBreakingItem     `json:"breaking_items,omitempty"`
 	ConflictRisks        []PublishConflictRiskItem `json:"conflict_risks,omitempty"`
 	PendingUpstreamItems []PublishBundleResultItem `json:"pending_upstream_items,omitempty"`
@@ -569,12 +570,11 @@ func PublishWorkspaceBundles(
 				item.AutoResolvedRisk = true
 			}
 
-			// 4.2 检查传递上游（仅依赖 direct deps 即可，因为前面层已传播 PENDING_UPSTREAM）
+			// 4.2 检查传递上游（仅依赖 direct deps 即可，因为前面层已传播 PENDING_UPSTREAM；破坏性变更不再阻塞上游/下游）
 			var blockingUpstreamNames []string
 			for depBID := range bundleDirectDeps[bid] {
 				st := bundleStatus[depBID]
-				if st == models.BundlePublishStatusBlockedBreaking ||
-					st == models.BundlePublishStatusBlockedConflict ||
+				if st == models.BundlePublishStatusBlockedConflict ||
 					st == models.BundlePublishStatusFailed ||
 					st == models.BundlePublishStatusPendingUpstream {
 					if ub, ok := bundleByID[depBID]; ok {
@@ -611,6 +611,10 @@ func PublishWorkspaceBundles(
 					scID := curAct.ID
 					item.SchemaID = &scID
 					bundleStatus[bid] = models.BundlePublishStatusSkippedUnchanged
+					if b.PendingBreakingSchemaID != nil {
+						_ = db.WithContext(ctx).Model(&models.GitProtoBundle{}).Where("id = ?", b.ID).
+							Update("pending_breaking_schema_id", nil).Error
+					}
 					continue
 				}
 			}
@@ -694,33 +698,20 @@ func PublishWorkspaceBundles(
 						Update("schema_id", scID).Error
 				}
 
-				// 破坏性变更门禁检查
-				violations, bErr := reg.DetectBreakingChangesAgainstActive(tk.bundle.TargetSchemaName, schema.DescriptorBytes)
-				if bErr != nil {
-					item.Status = models.BundlePublishStatusFailed
-					item.Reason = fmt.Sprintf("破坏性变更检测异常: %v", bErr)
-					bundleStatus[tk.bundle.ID] = models.BundlePublishStatusFailed
-					return
-				}
-				if len(violations) > 0 {
-					affected := decoder.FindAffectedDependents(db, violations)
-					item.Status = models.BundlePublishStatusBlockedBreaking
-					item.Reason = fmt.Sprintf("检测到 %d 项破坏性契约变更，已保留旧生效版待人工审批放行", len(violations))
-					bundleStatus[tk.bundle.ID] = models.BundlePublishStatusBlockedBreaking
-					details.BreakingItems = append(details.BreakingItems, PublishBreakingItem{
-						BundleID:           tk.bundle.ID,
-						BundleName:         tk.bundle.BundleName,
-						TargetSchemaName:   tk.bundle.TargetSchemaName,
-						SchemaID:           schema.ID,
-						Version:            schema.Version,
-						BreakingRules:      violations,
-						AffectedDependents: affected,
-					})
-					_ = db.WithContext(ctx).Model(&models.GitProtoBundle{}).Where("id = ?", tk.bundle.ID).Updates(map[string]any{
-						"last_schema_id":             schema.ID,
-						"pending_breaking_schema_id": schema.ID,
-					}).Error
-					return
+				// 破坏性变更仅在 PREVIEW 阶段采集预告，不再阻断编译与入库上线（统一归口至规范与 MR 门禁审计）
+				if publishMode == models.PublishModePreview {
+					if violations, bErr := reg.DetectBreakingChangesAgainstActive(tk.bundle.TargetSchemaName, schema.DescriptorBytes); bErr == nil && len(violations) > 0 {
+						affected := decoder.FindAffectedDependents(db, violations)
+						details.BreakingItems = append(details.BreakingItems, PublishBreakingItem{
+							BundleID:           tk.bundle.ID,
+							BundleName:         tk.bundle.BundleName,
+							TargetSchemaName:   tk.bundle.TargetSchemaName,
+							SchemaID:           schema.ID,
+							Version:            schema.Version,
+							BreakingRules:      violations,
+							AffectedDependents: affected,
+						})
+					}
 				}
 
 				layerStaged = append(layerStaged, compiledCandidate{
@@ -745,8 +736,7 @@ func PublishWorkspaceBundles(
 			var blockNames []string
 			for _, bid := range scc {
 				st := bundleStatus[bid]
-				if st == models.BundlePublishStatusBlockedBreaking ||
-					st == models.BundlePublishStatusBlockedConflict ||
+				if st == models.BundlePublishStatusBlockedConflict ||
 					st == models.BundlePublishStatusFailed ||
 					st == models.BundlePublishStatusPendingUpstream {
 					sccHasBlock = true
@@ -772,12 +762,22 @@ func PublishWorkspaceBundles(
 		if len(stagedByBundle) > 0 {
 			stagedIDs := make([]uint64, 0, len(stagedByBundle))
 			stagedBundleOrder := make([]uint64, 0, len(stagedByBundle))
+			bundleMetaMap := make(map[uint64]decoder.BreakingBundleMeta, len(stagedByBundle))
 			for bid := range stagedByBundle {
 				stagedBundleOrder = append(stagedBundleOrder, bid)
 			}
 			sort.Slice(stagedBundleOrder, func(i, j int) bool { return stagedBundleOrder[i] < stagedBundleOrder[j] })
 			for _, bid := range stagedBundleOrder {
-				stagedIDs = append(stagedIDs, stagedByBundle[bid].ID)
+				sc := stagedByBundle[bid]
+				stagedIDs = append(stagedIDs, sc.ID)
+				b := bundleByID[bid]
+				repoIDCopy := b.GitRepoID
+				bundleIDCopy := b.ID
+				bundleMetaMap[sc.ID] = decoder.BreakingBundleMeta{
+					GitRepoID:  &repoIDCopy,
+					BundleID:   &bundleIDCopy,
+					BundleName: b.BundleName,
+				}
 			}
 
 			if publishMode == models.PublishModePreview {
@@ -797,15 +797,30 @@ func PublishWorkspaceBundles(
 				if preDeact := deactivateCoveredArchivedSchemas(ctx, db, reg, stagedIDs, opts.TriggeredBy); len(preDeact) > 0 {
 					autoDeactivatedAll = appendUniqueUint64(autoDeactivatedAll, preDeact...)
 				}
+				observedBySchema := make(map[uint64]decoder.SchemaBreakingObservation)
+				runIDCopy := run.ID
+				auditCtx := &decoder.BreakingAuditContext{
+					Source:         models.BreakingSourcePipelinePublish,
+					PublishRunID:   &runIDCopy,
+					TriggeredBy:    opts.TriggeredBy,
+					BundleBySchema: bundleMetaMap,
+					OnObserved: func(obs decoder.SchemaBreakingObservation) {
+						observedBySchema[obs.ToSchemaID] = obs
+					},
+				}
 				activated, _, actErr := reg.BatchActivate(stagedIDs, decoder.BatchActivateOptions{
 					SkipReload:      true,
 					AllowLargeBatch: true,
+					BreakingAudit:   auditCtx,
 				})
 				if actErr != nil {
 					// 回退为逐个激活，隔离冲突/残缺 Bundle
 					for _, bid := range stagedBundleOrder {
 						sc := stagedByBundle[bid]
-						_, actOne, _, oneErr := reg.ActivateSchemaVersion(sc.ID, decoder.BatchActivateOptions{SkipReload: true})
+						_, actOne, _, oneErr := reg.ActivateSchemaVersion(sc.ID, decoder.BatchActivateOptions{
+							SkipReload:    true,
+							BreakingAudit: auditCtx,
+						})
 						item := resultByBundle[bid]
 						if oneErr != nil {
 							item.Status = models.BundlePublishStatusFailed
@@ -816,6 +831,20 @@ func PublishWorkspaceBundles(
 						anyActivated = true
 						item.Status = models.BundlePublishStatusPublished
 						item.ActiveSchemaID = &actOne.ID
+						if obs, ok := observedBySchema[actOne.ID]; ok {
+							item.Reason = fmt.Sprintf("已发布生效（检出 %d 项破坏性变更，已归档至规范与 MR 门禁审计）", len(obs.BreakingRules))
+							details.BreakingAuditCount++
+							b := bundleByID[bid]
+							details.BreakingItems = append(details.BreakingItems, PublishBreakingItem{
+								BundleID:           b.ID,
+								BundleName:         b.BundleName,
+								TargetSchemaName:   b.TargetSchemaName,
+								SchemaID:           actOne.ID,
+								Version:            actOne.Version,
+								BreakingRules:      obs.BreakingRules,
+								AffectedDependents: obs.AffectedDependents,
+							})
+						}
 						bundleStatus[bid] = models.BundlePublishStatusPublished
 						activeByName[actOne.Name] = *actOne
 						_, _ = protodoc.RebuildForSchema(db, actOne)
@@ -840,6 +869,20 @@ func PublishWorkspaceBundles(
 						item := resultByBundle[bid]
 						item.Status = models.BundlePublishStatusPublished
 						item.ActiveSchemaID = &act.ID
+						if obs, ok := observedBySchema[act.ID]; ok {
+							item.Reason = fmt.Sprintf("已发布生效（检出 %d 项破坏性变更，已归档至规范与 MR 门禁审计）", len(obs.BreakingRules))
+							details.BreakingAuditCount++
+							b := bundleByID[bid]
+							details.BreakingItems = append(details.BreakingItems, PublishBreakingItem{
+								BundleID:           b.ID,
+								BundleName:         b.BundleName,
+								TargetSchemaName:   b.TargetSchemaName,
+								SchemaID:           act.ID,
+								Version:            act.Version,
+								BreakingRules:      obs.BreakingRules,
+								AffectedDependents: obs.AffectedDependents,
+							})
+						}
 						bundleStatus[bid] = models.BundlePublishStatusPublished
 						activeByName[act.Name] = act
 						_, _ = protodoc.RebuildForSchema(db, &act)
@@ -926,8 +969,8 @@ func PublishWorkspaceBundles(
 	if err := db.WithContext(ctx).Save(&run).Error; err != nil {
 		return nil, &details, err
 	}
-	emit("COMPLETED", fmt.Sprintf("阶段 ④ 发布完成（生效 %d，跳过 %d，待审 %d，等待上游 %d，失败 %d）",
-		run.PublishedCount, run.SkippedCount, run.BreakingBlockedCount, run.PendingUpstreamCount, run.FailedCount), processedCount)
+	emit("COMPLETED", fmt.Sprintf("阶段 ④ 发布完成（生效 %d，跳过 %d，破坏性审计 %d，等待上游 %d，失败 %d）",
+		run.PublishedCount, run.SkippedCount, details.BreakingAuditCount, run.PendingUpstreamCount, run.FailedCount), processedCount)
 
 	return &run, &details, nil
 }
@@ -1097,6 +1140,30 @@ func ConfirmPreviewPublishRun(
 		_ = json.Unmarshal(pubRun.DetailsJSON, &details)
 	}
 
+	bundleMetaBySchema := make(map[uint64]decoder.BreakingBundleMeta, len(details.BundleResults))
+	for _, br := range details.BundleResults {
+		if br.SchemaID != nil && *br.SchemaID > 0 {
+			repoIDCopy := br.GitRepoID
+			bundleIDCopy := br.BundleID
+			bundleMetaBySchema[*br.SchemaID] = decoder.BreakingBundleMeta{
+				GitRepoID:  &repoIDCopy,
+				BundleID:   &bundleIDCopy,
+				BundleName: br.BundleName,
+			}
+		}
+	}
+	observedBySchema := make(map[uint64]decoder.SchemaBreakingObservation)
+	pubRunIDCopy := pubRun.ID
+	auditCtx := &decoder.BreakingAuditContext{
+		Source:         models.BreakingSourcePipelinePublish,
+		PublishRunID:   &pubRunIDCopy,
+		TriggeredBy:    operatorName,
+		BundleBySchema: bundleMetaBySchema,
+		OnObserved: func(obs decoder.SchemaBreakingObservation) {
+			observedBySchema[obs.ToSchemaID] = obs
+		},
+	}
+
 	publishedCnt := 0
 	var deactIDs []uint64
 	for _, layerIDs := range details.LayerBatches {
@@ -1109,6 +1176,7 @@ func ConfirmPreviewPublishRun(
 		activated, _, err := reg.BatchActivate(layerIDs, decoder.BatchActivateOptions{
 			SkipReload:      true,
 			AllowLargeBatch: true,
+			BreakingAudit:   auditCtx,
 		})
 		if err != nil {
 			return nil, &details, err
@@ -1118,9 +1186,10 @@ func ConfirmPreviewPublishRun(
 			_, _ = protodoc.RebuildForSchema(db, &activated[i])
 			if activated[i].SourceBundleID != nil && *activated[i].SourceBundleID > 0 {
 				_ = db.WithContext(ctx).Model(&models.GitProtoBundle{}).Where("id = ?", *activated[i].SourceBundleID).Updates(map[string]any{
-					"last_schema_id":      activated[i].ID,
-					"last_publish_status": models.BundlePublishStatusPublished,
-					"last_publish_run_id": pubRun.ID,
+					"last_schema_id":             activated[i].ID,
+					"last_publish_status":        models.BundlePublishStatusPublished,
+					"last_publish_run_id":        pubRun.ID,
+					"pending_breaking_schema_id": nil,
 				}).Error
 			}
 		}
@@ -1139,11 +1208,41 @@ func ConfirmPreviewPublishRun(
 		}()
 	}
 
+	if len(observedBySchema) > 0 {
+		details.BreakingAuditCount += len(observedBySchema)
+		existingItems := make(map[uint64]struct{}, len(details.BreakingItems))
+		for _, bi := range details.BreakingItems {
+			existingItems[bi.SchemaID] = struct{}{}
+		}
+		for sid, obs := range observedBySchema {
+			if _, ok := existingItems[sid]; ok {
+				continue
+			}
+			var bundleIDVal uint64
+			if obs.BundleID != nil {
+				bundleIDVal = *obs.BundleID
+			}
+			details.BreakingItems = append(details.BreakingItems, PublishBreakingItem{
+				BundleID:           bundleIDVal,
+				BundleName:         obs.BundleName,
+				TargetSchemaName:   obs.SchemaName,
+				SchemaID:           obs.ToSchemaID,
+				Version:            obs.ToVersion,
+				BreakingRules:      obs.BreakingRules,
+				AffectedDependents: obs.AffectedDependents,
+			})
+		}
+	}
+
 	for i := range details.BundleResults {
 		if details.BundleResults[i].Status == models.BundlePublishStatusPending && details.BundleResults[i].SchemaID != nil {
 			details.BundleResults[i].Status = models.BundlePublishStatusPublished
 			details.BundleResults[i].ActiveSchemaID = details.BundleResults[i].SchemaID
-			details.BundleResults[i].Reason = "已确认发布生效"
+			if obs, ok := observedBySchema[*details.BundleResults[i].SchemaID]; ok {
+				details.BundleResults[i].Reason = fmt.Sprintf("已确认发布生效（检出 %d 项破坏性变更，已归档至规范与 MR 门禁审计）", len(obs.BreakingRules))
+			} else {
+				details.BundleResults[i].Reason = "已确认发布生效"
+			}
 		}
 	}
 	fin := time.Now().UTC()

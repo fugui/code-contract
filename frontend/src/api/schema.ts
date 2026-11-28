@@ -106,7 +106,13 @@ export interface ActivateOptions {
 }
 
 export async function activateProtoSchema(id: string | number, options?: ActivateOptions) {
-  return apiRequest<{ schema: ProtoSchemaLedgerItemDTO; activated_operations: number; forced_breaking?: boolean }>(
+  return apiRequest<{
+    schema: ProtoSchemaLedgerItemDTO;
+    activated_operations: number;
+    forced_breaking?: boolean;
+    breaking_warnings?: import('../types').BreakingRuleViolation[];
+    breaking_event_count?: number;
+  }>(
     `/proto-schemas/${id}/activate`,
     {
       method: 'POST',
@@ -125,7 +131,13 @@ export async function deactivateProtoSchema(id: string | number) {
 }
 
 export async function batchActivateProtoSchemas(ids: (string | number)[], options?: ActivateOptions) {
-  return apiRequest<{ message: string; activated_count: number; forced_breaking?: boolean }>(`/proto-schemas/batch-activate`, {
+  return apiRequest<{
+    message?: string;
+    activated_count: number;
+    forced_breaking?: boolean;
+    breaking_warnings?: import('../types').BreakingRuleViolation[];
+    breaking_event_count?: number;
+  }>(`/proto-schemas/batch-activate`, {
     method: 'POST',
     body: JSON.stringify({
       schema_ids: ids.map((id) => Number(id)),
@@ -949,4 +961,46 @@ export async function fetchArchivedExternalSchemas() {
   return apiRequest<{ items: import('../types').ArchivedExternalSchemaDTO[] }>(
     '/proto-pipeline/archived-external-schemas'
   );
+}
+
+export async function listBreakingChangeEvents(params?: {
+  page?: number;
+  page_size?: number;
+  status?: string;
+  source?: string;
+  publish_run_id?: number;
+  q?: string;
+}) {
+  const query = new URLSearchParams();
+  if (params?.page) query.set('page', String(params.page));
+  if (params?.page_size) query.set('page_size', String(params.page_size));
+  if (params?.status) query.set('status', params.status);
+  if (params?.source) query.set('source', params.source);
+  if (params?.publish_run_id) query.set('publish_run_id', String(params.publish_run_id));
+  if (params?.q) query.set('q', params.q);
+  const qs = query.toString();
+  return apiRequest<import('../types').BreakingChangeEventListResponse>(
+    `/breaking-change-events${qs ? `?${qs}` : ''}`
+  );
+}
+
+export async function getBreakingChangeEvent(id: number | string) {
+  return apiRequest<import('../types').BreakingChangeEventDTO>(`/breaking-change-events/${id}`);
+}
+
+export async function acknowledgeBreakingChangeEvent(id: number | string, note?: string) {
+  return apiRequest<import('../types').BreakingChangeEventDTO>(
+    `/breaking-change-events/${id}/acknowledge`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ note: note || '' }),
+    }
+  );
+}
+
+export async function batchAcknowledgeBreakingChangeEvents(ids: number[], note?: string) {
+  return apiRequest<{ acknowledged_count: number }>(`/breaking-change-events/batch-acknowledge`, {
+    method: 'POST',
+    body: JSON.stringify({ ids, note: note || '' }),
+  });
 }

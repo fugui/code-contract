@@ -248,6 +248,12 @@ func RegisterAPIRoutes(r *gin.Engine) {
 		protected.POST("/mr-check-runs/:id/override", requireAdmin, OverrideMRCheckRun)
 		protected.POST("/mr-check-runs/:id/rerun", requireAdmin, RerunMRCheckRun)
 
+		// 5.3 非阻断上线破坏性变更审计域（统一归口至规范与 MR 门禁工作台）
+		protected.GET("/breaking-change-events", ListBreakingChangeEventsHandler)
+		protected.GET("/breaking-change-events/:id", GetBreakingChangeEventDetailHandler)
+		protected.POST("/breaking-change-events/:id/acknowledge", requireAdmin, AcknowledgeBreakingChangeEventHandler)
+		protected.POST("/breaking-change-events/batch-acknowledge", requireAdmin, BatchAcknowledgeBreakingChangeEventsHandler)
+
 		protected.GET("/notifications", ListNotifications)
 		protected.GET("/notifications/unread-count", GetUnreadNotificationCount)
 		protected.POST("/notifications/:id/read", MarkNotificationRead)

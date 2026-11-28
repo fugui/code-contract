@@ -159,6 +159,7 @@ type UploadSchemaInput struct {
 	PublishRunID               *uint64  // M43: 阶段 ④ 发布批次 ID
 	ExplicitOwnFiles           []string // M22: 非空时仅对该集合自有文件抽取 Operation，跳过全部 external_imports
 	AllowSelfContainedExternal bool     // M22: 草稿模式下允许从当前链接产物自带的外部描述符补全静态闭合验证
+	BreakingAudit              *BreakingAuditContext
 }
 
 // DecodeResult 单次 Payload 动态反序列化结果
@@ -843,6 +844,7 @@ func (r *Registry) UploadSchema(in UploadSchemaInput) (*models.ProtoSchema, []mo
 	var schema models.ProtoSchema
 	var insertedOps []models.ProtoOperation
 	inheritedOpCount := 0
+	var observedBreaking *SchemaBreakingObservation
 
 	err := r.db.Transaction(func(tx *gorm.DB) error {
 		// 获取 PostgreSQL 事务级咨询锁防并发竞争
@@ -1032,26 +1034,16 @@ func (r *Registry) UploadSchema(in UploadSchemaInput) (*models.ProtoSchema, []mo
 			insertedOps[i] = op
 		}
 
-		// 若指定自动激活，在此事务中先执行同名版本破坏性变更检测门禁，再执行 CompileTrialPool 预演
+		// 若指定自动激活，执行 CompileTrialPool 预演并切入生效池；破坏性变更仅作非阻断审计留痕
 		if in.AutoActivate {
 			var activeSchema models.ProtoSchema
+			var hasActivePrev bool
+			var violations []BreakingRuleViolation
 			if err := tx.Where("name = ? AND is_active = true AND id != ?", name, schema.ID).First(&activeSchema).Error; err == nil {
+				hasActivePrev = true
 				activeOwn, err := ExtractOwnFilesFromSchema(&activeSchema)
 				if err == nil {
-					violations := DetectBreakingChanges(activeOwn, ownFiles)
-					if len(violations) > 0 {
-						if !in.AllowBreaking {
-							affected := FindAffectedDependents(tx, violations, r.compiledFiles())
-							return &SchemaBreakingError{
-								BreakingRules:      violations,
-								AffectedDependents: affected,
-							}
-						}
-						reason := strings.TrimSpace(in.BreakingReason)
-						if len(reason) < 8 {
-							return errors.New("强制放行破坏性变更必须填写不少于 8 个字符的原因 (breaking_reason)")
-						}
-					}
+					violations = DetectBreakingChanges(activeOwn, ownFiles)
 				}
 			}
 
@@ -1086,6 +1078,35 @@ func (r *Registry) UploadSchema(in UploadSchemaInput) (*models.ProtoSchema, []mo
 			for i := range insertedOps {
 				insertedOps[i].IsActive = true
 			}
+
+			if hasActivePrev && len(violations) > 0 {
+				affected := FindAffectedDependents(tx, violations, r.compiledFiles())
+				auditSource := models.BreakingSourceAutoActivate
+				var pubRunID *uint64
+				var triggeredBy string
+				var metaPtr *BreakingBundleMeta
+				if in.BreakingAudit != nil {
+					if strings.TrimSpace(in.BreakingAudit.Source) != "" {
+						auditSource = in.BreakingAudit.Source
+					}
+					pubRunID = in.BreakingAudit.PublishRunID
+					triggeredBy = in.BreakingAudit.TriggeredBy
+					if in.BreakingAudit.BundleBySchema != nil {
+						if m, ok := in.BreakingAudit.BundleBySchema[schema.ID]; ok {
+							mCopy := m
+							metaPtr = &mCopy
+						}
+					}
+				}
+				obs, obsErr := persistBreakingChangeObservation(
+					tx, auditSource, pubRunID, triggeredBy, metaPtr,
+					&activeSchema, &schema, violations, affected,
+				)
+				if obsErr != nil {
+					return obsErr
+				}
+				observedBreaking = obs
+			}
 		}
 		return nil
 	})
@@ -1095,6 +1116,9 @@ func (r *Registry) UploadSchema(in UploadSchemaInput) (*models.ProtoSchema, []mo
 
 	if in.AutoActivate {
 		_ = r.Reload()
+		if observedBreaking != nil && in.BreakingAudit != nil && in.BreakingAudit.OnObserved != nil {
+			in.BreakingAudit.OnObserved(*observedBreaking)
+		}
 	}
 
 	return &schema, insertedOps, inheritedOpCount, nil
@@ -1106,11 +1130,23 @@ type BatchActivateOptions struct {
 	BreakingReason  string
 	SkipReload      bool
 	AllowLargeBatch bool
+	BreakingAudit   *BreakingAuditContext
 }
 
 // ActivateSchemaVersion 切换单个描述集为生效态
 func (r *Registry) ActivateSchemaVersion(schemaID uint64, opts ...BatchActivateOptions) (*models.ProtoSchema, *models.ProtoSchema, int, error) {
-	schemas, count, err := r.BatchActivate([]uint64{schemaID}, opts...)
+	var opt BatchActivateOptions
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+	if opt.BreakingAudit == nil {
+		opt.BreakingAudit = &BreakingAuditContext{Source: models.BreakingSourceManualActivate}
+	} else if strings.TrimSpace(opt.BreakingAudit.Source) == "" {
+		auditCopy := *opt.BreakingAudit
+		auditCopy.Source = models.BreakingSourceManualActivate
+		opt.BreakingAudit = &auditCopy
+	}
+	schemas, count, err := r.BatchActivate([]uint64{schemaID}, opt)
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -1120,21 +1156,19 @@ func (r *Registry) ActivateSchemaVersion(schemaID uint64, opts ...BatchActivateO
 	return nil, &schemas[0], count, nil
 }
 
-// BatchActivate 批量原子激活多个描述集 (单事务咨询锁 + CompileTrialPool 预编译仲裁)
+// BatchActivate 批量原子激活多个描述集 (单事务咨询锁 + CompileTrialPool 预编译仲裁；破坏性变更非阻断审计留痕)
 func (r *Registry) BatchActivate(schemaIDs []uint64, opts ...BatchActivateOptions) ([]models.ProtoSchema, int, error) {
 	if len(schemaIDs) == 0 {
 		return nil, 0, errors.New("待激活描述集列表不能为空")
 	}
 
-	var allowBreaking bool
-	var breakingReason string
 	var skipReload bool
 	var allowLargeBatch bool
+	var auditCtx *BreakingAuditContext
 	if len(opts) > 0 {
-		allowBreaking = opts[0].AllowBreaking
-		breakingReason = opts[0].BreakingReason
 		skipReload = opts[0].SkipReload
 		allowLargeBatch = opts[0].AllowLargeBatch
+		auditCtx = opts[0].BreakingAudit
 	}
 	if !allowLargeBatch && len(schemaIDs) > 100 {
 		return nil, 0, errors.New("单次批量激活不能超过 100 个描述集")
@@ -1142,6 +1176,7 @@ func (r *Registry) BatchActivate(schemaIDs []uint64, opts ...BatchActivateOption
 
 	var activatedSchemas []models.ProtoSchema
 	var totalActiveOps int
+	var observations []SchemaBreakingObservation
 
 	err := r.db.Transaction(func(tx *gorm.DB) error {
 		// 咨询锁防并发竞争
@@ -1173,8 +1208,13 @@ func (r *Registry) BatchActivate(schemaIDs []uint64, opts ...BatchActivateOption
 			targetNamesMap[t.Name] = t.ID
 		}
 
-		// 检查候选版本与同名当前生效版本的 AST 破坏性变更 (F-26 / M16)
-		var allViolations []BreakingRuleViolation
+		// 静默采集候选版本与同名当前生效版本的 AST 破坏性变更（仅用于审计留痕，不再阻断激活）
+		type pendingBreakingObs struct {
+			active     models.ProtoSchema
+			target     models.ProtoSchema
+			violations []BreakingRuleViolation
+		}
+		var pendingObs []pendingBreakingObs
 		for _, t := range targets {
 			var active models.ProtoSchema
 			if err := tx.Where("name = ? AND is_active = true AND id != ?", t.Name, t.ID).First(&active).Error; err == nil {
@@ -1183,23 +1223,15 @@ func (r *Registry) BatchActivate(schemaIDs []uint64, opts ...BatchActivateOption
 					targetOwn, err := ExtractOwnFilesFromSchema(&t)
 					if err == nil {
 						v := DetectBreakingChanges(activeOwn, targetOwn)
-						allViolations = append(allViolations, v...)
+						if len(v) > 0 {
+							pendingObs = append(pendingObs, pendingBreakingObs{
+								active:     active,
+								target:     t,
+								violations: v,
+							})
+						}
 					}
 				}
-			}
-		}
-
-		if len(allViolations) > 0 {
-			if !allowBreaking {
-				affected := FindAffectedDependents(tx, allViolations, r.compiledFiles())
-				return &SchemaBreakingError{
-					BreakingRules:      allViolations,
-					AffectedDependents: affected,
-				}
-			}
-			reason := strings.TrimSpace(breakingReason)
-			if len(reason) < 8 {
-				return errors.New("强制放行破坏性变更必须填写不少于 8 个字符的原因 (breaking_reason)")
 			}
 		}
 
@@ -1269,6 +1301,41 @@ func (r *Registry) BatchActivate(schemaIDs []uint64, opts ...BatchActivateOption
 			return err
 		}
 
+		// 激活成功后落库破坏性变更审计事件
+		if len(pendingObs) > 0 {
+			auditSource := models.BreakingSourceBatchActivate
+			var pubRunID *uint64
+			var triggeredBy string
+			if auditCtx != nil {
+				if strings.TrimSpace(auditCtx.Source) != "" {
+					auditSource = auditCtx.Source
+				}
+				pubRunID = auditCtx.PublishRunID
+				triggeredBy = auditCtx.TriggeredBy
+			}
+			for i := range pendingObs {
+				p := &pendingObs[i]
+				affected := FindAffectedDependents(tx, p.violations, r.compiledFiles())
+				var metaPtr *BreakingBundleMeta
+				if auditCtx != nil && auditCtx.BundleBySchema != nil {
+					if m, ok := auditCtx.BundleBySchema[p.target.ID]; ok {
+						mCopy := m
+						metaPtr = &mCopy
+					}
+				}
+				obs, obsErr := persistBreakingChangeObservation(
+					tx, auditSource, pubRunID, triggeredBy, metaPtr,
+					&p.active, &p.target, p.violations, affected,
+				)
+				if obsErr != nil {
+					return obsErr
+				}
+				if obs != nil {
+					observations = append(observations, *obs)
+				}
+			}
+		}
+
 		activatedSchemas = targets
 		for i := range activatedSchemas {
 			activatedSchemas[i].IsActive = true
@@ -1286,6 +1353,11 @@ func (r *Registry) BatchActivate(schemaIDs []uint64, opts ...BatchActivateOption
 
 	if !skipReload {
 		_ = r.Reload()
+	}
+	if auditCtx != nil && auditCtx.OnObserved != nil {
+		for _, obs := range observations {
+			auditCtx.OnObserved(obs)
+		}
 	}
 	return activatedSchemas, totalActiveOps, nil
 }

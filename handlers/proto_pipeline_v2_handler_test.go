@@ -280,7 +280,7 @@ func TestProtoPipelineV2API_ClosureRBACStaleLockAndArchivedGuard(t *testing.T) {
 		t.Fatalf("GET /archived-external-schemas 未返回遗留归档资产 (%d): %s", w.Code, w.Body.String())
 	}
 
-	// 7. 变更源文件并验证 overview 返回 normalize/reconcile stale + PREVIEW 确认生效 + breaking approve
+	// 7. 变更源文件并验证 overview 返回 reconcile_stale + PREVIEW 预告破坏性变更且确认切入后自动归档审计
 	breakBase := `syntax = "proto3";
 package pipe.base.v1;
 message PipeMeta { int64 trace_id = 1; }
@@ -322,37 +322,19 @@ message PipeMeta { int64 trace_id = 1; }
 		Details gitclient.PublishRunDetails `json:"details"`
 	}
 	_ = json.Unmarshal(wPrev.Body.Bytes(), &prevOut)
-	if prevOut.Run.Status != models.PublishRunStatusPartialBlocked || len(prevOut.Details.BreakingItems) != 1 {
-		t.Fatalf("破坏性变更期望阻塞 pipe-base 并生成 1 条 BreakingItems, got %+v details=%+v", prevOut.Run, prevOut.Details)
+	if prevOut.Run.Status != models.PublishRunStatusPreviewReady || len(prevOut.Details.BreakingItems) != 1 {
+		t.Fatalf("PREVIEW 模式破坏性变更应直接就绪并带 1 条风险预告, got %+v details=%+v", prevOut.Run, prevOut.Details)
 	}
 
-	// approve-breaking 放行破坏性变更
-	wApprove := doReq(http.MethodPost, fmt.Sprintf("/api/proto-pipeline/publish-runs/%d/approve-breaking", prevOut.Run.ID), adminToken, map[string]any{
-		"schema_ids":      []uint64{prevOut.Details.BreakingItems[0].SchemaID},
-		"breaking_reason": "测试环境管理员评审通过类型修改并重建下游依赖",
-	})
-	if wApprove.Code != http.StatusOK {
-		t.Fatalf("approve-breaking 失败 (%d): %s", wApprove.Code, wApprove.Body.String())
-	}
-
-	// 再测一次无破坏性变更下的 PREVIEW_READY -> confirm
-	wPrev2 := doReq(http.MethodPost, "/api/proto-pipeline/publish", adminToken, map[string]any{
-		"publish_mode":    "PREVIEW",
-		"force_recompile": true,
-	})
-	if wPrev2.Code != http.StatusOK {
-		t.Fatalf("PREVIEW publish #2 失败 (%d): %s", wPrev2.Code, wPrev2.Body.String())
-	}
-	var prev2Out struct {
-		Run models.ProtoPublishRun `json:"run"`
-	}
-	_ = json.Unmarshal(wPrev2.Body.Bytes(), &prev2Out)
-	if prev2Out.Run.Status != models.PublishRunStatusPreviewReady {
-		t.Fatalf("无破坏性 force_recompile 预览发布期望 PREVIEW_READY, got %s", prev2Out.Run.Status)
-	}
-	wConf := doReq(http.MethodPost, fmt.Sprintf("/api/proto-pipeline/publish-runs/%d/confirm", prev2Out.Run.ID), adminToken, map[string]any{})
+	wConf := doReq(http.MethodPost, fmt.Sprintf("/api/proto-pipeline/publish-runs/%d/confirm", prevOut.Run.ID), adminToken, map[string]any{})
 	if wConf.Code != http.StatusOK || !bytes.Contains(wConf.Body.Bytes(), []byte("COMPLETED")) {
 		t.Fatalf("PREVIEW confirm 期望 200 COMPLETED，实测 %d: %s", wConf.Code, wConf.Body.String())
+	}
+
+	// 验证 confirm 切入后自动生成了破坏性变更审计事件并反映在 overview.stage4.open_breaking_audit_count
+	wOvAfter := doReq(http.MethodGet, "/api/proto-pipeline/overview", viewerToken, nil)
+	if wOvAfter.Code != http.StatusOK || !bytes.Contains(wOvAfter.Body.Bytes(), []byte(`"open_breaking_audit_count":1`)) {
+		t.Fatalf("confirm 生效后 overview.stage4.open_breaking_audit_count 期望为 1，实测 %d: %s", wOvAfter.Code, wOvAfter.Body.String())
 	}
 }
 

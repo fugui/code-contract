@@ -11,14 +11,11 @@ import type {
   ProtoSchemaLedgerItemDTO,
   ProtoPoolSummaryDTO,
   ConflictOrBrokenResponse,
-  BreakingRuleViolation,
-  AffectedDependent,
 } from '../../types';
 import { SchemaPoolSummaryBar } from './SchemaPoolSummaryBar';
 import { SchemaAssetLedgerTable } from './SchemaAssetLedgerTable';
 import { SchemaAssetInspectDrawer } from './SchemaAssetInspectDrawer';
 import { SchemaConflictModal } from './SchemaConflictModal';
-import { BreakingChangeAlertDrawer } from '../ProtoSchemasPage/BreakingChangeAlertDrawer';
 import { ProtoDependenciesGraphPane } from './ProtoDependenciesGraphPane';
 import './ProtoDocsAndCodeViewer.css';
 
@@ -74,16 +71,6 @@ export const ProtoSchemaWorkbenchPage: React.FC = () => {
 
   const [conflictModalOpen, setConflictModalOpen] = useState(false);
   const [conflictData, setConflictData] = useState<ConflictOrBrokenResponse | null>(null);
-
-  const [breakingDrawerOpen, setBreakingDrawerOpen] = useState(false);
-  const [breakingDrawerData, setBreakingDrawerData] = useState<{
-    schemaId: string | number | null;
-    batchIds: (string | number)[] | null;
-    breakingRules: BreakingRuleViolation[];
-    affectedDependents: AffectedDependent[];
-    onCustomOverride?: (reason: string) => Promise<void>;
-  } | null>(null);
-  const [isOverriding, setIsOverriding] = useState(false);
 
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [schemaToDelete, setSchemaToDelete] = useState<ProtoSchemaLedgerItemDTO | null>(null);
@@ -183,27 +170,19 @@ export const ProtoSchemaWorkbenchPage: React.FC = () => {
   const handleActivateSchema = async (s: ProtoSchemaLedgerItemDTO) => {
     try {
       const res = await schemaApi.activateProtoSchema(s.id);
-      toast.success(`描述集 [${s.name} v${s.version}] 激活成功，生效 ${res.activated_operations} 个服务契约`);
+      const auditHint =
+        res.breaking_event_count && res.breaking_event_count > 0
+          ? '（含破坏性变更，已归档至规范与 MR 门禁审计）'
+          : '';
+      toast.success(
+        `描述集 [${s.name} v${s.version}] 激活成功，生效 ${res.activated_operations} 个服务契约${auditHint}`
+      );
       void loadAssetLedger();
       if (inspectDrawerOpen && inspectSchema?.name === s.name) {
         setInspectSchema(res.schema);
       }
     } catch (err: unknown) {
       const respData = (err as unknown as { responseData?: ConflictOrBrokenResponse })?.responseData;
-      if (
-        respData &&
-        (respData.code === 'BREAKING_CHANGE_DETECTED' ||
-          (respData.breaking_rules && respData.breaking_rules.length > 0))
-      ) {
-        setBreakingDrawerData({
-          schemaId: s.id,
-          batchIds: null,
-          breakingRules: respData.breaking_rules || [],
-          affectedDependents: respData.affected_dependents || [],
-        });
-        setBreakingDrawerOpen(true);
-        return;
-      }
       if (respData && (respData.conflicts || respData.broken_dependents)) {
         setConflictData(respData);
         setConflictModalOpen(true);
@@ -235,59 +214,20 @@ export const ProtoSchemaWorkbenchPage: React.FC = () => {
   const handleBatchActivate = async (selectedIds: (string | number)[]) => {
     try {
       const res = await schemaApi.batchActivateProtoSchemas(selectedIds);
-      toast.success(res.message || `成功批量激活 ${res.activated_count} 个描述集`);
+      const auditHint =
+        res.breaking_event_count && res.breaking_event_count > 0
+          ? `（其中 ${res.breaking_event_count} 个含破坏性变更已归档至规范与 MR 门禁审计）`
+          : '';
+      toast.success((res.message || `成功批量激活 ${res.activated_count} 个描述集`) + auditHint);
       void loadAssetLedger();
     } catch (err: unknown) {
       const respData = (err as unknown as { responseData?: ConflictOrBrokenResponse })?.responseData;
-      if (
-        respData &&
-        (respData.code === 'BREAKING_CHANGE_DETECTED' ||
-          (respData.breaking_rules && respData.breaking_rules.length > 0))
-      ) {
-        setBreakingDrawerData({
-          schemaId: null,
-          batchIds: selectedIds,
-          breakingRules: respData.breaking_rules || [],
-          affectedDependents: respData.affected_dependents || [],
-        });
-        setBreakingDrawerOpen(true);
-        return;
-      }
       if (respData && (respData.conflicts || respData.broken_dependents)) {
         setConflictData(respData);
         setConflictModalOpen(true);
         return;
       }
       toast.error(err instanceof Error ? err.message : '批量激活失败');
-    }
-  };
-
-  const handleConfirmBreakingOverride = async (reason: string) => {
-    if (!breakingDrawerData) return;
-    setIsOverriding(true);
-    try {
-      if (breakingDrawerData.onCustomOverride) {
-        await breakingDrawerData.onCustomOverride(reason);
-      } else if (breakingDrawerData.schemaId) {
-        const res = await schemaApi.activateProtoSchema(breakingDrawerData.schemaId, {
-          allow_breaking: true,
-          breaking_reason: reason,
-        });
-        toast.success(`已强制激活破坏性版本，生效 ${res.activated_operations} 个服务契约 (已记录 P1 审计)`);
-      } else if (breakingDrawerData.batchIds) {
-        const res = await schemaApi.batchActivateProtoSchemas(breakingDrawerData.batchIds, {
-          allow_breaking: true,
-          breaking_reason: reason,
-        });
-        toast.success(res.message || `已强制批量激活 ${res.activated_count} 个描述集 (已记录 P1 审计)`);
-      }
-      setBreakingDrawerOpen(false);
-      setBreakingDrawerData(null);
-      void loadAssetLedger();
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : '强制激活操作失败');
-    } finally {
-      setIsOverriding(false);
     }
   };
 
@@ -450,19 +390,6 @@ export const ProtoSchemaWorkbenchPage: React.FC = () => {
           setConflictData(null);
         }}
         conflictData={conflictData}
-      />
-
-      <BreakingChangeAlertDrawer
-        isOpen={breakingDrawerOpen}
-        onClose={() => {
-          setBreakingDrawerOpen(false);
-          setBreakingDrawerData(null);
-        }}
-        breakingRules={breakingDrawerData?.breakingRules || []}
-        affectedDependents={breakingDrawerData?.affectedDependents || []}
-        isAdmin={isAdmin}
-        onConfirmOverride={handleConfirmBreakingOverride}
-        isSubmitting={isOverriding}
       />
 
       <SchemaAssetInspectDrawer

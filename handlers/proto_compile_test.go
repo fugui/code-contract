@@ -168,7 +168,7 @@ service OrderService {
 		t.Fatalf("GET /api/proto-schemas?source_type=GIT_SYNC 失败: code=%d body=%s", listResp.Code, listResp.Body.String())
 	}
 
-	// 7. 编译删字段而不保留 reserved 的 v2 草稿并尝试 HTTP 激活 -> 触发 F-26 409 BREAKING_CHANGE_DETECTED
+	// 7. 编译删字段而不保留 reserved 的 v2 草稿并直接 HTTP 激活 -> 不再阻断，返回 200 且落库破坏性变更审计
 	orderV2Draft, _, _, err := compileTestProtoSchema(t, db, "order-compile", "BUSINESS", "", map[string]string{
 		"order/order.proto": `syntax = "proto3";
 package order.v1;
@@ -194,73 +194,48 @@ service OrderService {
 	req.Header.Set("Authorization", "Bearer "+adminToken)
 	resp = httptest.NewRecorder()
 	r.ServeHTTP(resp, req)
-	if resp.Code != http.StatusConflict {
-		t.Fatalf("破坏性 v2 激活应被 F-26 拦截返回 409，实测 %d: %s", resp.Code, resp.Body.String())
+	if resp.Code != http.StatusOK {
+		t.Fatalf("破坏性 v2 激活应直接返回 200 OK，实测 %d: %s", resp.Code, resp.Body.String())
 	}
-	var conflictResp struct {
-		Code               string                          `json:"code"`
-		BreakingRules      []decoder.BreakingRuleViolation `json:"breaking_rules"`
-		AffectedDependents []decoder.AffectedDependent     `json:"affected_dependents"`
+	var actResp struct {
+		BreakingEventCount int                             `json:"breaking_event_count"`
+		BreakingWarnings   []decoder.BreakingRuleViolation `json:"breaking_warnings"`
 	}
-	_ = json.Unmarshal(resp.Body.Bytes(), &conflictResp)
-	if conflictResp.Code != "BREAKING_CHANGE_DETECTED" || len(conflictResp.BreakingRules) == 0 || len(conflictResp.AffectedDependents) == 0 {
-		t.Fatalf("应返回 BREAKING_CHANGE_DETECTED 及下游受影响模块，实测: %+v", conflictResp)
+	_ = json.Unmarshal(resp.Body.Bytes(), &actResp)
+	if actResp.BreakingEventCount != 1 || len(actResp.BreakingWarnings) == 0 {
+		t.Fatalf("应返回 breaking_event_count=1 及 breaking_warnings，实测: %s", resp.Body.String())
 	}
-	if conflictResp.AffectedDependents[0].ModuleCode != "MOD_GATEWAY" {
-		t.Errorf("期望下游受影响模块为 MOD_GATEWAY，实测: %+v", conflictResp.AffectedDependents)
+	var orderEv models.BreakingChangeEvent
+	if err := db.Where("to_schema_id = ?", orderV2Draft.ID).First(&orderEv).Error; err != nil {
+		t.Fatalf("未落库 order-compile 破坏性变更审计事件: %v", err)
+	}
+	var orderAffected []decoder.AffectedDependent
+	_ = json.Unmarshal(orderEv.AffectedDependentsJSON, &orderAffected)
+	if len(orderAffected) == 0 || orderAffected[0].ModuleCode != "MOD_GATEWAY" {
+		t.Errorf("期望下游受影响模块为 MOD_GATEWAY，实测: %+v", orderAffected)
 	}
 
-	// 8. 同时验证 BASE_LIB 变更 (common/base.proto req_id string -> int64) 触发反向闭包影响 MOD_ORDER & MOD_GATEWAY
-	_, _, _, baseBreakErr := compileTestProtoSchema(t, db, "common-base-online", "BASE_LIB", "", map[string]string{
+	// 8. 同时验证 BASE_LIB 变更 (common/base.proto req_id string -> int64) 自动激活成功，并在审计事件中命中 MOD_ORDER & MOD_GATEWAY
+	baseV2Schema, _, _, baseBreakErr := compileTestProtoSchema(t, db, "common-base-online", "BASE_LIB", "", map[string]string{
 		"common/base.proto": "syntax = \"proto3\";\npackage common.v1;\nmessage Meta {\n  int64 req_id = 1;\n}\n",
 	}, true, false, "")
-	var baseBreakTyped *decoder.SchemaBreakingError
-	if !errors.As(baseBreakErr, &baseBreakTyped) {
-		t.Fatalf("BASE_LIB 破坏性变更应返回 SchemaBreakingError，实测: %v", baseBreakErr)
+	if baseBreakErr != nil {
+		t.Fatalf("BASE_LIB 破坏性变更应努力激活成功并记录审计，实测失败: %v", baseBreakErr)
 	}
+	var baseEv models.BreakingChangeEvent
+	if err := db.Where("to_schema_id = ?", baseV2Schema.ID).First(&baseEv).Error; err != nil {
+		t.Fatalf("未落库 common-base-online 破坏性变更审计事件: %v", err)
+	}
+	var baseAffected []decoder.AffectedDependent
+	_ = json.Unmarshal(baseEv.AffectedDependentsJSON, &baseAffected)
 	seenMod := make(map[string]bool)
-	for _, ad := range baseBreakTyped.AffectedDependents {
+	for _, ad := range baseAffected {
 		seenMod[ad.ModuleCode] = true
 	}
 	if !seenMod["MOD_ORDER"] || !seenMod["MOD_GATEWAY"] {
-		t.Errorf("BASE_LIB 破坏性变更应透过 import 闭包命中 MOD_ORDER 与 MOD_GATEWAY，实测: %+v", baseBreakTyped.AffectedDependents)
+		t.Errorf("BASE_LIB 破坏性变更应透过 import 闭包命中 MOD_ORDER 与 MOD_GATEWAY，实测: %+v", baseAffected)
 	}
 
-	// 9. allow_breaking 逃生舱：原因过短 -> 400；原因合法 -> 200 forced_breaking=true + P1 审计
-	shortReasonBody, _ := json.Marshal(map[string]any{
-		"allow_breaking":  true,
-		"breaking_reason": "short",
-	})
-	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/proto-schemas/%d/activate", orderV2Draft.ID), bytes.NewReader(shortReasonBody))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+adminToken)
-	resp = httptest.NewRecorder()
-	r.ServeHTTP(resp, req)
-	if resp.Code != http.StatusBadRequest {
-		t.Fatalf("allow_breaking 缺合法 reason 应返回 400，实测 %d: %s", resp.Code, resp.Body.String())
-	}
-
-	validReasonBody, _ := json.Marshal(map[string]any{
-		"allow_breaking":  true,
-		"breaking_reason": "已通知网关调用方协同下线 qty 字段",
-	})
-	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/proto-schemas/%d/activate", orderV2Draft.ID), bytes.NewReader(validReasonBody))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+adminToken)
-	resp = httptest.NewRecorder()
-	r.ServeHTTP(resp, req)
-	if resp.Code != http.StatusOK {
-		t.Fatalf("合法 reason 逃生舱激活应返回 200，实测 %d: %s", resp.Code, resp.Body.String())
-	}
-	var escapeResp struct {
-		ForcedBreaking bool `json:"forced_breaking"`
-	}
-	if err := json.Unmarshal(resp.Body.Bytes(), &escapeResp); err != nil {
-		t.Fatalf("反序列化 escapeResp 失败: %v", err)
-	}
-	if !escapeResp.ForcedBreaking {
-		t.Errorf("期望响应 forced_breaking=true，实测: %s", resp.Body.String())
-	}
 	_ = commonAudit.Close(context.Background())
 	var actAudits []commonModels.SysAuditLog
 	_ = db.Where("module = ? AND action = ?", config.ModuleKey, "activate").Find(&actAudits).Error
@@ -557,20 +532,25 @@ service PayService {
 		t.Fatalf("成环依赖 INFRA->GW(->BIZ->INFRA) 即使在 layer=0 也必须返回 409 ERR_CYCLIC_DEPENDENCY，实测 %d: %s", resp.Code, resp.Body.String())
 	}
 
-	// 4. F-26 BASE_LIB 递推闭包雷达：破坏 common/v1/base.proto 触发 Breaking 拦截并透出 MOD_SC13_BIZ 与 MOD_SC13_GW
-	_, _, _, baseBreakErr := compileTestProtoSchema(t, db, "sc13-common-base", "BASE_LIB", "", map[string]string{
+	// 4. F-26 BASE_LIB 递推闭包审计雷达：破坏 common/v1/base.proto 自动激活成功并在审计事件中透出 MOD_SC13_BIZ 与 MOD_SC13_GW
+	sc13BaseV2, _, _, baseBreakErr := compileTestProtoSchema(t, db, "sc13-common-base", "BASE_LIB", "", map[string]string{
 		"common/v1/base.proto": "syntax = \"proto3\";\npackage common.v1;\nmessage TraceMeta {\n  int32 trace_id = 1;\n}\n",
 	}, true, false, "")
-	var baseBreakTyped *decoder.SchemaBreakingError
-	if !errors.As(baseBreakErr, &baseBreakTyped) {
-		t.Fatalf("BASE_LIB 类型破坏应返回 SchemaBreakingError，实测: %v", baseBreakErr)
+	if baseBreakErr != nil {
+		t.Fatalf("BASE_LIB 类型破坏应努力激活成功并记录审计，实测失败: %v", baseBreakErr)
 	}
+	var sc13Ev models.BreakingChangeEvent
+	if err := db.Where("to_schema_id = ?", sc13BaseV2.ID).First(&sc13Ev).Error; err != nil {
+		t.Fatalf("未落库 sc13-common-base 破坏性变更审计事件: %v", err)
+	}
+	var sc13Affected []decoder.AffectedDependent
+	_ = json.Unmarshal(sc13Ev.AffectedDependentsJSON, &sc13Affected)
 	hitModules := make(map[string]bool)
-	for _, ad := range baseBreakTyped.AffectedDependents {
+	for _, ad := range sc13Affected {
 		hitModules[ad.ModuleCode] = true
 	}
 	if !hitModules["MOD_SC13_BIZ"] || !hitModules["MOD_SC13_GW"] {
-		t.Fatalf("BASE_LIB 传递闭包应命中 MOD_SC13_BIZ 与 MOD_SC13_GW，实测: %+v", baseBreakTyped.AffectedDependents)
+		t.Fatalf("BASE_LIB 传递闭包应命中 MOD_SC13_BIZ 与 MOD_SC13_GW，实测: %+v", sc13Affected)
 	}
 
 	// 5. 验证 GET /api/proto-schemas/dependencies-graph 与 GET /api/arch/topology/graph 元数据

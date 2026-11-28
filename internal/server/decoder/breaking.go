@@ -956,3 +956,126 @@ func FindAffectedDependents(db *gorm.DB, violations []BreakingRuleViolation, reg
 	})
 	return result
 }
+
+// BreakingBundleMeta 描述破坏性变更审计关联的契约包与仓库元信息。
+type BreakingBundleMeta struct {
+	GitRepoID  *uint64
+	BundleID   *uint64
+	BundleName string
+}
+
+// SchemaBreakingObservation 表示一次非阻断激活过程中检出并落库的破坏性变更观测结果。
+type SchemaBreakingObservation struct {
+	EventID            uint64
+	SchemaName         string
+	FromSchemaID       *uint64
+	FromVersion        int
+	ToSchemaID         uint64
+	ToVersion          int
+	BundleID           *uint64
+	BundleName         string
+	BreakingRules      []BreakingRuleViolation
+	AffectedDependents []AffectedDependent
+}
+
+// BreakingAuditContext 透传激活入口来源信息与观测回调，用于非阻断写入规范与 MR 门禁审计。
+type BreakingAuditContext struct {
+	Source         string
+	PublishRunID   *uint64
+	TriggeredBy    string
+	BundleBySchema map[uint64]BreakingBundleMeta
+	OnObserved     func(SchemaBreakingObservation)
+}
+
+func persistBreakingChangeObservation(
+	tx *gorm.DB,
+	source string,
+	publishRunID *uint64,
+	triggeredBy string,
+	meta *BreakingBundleMeta,
+	active *models.ProtoSchema,
+	target *models.ProtoSchema,
+	violations []BreakingRuleViolation,
+	affected []AffectedDependent,
+) (*SchemaBreakingObservation, error) {
+	if tx == nil || target == nil || len(violations) == 0 {
+		return nil, nil
+	}
+	if strings.TrimSpace(source) == "" {
+		source = models.BreakingSourcePipelinePublish
+	}
+	if affected == nil {
+		affected = []AffectedDependent{}
+	}
+	rulesBytes, err := json.Marshal(violations)
+	if err != nil {
+		return nil, err
+	}
+	affectedBytes, err := json.Marshal(affected)
+	if err != nil {
+		return nil, err
+	}
+
+	var gitRepoID *uint64
+	var bundleID *uint64
+	var bundleName string
+	if meta != nil {
+		gitRepoID = meta.GitRepoID
+		bundleID = meta.BundleID
+		bundleName = strings.TrimSpace(meta.BundleName)
+	}
+	if gitRepoID == nil && target.GitRepoID != nil {
+		gitRepoID = target.GitRepoID
+	}
+	if bundleID == nil && target.SourceBundleID != nil {
+		bundleID = target.SourceBundleID
+	}
+	if bundleName == "" && bundleID != nil && *bundleID > 0 {
+		var b models.GitProtoBundle
+		if err := tx.Select("bundle_name").First(&b, *bundleID).Error; err == nil {
+			bundleName = b.BundleName
+		}
+	}
+
+	var fromID *uint64
+	var fromVer int
+	if active != nil && active.ID > 0 {
+		idCopy := active.ID
+		fromID = &idCopy
+		fromVer = active.Version
+	}
+
+	ev := models.BreakingChangeEvent{
+		Source:                 source,
+		PublishRunID:           publishRunID,
+		GitRepoID:              gitRepoID,
+		BundleID:               bundleID,
+		BundleName:             bundleName,
+		SchemaName:             target.Name,
+		FromSchemaID:           fromID,
+		FromVersion:            fromVer,
+		ToSchemaID:             target.ID,
+		ToVersion:              target.Version,
+		BreakingCount:          len(violations),
+		AffectedCount:          len(affected),
+		BreakingRulesJSON:      rulesBytes,
+		AffectedDependentsJSON: affectedBytes,
+		Status:                 models.BreakingAuditStatusOpen,
+		TriggeredBy:            strings.TrimSpace(triggeredBy),
+	}
+	if err := tx.Create(&ev).Error; err != nil {
+		return nil, err
+	}
+	return &SchemaBreakingObservation{
+		EventID:            ev.ID,
+		SchemaName:         target.Name,
+		FromSchemaID:       fromID,
+		FromVersion:        fromVer,
+		ToSchemaID:         target.ID,
+		ToVersion:          target.Version,
+		BundleID:           bundleID,
+		BundleName:         bundleName,
+		BreakingRules:      violations,
+		AffectedDependents: affected,
+	}, nil
+}

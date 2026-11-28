@@ -765,27 +765,25 @@ func ActivateProtoSchema(c *gin.Context) {
 	}
 	_ = c.ShouldBindJSON(&req)
 
-	if req.AllowBreaking && len(strings.TrimSpace(req.BreakingReason)) < 8 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "强制放行破坏性变更必须填写不少于 8 个字符的原因 (breaking_reason)"})
-		return
-	}
-
 	reg, err := GetDecoderRegistry()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
+	_, opName := currentOperatorName(c)
+	var observations []decoder.SchemaBreakingObservation
 	_, activatedSchema, count, err := reg.ActivateSchemaVersion(id, decoder.BatchActivateOptions{
-		AllowBreaking:  req.AllowBreaking,
-		BreakingReason: req.BreakingReason,
+		BreakingAudit: &decoder.BreakingAuditContext{
+			Source:      models.BreakingSourceManualActivate,
+			TriggeredBy: opName,
+			OnObserved: func(obs decoder.SchemaBreakingObservation) {
+				observations = append(observations, obs)
+			},
+		},
 	})
 	if err != nil {
 		if writeProtoActivateError(c, err) {
-			return
-		}
-		if strings.Contains(err.Error(), "不少于 8 个字符") {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -794,9 +792,14 @@ func ActivateProtoSchema(c *gin.Context) {
 
 	docCount := rebuildProtoDocSymbolsForSchema(activatedSchema)
 
+	var breakingWarnings []decoder.BreakingRuleViolation
+	for _, obs := range observations {
+		breakingWarnings = append(breakingWarnings, obs.BreakingRules...)
+	}
+
 	auditSummary := fmt.Sprintf("激活描述集 [%s] 版本 %d", activatedSchema.Name, activatedSchema.Version)
-	if req.AllowBreaking {
-		auditSummary = fmt.Sprintf("强制激活破坏性描述集 [%s] 版本 %d (授权原因: %s)", activatedSchema.Name, activatedSchema.Version, req.BreakingReason)
+	if len(breakingWarnings) > 0 {
+		auditSummary = fmt.Sprintf("激活描述集 [%s] 版本 %d（含 %d 项破坏性变更，已写入破坏性变更审计）", activatedSchema.Name, activatedSchema.Version, len(breakingWarnings))
 	}
 	recordAudit(c, "activate", commonModels.AuditLevelP1, auditSummary, "proto_schema", activatedSchema.ID, activatedSchema.Name, nil, activatedSchema)
 
@@ -804,9 +807,10 @@ func ActivateProtoSchema(c *gin.Context) {
 		"schema":               activatedSchema,
 		"activated_operations": count,
 		"doc_symbol_count":     docCount,
+		"breaking_event_count": len(observations),
 	}
-	if req.AllowBreaking {
-		respData["forced_breaking"] = true
+	if len(breakingWarnings) > 0 {
+		respData["breaking_warnings"] = breakingWarnings
 	}
 	c.JSON(http.StatusOK, respData)
 }
@@ -873,10 +877,6 @@ func BatchActivateProtoSchemas(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "单次批量激活不能超过 100 个描述集"})
 		return
 	}
-	if req.AllowBreaking && len(strings.TrimSpace(req.BreakingReason)) < 8 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "强制放行破坏性变更必须填写不少于 8 个字符的原因 (breaking_reason)"})
-		return
-	}
 
 	reg, err := GetDecoderRegistry()
 	if err != nil {
@@ -884,15 +884,22 @@ func BatchActivateProtoSchemas(c *gin.Context) {
 		return
 	}
 
+	_, opName := currentOperatorName(c)
+	var observations []decoder.SchemaBreakingObservation
 	schemas, totalOps, err := reg.BatchActivate(req.SchemaIDs, decoder.BatchActivateOptions{
-		AllowBreaking:  req.AllowBreaking,
-		BreakingReason: req.BreakingReason,
+		BreakingAudit: &decoder.BreakingAuditContext{
+			Source:      models.BreakingSourceBatchActivate,
+			TriggeredBy: opName,
+			OnObserved: func(obs decoder.SchemaBreakingObservation) {
+				observations = append(observations, obs)
+			},
+		},
 	})
 	if err != nil {
 		if writeProtoActivateError(c, err) {
 			return
 		}
-		if strings.Contains(err.Error(), "同名") || strings.Contains(err.Error(), "不少于 8 个字符") {
+		if strings.Contains(err.Error(), "同名") {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
@@ -905,19 +912,26 @@ func BatchActivateProtoSchemas(c *gin.Context) {
 		totalDocSymbols += rebuildProtoDocSymbolsForSchema(&schemas[i])
 	}
 
+	var breakingWarnings []decoder.BreakingRuleViolation
+	for _, obs := range observations {
+		breakingWarnings = append(breakingWarnings, obs.BreakingRules...)
+	}
+
 	auditSummary := fmt.Sprintf("批量激活 %d 个描述集", len(schemas))
-	if req.AllowBreaking {
-		auditSummary = fmt.Sprintf("强制批量激活 %d 个描述集 (授权原因: %s)", len(schemas), req.BreakingReason)
+	if len(breakingWarnings) > 0 {
+		auditSummary = fmt.Sprintf("批量激活 %d 个描述集（含 %d 项破坏性变更，已写入破坏性变更审计）", len(schemas), len(breakingWarnings))
 	}
 	recordAudit(c, "batch_activate", commonModels.AuditLevelP1, auditSummary, "proto_schema", 0, "batch_activate", nil, schemas)
 
 	respData := gin.H{
 		"activated_schemas":       schemas,
+		"activated_count":         len(schemas),
 		"total_active_operations": totalOps,
 		"doc_symbol_count":        totalDocSymbols,
+		"breaking_event_count":    len(observations),
 	}
-	if req.AllowBreaking {
-		respData["forced_breaking"] = true
+	if len(breakingWarnings) > 0 {
+		respData["breaking_warnings"] = breakingWarnings
 	}
 	c.JSON(http.StatusOK, respData)
 }

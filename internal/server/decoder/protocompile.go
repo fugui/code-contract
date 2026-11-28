@@ -388,6 +388,7 @@ type CompileProtoBundleInput struct {
 	PublishRunID       *uint64
 	OperatorID         uint
 	SourceProvider     ProtoSourceProvider
+	BreakingAudit      *BreakingAuditContext
 }
 
 // CompileProtoOutput 纯 Go protocompile 编译输出结果
@@ -1018,5 +1019,6 @@ func (r *Registry) CompileAndSaveSchema(ctx context.Context, in CompileProtoBund
 		PublishRunID:               in.PublishRunID,
 		ExplicitOwnFiles:           compiled.OwnProtoFiles,
 		AllowSelfContainedExternal: allowSelfContainedExt,
+		BreakingAudit:              in.BreakingAudit,
 	})
 }

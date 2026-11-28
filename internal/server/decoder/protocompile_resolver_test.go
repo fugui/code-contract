@@ -2,6 +2,7 @@ package decoder
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -399,8 +400,8 @@ service OrderService {
 	depGw := models.ModuleDependency{ConsumerModuleID: modGw.ID, ServiceID: &svcOrder.ID, CreatedBy: 1}
 	db.Create(&depGw)
 
-	// 5. 变更 common/base.proto 字段类型 (string -> int64) 并尝试 auto_activate -> 应触发 0-Service 闭包穿透拦截
-	_, _, _, err = reg.CompileAndSaveSchema(context.Background(), CompileProtoBundleInput{
+	// 5. 变更 common/base.proto 字段类型 (string -> int64) 并 auto_activate -> 不阻断，直接激活并在审计表中记录 0-Service 闭包穿透受影响模块
+	baseV2Schema, _, _, err := reg.CompileAndSaveSchema(context.Background(), CompileProtoBundleInput{
 		Name:     "common-base-lib",
 		Category: models.ProtoCategoryBaseLib,
 		Files: map[string]string{
@@ -414,27 +415,35 @@ message CommonHeader {
 		AutoActivate: true,
 		OperatorID:   1,
 	})
-	var breakingErr *SchemaBreakingError
-	if !errors.As(err, &breakingErr) {
-		t.Fatalf("BASE_LIB 破坏性变更应触发 *SchemaBreakingError，实测: %v", err)
+	if err != nil {
+		t.Fatalf("BASE_LIB 破坏性变更应努力激活成功并记录审计，实测: %v", err)
 	}
-	if len(breakingErr.BreakingRules) == 0 {
+	var auditEv models.BreakingChangeEvent
+	if err := db.Where("to_schema_id = ?", baseV2Schema.ID).First(&auditEv).Error; err != nil {
+		t.Fatalf("未落库 BASE_LIB 破坏性变更审计事件: %v", err)
+	}
+	if auditEv.BreakingCount == 0 {
 		t.Fatalf("应检出 FIELD_TYPE_CHANGED 破坏性规则")
+	}
+
+	var affectedDeps []AffectedDependent
+	if err := json.Unmarshal(auditEv.AffectedDependentsJSON, &affectedDeps); err != nil {
+		t.Fatalf("反序列化 AffectedDependentsJSON 失败: %v", err)
 	}
 
 	// 验证 Direct + Transitive Reverse Import 闭包解析出的受影响模块
 	affectedMap := make(map[string]bool)
-	for _, a := range breakingErr.AffectedDependents {
+	for _, a := range affectedDeps {
 		affectedMap[a.ModuleCode] = true
 	}
 	if !affectedMap["MOD_ORDER"] {
-		t.Errorf("应沿反向 import 闭包穿透影响服务提供模块 MOD_ORDER，实际: %+v", breakingErr.AffectedDependents)
+		t.Errorf("应沿反向 import 闭包穿透影响服务提供模块 MOD_ORDER，实际: %+v", affectedDeps)
 	}
 	if !affectedMap["MOD_GATEWAY"] {
-		t.Errorf("应沿反向 import 闭包穿透影响下游消费模块 MOD_GATEWAY，实际: %+v", breakingErr.AffectedDependents)
+		t.Errorf("应沿反向 import 闭包穿透影响下游消费模块 MOD_GATEWAY，实际: %+v", affectedDeps)
 	}
 	if affectedMap["MOD_UNRELATED"] {
-		t.Errorf("不应波及无关模块 MOD_UNRELATED，实际: %+v", breakingErr.AffectedDependents)
+		t.Errorf("不应波及无关模块 MOD_UNRELATED，实际: %+v", affectedDeps)
 	}
 
 	// 也直接验证 FindAffectedDependents 在传入 CompiledRegistry.Files 的行为

@@ -209,7 +209,7 @@ service GwService { rpc Dispatch(GwReq) returns (GwRsp); }
 	}
 
 	// 7. 破坏性演进: 修改 base.proto 将 req_id string -> int64 -> 重协调后发布:
-	// base 被局部挂起 BLOCKED_BREAKING, order & gw 因依赖 base 传播为 PENDING_UPSTREAM
+	// 流水线努力编译并全部上线（base、order、gw 均 PUBLISHED），同时自动写入破坏性变更审计事件
 	baseProtoV2Breaking := `syntax = "proto3";
 package common.v1;
 message BaseMeta {
@@ -242,37 +242,32 @@ message BaseMeta {
 	if err != nil {
 		t.Fatalf("v2 PublishWorkspaceBundles failed: %v", err)
 	}
-	if run3.Status != models.PublishRunStatusPartialBlocked || run3.BreakingBlockedCount != 1 || run3.PendingUpstreamCount != 2 {
-		t.Fatalf("期望 PARTIAL_BLOCKED (breaking=1, pending_upstream=2), got status=%s brk=%d pend=%d",
-			run3.Status, run3.BreakingBlockedCount, run3.PendingUpstreamCount)
+	if run3.Status != models.PublishRunStatusCompleted || run3.PublishedCount != 3 || run3.BreakingBlockedCount != 0 || run3.PendingUpstreamCount != 0 {
+		t.Fatalf("期望 COMPLETED (published=3, breaking_blocked=0, pending_upstream=0), got status=%s pub=%d brk=%d pend=%d",
+			run3.Status, run3.PublishedCount, run3.BreakingBlockedCount, run3.PendingUpstreamCount)
 	}
-	if len(details3.BreakingItems) != 1 || details3.BreakingItems[0].BundleID != baseBundle.ID {
-		t.Fatalf("BreakingItems 应精准定位 base-bundle: %+v", details3.BreakingItems)
-	}
-
-	// 8. 管理员放行破坏性变更 -> 自动补发下游 order & gw
-	approveRes, err := ApproveBreakingSchemas(
-		ctx, db, reg, cfg, run3.ID,
-		[]uint64{details3.BreakingItems[0].SchemaID},
-		"架构委员会评审批准 BaseMeta req_id 类型变更并同步重建下游",
-		"admin", 1,
-	)
-	if err != nil {
-		t.Fatalf("ApproveBreakingSchemas failed: %v", err)
-	}
-	if len(approveRes.ApprovedSchemas) != 1 || !approveRes.ApprovedSchemas[0].IsActive {
-		t.Fatalf("放行后的 baseSchema 期望已激活: %+v", approveRes.ApprovedSchemas)
-	}
-	if approveRes.DownstreamRun == nil || approveRes.DownstreamRun.Status != models.PublishRunStatusCompleted {
-		t.Fatalf("放行后应自动触发下游补发且 COMPLETED: %+v", approveRes.DownstreamRun)
+	if details3.BreakingAuditCount != 1 || len(details3.BreakingItems) != 1 || details3.BreakingItems[0].BundleID != baseBundle.ID {
+		t.Fatalf("BreakingItems 应非阻断记录 base-bundle 审计项: count=%d items=%+v", details3.BreakingAuditCount, details3.BreakingItems)
 	}
 
-	// 验证 gwBundle 与 orderBundle 当前处于 PUBLISHED
-	var gwUpdated, orderUpdated models.GitProtoBundle
+	var auditEvents []models.BreakingChangeEvent
+	if err := db.Where("publish_run_id = ?", run3.ID).Find(&auditEvents).Error; err != nil {
+		t.Fatalf("查询 BreakingChangeEvent 失败: %v", err)
+	}
+	if len(auditEvents) != 1 || auditEvents[0].Source != models.BreakingSourcePipelinePublish || auditEvents[0].Status != models.BreakingAuditStatusOpen {
+		t.Fatalf("期望生成 1 条 OPEN 的 PIPELINE_PUBLISH 审计事件, got %+v", auditEvents)
+	}
+
+	// 验证 baseBundle、orderBundle 与 gwBundle 当前均处于 PUBLISHED
+	var baseUpdated, gwUpdated, orderUpdated models.GitProtoBundle
+	_ = db.First(&baseUpdated, baseBundle.ID).Error
 	_ = db.First(&orderUpdated, orderBundle.ID).Error
 	_ = db.First(&gwUpdated, gwBundle.ID).Error
-	if orderUpdated.LastPublishStatus != models.BundlePublishStatusPublished || gwUpdated.LastPublishStatus != models.BundlePublishStatusPublished {
-		t.Fatalf("下游补发后状态期望 PUBLISHED, got order=%s gw=%s", orderUpdated.LastPublishStatus, gwUpdated.LastPublishStatus)
+	if baseUpdated.LastPublishStatus != models.BundlePublishStatusPublished ||
+		orderUpdated.LastPublishStatus != models.BundlePublishStatusPublished ||
+		gwUpdated.LastPublishStatus != models.BundlePublishStatusPublished {
+		t.Fatalf("全部契约包状态期望 PUBLISHED, got base=%s order=%s gw=%s",
+			baseUpdated.LastPublishStatus, orderUpdated.LastPublishStatus, gwUpdated.LastPublishStatus)
 	}
 }
 

@@ -111,6 +111,7 @@ func SetupWithDB(db *gorm.DB) error {
 		&ProtoPoolReconcileRun{},
 		&ProtoPublishRun{},
 		&ProtoPipelineRun{},
+		&BreakingChangeEvent{},
 		&ProtoSchema{},
 		&ProtoOperation{},
 		&RecordingSession{},
@@ -540,6 +541,9 @@ END $$;
 	}
 	if err := ensureM26MRGateAndNotificationConstraints(DB); err != nil {
 		return fmt.Errorf("初始化 M26 MR 门禁与通知约束失败: %w", err)
+	}
+	if err := ensureBreakingChangeEventConstraints(DB); err != nil {
+		return fmt.Errorf("初始化破坏性变更审计约束失败: %w", err)
 	}
 	if err := ensureM30aDiscoveryConstraints(DB); err != nil {
 		return fmt.Errorf("初始化 M30a 现网发现快照约束失败: %w", err)

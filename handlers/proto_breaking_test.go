@@ -210,74 +210,29 @@ func TestSC09_BreakingChangeDetection_DownstreamAlert_AndAllowBreakingRollbackAu
 		t.Fatalf("v2 草稿应检测到 breaking_warnings 提示，但为空")
 	}
 
+	viewerUser := createTestUserInDB(t, db, "viewer_breaking", "developer")
+	viewerToken := generateTestJWT(t, viewerUser)
+
 	var req *http.Request
 	var resp *httptest.ResponseRecorder
 
-	// 4. 尝试直接激活 account v2 (默认 allow_breaking=false) -> 必须返回 409 BREAKING_CHANGE_DETECTED 与下游血缘
+	// 4. 直接激活 account v2 -> 不再阻断，返回 200 OK，同时返回 breaking_warnings 并自动写入破坏性变更审计事件
 	req = httptest.NewRequest(http.MethodPost, "/api/proto-schemas/"+strconvFormat(v2ID)+"/activate", bytes.NewReader([]byte("{}")))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+adminToken)
 	resp = httptest.NewRecorder()
 	r.ServeHTTP(resp, req)
-	if resp.Code != http.StatusConflict {
-		t.Fatalf("未携带 allow_breaking 激活破坏性描述集必须返回 409 Conflict: code=%d, body=%s", resp.Code, resp.Body.String())
-	}
-
-	var conflictResp struct {
-		Code               string                          `json:"code"`
-		BreakingRules      []decoder.BreakingRuleViolation `json:"breaking_rules"`
-		AffectedDependents []decoder.AffectedDependent     `json:"affected_dependents"`
-	}
-	_ = json.Unmarshal(resp.Body.Bytes(), &conflictResp)
-	if conflictResp.Code != "BREAKING_CHANGE_DETECTED" {
-		t.Errorf("期望 code 为 BREAKING_CHANGE_DETECTED，实测为 %s", conflictResp.Code)
-	}
-	if len(conflictResp.BreakingRules) == 0 {
-		t.Errorf("breaking_rules 列表不应为空")
-	}
-	if len(conflictResp.AffectedDependents) == 0 {
-		t.Fatalf("affected_dependents 不应为空，未推导出下游模块 ORDER_CORE")
-	}
-	depMod := conflictResp.AffectedDependents[0]
-	if depMod.ModuleCode != "ORDER_CORE" || depMod.ArchProcessCode != "sut-order" {
-		t.Errorf("推导下游血缘属性不符: %+v", depMod)
-	}
-
-	// 5. 管理员逃生舱校验：allow_breaking=true 但 breaking_reason < 8 字符 -> 400 Bad Request
-	reqBodyShort, _ := json.Marshal(map[string]interface{}{
-		"allow_breaking":  true,
-		"breaking_reason": "test", // 4 字符，不足 8
-	})
-	req = httptest.NewRequest(http.MethodPost, "/api/proto-schemas/"+strconvFormat(v2ID)+"/activate", bytes.NewReader(reqBodyShort))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+adminToken)
-	resp = httptest.NewRecorder()
-	r.ServeHTTP(resp, req)
-	if resp.Code != http.StatusBadRequest {
-		t.Fatalf("breaking_reason < 8 字符必须返回 400 Bad Request: code=%d, body=%s", resp.Code, resp.Body.String())
-	}
-
-	// 6. 管理员逃生舱通过：allow_breaking=true 且 breaking_reason >= 8 字符 -> 200 OK，forced_breaking=true，写入 P1 审计日志
-	validReason := "生产故障紧急版本回滚或架构评审批准破坏性演进"
-	reqBodyValid, _ := json.Marshal(map[string]interface{}{
-		"allow_breaking":  true,
-		"breaking_reason": validReason,
-	})
-	req = httptest.NewRequest(http.MethodPost, "/api/proto-schemas/"+strconvFormat(v2ID)+"/activate", bytes.NewReader(reqBodyValid))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+adminToken)
-	resp = httptest.NewRecorder()
-	r.ServeHTTP(resp, req)
 	if resp.Code != http.StatusOK {
-		t.Fatalf("带合法原因强制激活应成功 200: code=%d, body=%s", resp.Code, resp.Body.String())
+		t.Fatalf("激活描述集应直接成功 200 OK: code=%d, body=%s", resp.Code, resp.Body.String())
 	}
 
-	var okResp struct {
-		ForcedBreaking bool `json:"forced_breaking"`
+	var activateResp struct {
+		BreakingEventCount int                             `json:"breaking_event_count"`
+		BreakingWarnings   []decoder.BreakingRuleViolation `json:"breaking_warnings"`
 	}
-	_ = json.Unmarshal(resp.Body.Bytes(), &okResp)
-	if !okResp.ForcedBreaking {
-		t.Errorf("期望 forced_breaking=true")
+	_ = json.Unmarshal(resp.Body.Bytes(), &activateResp)
+	if activateResp.BreakingEventCount != 1 || len(activateResp.BreakingWarnings) == 0 {
+		t.Fatalf("期望返回 breaking_event_count=1 及 breaking_warnings，实测: %s", resp.Body.String())
 	}
 
 	// 刷新审计日志入库
@@ -289,38 +244,99 @@ func TestSC09_BreakingChangeDetection_DownstreamAlert_AndAllowBreakingRollbackAu
 	if err != nil {
 		t.Fatalf("未找到对应的 P1 级审计日志: %v", err)
 	}
-	if !strings.Contains(auditLog.Summary, validReason) {
-		t.Errorf("审计日志 Summary 未包含原因: %s, 期望包含: %s", auditLog.Summary, validReason)
+	if !strings.Contains(auditLog.Summary, "破坏性变更审计") {
+		t.Errorf("审计日志 Summary 未注明破坏性变更审计: %s", auditLog.Summary)
 	}
 
-	// 7. 测试 BatchActivateProtoSchemas 批量激活破坏性阻断与逃生舱
-	// 将 v1ID 重新批量激活
-	batchReqNoAllow, _ := json.Marshal(map[string]interface{}{
-		"schema_ids": []uint64{v1ID},
-	})
-	req = httptest.NewRequest(http.MethodPost, "/api/proto-schemas/batch-activate", bytes.NewReader(batchReqNoAllow))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+adminToken)
+	// 5. 查询破坏性变更审计列表与详情，校验下游受波及模块推导 (ORDER_CORE)
+	req = httptest.NewRequest(http.MethodGet, "/api/breaking-change-events?status=OPEN", nil)
+	req.Header.Set("Authorization", "Bearer "+viewerToken)
 	resp = httptest.NewRecorder()
 	r.ServeHTTP(resp, req)
-	// 因为当前生效的是 v2 (Tag 2)，切回 v1 (Tag 1) 同样是 Tag 变异破坏性变更，必须被阻断为 409
-	if resp.Code != http.StatusConflict {
-		t.Fatalf("批量激活切回旧版破坏性改动必须阻断为 409: code=%d, body=%s", resp.Code, resp.Body.String())
+	if resp.Code != http.StatusOK {
+		t.Fatalf("GET /api/breaking-change-events 失败 (%d): %s", resp.Code, resp.Body.String())
+	}
+	var listResp struct {
+		Items     []handlers.BreakingChangeEventDTO `json:"items"`
+		Total     int64                             `json:"total"`
+		OpenCount int64                             `json:"open_count"`
+	}
+	_ = json.Unmarshal(resp.Body.Bytes(), &listResp)
+	if listResp.Total != 1 || listResp.OpenCount != 1 || len(listResp.Items) != 1 {
+		t.Fatalf("期望 1 条 OPEN 审计事件，实测: %+v", listResp)
+	}
+	ev := listResp.Items[0]
+	if ev.SchemaName != "account-schema" || ev.Source != models.BreakingSourceManualActivate || len(ev.AffectedDependents) == 0 {
+		t.Fatalf("审计事件属性异常: %+v", ev)
+	}
+	if ev.AffectedDependents[0].ModuleCode != "ORDER_CORE" || ev.AffectedDependents[0].ArchProcessCode != "sut-order" {
+		t.Errorf("推导下游血缘属性不符: %+v", ev.AffectedDependents[0])
 	}
 
-	// 带合法逃生舱参数批量激活切回
-	batchReqAllowed, _ := json.Marshal(map[string]interface{}{
-		"schema_ids":      []uint64{v1ID},
-		"allow_breaking":  true,
-		"breaking_reason": "紧急将描述集回滚至 v1 基线版本以恢复线上可用性",
-	})
-	req = httptest.NewRequest(http.MethodPost, "/api/proto-schemas/batch-activate", bytes.NewReader(batchReqAllowed))
+	// 6. 普通用户无权确认 -> 403；管理员确认 -> 200 且 open_count 归零
+	req = httptest.NewRequest(http.MethodPost, "/api/breaking-change-events/"+strconvFormat(ev.ID)+"/acknowledge", bytes.NewReader([]byte(`{"note":"viewer"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+viewerToken)
+	resp = httptest.NewRecorder()
+	r.ServeHTTP(resp, req)
+	if resp.Code != http.StatusForbidden {
+		t.Fatalf("非管理员调用 acknowledge 必须返回 403，实测 %d: %s", resp.Code, resp.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/breaking-change-events/"+strconvFormat(ev.ID)+"/acknowledge", bytes.NewReader([]byte(`{"note":"已通知 ORDER_CORE 同步适配"}`)))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+adminToken)
 	resp = httptest.NewRecorder()
 	r.ServeHTTP(resp, req)
 	if resp.Code != http.StatusOK {
-		t.Fatalf("带合法逃生舱批量激活应成功 200: code=%d, body=%s", resp.Code, resp.Body.String())
+		t.Fatalf("管理员 acknowledge 失败 (%d): %s", resp.Code, resp.Body.String())
+	}
+	var acked handlers.BreakingChangeEventDTO
+	_ = json.Unmarshal(resp.Body.Bytes(), &acked)
+	if acked.Status != models.BreakingAuditStatusAcknowledged || acked.AcknowledgeNote != "已通知 ORDER_CORE 同步适配" {
+		t.Fatalf("acknowledge 后状态或备注异常: %+v", acked)
+	}
+
+	// 7. 批量激活切回 v1（同样触发破坏性变更审计）并验证 batch-acknowledge
+	batchReq, _ := json.Marshal(map[string]interface{}{
+		"schema_ids": []uint64{v1ID},
+	})
+	req = httptest.NewRequest(http.MethodPost, "/api/proto-schemas/batch-activate", bytes.NewReader(batchReq))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	resp = httptest.NewRecorder()
+	r.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("批量激活应直接成功 200: code=%d, body=%s", resp.Code, resp.Body.String())
+	}
+	var batchActResp struct {
+		BreakingEventCount int `json:"breaking_event_count"`
+	}
+	_ = json.Unmarshal(resp.Body.Bytes(), &batchActResp)
+	if batchActResp.BreakingEventCount != 1 {
+		t.Fatalf("批量激活期望生成 1 条审计事件, got %s", resp.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/breaking-change-events?status=OPEN", nil)
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	resp = httptest.NewRecorder()
+	r.ServeHTTP(resp, req)
+	_ = json.Unmarshal(resp.Body.Bytes(), &listResp)
+	if listResp.OpenCount != 1 || len(listResp.Items) != 1 || listResp.Items[0].Source != models.BreakingSourceBatchActivate {
+		t.Fatalf("期望 1 条 BATCH_ACTIVATE OPEN 事件, got %+v", listResp)
+	}
+
+	batchAckBody, _ := json.Marshal(map[string]any{
+		"ids":  []uint64{listResp.Items[0].ID},
+		"note": "批量确认回滚基线变更",
+	})
+	req = httptest.NewRequest(http.MethodPost, "/api/breaking-change-events/batch-acknowledge", bytes.NewReader(batchAckBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	resp = httptest.NewRecorder()
+	r.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK || !bytes.Contains(resp.Body.Bytes(), []byte(`"acknowledged_count":1`)) {
+		t.Fatalf("batch-acknowledge 失败 (%d): %s", resp.Code, resp.Body.String())
 	}
 }
 

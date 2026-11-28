@@ -11,23 +11,19 @@ import {
   ShieldCheck,
   Trash2,
 } from 'lucide-react';
-import { Modal, useConfirm, usePaginationState } from '@code/common';
+import { useConfirm, usePaginationState } from '@code/common';
 import * as schemaApi from '../../api/schema';
 import { useModulePath } from '../../hooks/useModulePath';
 import { useToast } from '../../utils/toast';
 import { SchemaAssetLedgerTable } from '../ProtoSchemaWorkbenchPage/SchemaAssetLedgerTable';
 import { SchemaAssetInspectDrawer } from '../ProtoSchemaWorkbenchPage/SchemaAssetInspectDrawer';
 import { SchemaConflictModal } from '../ProtoSchemaWorkbenchPage/SchemaConflictModal';
-import { BreakingChangeAlertDrawer } from '../ProtoSchemasPage/BreakingChangeAlertDrawer';
 import type {
-  AffectedDependent,
   ArchivedExternalSchemaDTO,
-  BreakingRuleViolation,
   ConflictOrBrokenResponse,
   PipelineOverviewDTO,
   ProtoPublishRunDTO,
   ProtoSchemaLedgerItemDTO,
-  PublishBreakingItemDTO,
   PublishProgressEventPayload,
   PublishRunDetailsDTO,
 } from '../../types';
@@ -95,11 +91,6 @@ export const StagePublishPane: React.FC<StagePublishPaneProps> = ({
   const [publishing, setPublishing] = useState(false);
   const [confirming, setConfirming] = useState(false);
 
-  const [breakingModalOpen, setBreakingModalOpen] = useState(false);
-  const [selectedBreaking, setSelectedBreaking] = useState<PublishBreakingItemDTO[]>([]);
-  const [breakingReason, setBreakingReason] = useState('');
-  const [approving, setApproving] = useState(false);
-
   // 生效契约库版本台账状态
   const {
     page: ledgerPage,
@@ -120,14 +111,6 @@ export const StagePublishPane: React.FC<StagePublishPaneProps> = ({
   const [inspectSchema, setInspectSchema] = useState<ProtoSchemaLedgerItemDTO | null>(null);
   const [conflictModalOpen, setConflictModalOpen] = useState(false);
   const [conflictData, setConflictData] = useState<ConflictOrBrokenResponse | null>(null);
-  const [breakingDrawerOpen, setBreakingDrawerOpen] = useState(false);
-  const [breakingDrawerData, setBreakingDrawerData] = useState<{
-    schemaId: string | number | null;
-    batchIds: (string | number)[] | null;
-    breakingRules: BreakingRuleViolation[];
-    affectedDependents: AffectedDependent[];
-  } | null>(null);
-  const [isOverriding, setIsOverriding] = useState(false);
 
   const loadPublishState = useCallback(async () => {
     try {
@@ -192,11 +175,15 @@ export const StagePublishPane: React.FC<StagePublishPaneProps> = ({
         toast.info('已完成 PREVIEW 模式预编译，请审核下方报告后点击「确认切入生效池」');
       } else if (res.run.status === 'PARTIAL_BLOCKED') {
         toast.warning(
-          `部分契约包受门禁挂起：已生效 ${res.run.published_count}，破坏性待审 ${res.run.breaking_blocked_count}，等待上游 ${res.run.pending_upstream_count}`
+          `部分契约包受阻：已生效 ${res.run.published_count}，冲突阻断 ${res.run.conflict_blocked_count}，等待上游 ${res.run.pending_upstream_count}`
         );
       } else {
+        const auditHint =
+          res.details?.breaking_audit_count && res.details.breaking_audit_count > 0
+            ? `，其中 ${res.details.breaking_audit_count} 个含破坏性变更已归档至「规范与 MR 门禁」审计`
+            : '';
         toast.success(
-          `发布完成：新生效 ${res.run.published_count} 个契约包，跳过无变更 ${res.run.skipped_count} 个`
+          `发布完成：新生效 ${res.run.published_count} 个契约包，跳过无变更 ${res.run.skipped_count} 个${auditHint}`
         );
       }
       await loadPublishState();
@@ -232,41 +219,6 @@ export const StagePublishPane: React.FC<StagePublishPaneProps> = ({
       toast.error((err as Error).message || '确认切入生效池失败');
     } finally {
       setConfirming(false);
-    }
-  };
-
-  const openApproveModal = (items: PublishBreakingItemDTO[]) => {
-    setSelectedBreaking(items);
-    setBreakingReason('');
-    setBreakingModalOpen(true);
-  };
-
-  const handleApproveBreaking = async () => {
-    if (!publishRun || selectedBreaking.length === 0) return;
-    if (breakingReason.trim().length < 8) {
-      toast.error('请填写不少于 8 个字符的破坏性变更审批理由');
-      return;
-    }
-    setApproving(true);
-    try {
-      const res = await schemaApi.approvePublishRunBreaking(publishRun.id, {
-        schema_ids: selectedBreaking.map((b) => b.schema_id),
-        breaking_reason: breakingReason.trim(),
-      });
-      toast.success(
-        `已放行 ${res.approved_schemas.length} 个契约版本${
-          res.downstream_publish_run
-            ? `，并自动补发下游批次 #${res.downstream_publish_run.id}`
-            : ''
-        }`
-      );
-      setBreakingModalOpen(false);
-      await loadPublishState();
-      onRefresh();
-    } catch (err) {
-      toast.error((err as Error).message || '放行破坏性变更失败');
-    } finally {
-      setApproving(false);
     }
   };
 
@@ -311,7 +263,13 @@ export const StagePublishPane: React.FC<StagePublishPaneProps> = ({
   const handleActivateLedgerSchema = async (s: ProtoSchemaLedgerItemDTO) => {
     try {
       const res = await schemaApi.activateProtoSchema(s.id);
-      toast.success(`描述集 [${s.name} v${s.version}] 激活成功，生效 ${res.activated_operations} 个服务契约`);
+      const auditHint =
+        res.breaking_event_count && res.breaking_event_count > 0
+          ? '（含破坏性变更，已归档至规范与 MR 门禁审计）'
+          : '';
+      toast.success(
+        `描述集 [${s.name} v${s.version}] 激活成功，生效 ${res.activated_operations} 个服务契约${auditHint}`
+      );
       await loadLedgerSchemas();
       if (inspectDrawerOpen && inspectSchema?.name === s.name) {
         setInspectSchema(res.schema);
@@ -319,20 +277,6 @@ export const StagePublishPane: React.FC<StagePublishPaneProps> = ({
       onRefresh();
     } catch (err: unknown) {
       const respData = (err as unknown as { responseData?: ConflictOrBrokenResponse })?.responseData;
-      if (
-        respData &&
-        (respData.code === 'BREAKING_CHANGE_DETECTED' ||
-          (respData.breaking_rules && respData.breaking_rules.length > 0))
-      ) {
-        setBreakingDrawerData({
-          schemaId: s.id,
-          batchIds: null,
-          breakingRules: respData.breaking_rules || [],
-          affectedDependents: respData.affected_dependents || [],
-        });
-        setBreakingDrawerOpen(true);
-        return;
-      }
       if (respData && (respData.conflicts || respData.broken_dependents)) {
         setConflictData(respData);
         setConflictModalOpen(true);
@@ -365,25 +309,15 @@ export const StagePublishPane: React.FC<StagePublishPaneProps> = ({
   const handleBatchActivateLedger = async (selectedIds: (string | number)[]) => {
     try {
       const res = await schemaApi.batchActivateProtoSchemas(selectedIds);
-      toast.success(res.message || `成功批量激活 ${res.activated_count} 个描述集`);
+      const auditHint =
+        res.breaking_event_count && res.breaking_event_count > 0
+          ? `（其中 ${res.breaking_event_count} 个含破坏性变更已归档至规范与 MR 门禁审计）`
+          : '';
+      toast.success((res.message || `成功批量激活 ${res.activated_count} 个描述集`) + auditHint);
       await loadLedgerSchemas();
       onRefresh();
     } catch (err: unknown) {
       const respData = (err as unknown as { responseData?: ConflictOrBrokenResponse })?.responseData;
-      if (
-        respData &&
-        (respData.code === 'BREAKING_CHANGE_DETECTED' ||
-          (respData.breaking_rules && respData.breaking_rules.length > 0))
-      ) {
-        setBreakingDrawerData({
-          schemaId: null,
-          batchIds: selectedIds,
-          breakingRules: respData.breaking_rules || [],
-          affectedDependents: respData.affected_dependents || [],
-        });
-        setBreakingDrawerOpen(true);
-        return;
-      }
       if (respData && (respData.conflicts || respData.broken_dependents)) {
         setConflictData(respData);
         setConflictModalOpen(true);
@@ -409,34 +343,6 @@ export const StagePublishPane: React.FC<StagePublishPaneProps> = ({
       onRefresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '删除描述集失败');
-    }
-  };
-
-  const handleConfirmBreakingOverride = async (reason: string) => {
-    if (!breakingDrawerData) return;
-    setIsOverriding(true);
-    try {
-      if (breakingDrawerData.batchIds && breakingDrawerData.batchIds.length > 0) {
-        const res = await schemaApi.batchActivateProtoSchemas(breakingDrawerData.batchIds, {
-          allow_breaking: true,
-          breaking_reason: reason,
-        });
-        toast.success(res.message || `已强制放行并激活 ${res.activated_count} 个描述集`);
-      } else if (breakingDrawerData.schemaId) {
-        await schemaApi.activateProtoSchema(breakingDrawerData.schemaId, {
-          allow_breaking: true,
-          breaking_reason: reason,
-        });
-        toast.success('已强制放行并激活该契约版本');
-      }
-      setBreakingDrawerOpen(false);
-      setBreakingDrawerData(null);
-      await loadLedgerSchemas();
-      onRefresh();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '强制放行失败');
-    } finally {
-      setIsOverriding(false);
     }
   };
 
@@ -517,8 +423,16 @@ export const StagePublishPane: React.FC<StagePublishPaneProps> = ({
           <div className="ppipe-kpi-value">{stage4?.active_operation_count ?? 0}</div>
         </div>
         <div className="ppipe-kpi-item">
-          <div className="ppipe-kpi-label">待审破坏性挂起</div>
-          <div className="ppipe-kpi-value">{stage4?.breaking_blocked_count ?? 0}</div>
+          <div className="ppipe-kpi-label">待确认破坏性审计</div>
+          <div className="ppipe-kpi-value">
+            <Link
+              to={resolvePath('/proto-governance?gov_tab=breaking-audit')}
+              style={{ color: 'inherit', textDecoration: 'none' }}
+              title="前往规范与 MR 门禁查看破坏性变更审计"
+            >
+              {stage4?.open_breaking_audit_count ?? 0}
+            </Link>
+          </div>
         </div>
         <div className="ppipe-kpi-item">
           <div className="ppipe-kpi-label">等待上游传播</div>
@@ -558,37 +472,22 @@ export const StagePublishPane: React.FC<StagePublishPaneProps> = ({
       )}
 
       {breakingItems.length > 0 && (
-        <div className="ppipe-alert ppipe-alert--danger" data-testid="breaking-approval-panel">
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 600, marginBottom: '6px' }}>
-              破坏性变更待审清单（{breakingItems.length} 个契约包，旧版保持生效以保护下游）：
-            </div>
-            <ul style={{ margin: 0, paddingLeft: '18px' }}>
-              {breakingItems.map((bi) => (
-                <li key={bi.schema_id} style={{ marginBottom: '4px' }}>
-                  <strong>{bi.bundle_name}</strong> ({bi.target_schema_name} v{bi.version})：
-                  {bi.breaking_rules.map((r) => `[${r.rule}] ${r.symbol}: ${r.message}`).join('；')}
-                  {bi.affected_dependents && bi.affected_dependents.length > 0 && (
-                    <span>
-                      {' '}
-                      · 波及下游：{bi.affected_dependents.map((d) => d.module_name).join(', ')}
-                    </span>
-                  )}
-                </li>
-              ))}
-            </ul>
+        <div className="ppipe-alert ppipe-alert--warning" data-testid="breaking-audit-notice">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1 }}>
+            <AlertTriangle size={16} />
+            <span>
+              {publishRun?.status === 'PREVIEW_READY'
+                ? `预览检测发现 ${breakingItems.length} 个契约包存在破坏性变更，确认切入生效池后将自动归档至「规范与 MR 门禁」进行合规审计。`
+                : `本次发布已正常推进，共检出 ${breakingItems.length} 个契约包存在破坏性变更，已自动归档至「规范与 MR 门禁」进行合规审计。`}
+            </span>
           </div>
-          {isAdmin && (
-            <button
-              type="button"
-              className="btn btn-primary btn-sm"
-              data-testid="open-breaking-approve-btn"
-              onClick={() => openApproveModal(breakingItems)}
-              disabled={locked}
-            >
-              审批放行并自动补发下游
-            </button>
-          )}
+          <Link
+            to={resolvePath('/proto-governance?gov_tab=breaking-audit')}
+            className="btn btn-secondary btn-sm"
+            data-testid="goto-breaking-audit-btn"
+          >
+            查看破坏性变更审计
+          </Link>
         </div>
       )}
 
@@ -826,63 +725,6 @@ export const StagePublishPane: React.FC<StagePublishPaneProps> = ({
         }}
         conflictData={conflictData}
       />
-
-      <BreakingChangeAlertDrawer
-        isOpen={breakingDrawerOpen}
-        onClose={() => {
-          setBreakingDrawerOpen(false);
-          setBreakingDrawerData(null);
-        }}
-        breakingRules={breakingDrawerData?.breakingRules || []}
-        affectedDependents={breakingDrawerData?.affectedDependents || []}
-        isAdmin={isAdmin}
-        onConfirmOverride={handleConfirmBreakingOverride}
-        isSubmitting={isOverriding}
-      />
-
-      <Modal
-        open={breakingModalOpen}
-        onClose={() => setBreakingModalOpen(false)}
-        title="审批放行破坏性契约变更"
-        footer={
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => setBreakingModalOpen(false)}
-              disabled={approving}
-            >
-              取消
-            </button>
-            <button
-              type="button"
-              className="btn btn-danger"
-              data-testid="confirm-breaking-approve-btn"
-              onClick={() => void handleApproveBreaking()}
-              disabled={approving || breakingReason.trim().length < 8}
-            >
-              {approving ? '正在放行与补发...' : '确认放行并补发下游'}
-            </button>
-          </div>
-        }
-      >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          <p style={{ margin: 0, fontSize: '13px', color: 'var(--color-text-secondary)' }}>
-            即将强制激活 {selectedBreaking.map((b) => `${b.bundle_name} (v${b.version})`).join('、')}
-            ，系统随后会自动重发等待该上游的下游契约包并重建文档索引。
-          </p>
-          <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '13px' }}>
-            <span>强制放行审批原因（必填，至少 8 个字符，将记入 P1 审计日志）：</span>
-            <textarea
-              className="ppipe-textarea"
-              data-testid="breaking-reason-input"
-              placeholder="例如：架构评审已确认兼容性影响，已通知下游同步适配"
-              value={breakingReason}
-              onChange={(e) => setBreakingReason(e.target.value)}
-            />
-          </label>
-        </div>
-      </Modal>
     </div>
   );
 };
