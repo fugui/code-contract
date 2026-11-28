@@ -108,7 +108,8 @@ docs/
 │   ├── 28-uservice-normalization-pg-flattening-and-compile-closure-adr.md  # ADR-28：[Implemented] 现网 uService 清洗转换、clean 目录去 /pg 扁平化与全池编译收敛架构决策 (R0~R8)
 │   ├── 29-proto-contract-pipeline-closure-and-ia-redesign-adr.md           # ADR-29：[Implemented / r4]「Proto 契约治理」四阶段可视化流水线闭环与四菜单信息架构重构决策
 │   ├── 30-contract-library-and-three-lines-ia-adr.md                       # ADR-30：[Implemented] 按「两条主线 + 独立开发 MR 合规线」重构契约菜单（6 组 14 项）及四阶段流水线工作台
-│   └── 31-rpc-replay-end-to-end-audit-and-production-readiness-adr.md      # ADR-31：[Proposed] RPC 离线自愈重放端到端代码审计、生产就绪修复决策与用户操作规范
+│   ├── 31-rpc-replay-end-to-end-audit-and-production-readiness-adr.md      # ADR-31：[Proposed] RPC 离线自愈重放端到端代码审计、生产就绪修复决策与用户操作规范
+│   └── 32-five-lines-flywheel-ux-dual-gate-and-audit-traceability-adr.md  # ADR-32：[Proposed] 五线活体契约飞轮动线校准、双闸门可视拉通、破坏性变更 MR 溯源与黄金用例反向滋养架构决策
 ├── 06-ops/          # 交付与验证：双模联调、物理隔离数据库测试与生产环境单二进制部署手册
 │   ├── 01-verification-and-deployment-guide.md    # 联调验证、自动化回归测试与生产部署操作指南
 │   └── 02-e2e-browser-test-and-ux-review.md       # E2E 浏览器实测走查与产品体验优化报告
