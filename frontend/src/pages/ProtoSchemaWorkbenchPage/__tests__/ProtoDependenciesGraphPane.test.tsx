@@ -4,11 +4,19 @@ import { MemoryRouter } from 'react-router-dom';
 import {
   ProtoDependenciesGraphPane,
   SOURCE_TYPE_LABEL,
+  computeGraphHighlightSet,
   computeSchemaNodeRelations,
   filterProtoGraphByCategory,
+  formatEdgeProtoLabel,
   layoutProtoDependenciesGraph,
   getSchemaNodeNavigationTarget,
 } from '../ProtoDependenciesGraphPane';
+import {
+  buildProtoGraphSvgString,
+  exportProtoGraphAsPng,
+  exportProtoGraphAsSvg,
+} from '../exportProtoGraph';
+import { ProtoDocsWorkbenchPage } from '../ProtoDocsWorkbenchPage';
 import { ProtoGraphNodeInspectContent } from '../ProtoGraphNodeInspectDrawer';
 import { ProtoSchemaWorkbenchPage } from '../ProtoSchemaWorkbenchPage';
 import { SchemaAssetLedgerTable } from '../SchemaAssetLedgerTable';
@@ -350,5 +358,137 @@ describe('M22-P3 ProtoDependenciesGraphPane (/schemas?tab=graph)', () => {
     expect(baseHtml).not.toContain('查看全注释参考文档');
     expect(baseHtml).toContain('common/base.proto');
     expect(baseHtml).toContain('common/types.proto');
+  });
+
+  it('supports TB/LR layout directions, compact edge labels, and 1-hop highlight calculation', async () => {
+    expect(formatEdgeProtoLabel(undefined)).toBe('import');
+    expect(formatEdgeProtoLabel(['demo/proto/common.proto'], false)).toBe('common.proto');
+    expect(formatEdgeProtoLabel(['demo/proto/common.proto', 'demo/proto/err.proto'], false)).toBe(
+      'common.proto (+1)'
+    );
+    expect(formatEdgeProtoLabel(['demo/proto/common.proto', 'demo/proto/err.proto'], true)).toBe(
+      'demo/proto/common.proto (+1)'
+    );
+
+    const tbLayout = await layoutProtoDependenciesGraph(sampleGraph, 20, 'TB');
+    expect(tbLayout.nodes[0].data.layoutDirection).toBe('TB');
+    expect(tbLayout.edges[0].label).toBe('base.proto');
+
+    const lrLayout = await layoutProtoDependenciesGraph(sampleGraph, null, 'LR');
+    expect(lrLayout.nodes[0].data.layoutDirection).toBe('LR');
+
+    expect(computeGraphHighlightSet(sampleGraph, null)).toBeNull();
+    const hl = computeGraphHighlightSet(sampleGraph, 20);
+    expect(hl).not.toBeNull();
+    expect(Array.from(hl!.activeNodeIds).sort()).toEqual(['schema_10', 'schema_20', 'schema_30']);
+    expect(hl!.activeEdgeIds.size).toBe(2);
+
+    const hlLeaf = computeGraphHighlightSet(sampleGraph, 10);
+    expect(Array.from(hlLeaf!.activeNodeIds).sort()).toEqual(['schema_10', 'schema_20']);
+    expect(hlLeaf!.activeEdgeIds.size).toBe(1);
+  });
+
+  it('renders graph toolbar controls (layout, zoom, minimap, export, fullscreen) and page viewport shell class', () => {
+    const graphHtml = renderToString(
+      <MemoryRouter initialEntries={['/proto-docs?docs_view=graph']}>
+        <ProtoDependenciesGraphPane initialGraph={sampleGraph} />
+      </MemoryRouter>
+    );
+    expect(graphHtml).toContain('纵向');
+    expect(graphHtml).toContain('横向');
+    expect(graphHtml).toContain('1:1');
+    expect(graphHtml).toContain('适应');
+    expect(graphHtml).toContain('小地图');
+    expect(graphHtml).toContain('PNG');
+    expect(graphHtml).toContain('SVG');
+    expect(graphHtml).toContain('全屏');
+    expect(graphHtml).toContain('proto-graph-hint');
+
+    const docsGraphHtml = renderToString(
+      <MemoryRouter initialEntries={['/proto-docs?docs_view=graph']}>
+        <ProtoDocsWorkbenchPage />
+      </MemoryRouter>
+    );
+    expect(docsGraphHtml).toContain('pdoc-page-shell--graph');
+
+    const docsRefHtml = renderToString(
+      <MemoryRouter initialEntries={['/proto-docs?docs_view=reference']}>
+        <ProtoDocsWorkbenchPage
+          initialTree={{ items: [], total_services: 0, total_methods: 0, deprecated_count: 0 }}
+        />
+      </MemoryRouter>
+    );
+    expect(docsRefHtml).not.toContain('pdoc-page-shell--graph');
+  });
+
+  it('builds pure vector SVG and supports SVG/PNG export in TB and LR directions', async () => {
+    const tbLayout = await layoutProtoDependenciesGraph(sampleGraph, null, 'TB');
+    const tbSvg = buildProtoGraphSvgString(tbLayout.nodes, tbLayout.edges, { direction: 'TB' });
+    expect(tbSvg.svg).toContain('<svg');
+    expect(tbSvg.svg).not.toContain('<foreignObject');
+    expect(tbSvg.svg).toContain('common-base');
+    expect(tbSvg.svg).toContain('trade-core');
+    expect(tbSvg.svg).toContain('<marker id="proto-dep-arrow"');
+
+    const lrSvg = buildProtoGraphSvgString(tbLayout.nodes, tbLayout.edges, { direction: 'LR' });
+    expect(lrSvg.svg).toContain('<path d="M ');
+
+    const emptySvg = buildProtoGraphSvgString([], []);
+    expect(emptySvg.svg).toContain('当前筛选条件下暂无契约依赖关系节点');
+
+    const downloads: string[] = [];
+    const fakeAnchor = {
+      href: '',
+      download: '',
+      click: vi.fn(),
+    };
+    const fakeCanvas = {
+      width: 0,
+      height: 0,
+      getContext: () => ({
+        scale: vi.fn(),
+        drawImage: vi.fn(),
+      }),
+      toBlob: (cb: (blob: Blob | null) => void) => cb(new Blob(['png'], { type: 'image/png' })),
+    };
+    const fakeDoc = {
+      createElement: (tag: string) => {
+        if (tag === 'a') return fakeAnchor;
+        if (tag === 'canvas') return fakeCanvas;
+        return {};
+      },
+      body: {
+        appendChild: vi.fn(),
+        removeChild: vi.fn(),
+      },
+    } as unknown as Document;
+    const fakeUrlApi = {
+      createObjectURL: () => {
+        return 'blob:mock';
+      },
+      revokeObjectURL: vi.fn(),
+    };
+
+    exportProtoGraphAsSvg(tbLayout.nodes, tbLayout.edges, {
+      documentRef: fakeDoc,
+      urlApi: fakeUrlApi,
+    });
+    downloads.push(fakeAnchor.download);
+
+    await exportProtoGraphAsPng(tbLayout.nodes, tbLayout.edges, {
+      documentRef: fakeDoc,
+      urlApi: fakeUrlApi,
+      createImage: () => {
+        const img = {} as HTMLImageElement;
+        queueMicrotask(() => {
+          img.onload?.(new Event('load'));
+        });
+        return img;
+      },
+    });
+    downloads.push(fakeAnchor.download);
+
+    expect(downloads[0]).toMatch(/^proto-dependencies-graph-\d{8}-\d{6}\.svg$/);
+    expect(downloads[1]).toMatch(/^proto-dependencies-graph-\d{8}-\d{6}\.png$/);
   });
 });

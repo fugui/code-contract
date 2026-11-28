@@ -121,7 +121,10 @@ export const ProtoDocsWorkbenchPage: React.FC<ProtoDocsWorkbenchPageProps> = ({
   };
 
   return (
-    <div className="pdoc-page-shell" data-testid="proto-docs-workbench-page">
+    <div
+      className={`pdoc-page-shell ${docsView === 'graph' ? 'pdoc-page-shell--graph' : ''}`}
+      data-testid="proto-docs-workbench-page"
+    >
       <div className="pdoc-page-header">
         <div className="pdoc-page-header__meta">
           <h2 className="pdoc-page-header__title">

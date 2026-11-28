@@ -2722,8 +2722,360 @@
  * 跨包依赖图节点选中态与只读速览抽屉 (.pggraph-inspect-*)
  * ============================================================================ */
 
+.pdoc-page-shell--graph {
+  height: calc(100vh - var(--portal-header-height, 64px) - var(--contract-utility-header-height, 0px));
+  min-height: 580px;
+  box-sizing: border-box;
+}
+
+/* ============================================================================
+ * 跨包依赖图工作台、节点卡片与沉浸全屏视图 (.proto-graph-*, .code-proto-graph-node*)
+ * ============================================================================ */
+
+.proto-graph-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: 12px;
+}
+
+.proto-graph-workspace {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: 12px;
+}
+
+.proto-graph-workspace--fullscreen {
+  width: 100%;
+  height: 100%;
+  gap: 0;
+  background: var(--color-bg-surface);
+}
+
+.proto-graph-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  padding: 10px 14px;
+  border-radius: var(--radius-md, 8px);
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-primary);
+  flex-shrink: 0;
+}
+
+.proto-graph-workspace--fullscreen .proto-graph-toolbar {
+  border-radius: 0;
+  border-top: none;
+  border-left: none;
+  border-right: none;
+  background: var(--color-bg-muted);
+}
+
+.proto-graph-toolbar__filters,
+.proto-graph-toolbar__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.proto-graph-filter-btn {
+  padding: 5px 11px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--color-border-primary);
+  background: var(--color-bg-surface);
+  color: var(--color-text-secondary);
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.proto-graph-filter-btn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-text-primary);
+}
+
+.proto-graph-filter-btn--active {
+  font-weight: 600;
+  border-color: var(--color-primary);
+  background: var(--color-bg-muted);
+  color: var(--color-primary);
+}
+
+.proto-graph-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.proto-graph-divider {
+  width: 1px;
+  height: 18px;
+  background: var(--color-border-primary);
+  opacity: 0.75;
+}
+
+.proto-graph-segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border-primary);
+  background: var(--color-bg-muted);
+}
+
+.proto-graph-segmented__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.proto-graph-segmented__btn:hover {
+  color: var(--color-text-primary);
+}
+
+.proto-graph-segmented__btn--active {
+  background: var(--color-bg-surface);
+  color: var(--color-primary);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+}
+
+.proto-graph-control-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.proto-graph-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 9px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border-primary);
+  background: var(--color-bg-surface);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.proto-graph-tool-btn:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  background: var(--color-bg-hover, var(--color-bg-muted));
+  color: var(--color-primary);
+}
+
+.proto-graph-tool-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.proto-graph-tool-btn--icon {
+  width: 28px;
+  padding: 0;
+}
+
+.proto-graph-tool-btn--active {
+  border-color: var(--color-primary);
+  background: var(--color-bg-muted);
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.proto-graph-tool-btn--close {
+  border-color: var(--color-border-primary);
+  color: var(--color-text-primary);
+}
+
+.proto-graph-tool-btn--close:hover:not(:disabled) {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 10%, var(--color-bg-surface));
+}
+
+.proto-graph-zoom-readout {
+  min-width: 48px;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border-primary);
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.proto-graph-zoom-readout:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.proto-graph-zoom-readout:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.proto-graph-empty {
+  padding: 56px 24px;
+  text-align: center;
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--radius-md, 8px);
+  color: var(--color-text-secondary);
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 420px;
+}
+
+.proto-graph-workspace--fullscreen .proto-graph-empty {
+  border: none;
+  border-radius: 0;
+}
+
+.proto-graph-empty__title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.proto-graph-empty__desc {
+  margin: 0;
+  font-size: 12px;
+}
+
+.proto-graph-empty__tags {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+.proto-graph-empty__tag {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.proto-graph-stage {
+  position: relative;
+  flex: 1;
+  min-height: 480px;
+  border-radius: var(--radius-md, 8px);
+  overflow: hidden;
+  background: var(--color-bg-canvas, var(--color-bg-surface));
+  border: 1px solid var(--color-border-primary);
+}
+
+.proto-graph-workspace--fullscreen .proto-graph-stage {
+  min-height: 0;
+  border: none;
+  border-radius: 0;
+}
+
+.proto-graph-stage .react-flow {
+  width: 100%;
+  height: 100%;
+}
+
+.proto-graph-hint {
+  position: absolute;
+  left: 14px;
+  bottom: 12px;
+  z-index: 5;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-primary);
+  box-shadow: var(--shadow-sm);
+  color: var(--color-text-muted);
+  font-size: 11px;
+  opacity: 0.86;
+  pointer-events: none;
+}
+
+.proto-graph-inline-placeholder {
+  flex: 1;
+  min-height: 360px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  border-radius: var(--radius-md, 8px);
+  border: 1px dashed var(--color-border-primary);
+  background: var(--color-bg-surface);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.proto-graph-ssr-index {
+  display: none;
+}
+
 .code-proto-graph-node {
-  transition: box-shadow 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
+  width: 240px;
+  min-height: 104px;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--color-bg-surface);
+  border: 1.5px solid var(--color-border-primary);
+  box-shadow: var(--shadow-sm);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 6px;
+  transition: box-shadow 0.16s ease, border-color 0.16s ease, opacity 0.16s ease, transform 0.16s ease;
+}
+
+.code-proto-graph-node--base-lib {
+  border-color: var(--color-info, var(--color-primary));
+}
+
+.code-proto-graph-node--business {
+  border-color: var(--color-primary);
+}
+
+.code-proto-graph-node--gateway {
+  border-color: var(--color-success);
 }
 
 .code-proto-graph-node:hover {
@@ -2732,6 +3084,83 @@
 
 .code-proto-graph-node--selected {
   background: var(--color-bg-subtle);
+  border-color: var(--color-primary);
+  outline: 2px solid var(--color-primary);
+  box-shadow: var(--shadow-lg, var(--shadow-sm));
+}
+
+.code-proto-graph-node--highlighted {
+  box-shadow: var(--shadow-md, var(--shadow-lg));
+  outline: 1.5px solid var(--color-primary);
+}
+
+.code-proto-graph-node--dimmed {
+  opacity: 0.28;
+}
+
+.code-proto-graph-node__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.code-proto-graph-node__name {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.code-proto-graph-node__version {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--color-bg-muted);
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.code-proto-graph-node__badges {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.code-proto-graph-node__cat {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--color-bg-muted);
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.code-proto-graph-node--base-lib .code-proto-graph-node__cat {
+  color: var(--color-info, var(--color-primary));
+}
+
+.code-proto-graph-node--gateway .code-proto-graph-node__cat {
+  color: var(--color-success);
+}
+
+.code-proto-graph-node__src {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--color-bg-muted);
+  color: var(--color-text-muted);
+}
+
+.code-proto-graph-node__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--color-text-secondary);
 }
 
 .pggraph-inspect-body {

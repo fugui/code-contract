@@ -200,6 +200,7 @@
 }
 
 .code-contract-embedded-shell {
+  --contract-utility-header-height: 42px;
   display: flex;
   flex-direction: column;
   width: 100%;
