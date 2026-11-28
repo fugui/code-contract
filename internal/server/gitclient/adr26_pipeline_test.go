@@ -133,13 +133,16 @@ func TestCollector_PgWhitelistStrictLowercase_IncrementalBlob_AndLFSQuarantine(t
 
 	bareDir := createBareGitRepoWithCommits(t, "main", []map[string]string{
 		{
-			"pg/common/base.proto":        "syntax = \"proto3\";\npackage acme.base.v1;\nmessage BaseID { string id = 1; }\n",
-			"submod/pg/order.proto":       "syntax = \"proto3\";\npackage acme.order.v1;\nimport \"common/base.proto\";\nmessage OrderReq { acme.base.v1.BaseID id = 1; }\n",
-			"PG/ignored.proto":            "syntax = \"proto3\";\npackage ignored;\nmessage Ignored1 { string x = 1; }\n",
-			"Pg/ignored2.proto":           "syntax = \"proto3\";\npackage ignored;\nmessage Ignored2 { string x = 1; }\n",
-			"src/pg_extra/ignored3.proto": "syntax = \"proto3\";\npackage ignored;\nmessage Ignored3 { string x = 1; }\n",
-			"pg/lfs_stub.proto":           "version https://git-lfs.github.com/spec/v1\noid sha256:4d7a214614ab2935c943f9e0ff69d22eadbb8f32b1258daaa5e2ca24d17e2393\nsize 12345\n",
-			"pg/oversize.proto":           "syntax = \"proto3\";\npackage acme.big;\nmessage Big { string data = 1; }\n" + strings.Repeat("// pad\n", 40),
+			"pg/common/base.proto":             "syntax = \"proto3\";\npackage acme.base.v1;\nmessage BaseID { string id = 1; }\n",
+			"submod/pg/order.proto":            "syntax = \"proto3\";\npackage acme.order.v1;\nimport \"common/base.proto\";\nmessage OrderReq { acme.base.v1.BaseID id = 1; }\n",
+			"platform/core/sub/pg/deep.proto":  "syntax = \"proto3\";\npackage acme.deep.v1;\nmessage DeepMsg { string id = 1; }\n",
+			"platform/core/test/pg/skip.proto": "syntax = \"proto3\";\npackage ignored;\nmessage SkipTest { string x = 1; }\n",
+			"PG/ignored.proto":                 "syntax = \"proto3\";\npackage ignored;\nmessage Ignored1 { string x = 1; }\n",
+			"Pg/ignored2.proto":                "syntax = \"proto3\";\npackage ignored;\nmessage Ignored2 { string x = 1; }\n",
+			"src/pg_extra/ignored3.proto":      "syntax = \"proto3\";\npackage ignored;\nmessage Ignored3 { string x = 1; }\n",
+			"platform/core/PG/ignored4.proto":  "syntax = \"proto3\";\npackage ignored;\nmessage Ignored4 { string x = 1; }\n",
+			"pg/lfs_stub.proto":                "version https://git-lfs.github.com/spec/v1\noid sha256:4d7a214614ab2935c943f9e0ff69d22eadbb8f32b1258daaa5e2ca24d17e2393\nsize 12345\n",
+			"pg/oversize.proto":                "syntax = \"proto3\";\npackage acme.big;\nmessage Big { string data = 1; }\n" + strings.Repeat("// pad\n", 40),
 		},
 	})
 
@@ -157,7 +160,7 @@ func TestCollector_PgWhitelistStrictLowercase_IncrementalBlob_AndLFSQuarantine(t
 		t.Fatalf("create repo: %v", err)
 	}
 
-	// Stage A 直接测试：验证严格小写 pg/ 白名单（derivePGPrefixes 直接按前缀列举）、LFS 指针与超限大小隔离
+	// Stage A 直接测试：验证严格小写 pg/ 白名单（含任意深层 pg 目录）、exclude_globs 过滤、LFS 指针与超限大小隔离
 	collect1, err := CollectRepoStageA(ctx, &repo, "main", CollectConfig{
 		CodesDir:           codesDir,
 		SharedWriteEnabled: true,
@@ -167,11 +170,11 @@ func TestCollector_PgWhitelistStrictLowercase_IncrementalBlob_AndLFSQuarantine(t
 	if err != nil {
 		t.Fatalf("CollectRepoStageA failed: %v", err)
 	}
-	if len(collect1.Files) != 4 {
-		t.Fatalf("expected exactly 4 whitelist .proto files under pg/ & submod/pg/, got %d", len(collect1.Files))
+	if len(collect1.Files) != 5 {
+		t.Fatalf("expected exactly 5 whitelist .proto files under pg/, submod/pg/ & platform/core/sub/pg/, got %d", len(collect1.Files))
 	}
 
-	// 验证 PLATFORM_SHARED 只读探测：通过 derivePGPrefixes 直接过滤，无需全仓 ls-tree -r
+	// 验证 PLATFORM_SHARED 只读探测：含 **/pg/**/*.proto 时自动降级全树 ls-tree -z -r，识别深层 pg 目录并统计白名单外文件
 	platShared := contractModels.GitRepo{
 		Name:           "collect-probe-shared",
 		Provider:       contractModels.GitProviderGeneric,
@@ -194,18 +197,27 @@ func TestCollector_PgWhitelistStrictLowercase_IncrementalBlob_AndLFSQuarantine(t
 	if probeErr != nil {
 		t.Fatalf("ProbeRepoPGStructure failed: %v", probeErr)
 	}
-	if wlCnt != 4 || outCnt != 0 || len(pgDirs) != 2 {
-		t.Fatalf("expected whitelist=4 outside=0 pgDirs=2, got wl=%d out=%d pgDirs=%v", wlCnt, outCnt, pgDirs)
+	if wlCnt != 5 || outCnt != 5 || len(pgDirs) != 3 {
+		t.Fatalf("expected whitelist=5 outside=5 pgDirs=3, got wl=%d out=%d pgDirs=%v", wlCnt, outCnt, pgDirs)
 	}
 
 	byPath := make(map[string]CollectedFile, len(collect1.Files))
 	for _, f := range collect1.Files {
 		byPath[f.RepoFilePath] = f
 	}
-	for _, banned := range []string{"PG/ignored.proto", "Pg/ignored2.proto", "src/pg_extra/ignored3.proto"} {
+	for _, banned := range []string{
+		"PG/ignored.proto",
+		"Pg/ignored2.proto",
+		"src/pg_extra/ignored3.proto",
+		"platform/core/PG/ignored4.proto",
+		"platform/core/test/pg/skip.proto",
+	} {
 		if _, exists := byPath[banned]; exists {
 			t.Fatalf("strict lowercase pg whitelist leaked %s", banned)
 		}
+	}
+	if got := byPath["platform/core/sub/pg/deep.proto"]; got.Status != contractModels.ProtoPipelineCollected || got.PGDir != "platform/core/sub/pg" {
+		t.Fatalf("expected platform/core/sub/pg/deep.proto COLLECTED with PGDir=platform/core/sub/pg, got %+v", got)
 	}
 	if got := byPath["pg/lfs_stub.proto"]; got.Status != contractModels.ProtoPipelineQuarantined || got.StatusReason != "LFS_POINTER" {
 		t.Fatalf("expected pg/lfs_stub.proto QUARANTINED(LFS_POINTER), got status=%s reason=%s", got.Status, got.StatusReason)
@@ -796,5 +808,41 @@ func TestSyncScheduler_SingleflightAndLocalCacheOnly(t *testing.T) {
 		if results[i] == nil || results[i].NormalizedCount != 1 {
 			t.Fatalf("expected NormalizedCount=1 via LOCAL_CACHE_ONLY, got %+v", results[i])
 		}
+	}
+}
+
+func TestExtractStrictPGDirAndDefaultGlobShape(t *testing.T) {
+	cases := []struct {
+		path    string
+		wantDir string
+		wantOK  bool
+	}{
+		{path: "pg/a.proto", wantDir: "pg", wantOK: true},
+		{path: "submod/pg/order.proto", wantDir: "submod/pg", wantOK: true},
+		{path: "platform/core/sub/pg/deep.proto", wantDir: "platform/core/sub/pg", wantOK: true},
+		{path: "platform/core/pg/sub/pg/nested.proto", wantDir: "platform/core/pg", wantOK: true},
+		{path: "pg.proto", wantDir: "", wantOK: false},
+		{path: "platform/pg.proto", wantDir: "", wantOK: false},
+		{path: "platform/PG/a.proto", wantDir: "", wantOK: false},
+		{path: "platform/Pg/a.proto", wantDir: "", wantOK: false},
+		{path: "platform/pg_extra/a.proto", wantDir: "", wantOK: false},
+		{path: "", wantDir: "", wantOK: false},
+	}
+	for _, tc := range cases {
+		gotDir, gotOK := ExtractStrictPGDir(tc.path)
+		if gotDir != tc.wantDir || gotOK != tc.wantOK {
+			t.Fatalf("ExtractStrictPGDir(%q) = (%q, %v), want (%q, %v)",
+				tc.path, gotDir, gotOK, tc.wantDir, tc.wantOK)
+		}
+	}
+
+	if !areAllGlobsDefaultPGShape([]string{"pg/**/*.proto", "*/pg/**/*.proto"}) {
+		t.Fatalf("expected 0/1-level pg globs to use prefix fast path")
+	}
+	if areAllGlobsDefaultPGShape([]string{"pg/**/*.proto", "*/pg/**/*.proto", "**/pg/**/*.proto"}) {
+		t.Fatalf("expected **/pg/**/*.proto to fall back to full tree traversal")
+	}
+	if areAllGlobsDefaultPGShape(nil) {
+		t.Fatalf("expected empty globs not to match default pg shape")
 	}
 }

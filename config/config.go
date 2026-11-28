@@ -198,9 +198,29 @@ func ApplyProtoPipelineDefaults(pp *ProtoPipelineSection) {
 	}
 }
 
-// DefaultCollectGlobs 返回 ADR-26 规定的默认 pg 白名单采集规则（严格全小写 pg）。
+// DefaultCollectGlobs 返回默认 pg 白名单采集规则（严格全小写 pg，覆盖根目录、一级及任意深层 pg 目录）。
 func DefaultCollectGlobs() []string {
-	return []string{"pg/**/*.proto", "*/pg/**/*.proto"}
+	return []string{"pg/**/*.proto", "*/pg/**/*.proto", "**/pg/**/*.proto"}
+}
+
+// EffectiveCollectGlobs 返回生效的 pg 白名单采集规则：优先使用运行时配置 proto_collect.collect_globs，为空时回退至 DefaultCollectGlobs。
+func EffectiveCollectGlobs() []string {
+	if len(AppConfig.ProtoCollect.CollectGlobs) > 0 {
+		out := make([]string, len(AppConfig.ProtoCollect.CollectGlobs))
+		copy(out, AppConfig.ProtoCollect.CollectGlobs)
+		return out
+	}
+	return DefaultCollectGlobs()
+}
+
+// EffectiveExcludeGlobs 返回生效的二级排除规则：优先使用运行时配置 proto_collect.exclude_globs，为空时回退至 DefaultExcludeGlobs。
+func EffectiveExcludeGlobs() []string {
+	if len(AppConfig.ProtoCollect.ExcludeGlobs) > 0 {
+		out := make([]string, len(AppConfig.ProtoCollect.ExcludeGlobs))
+		copy(out, AppConfig.ProtoCollect.ExcludeGlobs)
+		return out
+	}
+	return DefaultExcludeGlobs()
 }
 
 // DefaultExcludeGlobs 返回 ADR-26 规定的默认二级排除规则。

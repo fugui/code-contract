@@ -58,6 +58,7 @@ proto_collect:
   collect_globs:
     - "pg/**/*.proto"
     - "*/pg/**/*.proto"
+    - "**/pg/**/*.proto"   # 匹配 platform/xxx/.../pg/ 等任意深度 pg 目录
   exclude_globs:
     - "**/test/**"
     - "**/testdata/**"

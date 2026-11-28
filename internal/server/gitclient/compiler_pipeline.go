@@ -366,10 +366,21 @@ func RunFourStagePipeline(
 		repo.ProtoStatus != "" && repo.ProtoStatus != models.GitRepoProtoStatusPending &&
 		repo.ProtoStatus != models.GitRepoProtoStatusNoLocalCache && repo.ProtoStatus != models.GitRepoProtoStatusSyncFailed
 
-	var globalCollectGlobs, globalExcludeGlobs []string
-	if govDoc != nil {
-		globalCollectGlobs = govDoc.Global.CollectGlobs
-		globalExcludeGlobs = govDoc.Global.ExcludeGlobs
+	// 优先级：单仓覆写 > 全局治理配置 > 运行时 proto_collect 配置 / 默认规则
+	effectiveCollectGlobs := repo.CollectGlobs()
+	if len(effectiveCollectGlobs) == 0 && govDoc != nil && len(govDoc.Global.CollectGlobs) > 0 {
+		effectiveCollectGlobs = govDoc.Global.CollectGlobs
+	}
+	if len(effectiveCollectGlobs) == 0 {
+		effectiveCollectGlobs = config.EffectiveCollectGlobs()
+	}
+
+	effectiveExcludeGlobs := repo.ExcludeGlobs()
+	if len(effectiveExcludeGlobs) == 0 && govDoc != nil && len(govDoc.Global.ExcludeGlobs) > 0 {
+		effectiveExcludeGlobs = govDoc.Global.ExcludeGlobs
+	}
+	if len(effectiveExcludeGlobs) == 0 {
+		effectiveExcludeGlobs = config.EffectiveExcludeGlobs()
 	}
 
 	// Stage A: pg 白名单采集 + 增量 blob 读取
@@ -379,8 +390,8 @@ func RunFourStagePipeline(
 		CachePolicy:           opts.CachePolicy,
 		KnownCommitSHA:        repo.LastCollectedCommit,
 		SkipIfCommitUnchanged: skipIfUnchanged,
-		CollectGlobs:          globalCollectGlobs,
-		ExcludeGlobs:          globalExcludeGlobs,
+		CollectGlobs:          effectiveCollectGlobs,
+		ExcludeGlobs:          effectiveExcludeGlobs,
 		MaxFileBytes:          config.AppConfig.ProtoCollect.MaxFileBytes,
 		MaxFilesPerRepo:       config.AppConfig.ProtoCollect.MaxFilesPerRepo,
 		KnownRawBlobSHAs:      knownSHAs,

@@ -124,14 +124,14 @@ func CollectRepoStageA(ctx context.Context, repo *models.GitRepo, branch string,
 		if repoGlobs := repo.CollectGlobs(); len(repoGlobs) > 0 {
 			cfg.CollectGlobs = repoGlobs
 		} else {
-			cfg.CollectGlobs = config.DefaultCollectGlobs()
+			cfg.CollectGlobs = config.EffectiveCollectGlobs()
 		}
 	}
 	if len(cfg.ExcludeGlobs) == 0 {
 		if repoEx := repo.ExcludeGlobs(); len(repoEx) > 0 {
 			cfg.ExcludeGlobs = repoEx
 		} else {
-			cfg.ExcludeGlobs = config.DefaultExcludeGlobs()
+			cfg.ExcludeGlobs = config.EffectiveExcludeGlobs()
 		}
 	}
 	if cfg.MaxFileBytes <= 0 {
@@ -344,7 +344,7 @@ func CollectRepoStageA(ctx context.Context, repo *models.GitRepo, branch string,
 	return res, nil
 }
 
-// ProbeRepoPGStructure 在只读共享锁下通过 derivePGPrefixes 毫秒级快筛全小写 pg 目录与白名单统计（严禁全仓 ls-tree -r）。
+// ProbeRepoPGStructure 在只读共享锁下快筛全小写 pg 目录与白名单统计；当 globs 为默认 0/1 级形状时走前缀优化，含 **/pg/**/*.proto 等规则时自动降级为全树 ls-tree -z -r。
 func ProbeRepoPGStructure(ctx context.Context, codesDir, repoURL, branch string) (pgDirs []string, whitelistCount int, outsideCount int, resolvedBranch string, err error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -371,8 +371,8 @@ func ProbeRepoPGStructure(ctx context.Context, codesDir, repoURL, branch string)
 		}
 	}
 
-	defaultGlobs := config.DefaultCollectGlobs()
-	defaultEx := config.DefaultExcludeGlobs()
+	defaultGlobs := config.EffectiveCollectGlobs()
+	defaultEx := config.EffectiveExcludeGlobs()
 	entries, err := listWhitelistCandidateEntries(ctx, localPath, fullRef, defaultGlobs)
 	if err != nil {
 		return nil, 0, 0, "", err
@@ -477,14 +477,13 @@ func areAllGlobsDefaultPGShape(globs []string) bool {
 	return true
 }
 
-// ExtractStrictPGDir 识别路径所属的严格全小写 pg 目录（"pg" 或 "<dir>/pg"）。
+// ExtractStrictPGDir 识别路径所属的严格全小写 pg 目录（支持根目录 "pg"、一级 "<dir>/pg" 及任意深层 "<prefix>/pg"）。
 func ExtractStrictPGDir(repoRelPath string) (string, bool) {
 	segs := strings.Split(strings.Trim(repoRelPath, "/"), "/")
-	if len(segs) >= 2 && segs[0] == "pg" {
-		return "pg", true
-	}
-	if len(segs) >= 3 && segs[1] == "pg" {
-		return segs[0] + "/pg", true
+	for i := 0; i < len(segs)-1; i++ {
+		if segs[i] == "pg" {
+			return strings.Join(segs[:i+1], "/"), true
+		}
 	}
 	return "", false
 }

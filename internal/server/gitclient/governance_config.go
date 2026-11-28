@@ -304,8 +304,8 @@ func DefaultGovernanceConfig() GovernanceConfigDoc {
 		SchemaVersion: GovernanceSchemaVersion,
 		Revision:      0,
 		Global: GlobalGovernanceSection{
-			CollectGlobs: config.DefaultCollectGlobs(),
-			ExcludeGlobs: config.DefaultExcludeGlobs(),
+			CollectGlobs: config.EffectiveCollectGlobs(),
+			ExcludeGlobs: config.EffectiveExcludeGlobs(),
 			EnabledRules: []string{
 				NormRuleEncodingAndEOL,
 				NormRuleDirectiveStrip,
