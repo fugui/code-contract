@@ -23,7 +23,15 @@ import './ProtoDocsAndCodeViewer.css';
 
 export const PRODUCTION_USERVICE_PRESET_GLOBAL: GlobalGovernanceSectionDTO = {
   collect_globs: ['pg/**/*.proto', '**/pg/**/*.proto'],
-  exclude_globs: ['build/**', 'test/**', 'doc/**', '**/*_test.proto', '**/mock/**'],
+  exclude_globs: [
+    'build/**',
+    'test/**',
+    'doc/**',
+    '**/test/**',
+    '**/testdata/**',
+    '**/*_test.proto',
+    '**/mock/**',
+  ],
   exclude_subsystems: ['build', 'test', 'doc', 'tools'],
   exclude_repo_patterns: ['-doc$', '-test$'],
   enabled_rules: [

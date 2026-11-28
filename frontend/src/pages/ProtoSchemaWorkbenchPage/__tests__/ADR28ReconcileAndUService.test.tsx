@@ -144,6 +144,17 @@ describe('ADR-28 Frontend Controls & Pool Reconcile Flows', () => {
     expect(PRODUCTION_USERVICE_PRESET_GLOBAL.exclude_subsystems).toEqual(
       expect.arrayContaining(['build', 'test', 'doc'])
     );
+    expect(PRODUCTION_USERVICE_PRESET_GLOBAL.exclude_globs).toEqual(
+      expect.arrayContaining([
+        'build/**',
+        'test/**',
+        'doc/**',
+        '**/test/**',
+        '**/testdata/**',
+        '**/*_test.proto',
+        '**/mock/**',
+      ])
+    );
     expect(PRODUCTION_USERVICE_PRESET_GLOBAL.shared_base_sources?.length).toBeGreaterThanOrEqual(2);
     expect(PRODUCTION_USERVICE_PRESET_GLOBAL.pool_reconcile?.max_r8_rounds).toBe(150);
 
