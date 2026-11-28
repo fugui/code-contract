@@ -799,9 +799,9 @@ func (s *AgentServer) handleStopMonitor(w http.ResponseWriter, r *http.Request) 
 		bypassed, _, _ = s.ebpfMgr.GetStats()
 	}
 	finalSnap := s.captureStatsSnapshot()
-	s.logf("[Agent] [✓ 停录完成]: SessionID=%d, 捕获总帧数=%d, 丢帧=%d, 过滤噪音帧=%d, TCP-In=%d, TCP-Out=%d(dlink=%d), Mesh=%d(截断=%d,丢弃=%d), WS已发=%d, 恢复 ARMED 待命状态",
+	s.logf("[Agent] [✓ 停录完成]: SessionID=%d, 捕获总帧数=%d, 丢帧=%d, 过滤噪音帧=%d, TCP-In=%d, TCP-Out=%d(dlink=%d), Mesh=%d(写=%d,读=%d,截断=%d,丢弃=%d), WS已发=%d, 恢复 ARMED 待命状态",
 		oldRefID, total, dropped, filteredNoise, finalSnap.ingress.CapturedFrames, finalSnap.egress.CapturedFrames, finalSnap.egress.DlinkEvents,
-		finalSnap.drt.ValidFrames, finalSnap.drt.TruncatedFrames, finalSnap.drt.DroppedEvents, finalSnap.wsSent)
+		finalSnap.drt.ValidFrames, finalSnap.drt.WriteEvents, finalSnap.drt.ReadEvents, finalSnap.drt.TruncatedFrames, finalSnap.drt.DroppedEvents, finalSnap.wsSent)
 
 	resp := agentproto.StopMonitorResp{
 		CapturedFrames:      total,

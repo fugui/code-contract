@@ -37,6 +37,11 @@ __attribute__((visibility("default")))
 int DRT_WriteBulk(uint64_t handle, uint32_t msgNum, DRT_MSG_S astMsg[]) {
     return 0;
 }
+
+__attribute__((visibility("default")))
+uint32_t DRT_ReadNoCheckLen(uint64_t handle, char* buf, uint32_t* puiMsgLen) {
+    return 0;
+}
 `
 	srcPath := filepath.Join(tmpDir, "libdopra.c")
 	soPath := filepath.Join(tmpDir, "libdopra.so")

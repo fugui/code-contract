@@ -48,6 +48,13 @@ type cros_probeConnTuple struct {
 	StreamOffTx uint64
 }
 
+type cros_probeDrtReadArgs struct {
+	_      structs.HostLayout
+	Handle uint64
+	BufPtr uint64
+	LenPtr uint64
+}
+
 type cros_probeDrtUprobeEvent struct {
 	_           structs.HostLayout
 	SessionId   uint64
@@ -59,7 +66,7 @@ type cros_probeDrtUprobeEvent struct {
 	IsTruncated uint8
 	ChunkIdx    uint8
 	ChunkCount  uint8
-	Pad         uint8
+	SourceKind  uint8
 	Hdr40       [40]uint8
 	OrigLen     uint32
 	ChunkSeq    uint32
@@ -138,35 +145,38 @@ type cros_probeTargetProc struct {
 //
 // Used for safe lookups in a Collection or CollectionSpec.
 const (
-	cros_probeMapActiveRwArgsMap        = "active_rw_args_map"
-	cros_probeMapAgentCfgMap            = "agent_cfg_map"
-	cros_probeMapConnectObserveRingbuf  = "connect_observe_ringbuf"
-	cros_probeMapCookieOrigDstMap       = "cookie_orig_dst_map"
-	cros_probeMapDownstreamRulesMap     = "downstream_rules_map"
-	cros_probeMapDrtRingbuf             = "drt_ringbuf"
-	cros_probeMapEbpfStatsMap           = "ebpf_stats_map"
-	cros_probeMapIngConnMap             = "ing_conn_map"
-	cros_probeMapIngRingbuf             = "ing_ringbuf"
-	cros_probeMapNatTupleMap            = "nat_tuple_map"
-	cros_probeMapTargetPidsMap          = "target_pids_map"
-	cros_probeProgCrosConnect4          = "cros_connect4"
-	cros_probeProgCrosDrtWriteBulk      = "cros_drt_write_bulk"
-	cros_probeProgCrosSchedExec         = "cros_sched_exec"
-	cros_probeProgCrosSockOps           = "cros_sock_ops"
-	cros_probeProgTraceSysEnterClose    = "trace_sys_enter_close"
-	cros_probeProgTraceSysEnterRead     = "trace_sys_enter_read"
-	cros_probeProgTraceSysEnterRecvfrom = "trace_sys_enter_recvfrom"
-	cros_probeProgTraceSysEnterSendto   = "trace_sys_enter_sendto"
-	cros_probeProgTraceSysEnterWrite    = "trace_sys_enter_write"
-	cros_probeProgTraceSysExitAccept    = "trace_sys_exit_accept"
-	cros_probeProgTraceSysExitAccept4   = "trace_sys_exit_accept4"
-	cros_probeProgTraceSysExitRead      = "trace_sys_exit_read"
-	cros_probeProgTraceSysExitRecvfrom  = "trace_sys_exit_recvfrom"
-	cros_probeProgTraceSysExitSendto    = "trace_sys_exit_sendto"
-	cros_probeProgTraceSysExitWrite     = "trace_sys_exit_write"
-	cros_probeVarUnusedCoe              = "__unused_coe"
-	cros_probeVarUnusedDue              = "__unused_due"
-	cros_probeVarUnusedIde              = "__unused_ide"
+	cros_probeMapActiveRwArgsMap          = "active_rw_args_map"
+	cros_probeMapAgentCfgMap              = "agent_cfg_map"
+	cros_probeMapConnectObserveRingbuf    = "connect_observe_ringbuf"
+	cros_probeMapCookieOrigDstMap         = "cookie_orig_dst_map"
+	cros_probeMapDownstreamRulesMap       = "downstream_rules_map"
+	cros_probeMapDrtReadArgsMap           = "drt_read_args_map"
+	cros_probeMapDrtRingbuf               = "drt_ringbuf"
+	cros_probeMapEbpfStatsMap             = "ebpf_stats_map"
+	cros_probeMapIngConnMap               = "ing_conn_map"
+	cros_probeMapIngRingbuf               = "ing_ringbuf"
+	cros_probeMapNatTupleMap              = "nat_tuple_map"
+	cros_probeMapTargetPidsMap            = "target_pids_map"
+	cros_probeProgCrosConnect4            = "cros_connect4"
+	cros_probeProgCrosDrtReadNocheckEnter = "cros_drt_read_nocheck_enter"
+	cros_probeProgCrosDrtReadNocheckRet   = "cros_drt_read_nocheck_ret"
+	cros_probeProgCrosDrtWriteBulk        = "cros_drt_write_bulk"
+	cros_probeProgCrosSchedExec           = "cros_sched_exec"
+	cros_probeProgCrosSockOps             = "cros_sock_ops"
+	cros_probeProgTraceSysEnterClose      = "trace_sys_enter_close"
+	cros_probeProgTraceSysEnterRead       = "trace_sys_enter_read"
+	cros_probeProgTraceSysEnterRecvfrom   = "trace_sys_enter_recvfrom"
+	cros_probeProgTraceSysEnterSendto     = "trace_sys_enter_sendto"
+	cros_probeProgTraceSysEnterWrite      = "trace_sys_enter_write"
+	cros_probeProgTraceSysExitAccept      = "trace_sys_exit_accept"
+	cros_probeProgTraceSysExitAccept4     = "trace_sys_exit_accept4"
+	cros_probeProgTraceSysExitRead        = "trace_sys_exit_read"
+	cros_probeProgTraceSysExitRecvfrom    = "trace_sys_exit_recvfrom"
+	cros_probeProgTraceSysExitSendto      = "trace_sys_exit_sendto"
+	cros_probeProgTraceSysExitWrite       = "trace_sys_exit_write"
+	cros_probeVarUnusedCoe                = "__unused_coe"
+	cros_probeVarUnusedDue                = "__unused_due"
+	cros_probeVarUnusedIde                = "__unused_ide"
 )
 
 // loadCros_probe returns the embedded CollectionSpec for cros_probe.
@@ -211,21 +221,23 @@ type cros_probeSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type cros_probeProgramSpecs struct {
-	CrosConnect4          *ebpf.ProgramSpec `ebpf:"cros_connect4"`
-	CrosDrtWriteBulk      *ebpf.ProgramSpec `ebpf:"cros_drt_write_bulk"`
-	CrosSchedExec         *ebpf.ProgramSpec `ebpf:"cros_sched_exec"`
-	CrosSockOps           *ebpf.ProgramSpec `ebpf:"cros_sock_ops"`
-	TraceSysEnterClose    *ebpf.ProgramSpec `ebpf:"trace_sys_enter_close"`
-	TraceSysEnterRead     *ebpf.ProgramSpec `ebpf:"trace_sys_enter_read"`
-	TraceSysEnterRecvfrom *ebpf.ProgramSpec `ebpf:"trace_sys_enter_recvfrom"`
-	TraceSysEnterSendto   *ebpf.ProgramSpec `ebpf:"trace_sys_enter_sendto"`
-	TraceSysEnterWrite    *ebpf.ProgramSpec `ebpf:"trace_sys_enter_write"`
-	TraceSysExitAccept    *ebpf.ProgramSpec `ebpf:"trace_sys_exit_accept"`
-	TraceSysExitAccept4   *ebpf.ProgramSpec `ebpf:"trace_sys_exit_accept4"`
-	TraceSysExitRead      *ebpf.ProgramSpec `ebpf:"trace_sys_exit_read"`
-	TraceSysExitRecvfrom  *ebpf.ProgramSpec `ebpf:"trace_sys_exit_recvfrom"`
-	TraceSysExitSendto    *ebpf.ProgramSpec `ebpf:"trace_sys_exit_sendto"`
-	TraceSysExitWrite     *ebpf.ProgramSpec `ebpf:"trace_sys_exit_write"`
+	CrosConnect4            *ebpf.ProgramSpec `ebpf:"cros_connect4"`
+	CrosDrtReadNocheckEnter *ebpf.ProgramSpec `ebpf:"cros_drt_read_nocheck_enter"`
+	CrosDrtReadNocheckRet   *ebpf.ProgramSpec `ebpf:"cros_drt_read_nocheck_ret"`
+	CrosDrtWriteBulk        *ebpf.ProgramSpec `ebpf:"cros_drt_write_bulk"`
+	CrosSchedExec           *ebpf.ProgramSpec `ebpf:"cros_sched_exec"`
+	CrosSockOps             *ebpf.ProgramSpec `ebpf:"cros_sock_ops"`
+	TraceSysEnterClose      *ebpf.ProgramSpec `ebpf:"trace_sys_enter_close"`
+	TraceSysEnterRead       *ebpf.ProgramSpec `ebpf:"trace_sys_enter_read"`
+	TraceSysEnterRecvfrom   *ebpf.ProgramSpec `ebpf:"trace_sys_enter_recvfrom"`
+	TraceSysEnterSendto     *ebpf.ProgramSpec `ebpf:"trace_sys_enter_sendto"`
+	TraceSysEnterWrite      *ebpf.ProgramSpec `ebpf:"trace_sys_enter_write"`
+	TraceSysExitAccept      *ebpf.ProgramSpec `ebpf:"trace_sys_exit_accept"`
+	TraceSysExitAccept4     *ebpf.ProgramSpec `ebpf:"trace_sys_exit_accept4"`
+	TraceSysExitRead        *ebpf.ProgramSpec `ebpf:"trace_sys_exit_read"`
+	TraceSysExitRecvfrom    *ebpf.ProgramSpec `ebpf:"trace_sys_exit_recvfrom"`
+	TraceSysExitSendto      *ebpf.ProgramSpec `ebpf:"trace_sys_exit_sendto"`
+	TraceSysExitWrite       *ebpf.ProgramSpec `ebpf:"trace_sys_exit_write"`
 }
 
 // cros_probeMapSpecs contains maps before they are loaded into the kernel.
@@ -237,6 +249,7 @@ type cros_probeMapSpecs struct {
 	ConnectObserveRingbuf *ebpf.MapSpec `ebpf:"connect_observe_ringbuf"`
 	CookieOrigDstMap      *ebpf.MapSpec `ebpf:"cookie_orig_dst_map"`
 	DownstreamRulesMap    *ebpf.MapSpec `ebpf:"downstream_rules_map"`
+	DrtReadArgsMap        *ebpf.MapSpec `ebpf:"drt_read_args_map"`
 	DrtRingbuf            *ebpf.MapSpec `ebpf:"drt_ringbuf"`
 	EbpfStatsMap          *ebpf.MapSpec `ebpf:"ebpf_stats_map"`
 	IngConnMap            *ebpf.MapSpec `ebpf:"ing_conn_map"`
@@ -279,6 +292,7 @@ type cros_probeMaps struct {
 	ConnectObserveRingbuf *ebpf.Map `ebpf:"connect_observe_ringbuf"`
 	CookieOrigDstMap      *ebpf.Map `ebpf:"cookie_orig_dst_map"`
 	DownstreamRulesMap    *ebpf.Map `ebpf:"downstream_rules_map"`
+	DrtReadArgsMap        *ebpf.Map `ebpf:"drt_read_args_map"`
 	DrtRingbuf            *ebpf.Map `ebpf:"drt_ringbuf"`
 	EbpfStatsMap          *ebpf.Map `ebpf:"ebpf_stats_map"`
 	IngConnMap            *ebpf.Map `ebpf:"ing_conn_map"`
@@ -294,6 +308,7 @@ func (m *cros_probeMaps) Close() error {
 		m.ConnectObserveRingbuf,
 		m.CookieOrigDstMap,
 		m.DownstreamRulesMap,
+		m.DrtReadArgsMap,
 		m.DrtRingbuf,
 		m.EbpfStatsMap,
 		m.IngConnMap,
@@ -316,26 +331,30 @@ type cros_probeVariables struct {
 //
 // It can be passed to loadCros_probeObjects or ebpf.CollectionSpec.LoadAndAssign.
 type cros_probePrograms struct {
-	CrosConnect4          *ebpf.Program `ebpf:"cros_connect4"`
-	CrosDrtWriteBulk      *ebpf.Program `ebpf:"cros_drt_write_bulk"`
-	CrosSchedExec         *ebpf.Program `ebpf:"cros_sched_exec"`
-	CrosSockOps           *ebpf.Program `ebpf:"cros_sock_ops"`
-	TraceSysEnterClose    *ebpf.Program `ebpf:"trace_sys_enter_close"`
-	TraceSysEnterRead     *ebpf.Program `ebpf:"trace_sys_enter_read"`
-	TraceSysEnterRecvfrom *ebpf.Program `ebpf:"trace_sys_enter_recvfrom"`
-	TraceSysEnterSendto   *ebpf.Program `ebpf:"trace_sys_enter_sendto"`
-	TraceSysEnterWrite    *ebpf.Program `ebpf:"trace_sys_enter_write"`
-	TraceSysExitAccept    *ebpf.Program `ebpf:"trace_sys_exit_accept"`
-	TraceSysExitAccept4   *ebpf.Program `ebpf:"trace_sys_exit_accept4"`
-	TraceSysExitRead      *ebpf.Program `ebpf:"trace_sys_exit_read"`
-	TraceSysExitRecvfrom  *ebpf.Program `ebpf:"trace_sys_exit_recvfrom"`
-	TraceSysExitSendto    *ebpf.Program `ebpf:"trace_sys_exit_sendto"`
-	TraceSysExitWrite     *ebpf.Program `ebpf:"trace_sys_exit_write"`
+	CrosConnect4            *ebpf.Program `ebpf:"cros_connect4"`
+	CrosDrtReadNocheckEnter *ebpf.Program `ebpf:"cros_drt_read_nocheck_enter"`
+	CrosDrtReadNocheckRet   *ebpf.Program `ebpf:"cros_drt_read_nocheck_ret"`
+	CrosDrtWriteBulk        *ebpf.Program `ebpf:"cros_drt_write_bulk"`
+	CrosSchedExec           *ebpf.Program `ebpf:"cros_sched_exec"`
+	CrosSockOps             *ebpf.Program `ebpf:"cros_sock_ops"`
+	TraceSysEnterClose      *ebpf.Program `ebpf:"trace_sys_enter_close"`
+	TraceSysEnterRead       *ebpf.Program `ebpf:"trace_sys_enter_read"`
+	TraceSysEnterRecvfrom   *ebpf.Program `ebpf:"trace_sys_enter_recvfrom"`
+	TraceSysEnterSendto     *ebpf.Program `ebpf:"trace_sys_enter_sendto"`
+	TraceSysEnterWrite      *ebpf.Program `ebpf:"trace_sys_enter_write"`
+	TraceSysExitAccept      *ebpf.Program `ebpf:"trace_sys_exit_accept"`
+	TraceSysExitAccept4     *ebpf.Program `ebpf:"trace_sys_exit_accept4"`
+	TraceSysExitRead        *ebpf.Program `ebpf:"trace_sys_exit_read"`
+	TraceSysExitRecvfrom    *ebpf.Program `ebpf:"trace_sys_exit_recvfrom"`
+	TraceSysExitSendto      *ebpf.Program `ebpf:"trace_sys_exit_sendto"`
+	TraceSysExitWrite       *ebpf.Program `ebpf:"trace_sys_exit_write"`
 }
 
 func (p *cros_probePrograms) Close() error {
 	return _Cros_probeClose(
 		p.CrosConnect4,
+		p.CrosDrtReadNocheckEnter,
+		p.CrosDrtReadNocheckRet,
 		p.CrosDrtWriteBulk,
 		p.CrosSchedExec,
 		p.CrosSockOps,

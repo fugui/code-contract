@@ -34,6 +34,8 @@ type DRTUprobeConfig struct {
 // DRTUprobeStats dophi_mesh uprobe 采集累计统计快照
 type DRTUprobeStats struct {
 	RawEvents       int64
+	WriteEvents     int64
+	ReadEvents      int64
 	ValidFrames     int64
 	ReqFrames       int64
 	RspPaired       int64
@@ -55,6 +57,7 @@ type DRTUprobeEvent struct {
 	IsTruncated bool
 	ChunkIdx    uint8
 	ChunkCount  uint8
+	SourceKind  uint8
 	Hdr40       [40]byte
 	OrigLen     uint32
 	TID         uint32
@@ -82,6 +85,7 @@ type drtChunkKey struct {
 	tid         uint32
 	timestampNs uint64
 	handle      uint64
+	sourceKind  uint8
 }
 
 type drtChunkAssembly struct {
@@ -96,14 +100,19 @@ type drtChunkAssembly struct {
 }
 
 const (
-	drtWriteBulkSymbol      = "DRT_WriteBulk"
-	DRTUprobeEventHeaderLen = 96
-	MaxDRTChunkSize         = 32768
-	MaxDRTChunks            = 8
-	MaxDRTTotalSize         = MaxDRTChunkSize * MaxDRTChunks
-	defaultChunkTTL         = 5 * time.Second
-	maxPendingChunks        = 1024
-	defaultStopDrainWait    = 50 * time.Millisecond
+	drtWriteBulkSymbol          = "DRT_WriteBulk"
+	drtReadNoCheckLenSymbol     = "DRT_ReadNoCheckLen"
+	DRTEventSourceWriteBulk     = uint8(0)
+	DRTEventSourceRead          = uint8(1)
+	drtSyntheticEgressPeerPort  = uint16(8000)
+	drtSyntheticIngressPeerPort = uint16(8001)
+	DRTUprobeEventHeaderLen     = 96
+	MaxDRTChunkSize             = 32768
+	MaxDRTChunks                = 8
+	MaxDRTTotalSize             = MaxDRTChunkSize * MaxDRTChunks
+	defaultChunkTTL             = 5 * time.Second
+	maxPendingChunks            = 1024
+	defaultStopDrainWait        = 50 * time.Millisecond
 )
 
 func buildDRTUprobeOptions(fileOffset uint64, pid uint32) *link.UprobeOptions {
@@ -115,30 +124,34 @@ func buildDRTUprobeOptions(fileOffset uint64, pid uint32) *link.UprobeOptions {
 
 // DRTUprobeDriver dophi_mesh 数据面 uprobe 旁路采集传输驱动 (ADR-22 & ADR-23)
 type DRTUprobeDriver struct {
-	mu               sync.Mutex
-	mgr              *ebpf.Manager
-	cfg              DRTUprobeConfig
-	closed           bool
-	activeSpecs      map[uint64]CaptureSpec
-	links            map[string]io.Closer
-	lastAttachErr    map[string]string
-	attachExecUprobe func(ex *link.Executable, symbol string, opts *link.UprobeOptions) (io.Closer, error)
-	ringbufReader    *ringbuf.Reader
-	readerStop       chan struct{}
-	inflightReqs     map[uint64][]*inflightReq
-	inflightCount    int
-	pendingChunks    map[drtChunkKey]*drtChunkAssembly
-	seenChannels     map[string]bool
-	errLogCount      int
-	truncLogCount    int
-	statRawEvents    atomic.Int64
-	statValidFrames  atomic.Int64
-	statReqFrames    atomic.Int64
-	statRspPaired    atomic.Int64
-	statRspOrphan    atomic.Int64
-	statMngFrames    atomic.Int64
-	statTruncated    atomic.Int64
-	statDropped      atomic.Int64
+	mu                  sync.Mutex
+	mgr                 *ebpf.Manager
+	cfg                 DRTUprobeConfig
+	closed              bool
+	activeSpecs         map[uint64]CaptureSpec
+	links               map[string]io.Closer
+	readAttachedProcs   map[string]int
+	lastAttachErr       map[string]string
+	attachExecUprobe    func(ex *link.Executable, symbol string, opts *link.UprobeOptions) (io.Closer, error)
+	attachExecUretprobe func(ex *link.Executable, symbol string, opts *link.UprobeOptions) (io.Closer, error)
+	ringbufReader       *ringbuf.Reader
+	readerStop          chan struct{}
+	inflightReqs        map[uint64][]*inflightReq
+	inflightCount       int
+	pendingChunks       map[drtChunkKey]*drtChunkAssembly
+	seenChannels        map[string]bool
+	errLogCount         int
+	truncLogCount       int
+	statRawEvents       atomic.Int64
+	statWriteEvents     atomic.Int64
+	statReadEvents      atomic.Int64
+	statValidFrames     atomic.Int64
+	statReqFrames       atomic.Int64
+	statRspPaired       atomic.Int64
+	statRspOrphan       atomic.Int64
+	statMngFrames       atomic.Int64
+	statTruncated       atomic.Int64
+	statDropped         atomic.Int64
 }
 
 // NewDRTUprobeDriver 实例化 builtin-drt-uprobe 传输驱动
@@ -158,14 +171,15 @@ func NewDRTUprobeDriver(mgr *ebpf.Manager, cfg DRTUprobeConfig) *DRTUprobeDriver
 		cfg.StopDrainWait = 0
 	}
 	return &DRTUprobeDriver{
-		mgr:           mgr,
-		cfg:           cfg,
-		activeSpecs:   make(map[uint64]CaptureSpec),
-		links:         make(map[string]io.Closer),
-		lastAttachErr: make(map[string]string),
-		inflightReqs:  make(map[uint64][]*inflightReq),
-		pendingChunks: make(map[drtChunkKey]*drtChunkAssembly),
-		seenChannels:  make(map[string]bool),
+		mgr:               mgr,
+		cfg:               cfg,
+		activeSpecs:       make(map[uint64]CaptureSpec),
+		links:             make(map[string]io.Closer),
+		readAttachedProcs: make(map[string]int),
+		lastAttachErr:     make(map[string]string),
+		inflightReqs:      make(map[uint64][]*inflightReq),
+		pendingChunks:     make(map[drtChunkKey]*drtChunkAssembly),
+		seenChannels:      make(map[string]bool),
 	}
 }
 
@@ -176,6 +190,8 @@ func (d *DRTUprobeDriver) Stats() DRTUprobeStats {
 	d.mu.Unlock()
 	return DRTUprobeStats{
 		RawEvents:       d.statRawEvents.Load(),
+		WriteEvents:     d.statWriteEvents.Load(),
+		ReadEvents:      d.statReadEvents.Load(),
 		ValidFrames:     d.statValidFrames.Load(),
 		ReqFrames:       d.statReqFrames.Load(),
 		RspPaired:       d.statRspPaired.Load(),
@@ -250,6 +266,7 @@ func ParseDRTUprobeEvent(raw []byte) (DRTUprobeEvent, error) {
 	evt.IsTruncated = raw[40] != 0
 	evt.ChunkIdx = raw[41]
 	evt.ChunkCount = raw[42]
+	evt.SourceKind = raw[43]
 	copy(evt.Hdr40[:], raw[44:84])
 	evt.OrigLen = binary.LittleEndian.Uint32(raw[84:88])
 	evt.TID = binary.LittleEndian.Uint32(raw[92:96])
@@ -307,6 +324,7 @@ func (d *DRTUprobeDriver) reassembleChunkLocked(evt DRTUprobeEvent, now time.Tim
 		tid:         evt.TID,
 		timestampNs: evt.TimestampNs,
 		handle:      evt.Handle,
+		sourceKind:  evt.SourceKind,
 	}
 
 	asm, exists := d.pendingChunks[key]
@@ -367,6 +385,25 @@ func (d *DRTUprobeDriver) reassembleChunkLocked(evt DRTUprobeEvent, now time.Tim
 	return out, true, nil
 }
 
+func findMatchingInflightForProcess(bucket []*inflightReq, processID uint64, direction uint8, svcName, opName string) (int, *inflightReq) {
+	if len(bucket) == 0 {
+		return -1, nil
+	}
+	if svcName != "" {
+		for i, req := range bucket {
+			if req.processID == processID && req.direction == direction && req.serviceName == svcName && req.operation == opName {
+				return i, req
+			}
+		}
+	}
+	for i, req := range bucket {
+		if req.processID == processID && req.direction == direction && (svcName == "" || req.serviceName == "") {
+			return i, req
+		}
+	}
+	return -1, nil
+}
+
 func findMatchingInflight(bucket []*inflightReq, pid uint32, svcName, opName string) (int, *inflightReq) {
 	if len(bucket) == 0 {
 		return -1, nil
@@ -408,6 +445,11 @@ func (d *DRTUprobeDriver) ProcessEvent(evt DRTUprobeEvent, sink FrameSink) error
 	}
 
 	d.statRawEvents.Add(1)
+	if evt.SourceKind == DRTEventSourceRead {
+		d.statReadEvents.Add(1)
+	} else {
+		d.statWriteEvents.Add(1)
+	}
 
 	crosPkt, payloadOff := ExtractCROSPacket(evt.Data, d.cfg.PayloadOffset)
 	var comm crosrpc.CommHead
@@ -463,16 +505,17 @@ func (d *DRTUprobeDriver) ProcessEvent(evt DRTUprobeEvent, sink FrameSink) error
 	}
 
 	if d.cfg.Verbose && len(d.seenChannels) < 256 {
-		chanKey := fmt.Sprintf("%d:%d", evt.PID, evt.Handle)
+		chanKey := fmt.Sprintf("%d:%d:%d", evt.PID, evt.Handle, evt.SourceKind)
 		if !d.seenChannels[chanKey] {
 			d.seenChannels[chanKey] = true
-			log.Printf("[DRTUprobe][FirstFrame] PID=%d handle=0x%x dataLen=%d origLen=%d chunks=%d payloadOff=%d proto=%d msgType=%d sno=%d truncated=%v hdr40[:16]=%x",
-				evt.PID, evt.Handle, evt.DataLen, evt.OrigLen, evt.ChunkCount, payloadOff, comm.TransportProto, comm.MsgType, comm.SNO, evt.IsTruncated, evt.Hdr40[:16])
+			log.Printf("[DRTUprobe][FirstFrame] PID=%d src=%d handle=0x%x dataLen=%d origLen=%d chunks=%d payloadOff=%d proto=%d msgType=%d sno=%d truncated=%v hdr40[:16]=%x",
+				evt.PID, evt.SourceKind, evt.Handle, evt.DataLen, evt.OrigLen, evt.ChunkCount, payloadOff, comm.TransportProto, comm.MsgType, comm.SNO, evt.IsTruncated, evt.Hdr40[:16])
 		}
 	}
 
 	d.evictExpiredInflightLocked(now)
 
+	isReadSource := evt.SourceKind == DRTEventSourceRead
 	env := agentproto.EnvelopeHeader{
 		Magic:           agentproto.EnvelopeMagic,
 		ProtoVer:        agentproto.EnvelopeProtoVer,
@@ -485,7 +528,7 @@ func (d *DRTUprobeDriver) ProcessEvent(evt DRTUprobeEvent, sink FrameSink) error
 		SrcIPv4:         [4]byte{127, 0, 0, 1},
 		DstIPv4:         [4]byte{127, 0, 0, 1},
 		SrcPort:         uint16(evt.PID),
-		DstPort:         8000,
+		DstPort:         drtSyntheticEgressPeerPort,
 		ConnSeq:         uint32(evt.Handle),
 	}
 	if evt.IsTruncated {
@@ -496,13 +539,19 @@ func (d *DRTUprobeDriver) ProcessEvent(evt DRTUprobeEvent, sink FrameSink) error
 	switch {
 	case comm.MsgType == crosrpc.MsgTypeReq:
 		frameKind = "REQ"
-		env.Direction = agentproto.DirectionEgress
+		if isReadSource {
+			env.Direction = agentproto.DirectionIngress
+			env.SrcPort = drtSyntheticIngressPeerPort
+			env.DstPort = uint16(evt.PID)
+		} else {
+			env.Direction = agentproto.DirectionEgress
+		}
 		if !isOneway {
 			item := &inflightReq{
 				sessionID:   evt.SessionID,
 				processID:   evt.ProcessID,
 				capturedPID: evt.PID,
-				direction:   agentproto.DirectionEgress,
+				direction:   env.Direction,
 				srcIP:       env.SrcIPv4,
 				srcPort:     env.SrcPort,
 				dstIP:       env.DstIPv4,
@@ -521,7 +570,21 @@ func (d *DRTUprobeDriver) ProcessEvent(evt DRTUprobeEvent, sink FrameSink) error
 
 	case comm.MsgType == crosrpc.MsgTypeRsp || comm.MsgType == crosrpc.MsgTypeRspSeg:
 		bucket := d.inflightReqs[comm.SNO]
-		if idx, req := findMatchingInflight(bucket, evt.PID, svcName, opName); req != nil {
+		idx := -1
+		var req *inflightReq
+		if isReadSource {
+			// B 读到下游返回的 RSP -> 匹配 B 自身发出的 EGRESS REQ
+			idx, req = findMatchingInflightForProcess(bucket, evt.ProcessID, agentproto.DirectionEgress, svcName, opName)
+		} else {
+			// B 写出给上游的 RSP -> 优先匹配 B 自身读侧收到的 INGRESS REQ
+			idx, req = findMatchingInflightForProcess(bucket, evt.ProcessID, agentproto.DirectionIngress, svcName, opName)
+			// 仅当该进程未挂载读侧探针时，回退纯写侧跨进程匹配模式 (兼容既有纯写双进程场景)
+			if req == nil && !d.hasReadProbeLocked(evt.SessionID, evt.ProcessID) {
+				idx, req = findMatchingInflight(bucket, evt.PID, svcName, opName)
+			}
+		}
+
+		if req != nil {
 			frameKind = "RSP_PAIRED"
 			// ADR-11 投影归一化：将应答帧投影到对应的请求四元组与 ProcessID，保证 ExchangeAssembler 配对
 			env.ProcessID = req.processID
@@ -545,9 +608,15 @@ func (d *DRTUprobeDriver) ProcessEvent(evt DRTUprobeEvent, sink FrameSink) error
 			}
 		} else {
 			frameKind = "RSP_ORPHAN"
-			env.Direction = agentproto.DirectionIngress
-			env.SrcPort = 8000
-			env.DstPort = uint16(evt.PID)
+			if isReadSource {
+				env.Direction = agentproto.DirectionEgress
+				env.SrcPort = uint16(evt.PID)
+				env.DstPort = drtSyntheticEgressPeerPort
+			} else {
+				env.Direction = agentproto.DirectionIngress
+				env.SrcPort = drtSyntheticIngressPeerPort
+				env.DstPort = uint16(evt.PID)
+			}
 		}
 
 	default:
@@ -656,6 +725,59 @@ func (d *DRTUprobeDriver) logAttachErrorLocked(linkKey, msg string) {
 	log.Print(msg)
 }
 
+func procKey(sessionOrTaskID, processID uint64) string {
+	return fmt.Sprintf("%d:%d", sessionOrTaskID, processID)
+}
+
+func (d *DRTUprobeDriver) hasReadProbeLocked(sessionOrTaskID, processID uint64) bool {
+	return d.readAttachedProcs[procKey(sessionOrTaskID, processID)] > 0
+}
+
+func pidKeyFromLinkKey(k string) string {
+	for _, suffix := range []string{":rd_en", ":rd_ret"} {
+		if len(k) > len(suffix) && k[len(k)-len(suffix):] == suffix {
+			return k[:len(k)-len(suffix)]
+		}
+	}
+	return k
+}
+
+func isReadRetLinkKey(k string) bool {
+	const suffix = ":rd_ret"
+	return len(k) > len(suffix) && k[len(k)-len(suffix):] == suffix
+}
+
+func procKeyFromLinkKey(k string) string {
+	base := pidKeyFromLinkKey(k)
+	lastColon := -1
+	for i := len(base) - 1; i >= 0; i-- {
+		if base[i] == ':' {
+			lastColon = i
+			break
+		}
+	}
+	if lastColon <= 0 {
+		return ""
+	}
+	return base[:lastColon]
+}
+
+func (d *DRTUprobeDriver) removeLinkLocked(k string, l io.Closer) {
+	if l != nil {
+		_ = l.Close()
+	}
+	delete(d.links, k)
+	if isReadRetLinkKey(k) {
+		if pk := procKeyFromLinkKey(k); pk != "" {
+			if d.readAttachedProcs[pk] > 1 {
+				d.readAttachedProcs[pk]--
+			} else {
+				delete(d.readAttachedProcs, pk)
+			}
+		}
+	}
+}
+
 func (d *DRTUprobeDriver) attachPIDLocked(sessionOrTaskID uint64, processID uint64, pid uint32) {
 	if pid == 0 {
 		return
@@ -714,6 +836,74 @@ func (d *DRTUprobeDriver) attachPIDLocked(sessionOrTaskID uint64, processID uint
 	delete(d.lastAttachErr, linkKey)
 	d.links[linkKey] = up
 	log.Printf("[DRTUprobe] [✓ Uprobe 动态挂载成功] PID=%d, Lib=%s, Addr=0x%x, SessionID=%d", pid, soPath, opts.Address, sessionOrTaskID)
+
+	d.attachReadSideLocked(sessionOrTaskID, processID, pid, linkKey, soPath, ex, offsets)
+}
+
+func (d *DRTUprobeDriver) attachReadSideLocked(
+	sessionOrTaskID uint64,
+	processID uint64,
+	pid uint32,
+	linkKey string,
+	soPath string,
+	ex *link.Executable,
+	offsets *DRTSymbolOffsets,
+) {
+	if offsets == nil || offsets.ReadNoCheckLenOffset == 0 {
+		return
+	}
+	rdEnKey := linkKey + ":rd_en"
+	rdRetKey := linkKey + ":rd_ret"
+	if _, exists := d.links[rdRetKey]; exists {
+		return
+	}
+
+	var enterProg, retProg interface{}
+	if d.attachExecUprobe != nil && d.attachExecUretprobe != nil {
+		enterProg = true
+		retProg = true
+	} else if d.mgr != nil {
+		ep := d.mgr.DRTReadEnterUprobeProgram()
+		rp := d.mgr.DRTReadRetUprobeProgram()
+		if ep != nil && rp != nil {
+			enterProg = ep
+			retProg = rp
+		}
+	}
+	if enterProg == nil || retProg == nil {
+		return
+	}
+
+	rdOpts := buildDRTUprobeOptions(offsets.ReadNoCheckLenOffset, pid)
+	var err error
+	var rdEn, rdRet io.Closer
+	if d.attachExecUprobe != nil && d.attachExecUretprobe != nil {
+		rdEn, err = d.attachExecUprobe(ex, drtReadNoCheckLenSymbol, rdOpts)
+	} else {
+		rdEn, err = ex.Uprobe(drtReadNoCheckLenSymbol, d.mgr.DRTReadEnterUprobeProgram(), rdOpts)
+	}
+	if err != nil {
+		d.logAttachErrorLocked(linkKey+":rd", fmt.Sprintf("[DRTUprobe] 读侧 Uprobe(pid=%d, lib=%s, addr=0x%x) 挂载失败(仅保留写侧): %v", pid, soPath, rdOpts.Address, err))
+		return
+	}
+
+	if d.attachExecUretprobe != nil {
+		rdRet, err = d.attachExecUretprobe(ex, drtReadNoCheckLenSymbol, rdOpts)
+	} else {
+		rdRet, err = ex.Uretprobe(drtReadNoCheckLenSymbol, d.mgr.DRTReadRetUprobeProgram(), rdOpts)
+	}
+	if err != nil {
+		_ = rdEn.Close()
+		d.logAttachErrorLocked(linkKey+":rd", fmt.Sprintf("[DRTUprobe] 读侧 Uretprobe(pid=%d, lib=%s, addr=0x%x) 挂载失败(已回滚入口探针，仅保留写侧): %v", pid, soPath, rdOpts.Address, err))
+		return
+	}
+
+	delete(d.lastAttachErr, linkKey+":rd")
+	d.links[rdEnKey] = rdEn
+	d.links[rdRetKey] = rdRet
+	pk := procKey(sessionOrTaskID, processID)
+	d.readAttachedProcs[pk]++
+	log.Printf("[DRTUprobe] [✓ 读侧 Uprobe+Uretprobe 动态挂载成功] PID=%d, Lib=%s, Addr=0x%x, SessionID=%d", pid, soPath, rdOpts.Address, sessionOrTaskID)
 }
 
 // SyncProcessPIDs 在 CAPTURING 期间按最新存活 PID 列表动态同步 uprobe（摘除退出旧 PID，补挂新 PID）；待命期不执行挂载
@@ -739,16 +929,19 @@ func (d *DRTUprobeDriver) SyncProcessPIDs(sessionOrTaskID uint64, processID uint
 	prefix := fmt.Sprintf("%d:%d:", sessionOrTaskID, processID)
 	for k, l := range d.links {
 		if len(k) >= len(prefix) && k[:len(prefix)] == prefix {
-			if _, keep := desired[k]; !keep {
-				_ = l.Close()
-				delete(d.links, k)
+			if _, keep := desired[pidKeyFromLinkKey(k)]; !keep {
+				d.removeLinkLocked(k, l)
 				log.Printf("[DRTUprobe] [Detach] 动态对账摘除旧 PID uprobe: key=%s, remainingLinks=%d", k, len(d.links))
 			}
 		}
 	}
 	for k := range d.lastAttachErr {
 		if len(k) >= len(prefix) && k[:len(prefix)] == prefix {
-			if _, keep := desired[k]; !keep {
+			base := k
+			if len(base) > 3 && base[len(base)-3:] == ":rd" {
+				base = base[:len(base)-3]
+			}
+			if _, keep := desired[base]; !keep {
 				delete(d.lastAttachErr, k)
 			}
 		}
@@ -879,9 +1072,13 @@ func (d *DRTUprobeDriver) StopCapture(ctx context.Context, sessionOrTaskID uint6
 	detached := 0
 	for k, l := range d.links {
 		if len(k) >= len(prefix) && k[:len(prefix)] == prefix {
-			_ = l.Close()
-			delete(d.links, k)
+			d.removeLinkLocked(k, l)
 			detached++
+		}
+	}
+	for pk := range d.readAttachedProcs {
+		if len(pk) >= len(prefix) && pk[:len(prefix)] == prefix {
+			delete(d.readAttachedProcs, pk)
 		}
 	}
 	for k := range d.lastAttachErr {
@@ -942,11 +1139,11 @@ func (d *DRTUprobeDriver) RemoveTarget(sessionOrTaskID uint64, processID uint64)
 	detached := 0
 	for k, l := range d.links {
 		if len(k) >= len(prefix) && k[:len(prefix)] == prefix {
-			_ = l.Close()
-			delete(d.links, k)
+			d.removeLinkLocked(k, l)
 			detached++
 		}
 	}
+	delete(d.readAttachedProcs, procKey(sessionOrTaskID, processID))
 	for k := range d.lastAttachErr {
 		if len(k) >= len(prefix) && k[:len(prefix)] == prefix {
 			delete(d.lastAttachErr, k)
@@ -967,6 +1164,7 @@ func (d *DRTUprobeDriver) cleanupLocked(markClosed bool) {
 		_ = l.Close()
 		delete(d.links, k)
 	}
+	clear(d.readAttachedProcs)
 
 	if d.ringbufReader != nil {
 		if d.readerStop != nil {

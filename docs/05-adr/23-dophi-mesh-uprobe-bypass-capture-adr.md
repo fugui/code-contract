@@ -1,9 +1,9 @@
 # ADR-23：基于内核 uprobe 的 `dophi_mesh` 数据面旁路观测工程实证与纯 Go 采集通道裁决
 
 - **文档编号**：`23-dophi-mesh-uprobe-bypass-capture-adr.md`
-- **文档版本**：v1.1.0
-- **日期**：2026-11-19
-- **状态**：✅ 已采纳 (Accepted — v1.1.0，与 [`ADR-22`](./22-pluggable-transport-driver-and-mesh-capture-adr.md) v2.0.0 协同定稿)
+- **文档版本**：v1.2.0
+- **日期**：2026-11-28
+- **状态**：✅ 已采纳 (Accepted — v1.2.0，补齐读侧 `DRT_ReadNoCheckLen` 全双工 `uprobe + uretprobe`)
 - **关联特性**：`F-09`（数据面按需旁路采集）、`F-11`（出站代理与多底座采集）、`F-35`（Agent 纯 Go 可插拔传输驱动架构与 `dophi_mesh` 采集 ➔ TCP 重放跨传输闭环，见 [`ADR-22`](./22-pluggable-transport-driver-and-mesh-capture-adr.md)）
 - **关联设计**：[`02-data-plane-and-cros-rpc-engine.md`](../02-design/02-data-plane-and-cros-rpc-engine.md)、[`01-cros-rpc-protocol-spec.md`](../07-references/01-cros-rpc-protocol-spec.md)、[`01-system-architecture.md`](../02-design/01-system-architecture.md)
 - **关联 ADR**：[`ADR-21`](./21-csg-aware-agent-service-discovery-and-replay-mock-adr.md)、[`ADR-22`](./22-pluggable-transport-driver-and-mesh-capture-adr.md)
@@ -17,7 +17,8 @@
 | :--- | :--- | :--- |
 | v0.1.0 | 2026-11-19 | 首次提出：汇总 DRT 共享内存环 uprobe 旁路观测的完整工程实证（符号锚定、fetchargs 能力边界、双向载荷捕获、inode 隔离与 mount namespace 卫生、性能与负控数据），提交架构评审。 |
 | v1.0.0 | 2026-11-19 | 协同 ADR-22 评审定稿：区分实验室 `ftrace :string` 探针与生产 `cilium/ebpf` `bpf_probe_read_user` 二进制全帧拷贝（防 `\x00` 截断），细化 D7 现网首 24B `:x64` Hex 验证配方。 |
-| **v1.1.0** | **2026-11-19** | **协同 ADR-22 v2.0.0 最终收敛**：依据现网证伪结论（`libdophimesh.so` 钩子仅限本进程内使用，P2P 网状架构下 Agent 侧引入无使用价值；Mock 阶段全部进程支持 `tcp://`），彻底移除 `plugin_transport.so` 备通道相关表述，确立 `builtin-drt-uprobe` 为 `dophi_mesh` 数据面只读采集的**唯一正式通道**，全栈保持 100% 纯 Go (`CGO_ENABLED=0`)、零子进程、零 `.so` 插件。 |
+| v1.1.0 | 2026-11-19 | 协同 ADR-22 v2.0.0 最终收敛：依据现网证伪结论（`libdophimesh.so` 钩子仅限本进程内使用，P2P 网状架构下 Agent 侧引入无使用价值；Mock 阶段全部进程支持 `tcp://`），彻底移除 `plugin_transport.so` 备通道相关表述，确立 `builtin-drt-uprobe` 为 `dophi_mesh` 数据面只读采集的**唯一正式通道**，全栈保持 100% 纯 Go (`CGO_ENABLED=0`)、零子进程、零 `.so` 插件。 |
+| **v1.2.0** | **2026-11-28** | **补齐读侧 `DRT_ReadNoCheckLen` 全双工 `uprobe + uretprobe`**：基于源码与 200:200 实测确认两段式读侧 ABI（`DRT_ReadLen` peek + `DRT_ReadNoCheckLen` 一次性拷贝 `[40B 环头][CROS 载荷]`，空环零触发），在 `cros_probe.c` 与 `DRTUprobeDriver` 中补齐单进程全双工采集（解决仅监控 B 时只捕到返回 `RSP`、捕不到入站 `REQ` 及出站 `RSP` 的盲区），并保持纯写模式向后兼容。 |
 
 ---
 
@@ -65,10 +66,16 @@
   - `astMsg[0]`（偏移 `+0(%dx)`，`uiMsgLen = +8(%dx) = 40`）：**40B DRT 环管理头**；
   - `astMsg[1]`（偏移 `+16(%dx)`）：**业务载荷**，其指针与长度分别为 **`pcMsg = +16(%dx)`（64 位指针）**、**`uiMsgLen = +24(%dx)`（32 位无符号长度）**。
 
-### 事实三：读侧入口参数无载荷，写侧单点即可捕获双向载荷
+### 事实三：读侧两段式 ABI 与全双工补齐（`DRT_ReadNoCheckLen` 空环零触发）
 
-`DRT_ReadLen/ReadNoCheckLen` 在函数入口处，目标缓冲区尚未填充，**入口探针拿不到消息字节**；消费侧载荷必须在 `uretprobe`（返回时）借助 BPF Map 暂存入口指针补齐。
-- **关键工程红利**：本机进程 $A \leftrightarrow B$ 通过 `dophi_mesh` 通信时，**请求方发 `REQ` 调用 `DRT_WriteBulk`，应答方发 `RSP` 同样调用 `DRT_WriteBulk`**。因此优先在写侧 `DRT_WriteBulk` 入口挂单颗 `uprobe`，即可捕获双向全量报文，规避 `uretprobe` 栈帧开销（仅在单进程录制且上游不在本机监控范围时按需补充读侧 `uprobe + uretprobe`）。
+`MESH_Recv` 接收路径为两段式（平级调用，非内部嵌套）：
+1. `DRT_ReadLen(DRT_HANDLE_T handle /*RDI*/, VOS_UINT32 *puiMsgLen /*RSI*/) -> VOS_UINT32 /*RAX*/`：只 peek 环上长度（`*puiMsgLen = 40 + payload_len`），不消费、不推进读偏移；空环时返回 `DRT_ERRNO_READ_EMPTY` 后 `MESH_Recv` 直接返回；
+2. `DRT_ReadNoCheckLen(DRT_HANDLE_T handle /*RDI*/, VOS_CHAR *pcMsgBuf /*RSI*/, VOS_UINT32 *puiMsgLen /*RDX*/) -> VOS_UINT32 /*RAX*/`：仅在环上有消息时被调用，一次性将 `[40B MESH_MSG_DATA_HEAD_S][CROS 载荷]` 拷贝入 `pcMsgBuf` 并通过 `*puiMsgLen` 回填实际字节数（返回值 `RAX == 0` 表示 `VOS_OK`）。
+
+- **单进程盲区与全双工解法**：若仅挂写侧 `DRT_WriteBulk`，当 $A \to B$ 仅监控进程 $B$ 时，只能捕获 $B$ 回写的 `RSP`（落为 `RSP_ORPHAN`），漏掉入站 `REQ` 与 $B \to C$ 的出站 `RSP`。挂载 `DRT_ReadNoCheckLen` 的 `uprobe + uretprobe`（入口在 `drt_read_args_map[tgid_pid]` 暂存 `handle/buf_ptr/len_ptr`，`RAX == 0` 返回时读 `*len_ptr` 并拷贝 `[40B 头][载荷]`，标记 `source_kind = 1`）后：
+  - **空环零触发**：无消息时 `DRT_ReadNoCheckLen` 根本不被调用，零空轮询开销；
+  - **单进程全双工闭环**：$B$ 读侧收到的 `REQ`（`INGRESS`）与写侧发出的 `RSP` 在 $B$ 进程内完成往返配对；$B$ 写侧发出的 `REQ`（`EGRESS`）与读侧收到的 `RSP` 在 $B$ 进程内完成往返配对；
+  - **多进程严格隔离**：当同时监控 $A$ 和 $B$ 且已挂载读侧探针时，$A$ 仅配对自身的 `EGRESS` 往返、$B$ 仅配对自身的 `INGRESS` 往返，杜绝跨进程抢占误配对；未找到读侧符号时自动回退纯写跨进程关联模式。
 
 ### 事实四：环上载荷语义自由，CROS 帧偏移需现网 D7 门禁一次确认
 
@@ -103,7 +110,7 @@
 | :--- | :--- | :--- | :--- |
 | **D1** | **唯一正式采集驱动 (`builtin-drt-uprobe`)** | 实现 [`ADR-22`](./22-pluggable-transport-driver-and-mesh-capture-adr.md) 的纯 Go `pkg/transport.Driver` 接口（`CapCapture`）：使用 Go 标准库 `debug/elf` 解析 `.dynsym` + `cilium/ebpf` 挂载 `DRT_WriteBulk` uprobe，**零子进程、零 `.so` 插件、零 CGO**，内核 `bpf_probe_read_user` 单次拷贝入 `BPF_MAP_TYPE_RINGBUF` 直达 Agent | 彻底替代已证伪的 `libdophimesh.so` 进程内钩子方案，保持 Agent 纯 Go 单二进制与极简运维 |
 | **D2** | **符号锚定策略 (`debug/elf` 动态解析)** | Agent 使用 Go 标准库 `debug/elf`（免外部 `readelf` 依赖）解析目标进程 `/proc/<pid>/maps` 映射的 `libdopra.so` `.dynsym`，动态提取 `DRT_WriteBulk`、`DRT_ReadLen`、`DRT_ReadNoCheckLen` 的精确文件偏移 | 事实二；strip 容错，自动适配不同版本 `libdopra.so` |
-| **D3** | **写侧优先，读侧按需** | 默认在写侧 `DRT_WriteBulk` 入口挂载单颗 `uprobe` 捕获双向载荷；仅当单进程录制且对端不在本机监控集时，按需补充 `DRT_ReadLen/ReadNoCheckLen` 的 `uprobe + uretprobe`（BPF Hash Map 暂存入口缓冲区指针并在返回时拷贝） | 事实二 + 事实三；规避不必要的 `uretprobe` 陷页开销 |
+| **D3** | **写读全双工采集（写侧 `DRT_WriteBulk` + 读侧 `DRT_ReadNoCheckLen`）** | 默认按目标 PID 挂载写侧 `DRT_WriteBulk` `uprobe` 与读侧 `DRT_ReadNoCheckLen` `uprobe + uretprobe`（`BPF_MAP_TYPE_LRU_HASH` 暂存入口参数并在 `RAX==0` 返回时拷贝 `[40B 头][载荷]`，`source_kind=1`），支撑单进程全双工闭环与多进程方向隔离；读侧符号缺失或挂载失败时原子回滚并自动回退纯写模式 | 事实二 + 事实三；空环时 `DRT_ReadNoCheckLen` 零调用，兼顾单进程完整覆盖与空载零损耗 |
 | **D4** | **实验室 ftrace 探查 + 生产 `cilium/ebpf` 二进制直采** | 现场探查/D7 验证使用冻结的 ftrace `:x64` 配方；Agent 生产代码使用 `cilium/ebpf` `bpf_probe_read_user` 完整拷贝含 `\x00` 字节的二进制 CROS 帧（单帧上限 32KB，对齐现有 `ing_ringbuf`） | 事实五；避免 `:string` 遇 `\x00` 截断真实二进制 CROS 报文 |
 | **D5** | **挂载卫生三原则** | ① **待命期 0 uprobe 挂载**：仅在开启录制（`CAPTURING`）时按目标 `PID` 挂载 `DRT_WriteBulk`，停录瞬间立即 `link.Close()`，平时 0% 损耗；② **零 tracefs 污染**：通过 `cilium/ebpf` 匿名 `perf_event_open` FD 挂载 `bpf_link`，不写全局 `/sys/kernel/tracing/uprobe_events`；实验室压测支持私有副本 + `unshare -m --propagation private`；③ **五出口幂等卸载**对齐 ADR-22 §3 D6 | 严守现网探针零残留、低侵入红线 |
 | **D6** | **方向归一化与 56B 信封输出** | 输出标准 56B `EnvelopeHeader`（偏移 `26` `TransportProto = 4`）：结合触发进程角色与帧内 `ucMsgType = frame[22]` 按 ADR-11 不变量归一化 `DirectionIngress (1)` / `DirectionEgress (2)`，通道标识来自 `astMsg[0]`（40B 环头）或 `DRT_HANDLE` 填入 `ConnSeq` | 与主控 `ExchangeAssembler` `connKey + ullSNO` 配对 100% 兼容 |

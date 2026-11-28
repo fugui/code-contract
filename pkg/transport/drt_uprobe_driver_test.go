@@ -245,6 +245,7 @@ func TestParseDRTUprobeEvent_BufferValidation(t *testing.T) {
 	raw[40] = 1 // isTruncated
 	raw[41] = 2 // chunkIdx
 	raw[42] = 4 // chunkCount
+	raw[43] = DRTEventSourceRead
 	binary.LittleEndian.PutUint32(raw[84:88], 131072)
 	binary.LittleEndian.PutUint32(raw[92:96], 556)
 	copy(raw[DRTUprobeEventHeaderLen:], []byte("0123456789"))
@@ -254,7 +255,8 @@ func TestParseDRTUprobeEvent_BufferValidation(t *testing.T) {
 		t.Fatalf("ParseDRTUprobeEvent failed: %v", err)
 	}
 	if evt.SessionID != 111 || evt.ProcessID != 222 || evt.PID != 555 || !evt.IsTruncated ||
-		evt.ChunkIdx != 2 || evt.ChunkCount != 4 || evt.OrigLen != 131072 || evt.TID != 556 {
+		evt.ChunkIdx != 2 || evt.ChunkCount != 4 || evt.SourceKind != DRTEventSourceRead ||
+		evt.OrigLen != 131072 || evt.TID != 556 {
 		t.Errorf("parsed event mismatch: %+v", evt)
 	}
 	if string(evt.Data) != "0123456789" {
@@ -1016,4 +1018,371 @@ func TestDRTUprobeDriver_ResetAllowsReuseAndLogsDetach(t *testing.T) {
 			t.Errorf("expected log %q, got:\n%s", needle, logs)
 		}
 	}
+}
+
+func TestDRTUprobeDriver_ReadSideFullDuplex_SingleAndDualProcess(t *testing.T) {
+	t.Run("SingleProcess_InboundAndOutbound_AndSelfCall", func(t *testing.T) {
+		drv := NewDRTUprobeDriver(nil, DRTUprobeConfig{ProcRoot: "/proc"})
+
+		var envs []agentproto.EnvelopeHeader
+		var payloads [][]byte
+		sink := FrameSinkFunc(func(h agentproto.EnvelopeHeader, payload []byte) error {
+			envs = append(envs, h)
+			cp := make([]byte, len(payload))
+			copy(cp, payload)
+			payloads = append(payloads, cp)
+			return nil
+		})
+
+		sessionID := uint64(9001)
+		procB := uint64(202)
+		pidB := uint32(6002)
+
+		// 1. A -> B 入站（仅监控 B）：B 读侧收到 REQ + B 写侧回 RSP
+		inReq := buildFullCrosReqPacket(crosrpc.TransportMesh, 101, crosrpc.ReqTypeSync, "svc.B", "HandleOrder", []byte("in_req"))
+		inRsp := buildFullCrosRspPacket(crosrpc.TransportMesh, 101, "svc.B", "HandleOrder", []byte("in_rsp"))
+		if err := drv.ProcessEvent(DRTUprobeEvent{
+			SessionID: sessionID, ProcessID: procB, PID: pidB, Handle: 0x1001, SourceKind: DRTEventSourceRead,
+			DataLen: uint32(len(inReq)), Data: inReq,
+		}, sink); err != nil {
+			t.Fatalf("inbound read REQ failed: %v", err)
+		}
+		if err := drv.ProcessEvent(DRTUprobeEvent{
+			SessionID: sessionID, ProcessID: procB, PID: pidB, Handle: 0x2002, SourceKind: DRTEventSourceWriteBulk,
+			DataLen: uint32(len(inRsp)), Data: inRsp,
+		}, sink); err != nil {
+			t.Fatalf("inbound write RSP failed: %v", err)
+		}
+
+		// 2. B -> C 出站（仅监控 B）：B 写侧发出 REQ + B 读侧收到流式 RSP_SEG + RSP
+		outReq := buildFullCrosReqPacket(crosrpc.TransportMesh, 202, crosrpc.ReqTypeSync, "svc.C", "QueryItem", []byte("out_req"))
+		outSeg := buildFullCrosRspPacket(crosrpc.TransportMesh, 202, "svc.C", "QueryItem", []byte("out_seg1"))
+		outSeg[22] = crosrpc.MsgTypeRspSeg
+		outRsp := buildFullCrosRspPacket(crosrpc.TransportMesh, 202, "svc.C", "QueryItem", []byte("out_rsp"))
+		if err := drv.ProcessEvent(DRTUprobeEvent{
+			SessionID: sessionID, ProcessID: procB, PID: pidB, Handle: 0x3003, SourceKind: DRTEventSourceWriteBulk,
+			DataLen: uint32(len(outReq)), Data: outReq,
+		}, sink); err != nil {
+			t.Fatalf("outbound write REQ failed: %v", err)
+		}
+		if err := drv.ProcessEvent(DRTUprobeEvent{
+			SessionID: sessionID, ProcessID: procB, PID: pidB, Handle: 0x4004, SourceKind: DRTEventSourceRead,
+			DataLen: uint32(len(outSeg)), Data: outSeg,
+		}, sink); err != nil {
+			t.Fatalf("outbound read RSP_SEG failed: %v", err)
+		}
+		if err := drv.ProcessEvent(DRTUprobeEvent{
+			SessionID: sessionID, ProcessID: procB, PID: pidB, Handle: 0x4004, SourceKind: DRTEventSourceRead,
+			DataLen: uint32(len(outRsp)), Data: outRsp,
+		}, sink); err != nil {
+			t.Fatalf("outbound read RSP failed: %v", err)
+		}
+
+		// 3. B -> B 同进程自调（同 SNO 同 Handle）：确保 EGRESS (8000) 与 INGRESS (8001) 不碰撞
+		selfOutReq := buildFullCrosReqPacket(crosrpc.TransportMesh, 303, crosrpc.ReqTypeSync, "svc.Self", "Ping", []byte("s_req"))
+		selfInReq := buildFullCrosReqPacket(crosrpc.TransportMesh, 303, crosrpc.ReqTypeSync, "svc.Self", "Ping", []byte("s_req"))
+		selfOutRsp := buildFullCrosRspPacket(crosrpc.TransportMesh, 303, "svc.Self", "Ping", []byte("s_rsp"))
+		selfInRsp := buildFullCrosRspPacket(crosrpc.TransportMesh, 303, "svc.Self", "Ping", []byte("s_rsp"))
+
+		_ = drv.ProcessEvent(DRTUprobeEvent{SessionID: sessionID, ProcessID: procB, PID: pidB, Handle: 0x5555, SourceKind: DRTEventSourceWriteBulk, DataLen: uint32(len(selfOutReq)), Data: selfOutReq}, sink)
+		_ = drv.ProcessEvent(DRTUprobeEvent{SessionID: sessionID, ProcessID: procB, PID: pidB, Handle: 0x5555, SourceKind: DRTEventSourceRead, DataLen: uint32(len(selfInReq)), Data: selfInReq}, sink)
+		_ = drv.ProcessEvent(DRTUprobeEvent{SessionID: sessionID, ProcessID: procB, PID: pidB, Handle: 0x5555, SourceKind: DRTEventSourceWriteBulk, DataLen: uint32(len(selfOutRsp)), Data: selfOutRsp}, sink)
+		_ = drv.ProcessEvent(DRTUprobeEvent{SessionID: sessionID, ProcessID: procB, PID: pidB, Handle: 0x5555, SourceKind: DRTEventSourceRead, DataLen: uint32(len(selfInRsp)), Data: selfInRsp}, sink)
+
+		if len(envs) != 9 {
+			t.Fatalf("expected 9 frames, got %d", len(envs))
+		}
+
+		// 校验入站往返 (0, 1)
+		if envs[0].Direction != agentproto.DirectionIngress || envs[1].Direction != agentproto.DirectionIngress {
+			t.Errorf("inbound pair expected DirectionIngress(1), got (%d, %d)", envs[0].Direction, envs[1].Direction)
+		}
+		if envs[0].SrcPort != envs[1].SrcPort || envs[0].DstPort != envs[1].DstPort || envs[0].ConnSeq != envs[1].ConnSeq {
+			t.Errorf("inbound tuple mismatch: req=%+v rsp=%+v", envs[0], envs[1])
+		}
+
+		// 校验出站流式往返 (2, 3, 4)
+		for idx := 2; idx <= 4; idx++ {
+			if envs[idx].Direction != agentproto.DirectionEgress {
+				t.Errorf("outbound frame %d expected DirectionEgress(2), got %d", idx, envs[idx].Direction)
+			}
+			if envs[idx].ConnSeq != envs[2].ConnSeq || envs[idx].SrcPort != envs[2].SrcPort || envs[idx].DstPort != envs[2].DstPort {
+				t.Errorf("outbound frame %d tuple mismatch: got %+v want %+v", idx, envs[idx], envs[2])
+			}
+		}
+
+		// 校验同进程自调 (5=EGRESS_REQ, 6=INGRESS_REQ, 7=INGRESS_RSP, 8=EGRESS_RSP)
+		if envs[5].Direction != agentproto.DirectionEgress || envs[8].Direction != agentproto.DirectionEgress {
+			t.Errorf("self-call egress pair mismatch: %d, %d", envs[5].Direction, envs[8].Direction)
+		}
+		if envs[6].Direction != agentproto.DirectionIngress || envs[7].Direction != agentproto.DirectionIngress {
+			t.Errorf("self-call ingress pair mismatch: %d, %d", envs[6].Direction, envs[7].Direction)
+		}
+		if envs[5].DstPort == envs[6].SrcPort {
+			t.Errorf("self-call synthetic peer ports must differ between egress(%d) and ingress(%d)", envs[5].DstPort, envs[6].SrcPort)
+		}
+
+		st := drv.Stats()
+		if st.WriteEvents != 4 || st.ReadEvents != 5 || st.RspPaired != 5 || st.RspOrphan != 0 {
+			t.Fatalf("unexpected stats: %+v", st)
+		}
+		drv.mu.Lock()
+		rem := drv.inflightCount
+		drv.mu.Unlock()
+		if rem != 0 {
+			t.Fatalf("expected 0 remaining inflight requests, got %d", rem)
+		}
+	})
+
+	t.Run("DualProcessWithReadProbes_StrictIsolation_NoCrossHijack", func(t *testing.T) {
+		drv := NewDRTUprobeDriver(nil, DRTUprobeConfig{ProcRoot: "/proc"})
+		// 模拟 A(101) 与 B(202) 均已挂载读侧探针
+		drv.mu.Lock()
+		drv.readAttachedProcs[procKey(1, 101)] = 1
+		drv.readAttachedProcs[procKey(1, 202)] = 1
+		drv.mu.Unlock()
+
+		var envs []agentproto.EnvelopeHeader
+		sink := FrameSinkFunc(func(h agentproto.EnvelopeHeader, _ []byte) error {
+			envs = append(envs, h)
+			return nil
+		})
+
+		reqA := buildFullCrosReqPacket(crosrpc.TransportMesh, 777, crosrpc.ReqTypeSync, "svc.B", "DoWork", []byte("a_req"))
+		reqB := buildFullCrosReqPacket(crosrpc.TransportMesh, 777, crosrpc.ReqTypeSync, "svc.B", "DoWork", []byte("a_req"))
+		rspB := buildFullCrosRspPacket(crosrpc.TransportMesh, 777, "svc.B", "DoWork", []byte("b_rsp"))
+		rspA := buildFullCrosRspPacket(crosrpc.TransportMesh, 777, "svc.B", "DoWork", []byte("b_rsp"))
+
+		// 正常全双工双进程：A 写 REQ -> B 读 REQ -> B 写 RSP -> A 读 RSP
+		_ = drv.ProcessEvent(DRTUprobeEvent{SessionID: 1, ProcessID: 101, PID: 1001, Handle: 0x1, SourceKind: DRTEventSourceWriteBulk, DataLen: uint32(len(reqA)), Data: reqA}, sink)
+		_ = drv.ProcessEvent(DRTUprobeEvent{SessionID: 1, ProcessID: 202, PID: 2001, Handle: 0x2, SourceKind: DRTEventSourceRead, DataLen: uint32(len(reqB)), Data: reqB}, sink)
+		_ = drv.ProcessEvent(DRTUprobeEvent{SessionID: 1, ProcessID: 202, PID: 2001, Handle: 0x2, SourceKind: DRTEventSourceWriteBulk, DataLen: uint32(len(rspB)), Data: rspB}, sink)
+		_ = drv.ProcessEvent(DRTUprobeEvent{SessionID: 1, ProcessID: 101, PID: 1001, Handle: 0x1, SourceKind: DRTEventSourceRead, DataLen: uint32(len(rspA)), Data: rspA}, sink)
+
+		if len(envs) != 4 {
+			t.Fatalf("expected 4 frames, got %d", len(envs))
+		}
+		if envs[0].ProcessID != 101 || envs[0].Direction != agentproto.DirectionEgress ||
+			envs[3].ProcessID != 101 || envs[3].Direction != agentproto.DirectionEgress {
+			t.Errorf("A should own EGRESS pair, got env0=%+v env3=%+v", envs[0], envs[3])
+		}
+		if envs[1].ProcessID != 202 || envs[1].Direction != agentproto.DirectionIngress ||
+			envs[2].ProcessID != 202 || envs[2].Direction != agentproto.DirectionIngress {
+			t.Errorf("B should own INGRESS pair, got env1=%+v env2=%+v", envs[1], envs[2])
+		}
+
+		// 若 B 漏掉读侧 REQ，B 写出的 RSP 必须落为 RSP_ORPHAN，绝不抢占 A 的 EGRESS REQ
+		envs = envs[:0]
+		reqA2 := buildFullCrosReqPacket(crosrpc.TransportMesh, 888, crosrpc.ReqTypeSync, "svc.B", "DoWork", []byte("a_req2"))
+		rspB2 := buildFullCrosRspPacket(crosrpc.TransportMesh, 888, "svc.B", "DoWork", []byte("b_rsp2"))
+		_ = drv.ProcessEvent(DRTUprobeEvent{SessionID: 1, ProcessID: 101, PID: 1001, Handle: 0x1, SourceKind: DRTEventSourceWriteBulk, DataLen: uint32(len(reqA2)), Data: reqA2}, sink)
+		_ = drv.ProcessEvent(DRTUprobeEvent{SessionID: 1, ProcessID: 202, PID: 2001, Handle: 0x2, SourceKind: DRTEventSourceWriteBulk, DataLen: uint32(len(rspB2)), Data: rspB2}, sink)
+
+		if len(envs) != 2 {
+			t.Fatalf("expected 2 frames, got %d", len(envs))
+		}
+		if envs[1].ProcessID != 202 || envs[1].Direction != agentproto.DirectionIngress {
+			t.Errorf("B's unmatched write RSP must stay INGRESS orphan on proc 202, got %+v", envs[1])
+		}
+		st := drv.Stats()
+		if st.RspOrphan != 1 {
+			t.Fatalf("expected RspOrphan=1, got %+v", st)
+		}
+	})
+
+	t.Run("ReadSide_124KB_ChunkReassembly", func(t *testing.T) {
+		drv := NewDRTUprobeDriver(nil, DRTUprobeConfig{ProcRoot: "/proc"})
+		var gotPayload []byte
+		var gotEnv agentproto.EnvelopeHeader
+		sink := FrameSinkFunc(func(h agentproto.EnvelopeHeader, payload []byte) error {
+			gotEnv = h
+			gotPayload = append([]byte(nil), payload...)
+			return nil
+		})
+
+		body := make([]byte, 124*1024-crosrpc.CommHeadLen-crosrpc.ReqHeadMinLen)
+		for i := range body {
+			body[i] = byte(i % 251)
+		}
+		pkt124K := buildFullCrosReqPacket(crosrpc.TransportMesh, 404, crosrpc.ReqTypeSync, "svc.Large", "Upload", body)
+		chunkCount := (len(pkt124K) + MaxDRTChunkSize - 1) / MaxDRTChunkSize
+		for i := 0; i < chunkCount; i++ {
+			start := i * MaxDRTChunkSize
+			end := start + MaxDRTChunkSize
+			if end > len(pkt124K) {
+				end = len(pkt124K)
+			}
+			err := drv.ProcessEvent(DRTUprobeEvent{
+				SessionID: 1, ProcessID: 202, TimestampNs: 9999, Handle: 0x99, PID: 6002, TID: 7002,
+				SourceKind: DRTEventSourceRead, DataLen: uint32(end - start), OrigLen: uint32(len(pkt124K)),
+				ChunkIdx: uint8(i), ChunkCount: uint8(chunkCount), Data: pkt124K[start:end],
+			}, sink)
+			if err != nil {
+				t.Fatalf("chunk %d failed: %v", i, err)
+			}
+		}
+		if gotEnv.Direction != agentproto.DirectionIngress || !bytes.Equal(gotPayload, pkt124K) {
+			t.Fatalf("124KB read chunk reassembly failed: dir=%d len=%d want=%d", gotEnv.Direction, len(gotPayload), len(pkt124K))
+		}
+	})
+}
+
+func TestDRTUprobeDriver_AttachPID_RealELFFixtureWithReadNoCheckLen(t *testing.T) {
+	clang, err := exec.LookPath("clang")
+	if err != nil {
+		t.Skip("clang not available on host, skipping ELF fixture attach test")
+	}
+
+	tmpDir := t.TempDir()
+	cSource := filepath.Join(tmpDir, "drt_fixture_duplex.c")
+	soPath := filepath.Join(tmpDir, "libdopra.so")
+	cCode := `
+__attribute__((visibility("default"))) int DRT_WriteBulk(void* handle, int count, void* entries) {
+    return 0;
+}
+__attribute__((visibility("default"))) int DRT_ReadNoCheckLen(void* handle, char* buf, unsigned int* len) {
+    return 0;
+}
+`
+	if err := os.WriteFile(cSource, []byte(cCode), 0644); err != nil {
+		t.Fatalf("write c source failed: %v", err)
+	}
+	if out, err := exec.Command(clang, "-shared", "-fPIC", "-O2", "-o", soPath, cSource).CombinedOutput(); err != nil {
+		t.Fatalf("clang build shared library failed: %v, out: %s", err, string(out))
+	}
+	if strip, sErr := exec.LookPath("llvm-strip"); sErr == nil {
+		_ = exec.Command(strip, "--strip-all", soPath).Run()
+	}
+
+	offsets, err := ResolveDRTSymbolOffsets(soPath)
+	if err != nil || offsets.WriteBulkOffset == 0 || offsets.ReadNoCheckLenOffset == 0 {
+		t.Fatalf("ResolveDRTSymbolOffsets failed: %v (offsets=%+v)", err, offsets)
+	}
+
+	pid1 := uint32(37250)
+	pid2 := uint32(37251)
+	procRoot := filepath.Join(tmpDir, "proc")
+	for _, pid := range []uint32{pid1, pid2} {
+		mapsDir := filepath.Join(procRoot, fmt.Sprintf("%d", pid))
+		if err := os.MkdirAll(mapsDir, 0755); err != nil {
+			t.Fatalf("mkdir maps dir failed: %v", err)
+		}
+		mapsContent := fmt.Sprintf("7f3b89350000-7f3b89400000 r-xp 00000000 08:01 3001 %s\n", soPath)
+		if err := os.WriteFile(filepath.Join(mapsDir, "maps"), []byte(mapsContent), 0644); err != nil {
+			t.Fatalf("write maps failed: %v", err)
+		}
+	}
+
+	t.Run("Attach3LinksPerPID_SyncAndStopCleanup", func(t *testing.T) {
+		var uprobeSyms []string
+		var uretprobeSyms []string
+		var createdLinks []*mockClosableLink
+
+		drv := NewDRTUprobeDriver(nil, DRTUprobeConfig{ProcRoot: procRoot})
+		drv.attachExecUprobe = func(_ *link.Executable, symbol string, opts *link.UprobeOptions) (io.Closer, error) {
+			uprobeSyms = append(uprobeSyms, fmt.Sprintf("%s:%d:0x%x", symbol, opts.PID, opts.Address))
+			lnk := &mockClosableLink{}
+			createdLinks = append(createdLinks, lnk)
+			return lnk, nil
+		}
+		drv.attachExecUretprobe = func(_ *link.Executable, symbol string, opts *link.UprobeOptions) (io.Closer, error) {
+			uretprobeSyms = append(uretprobeSyms, fmt.Sprintf("%s:%d:0x%x", symbol, opts.PID, opts.Address))
+			lnk := &mockClosableLink{}
+			createdLinks = append(createdLinks, lnk)
+			return lnk, nil
+		}
+
+		ctx := context.Background()
+		if err := drv.StartCapture(ctx, CaptureSpec{
+			SessionOrTaskID: 4001,
+			Processes:       []TargetProcess{{ProcessID: 10, PIDs: []uint32{pid1, pid2}}},
+		}); err != nil {
+			t.Fatalf("StartCapture failed: %v", err)
+		}
+
+		// 2 PIDs * (1 write uprobe + 1 read uprobe + 1 read uretprobe) = 6 links
+		if drv.ActiveLinksCount() != 6 || len(uprobeSyms) != 4 || len(uretprobeSyms) != 2 {
+			t.Fatalf("expected 6 active links (4 uprobe + 2 uretprobe), got links=%d uprobes=%v uretprobes=%v",
+				drv.ActiveLinksCount(), uprobeSyms, uretprobeSyms)
+		}
+
+		drv.mu.Lock()
+		readCnt := drv.readAttachedProcs[procKey(4001, 10)]
+		drv.mu.Unlock()
+		if readCnt != 2 {
+			t.Fatalf("expected readAttachedProcs=2, got %d", readCnt)
+		}
+
+		// SyncProcessPIDs 保留 pid1，摘除 pid2 -> 应精确剩 3 个 link，且 readCnt 降为 1
+		if err := drv.SyncProcessPIDs(4001, 10, []uint32{pid1}); err != nil {
+			t.Fatalf("SyncProcessPIDs failed: %v", err)
+		}
+		if drv.ActiveLinksCount() != 3 {
+			t.Fatalf("expected 3 active links after removing pid2, got %d", drv.ActiveLinksCount())
+		}
+		drv.mu.Lock()
+		readCnt = drv.readAttachedProcs[procKey(4001, 10)]
+		drv.mu.Unlock()
+		if readCnt != 1 {
+			t.Fatalf("expected readAttachedProcs=1 after removing pid2, got %d", readCnt)
+		}
+
+		if err := drv.StopCapture(ctx, 4001); err != nil {
+			t.Fatalf("StopCapture failed: %v", err)
+		}
+		if drv.ActiveLinksCount() != 0 {
+			t.Fatalf("expected 0 active links after StopCapture, got %d", drv.ActiveLinksCount())
+		}
+		for i, lnk := range createdLinks {
+			if lnk.closed.Load() != 1 {
+				t.Errorf("link %d expected closed=1, got %d", i, lnk.closed.Load())
+			}
+		}
+	})
+
+	t.Run("UretprobeFailureRollsBackReadEnterProbe", func(t *testing.T) {
+		var wbLink, rdEnterLink *mockClosableLink
+		drv := NewDRTUprobeDriver(nil, DRTUprobeConfig{ProcRoot: procRoot})
+		drv.attachExecUprobe = func(_ *link.Executable, symbol string, _ *link.UprobeOptions) (io.Closer, error) {
+			lnk := &mockClosableLink{}
+			if symbol == drtWriteBulkSymbol {
+				wbLink = lnk
+			} else {
+				rdEnterLink = lnk
+			}
+			return lnk, nil
+		}
+		drv.attachExecUretprobe = func(_ *link.Executable, _ string, _ *link.UprobeOptions) (io.Closer, error) {
+			return nil, fmt.Errorf("mock uretprobe attach error")
+		}
+
+		ctx := context.Background()
+		if err := drv.StartCapture(ctx, CaptureSpec{
+			SessionOrTaskID: 4002,
+			Processes:       []TargetProcess{{ProcessID: 10, PID: pid1}},
+		}); err != nil {
+			t.Fatalf("StartCapture failed: %v", err)
+		}
+
+		if drv.ActiveLinksCount() != 1 {
+			t.Fatalf("expected only write-side link (1) to remain after uretprobe rollback, got %d", drv.ActiveLinksCount())
+		}
+		if wbLink == nil || wbLink.closed.Load() != 0 {
+			t.Fatalf("expected write-side link to stay open")
+		}
+		if rdEnterLink == nil || rdEnterLink.closed.Load() != 1 {
+			t.Fatalf("expected read-enter link to be rolled back (closed=1), got %+v", rdEnterLink)
+		}
+		drv.mu.Lock()
+		hasRead := drv.hasReadProbeLocked(4002, 10)
+		drv.mu.Unlock()
+		if hasRead {
+			t.Fatalf("expected hasReadProbeLocked=false after uretprobe rollback")
+		}
+
+		_ = drv.StopCapture(ctx, 4002)
+		if wbLink.closed.Load() != 1 {
+			t.Fatalf("expected write-side link closed on StopCapture")
+		}
+	})
 }

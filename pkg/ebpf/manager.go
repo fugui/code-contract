@@ -1472,6 +1472,26 @@ func (m *Manager) DRTUprobeProgram() *ebpf.Program {
 	return m.objs.CrosDrtWriteBulk
 }
 
+// DRTReadEnterUprobeProgram 返回 DRT_ReadNoCheckLen 入口 uprobe 对应的 eBPF 程序 (ADR-23)
+func (m *Manager) DRTReadEnterUprobeProgram() *ebpf.Program {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.objs == nil {
+		return nil
+	}
+	return m.objs.CrosDrtReadNocheckEnter
+}
+
+// DRTReadRetUprobeProgram 返回 DRT_ReadNoCheckLen 出口 uretprobe 对应的 eBPF 程序 (ADR-23)
+func (m *Manager) DRTReadRetUprobeProgram() *ebpf.Program {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.objs == nil {
+		return nil
+	}
+	return m.objs.CrosDrtReadNocheckRet
+}
+
 // DRTRingbufMap 返回 dophi_mesh 采集专用的 RingBuf BPF Map (ADR-23)
 func (m *Manager) DRTRingbufMap() *ebpf.Map {
 	m.mu.Lock()
