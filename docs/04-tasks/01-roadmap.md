@@ -1,16 +1,17 @@
 # 架构与活体契约治理 (`code-contract`) TDD 工程实施路线图与质量门禁
 
 - **文档编号**：`01-roadmap.md`
-- **文档版本**：v1.21.0
+- **文档版本**：v1.22.0
 - **更新日期**：2026-11-28
 - **归属阶段**：阶段三/四：TDD 实施路线图与全局门禁 (`04-tasks`)
-- **状态**：M1~M45 已全部交付 (`✅ 已交付`)；含 `ADR-25` 降噪、`ADR-30` 六组十四项主线 IA、全双工 `DRT_ReadNoCheckLen` 及非阻断破坏性变更审计收口
-- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.30.0)、[`01-system-architecture.md`](../02-design/01-system-architecture.md) (v1.13.0)、[`02-data-plane-and-cros-rpc-engine.md`](../02-design/02-data-plane-and-cros-rpc-engine.md) (v1.10.0)、[`03-architecture-elements-and-topology.md`](../02-design/03-architecture-elements-and-topology.md) (v1.12.0)、[`04-control-plane-and-web-console.md`](../02-design/04-control-plane-and-web-console.md) (v1.16.0)、[`05-database-schema.md`](../02-design/05-database-schema.md) (v1.12.0)、[`01-http-api-contract.md`](../03-api/01-http-api-contract.md) (v1.12.0)、[`ADR-24`](../05-adr/24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md) ~ [`ADR-30`](../05-adr/30-contract-library-and-three-lines-ia-adr.md)
+- **状态**：M1~M45 已全部交付 (`✅ 已交付`)；**M46 (`ADR-31` RPC 离线自愈重放端到端审计与生产就绪修复) `🚧 进行中`**
+- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.31.0)、[`01-system-architecture.md`](../02-design/01-system-architecture.md) (v1.13.0)、[`02-data-plane-and-cros-rpc-engine.md`](../02-design/02-data-plane-and-cros-rpc-engine.md) (v1.11.0)、[`03-architecture-elements-and-topology.md`](../02-design/03-architecture-elements-and-topology.md) (v1.12.0)、[`04-control-plane-and-web-console.md`](../02-design/04-control-plane-and-web-console.md) (v1.17.0)、[`05-database-schema.md`](../02-design/05-database-schema.md) (v1.12.1)、[`01-http-api-contract.md`](../03-api/01-http-api-contract.md) (v1.13.0)、[`ADR-24`](../05-adr/24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md) ~ [`ADR-31`](../05-adr/31-rpc-replay-end-to-end-audit-and-production-readiness-adr.md)
 
 ### 修订记录
 
 | 版本 | 日期 | 作者 | 变更说明 |
 | :--- | :--- | :--- | :--- |
+| **`v1.22.0`** | **`2026-11-28`** | **Engineering Team** | **依据 [`ADR-31`](../05-adr/31-rpc-replay-end-to-end-audit-and-production-readiness-adr.md) 新增里程碑 `M46`（`F-55`、`SC-34`，状态 `🚧 进行中`）**：规划 Phase 1（P0 阻断：Agent `Items`/`MockEvents` 结构化结果 + Server Fail-Closed 无自降级 + `RediffTask` 异常保留与规则合并 + `SSEBroker` 推送 + 单包抽屉迁移 `arch_process_id` + 探针 `409` 包裹）、Phase 2（P1 契约/体验：`ReplayTask`/`ReplayItem` 派生字段 + 前端报告/断言/时间线/任务创建器解耦 + `/discovery` 跳链参数闭环）与 Phase 3（P2 健壮性与 `demo/` E2E：`MsgTypeRspSeg` 多分片 + 单条超时隔离重连 + `IsProcessArmed` `409 PROCESS_NOT_ARMED` 守卫 + 真实双向进程 E2E 闭环） |
 | `v1.8.0` | `2026-11-11` | Architecture Team | 同步 ADR-16 (`v1.0.0`)：新增里程碑 `M20` |
 | `v1.9.0` | `2026-11-13` | Architecture Team | 同步 [`ADR-17`](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md) (`v1.0.0`)：新增里程碑 `M21` |
 | `v1.10.0` | `2026-11-13` | Architecture Team | 依据 [`ADR-18`](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (`v1.1.0`) 规划 `M22 ~ M25` |
@@ -119,6 +120,8 @@ flowchart LR
     M40["M40~M42: uService 清洗、去 /pg 扁平化与全池编译收敛<br/>(NORM-006/007 + R4基座 + R2投票 + R7自愈 + R8隔离 + workspace)"]
     M40 ==> M43
     M43["M43~M45: 单仓拓扑发布、四阶段可视化流水线与 IA 收敛<br/>(R3同源解析 + input_fingerprint + 自封闭发布 + 消费端聚合)"]
+    M43 ==> M46
+    M46["M46 (ADR-31): RPC 离线自愈重放生产就绪修复<br/>(结构化 Items + Fail-Closed + 派生计数 + 探针守卫 + E2E)"]
 ```
 
 | 里程碑 | 状态 | 作战卡文档 | 核心职责与交付边界 | 准出质量门禁 (Exit Gate) |
@@ -169,12 +172,13 @@ flowchart LR
 | **M43** | ✅ 已交付 | [`45-m43-workspace-topology-publish-and-pipeline-closure.md`](./45-m43-workspace-topology-publish-and-pipeline-closure.md) | **后端单仓拓扑发布引擎与一键流水线闭环**（`ADR-29 r4`, `F-50`, `SC-31`）：新增表 #41 `contract_proto_publish_runs` 与表 #42 `contract_proto_pipeline_runs`、R3 胜出方 `R3_AUTO` 持久化、`input_fingerprint`、流水线 PostgreSQL advisory lock、`selectR3Winner` 仲裁优先级修正；实现 `PublishWorkspaceBundles`（拓扑分层 + SCC 激活单元 + `compile_input_sha256` 跳过 + 破坏性局部隔离与 `PENDING_UPSTREAM` 传播 + `AUTO`/`PREVIEW` + `block_on_unresolved_conflict` + `approve-breaking` 补发 + `protodoc` 联动 + 归档覆盖自动停用与 30 天站内信提醒）；`sync-all` 默认 `skip_compile=true`、单仓同步禁激活、MR `AUTO_ACTIVATE` 去抖入队；下线外部上传/直编与来源守卫 | 本地 Git 沙箱全链路 → `/api/proto-docs/tree` 可见 + 冲突无人工仲裁编译零 `ImportAmbiguousError` + 破坏性挂起与 `PENDING_UPSTREAM` 传播及放行补发全绿 + `RECONCILE_STALE`/`409`/`SKIPPED_UNCHANGED`/`404`/`422` 全绿 + `TEST_DB_DSN=... make test` & `-race` 全绿 |
 | **M44** | ✅ 已交付 | [`46-m44-proto-pipeline-four-stage-workbench.md`](./46-m44-proto-pipeline-four-stage-workbench.md) | **`/proto-pipeline` 四阶段可视化流水线工作台与完全自封闭改造**（`ADR-29 r4`, `F-51`, `SC-32`）：实现 `PipelineStepperHeader`（一键同步发布、4 阶段状态/Stale 卡片、SSE 实时进度与运行锁态）与阶段 ①~④ 专属工作区（极简 6 态采集、异常置顶清洗 + 严格冲突开关、内联 R3 `symbol_diff` 与权威仲裁合一/R7 固化/R8 源码抽屉/R4 清单、阶段 ④ 待发布队列/破坏性 P1 放行/等待上游/`PREVIEW` 确认/生效台账/归档对账）；下线 `SchemaUploadModal` 与全部外部上传/直编入口，完成界面文案业务化去黑话 | Stale 漂移提示与锁态禁用单测全绿 + 阶段 ③ 内联仲裁与阶段 ④ 放行/对账 Vitest 全绿 + 全站零 `.pb`/`.proto` 手工入口 + `make lint`、`make test`、`make build && make clean` 全绿 |
 | **M45** | ✅ 已交付 | [`47-m45-four-menu-ia-consumer-consolidation-and-e2e.md`](./47-m45-four-menu-ia-consumer-consolidation-and-e2e.md) | **四菜单 IA 切换、消费端聚合与全链路回归**（`ADR-29 r4`, `F-52`, `SC-33`）：切换 `menu.ts` 为「接口文档与目录 / Proto 源码库 / 契约同步与发布 / 规范与 MR 门禁」4 菜单并在嵌入/独立双模式注册新路由；`/proto-docs` 收拢 `reference \| catalog \| graph` 三视图与旧 `docs_view` 归一化；`/proto-sources` 剥离治理运维杂项；落地全量历史 URL 无损重定向及站内信/大盘链接更新；沙箱全链路 E2E 验证 | 嵌入与独立双模式全量历史 URL 100% 无损跳转保留 Query 与 `#L<n>` + 沙箱端到端「一键发布 → 文档/目录/依赖图 → 源码定位」通过 + 全量 `make test`、`go test -race`、`make lint`、`make build && make clean` 全绿 |
+| **M46** | 🚧 进行中 | [`48-m46-rpc-replay-production-readiness.md`](./48-m46-rpc-replay-production-readiness.md) | **RPC 离线自愈重放端到端生产就绪修复**（`ADR-31`, `F-55`, `SC-34`）：**Phase 1** 打通 Agent 结构化 `Items`/`MockEvents`、控制面 Fail-Closed 回收（零自比较降级、`evaluateReplayItem`、`ActualPayload` 落库、`FailedLayer`、`CANCELLED` 防并发覆盖、`RediffTask` 规则合并与异常保留、`hub.SSEBroker` 推送、`csg_exec` 409）及 `SinglePacketReplayDrawer`（`ArchProcessID`+轮询）；**Phase 2** 水合 `ReplayTask`/`ReplayItem` 派生字段、对齐报告/断言/Mock 时间线、`ReplayTaskCreatorModal` 源/目标过程解耦及 `/discovery` 深链闭环；**Phase 3** 补齐 `MsgTypeRspSeg` 多片聚合 + 单条 `TIMEOUT`/`EOF` 重连隔离、`ebpf.IsProcessArmed` `409 PROCESS_NOT_ARMED` 守卫及真实双向进程 `demo/` E2E | `TEST_DB_DSN=... make test`、`go test -race`、`cd demo && make test`、`make lint`、`make build && make clean` 全绿 + `AC-01`~`AC-07` (`SC-34`) 全通过 |
 
 ---
 
-## 3. 特性矩阵 (`F-01`~`F-54`) 与验收场景 (`SC-01`~`SC-33`) 落位映射表
+## 3. 特性矩阵 (`F-01`~`F-55`) 与验收场景 (`SC-01`~`SC-34`) 落位映射表
 
-### 3.1 核心特性 (`F-01` ~ `F-54`) TDD 落位追踪
+### 3.1 核心特性 (`F-01` ~ `F-55`) TDD 落位追踪
 
 | 特性编号 | 特性名称 | 落位里程碑 | 目标测试文件 | 关键先行测试函数 |
 | :--- | :--- | :---: | :--- | :--- |
@@ -246,8 +250,9 @@ flowchart LR
 | **F-52** | 四菜单 IA 切换、消费端聚合与全量旧深链无损重定向 | M45 | `frontend/src/__tests__/MenuAndLegacyRoutes.test.tsx`<br>`frontend/src/pages/ProtoSchemaWorkbenchPage/__tests__/LivingProtoDocsPane.test.tsx` | `testMenuStructure_FourProtoGovernanceItems_AndLosslessRedirectsEmbeddedStandalone`<br>`testProtoDocs_ThreeOrthogonalViews_AndCatalogNormalization` |
 | **F-53** | 低关注/噪音服务全链路降噪（双源 SSOT + Agent 源头丢弃 + 事务树先算账后折叠与异常破格） | ADR-25 | `pkg/agentproto/noise_filter_test.go`<br>`internal/server/noise/rules_test.go`<br>`handlers/noise_rules_handler_test.go` | `TestNoiseMatcher_WildcardsOpAndPIDNormalization`<br>`TestAppendGlobalNoiseRule_IdempotentAndDedup`<br>`TestNoiseRulesHandler_RBACAndAppendAudit` |
 | **F-54** | 六组十四项五主线 IA、`DRT_ReadNoCheckLen` 全双工 Mesh 采集与非阻断破坏性变更审计归口 | ADR-30 / 演进 | `pkg/transport/drt_uprobe_driver_test.go`<br>`handlers/breaking_audit_handler.go`<br>`frontend/src/pages/ProtoSchemaWorkbenchPage/__tests__/BreakingAuditWorkbenchPane.test.tsx`<br>`frontend/src/__tests__/MenuAndLegacyRoutes.test.tsx` | `TestDRTReadNoCheckLen_FullDuplexCapture`<br>`TestBreakingAuditWorkbenchPane_ListAcknowledgeAndBatchAck`<br>`TestMenuStructure_SixGroupsFourteenItems_ThreeLines` |
+| **F-55** | RPC 离线自愈重放端到端生产就绪、Fail-Closed 诊断与多段隔离闭环 (`ADR-31`) | M46 | `pkg/replay/replay_test.go`<br>`internal/server/diff/scheduler_adr31_test.go`<br>`internal/agent/server/server_test.go`<br>`frontend/src/__tests__/SinglePacketReplay.test.tsx`<br>`frontend/src/__tests__/ReplayWorkbenchADR31.test.tsx` | `TestReplayExecutor_StructuredItems_RspSegAndTimeoutIsolation`<br>`TestReplayScheduler_FailClosed_RediffAndCancelGuard`<br>`TestHandleExecuteReplay_ProcessNotArmedReturns409`<br>`TestSinglePacketReplay_ArchProcessAndPolling` |
 
-### 3.2 端到端业务验收场景 (`SC-01` ~ `SC-33`) 追踪矩阵
+### 3.2 端到端业务验收场景 (`SC-01` ~ `SC-34`) 追踪矩阵
 
 | 场景编号 | 场景名称 | 落位里程碑 | 自动化验收测试入口 |
 | :--- | :--- | :--- | :--- |
@@ -284,6 +289,7 @@ flowchart LR
 | **SC-31** | 单仓拓扑发布引擎、R3 同源解析、破坏性挂起传播与完全自封闭流水线闭环（`ADR-29 / M43`） | M43 | `internal/server/gitclient/workspace_publisher_test.go`: `TestSC31_FullPipelineSandbox_R3Source_BreakingPropagation_AndSelfClosed`；`handlers/proto_pipeline_v2_handler_test.go` |
 | **SC-32** | `/proto-pipeline` 四阶段可视化工作台、内联冲突仲裁与去黑话改造（`ADR-29 / M44`） | M44 | `frontend/src/pages/ProtoPipelineWorkbenchPage/__tests__/ProtoPipelineWorkbenchPage.test.tsx` |
 | **SC-33** | 四菜单 IA 切换、消费端三视图聚合与全量历史深链无损重定向（`ADR-29 / M45`） | M45 | `frontend/src/__tests__/MenuAndLegacyRoutes.test.tsx`；`handlers/proto_pipeline_v2_handler_test.go`: `TestSC33_EndToEnd_SandboxPublishToDocsAndSources` |
+| **SC-34** | RPC 离线自愈重放生产就绪全链路验收：Fail-Closed、异常保留、`RSP_SEG`、`PROCESS_NOT_ARMED` 与真实双向进程 E2E（`ADR-31 / M46`） | M46 | `pkg/replay/replay_test.go`；`internal/server/diff/scheduler_adr31_test.go`；`internal/agent/server/server_test.go`；`demo/replay_readiness_e2e_test.go`；`frontend/src/__tests__/{SinglePacketReplay,ReplayWorkbenchADR31}.test.tsx` |
 
 ---
 

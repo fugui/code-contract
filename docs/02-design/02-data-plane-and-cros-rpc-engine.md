@@ -1,16 +1,17 @@
 # 架构与活体契约治理 (`code-contract`) 数据面引擎与 CROS RPC 协议栈设计
 
 - **文档编号**：`02-data-plane-and-cros-rpc-engine.md`
-- **文档版本**：v1.10.0
+- **文档版本**：v1.11.0
 - **更新日期**：2026-11-28
 - **归属阶段**：阶段二：系统架构与数据模型设计 (`02-design`)
-- **状态**：M1~M45 全量交付 (`✅ 已交付`)；含 `DRT_ReadNoCheckLen` 全双工 `dophi_mesh` 采集与 `ADR-25` Agent 源头降噪
-- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.30.0)、[`01-cros-rpc-protocol-spec.md`](../07-references/01-cros-rpc-protocol-spec.md) (v1.0.0)、[`02-drt-uprobe-abi-reference.md`](../07-references/02-drt-uprobe-abi-reference.md)、[`01-system-architecture.md`](./01-system-architecture.md) (v1.13.0)、[`ADR-21`](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (v2.2.0)、[`ADR-22`](../05-adr/22-pluggable-transport-driver-and-mesh-capture-adr.md) (v2.0.0)、[`ADR-23`](../05-adr/23-dophi-mesh-uprobe-bypass-capture-adr.md) (v1.1.0)、[`ADR-24`](../05-adr/24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md) (v1.1.0)、[`ADR-25`](../05-adr/25-noise-service-filtering-and-traffic-denoising-adr.md)
+- **状态**：M1~M45 全量交付 (`✅ 已交付`)；**M46 (`ADR-31`) 数据面重放生产就绪扩展设计已冻结**
+- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.31.0)、[`01-cros-rpc-protocol-spec.md`](../07-references/01-cros-rpc-protocol-spec.md) (v1.0.0)、[`02-drt-uprobe-abi-reference.md`](../07-references/02-drt-uprobe-abi-reference.md)、[`01-system-architecture.md`](./01-system-architecture.md) (v1.13.0)、[`ADR-21`](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (v2.2.0)、[`ADR-22`](../05-adr/22-pluggable-transport-driver-and-mesh-capture-adr.md) (v2.0.0)、[`ADR-23`](../05-adr/23-dophi-mesh-uprobe-bypass-capture-adr.md) (v1.1.0)、[`ADR-24`](../05-adr/24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md) (v1.1.0)、[`ADR-25`](../05-adr/25-noise-service-filtering-and-traffic-denoising-adr.md)、[`ADR-31`](../05-adr/31-rpc-replay-end-to-end-audit-and-production-readiness-adr.md)
 
 ### 修订记录
 
 | 版本 | 日期 | 修订说明 |
 | :--- | :--- | :--- |
+| **v1.11.0** | **2026-11-28** | **依据 [`ADR-31`](../05-adr/31-rpc-replay-end-to-end-audit-and-production-readiness-adr.md)（`M46`）补齐 Agent 数据面重放契约与探针守卫 (`D1` / `D5-2` / `P2-1`)**：1. §3.1/§3.2 正式定义结构化 `MockTraceEvent`、`ReplayItemDetail`（`RecordID`、`SeqNo`、`SNO`、`Status`、`LatencyUs`、`ActualRspHex`、`MockTrace`、`Error`）与 `ReplayTaskResultResp.Items`/`MockEvents`；2. §3.1 新增 `MsgTypeRspSeg` 多分片合并读取、单条 `TIMEOUT`/`EOF` 故障隔离与 TCP 注入连接重连重建，确保超时/取消/错误退出时仍完整返回已采集明细与 `ObservedEgressCalls`；3. 新增 `ebpf.Manager.IsProcessArmed` / `HasCapabilities` 探针就绪预检接口，缺口场景返回 `409 PROCESS_NOT_ARMED` 阻断无防护外泄重放 |
 | v1.5.0 | 2026-11-04 | 依据 ADR-11 / ADR-12 对齐全出站透明代理、`StreamFramer` SIMD 紧缩、首字节定戳与 `ScopedMockMatcher` 因果池设计 |
 | v1.6.0 | 2026-11-18 | **依据 ADR-21 (v2.1.0 / M28) 增补 CSG 控制面协议栈、双层自动发现与三模仿真测试引擎设计**：新增 §4（`pkg/csgdlink` 32B 帧头/248B 实例/`Observer` 与 `pkg/rpcmon` 基于 `pkg/crosrpc` 标准帧及零 `protoregistry` Wire 编解码）、§5（`internal/agent/csg/discoverer.go` 多租户定位、L1/L2/L3 融合与跨板 LDC 隔离）及 §6（`pkg/csgmock.MockCSGServer` 与 `SimulationController` `CLIENT_INJECT`/`PUB_STUB`/`MOCK_SERVER` 状态机及五出口清理） |
 | v1.7.0 | 2026-11-19 | **依据 ADR-22 (v2.0.0) 与 ADR-23 (v1.1.0 / M29) 增补纯 Go 可插拔传输驱动与 `dophi_mesh` 采集 ➔ TCP 重放跨传输闭环设计**：1. 更新 §1.1 `ValidateCommHead` 放宽 `ucProtocol ∈ [0..7]`（含 `TransportMesh=4`）同时保持 §1.2 TCP `StreamFramer` 默认 `<= 1` 防伪帧隔离；2. 更新 §3.1/§3.3 `ReplayExecutor` 与 `HealSingleResponseFrame` 发送副本 `ucProtocol (4 -> 1)` 原地归一化；3. 更新 §6 `MockCSGServer` / `SimController` `MOCK_SERVER` 模式放行 `dophi_mesh://` 改写 `tcp://`（取消 `422` 误阻断）；4. 新增 **§7 纯 Go 可插拔传输驱动层 (`pkg/transport`) 与 `builtin-drt-uprobe` 内核 uprobe 采集引擎**（`debug/elf` `.dynsym` 解析、`uprobe/DRT_WriteBulk` + `drt_ringbuf`、方向/四元组相关性归一化与五出口探针卫生） |
@@ -376,11 +377,45 @@ flowchart LR
 2. **连接注入、按 `RecordID` 切换局部 Mock 池与多连接会话还原 (`ADR-12`)**：
    - Agent 注入器通过 `/proc/net/tcp` 探知目标进程绑定的实际监听地址（如特定网卡 IP 或 `127.0.0.1`）及 `ListenPort` 建立 TCP 注入连接（注入协程 `pid == agent_pid`，不受重定向影响）；
    - 若录制会话中存在前置 `MNG` 管理消息帧（A-08），注入器按原连接时序先发送入站 MNG 帧（发送副本经 `NormalizeFrameTransportForTCP` 归一化）；
-   - 按 `ExecuteReplayReq.IngressItems` 顺序逐条执行注入（若旧调用方仅传入平铺 `IngressRequests` 则自动包装为虚拟递增 `RecordID` 保持 100% 向后兼容）：**每发送一条 `IngressItem` 前，立即调用 `matcher.SetActiveRecordID(item.RecordID)` 将局部 Mock 匹配焦点切换至当前入口请求的因果闭包，并对待发副本执行 `NormalizeFrameTransportForTCP(item.RawReq)`（若录制自 `dophi_mesh` 即 `buf[7] == 4`，仅在发送副本中原地改写为 `1 (TransportTCP)`，绝不修改原始录制切片）**，随后写入 TCP 连接并在 `StreamFramer` 中等待相同 `ullSNO` 的应答帧（若收到 `ucMsgType == 4 (RSP_SEG)` 则持续收集各分片直至收到终结帧，单请求最长等待 `TimeoutMs` 默认 `30s`）。
+   - 按 `ExecuteReplayReq.IngressItems` 顺序逐条执行注入（若旧调用方仅传入平铺 `IngressRequests` 则自动包装为虚拟递增 `RecordID` 保持 100% 向后兼容）：**每发送一条 `IngressItem` 前，立即调用 `matcher.SetActiveRecordID(item.RecordID)` 将局部 Mock 匹配焦点切换至当前入口请求的因果闭包，并对待发副本执行 `NormalizeFrameTransportForTCP(item.RawReq)`（若录制自 `dophi_mesh` 即 `buf[7] == 4`，仅在发送副本中原地改写为 `1 (TransportTCP)`，绝不修改原始录制切片）**，随后写入 TCP 连接并在 `StreamFramer` 中按 `ullSNO` 读取应答；
+   - **多分片合并读取与单条故障隔离（`P2-1`）**：当 `readResponseBySNO` 连续收到 `ucMsgType == MsgTypeRspSeg (4)` 分片帧时，按到达顺序拼接为完整连续分片缓冲区（单包重放累计缓存 `actual_rsp_hex`），直至收到终结应答帧 `ucMsgType == MsgTypeRsp (3)`（或异常/超时中断）；当某条 `IngressItem` 发生 `TIMEOUT`、对端断连 `EOF` 或写入错误时，仅将当前条目显式记为 `TIMEOUT` / `ERROR`（或按 `MockTrace` 记录中出现的未命中事实标为 `MOCK_MISS`），自动关闭并重新 Dial 注入 TCP 连接后继续执行后续 `IngressItems`；在正常完成、超时、取消（`context.Canceled`）及部分失败各出口，均完整回填已执行明细 `Items`、`MockEvents` 与 `ObservedEgressCalls`。
 
 ### 3.2 分层作用域与双级无 Schema 二进制 Mock 匹配算法 (`ScopedMockMatcher`)
 
-为杜绝单批次多请求因全局顺序兜底导致的“张冠李戴”（例如第 10 次请求因为带时间戳无法精确哈希命中，却意外弹出了第 1 次请求录制的旧应答），`pkg/agentproto` 与 `pkg/replay` 端到端打通**「`RecordID` 因果闭包局部优先 + 全局顺序兜底」**的分层匹配契约（零 DB、零 `.pb` 依赖）：
+为杜绝单批次多请求因全局顺序兜底导致的“张冠李戴”（例如第 10 次请求因为带时间戳无法精确哈希命中，却意外弹出了第 1 次请求录制的旧应答），`pkg/agentproto` 与 `pkg/replay` 端到端打通**「`RecordID` 因果闭包局部优先 + 全局顺序兜底」**与**结构化 `ReplayItemDetail` + `MockTraceEvent` 诊断回传（`D1` / `ADR-31`）**契约（零 DB、零 `.pb` 依赖）：
+
+```go
+package agentproto
+
+// MockTraceEvent 结构化 Mock 命中/未命中轨迹事件（供主控按 RecordID 关联归档并渲染 MockHitMissTimeline）
+type MockTraceEvent struct {
+	RecordID     uint64 `json:"record_id"`               // 触发该下游调用时所处的入口 RecordID 作用域
+	SeqNo        int64  `json:"seq_no"`                  // 触发顺序序号
+	ServiceName  string `json:"service_name"`            // 下游服务名（含可选 @dst_tag 后缀日志字段）
+	Operation    string `json:"operation"`               // 下游方法名
+	SNO          uint64 `json:"sno"`                     // 本次出站请求帧序列号
+	Tier         string `json:"tier"`                    // SCOPED_EXACT | SCOPED_SEQ | GLOBAL_EXACT | GLOBAL_SEQ | MISS | MNG_HIT
+	Hit          bool   `json:"hit"`                     // 是否命中 Mock 应答
+	ErrorMessage string `json:"error_message,omitempty"` // 未命中或自愈失败诊断详情
+	TimestampNs  int64  `json:"timestamp_ns"`            // 纳秒时间戳
+}
+
+// ReplayItemDetail 单条入站重放执行结构化明细（供主控 Fail-Closed 校验与双层 Diff）
+type ReplayItemDetail struct {
+	RecordID     uint64           `json:"record_id"`                // 对应主控 contract_traffic_records.id 或 golden_suite_items.id
+	SeqNo        int64            `json:"seq_no"`                   // 在本批次中的执行序号
+	ServiceName  string           `json:"service_name"`             // 入口请求服务名
+	Operation    string           `json:"operation"`                // 入口请求方法名
+	SNO          uint64           `json:"sno"`                      // 注入请求帧公共头序列号 ullSNO
+	Status       string           `json:"status"`                   // PASS | FAILED | MOCK_MISS | TIMEOUT | ERROR | ONEWAY_OK
+	LatencyUs    int64            `json:"latency_us"`               // 本条往返实际耗时（微秒）
+	ActualRspHex string           `json:"actual_rsp_hex,omitempty"` // 捕获到的实际应答原始二进制帧（多片分片拼接 HEX）
+	MockTrace    []MockTraceEvent `json:"mock_trace,omitempty"`     // 本条入口请求关联的下游 Mock 命中/未命中轨迹
+	Error        string           `json:"error,omitempty"`          // 超时或连接错误摘要
+}
+```
+
+`ReplayTaskResultResp` 同步包含结构化 `Items []ReplayItemDetail \`json:"items,omitempty"\`` 与全量汇总 `MockEvents []MockTraceEvent \`json:"mock_events,omitempty"\``（同时保留旧字段 `Details string` 输出 JSON 数组以兼容历史单元测试）；Agent `AgentServer.handleExecuteReplay`（`D5-2`）在调用 `ReplayExecutor` 前通过 `pkg/ebpf.Manager.IsProcessArmed(processID)` 与 `HasCapabilities()` 执行探针就绪检查，当重放涉及 `EgressProxy` 下游拦截或特权宿主机尚未挂载目标进程探针时，直接拦截并返回 **`409 Conflict`（`code: "PROCESS_NOT_ARMED"`）**。
 
 ```go
 package agentproto

@@ -22,15 +22,15 @@ docs/
 │   └── 02-living-contract-philosophy.md           # 系统理念：《活体契约治理：以运行态为活水，构建微服务的五线自愈防线》
 ├── 02-design/       # 系统技术架构 (SDD)：双子系统边界、数据面引擎、业务拓扑与数据模型
 │   ├── 01-system-architecture.md                  # 【总览篇】系统总体架构、6 组 14 项双模拓扑、五线映射、Discovery-First 与共享 Git 四阶段流水线 (v1.13.0)
-│   ├── 02-data-plane-and-cros-rpc-engine.md       # 【数据面篇】CROS RPC 协议栈、Agent eBPF 采集、纯 Go pkg/transport (DRT_WriteBulk + DRT_ReadNoCheckLen 全双工)、源头降噪与 CSG 底座 (v1.10.0)
+│   ├── 02-data-plane-and-cros-rpc-engine.md       # 【数据面篇】CROS RPC 协议栈、Agent eBPF 采集、结构化 ReplayResult/RspSeg 重放引擎与探针就绪守卫 (v1.11.0)
 │   ├── 03-architecture-elements-and-topology.md   # 【业务篇】架构元素建模 (SSOT)、L0/L1/L2 双态对齐、统一目录 (/proto-catalog) 五态雷达、架构收件箱与单层平铺拓扑 (v1.12.0)
-│   ├── 04-control-plane-and-web-console.md        # 【管理面篇】Server 控制面、6 组 14 项主线菜单、四阶段流水线、只读契约库、ADR-25 降噪与非阻断破坏性审计台 (v1.16.0)
-│   ├── 05-database-schema.md                      # 【数据模型篇】43 张核心 contract_* 业务表 + contract_settings 物理表 GORM 字典、分区并发索引与迁移顺序 (v1.12.0)
+│   ├── 04-control-plane-and-web-console.md        # 【管理面篇】Server 控制面、6 组 14 项主线菜单、四阶段流水线、Fail-Closed 重放编排与只读契约库 (v1.17.0)
+│   ├── 05-database-schema.md                      # 【数据模型篇】43 张核心 contract_* 业务表 + contract_settings 物理表 GORM 字典、分区并发索引与迁移顺序 (v1.12.1)
 │   └── 06-agent-observability-and-self-healing-design.md # 【运维可观测与自愈篇】Agent 探针特权感知、体检诊断与全链路闭环自愈设计
 ├── 03-api/          # 接口与数据契约：RESTful / SSE API 签名、主从信道契约、RBAC 权限与审计规范
-│   └── 01-http-api-contract.md                    # 【API 契约】控制面 REST/SSE 字典（含现网发现、四阶段流水线、降噪与破坏性审计）、主从 HTTP/WS 与已下线路由清单 (v1.12.0)
-├── 04-tasks/        # TDD 实施规划与验收：Milestone 1~45 依赖拓扑、任务作战卡与自动化验收标准 (AC)
-│   ├── 01-roadmap.md                              # 【工程路线图】M1~M45 全部已交付、DAG 拓扑、F-01~F-54 / SC-01~SC-33 覆盖矩阵与安全质量门禁 (v1.21.0)
+│   └── 01-http-api-contract.md                    # 【API 契约】控制面 REST/SSE 字典（含重放诊断、现网发现、四阶段流水线与破坏性审计）、主从 HTTP/WS 与已下线路由清单 (v1.13.0)
+├── 04-tasks/        # TDD 实施规划与验收：Milestone 1~46 依赖拓扑、任务作战卡与自动化验收标准 (AC)
+│   ├── 01-roadmap.md                              # 【工程路线图】M1~M45 已交付 & M46 进行中、DAG 拓扑、F-01~F-55 / SC-01~SC-34 覆盖矩阵与安全质量门禁 (v1.22.0)
 │   ├── 02-m1-crosrpc-and-domain-models.md         # 【M1 作战卡】协议栈 (pkg/crosrpc)、信封协议与 13 张表/分区管理器
 │   ├── 03-m2-arch-proto-and-agent-control.md      # 【M2 作战卡】三级架构元素、.pb 动态编解码与公私域 Agent 排他租约管控
 │   ├── 04-m3-agent-dataplane-ebpf-and-replay.md   # 【M3 作战卡】数据面 Agent 信道、cilium/ebpf 采集与零 .pb 二进制自愈重放
@@ -76,7 +76,8 @@ docs/
 │   ├── 44-m42-protocompile-r7-r8-workspace-and-console-closure.md     # 【M42 作战卡 | ✅ 已交付】纯 Go protocompile R7 自愈、R8 隔离、workspace 导出与治理台闭环 (ADR-28)
 │   ├── 45-m43-workspace-topology-publish-and-pipeline-closure.md      # 【M43 作战卡 | ✅ 已交付】阶段 ④ 单仓拓扑发布引擎、同源解析与一键流水线闭环 (ADR-29 r4)
 │   ├── 46-m44-proto-pipeline-four-stage-workbench.md                  # 【M44 作战卡 | ✅ 已交付】/proto-pipeline 四阶段可视化流水线工作台与完全自封闭改造 (ADR-29 r4)
-│   └── 47-m45-four-menu-ia-consumer-consolidation-and-e2e.md          # 【M45 作战卡 | ✅ 已交付】四菜单 IA 切换、消费端聚合与全量旧深链无损重定向 (ADR-29 r4)
+│   ├── 47-m45-four-menu-ia-consumer-consolidation-and-e2e.md          # 【M45 作战卡 | ✅ 已交付】四菜单 IA 切换、消费端聚合与全量旧深链无损重定向 (ADR-29 r4)
+│   └── 48-m46-rpc-replay-production-readiness.md                    # 【M46 作战卡 | 🚧 进行中】RPC 离线自愈重放端到端生产就绪修复 (ADR-31)
 ├── 05-adr/          # 架构决策记录 (ADR)：重大技术选型与权衡记录 (Architecture Decision Records)
 │   ├── 01-microfrontend-and-table-prefix-isolation.md                  # ADR-01：微前端集成、共享库表前缀隔离与 TDD 测试策略
 │   ├── 02-ebpf-hook-and-dual-subsystem-adr.md                          # ADR-02：eBPF 入站旁路钩子、Cookie 原目的还原与无 Schema 数据面解耦

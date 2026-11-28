@@ -1,16 +1,17 @@
 # 架构与活体契约治理 (`code-contract`) 数据库物理模型与 GORM 建模字典
 
 - **文档编号**：`05-database-schema.md`
-- **文档版本**：v1.12.0
+- **文档版本**：v1.12.1
 - **更新日期**：2026-11-28
 - **归属阶段**：阶段二：系统架构与数据模型设计 (`02-design`)
-- **状态**：M1~M45 全量交付 (`✅ 已交付`)；累计 **`43` 张核心业务表 + `contract_settings` = `44` 张表**
-- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.30.0)、[`01-system-architecture.md`](./01-system-architecture.md) (v1.13.0)、[`ADR-24`](../05-adr/24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md) ~ [`ADR-30`](../05-adr/30-contract-library-and-three-lines-ia-adr.md)
+- **状态**：M1~M45 全量交付 (`✅ 已交付`)；**M46 (`ADR-31`) 增量 `ReplayItem.FailedLayer` 与只读派生 JSON 契约已冻结**，累计 **`43` 张核心业务表 + `contract_settings` = `44` 张表**
+- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.31.0)、[`01-system-architecture.md`](./01-system-architecture.md) (v1.13.0)、[`ADR-24`](../05-adr/24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md) ~ [`ADR-31`](../05-adr/31-rpc-replay-end-to-end-audit-and-production-readiness-adr.md)
 
 ### 修订记录
 
 | 版本 | 日期 | 修订说明 |
 | :--- | :--- | :--- |
+| **v1.12.1** | **2026-11-28** | **依据 [`ADR-31`](../05-adr/31-rpc-replay-end-to-end-audit-and-production-readiness-adr.md)（`M46`）补齐重放诊断模型字段（零新增物理表，维持 `43+1` 表）**：`ReplayItem`（表 #16）新增持久化列 `failed_layer int NOT NULL DEFAULT 0` 与只读派生 JSON 字段 `header_diff_passed`/`sno`/`actual_status_code`/`baseline_status_code`；`ReplayTask`（表 #15）新增 API 只读派生汇总计数 `failed_requests`/`mock_miss_requests`/`timeout_requests`/`error_requests`（从 `contract_replay_items` 批量聚合填充） |
 | v1.5.1 | 2026-11-09 | 同步 ADR-15 (v1.1.0) 拓扑画布双层布局持久化表 `contract_topology_layouts`（18 张核心业务表） |
 | v1.6.0 | 2026-11-11 | 依据 ADR-16 (v1.0.0) 同步多实现服务契约与接口库建模（`F-02.1` / `F-04.4` / `F-05.1` / `SC-12` / `M20`，核心业务表扩充为 19 张）：1. 新增 `contract_service_contracts` 多实现服务契约表；2. `contract_modules` 新增 `module_kind` 与库模块禁绑进程 `CHECK`；3. `contract_module_services` 新增 `contract_id`、`impl_key`，将 `uk_contract_mod_svc_name` 平滑替换为部分唯一索引 `uk_contract_mod_svc_name_excl`、`uk_contract_mod_svc_contract_impl`、`uk_contract_mod_svc_contract_mod`（修订 `A-05`、守护 `A-09`）；4. `contract_module_dependencies` 新增 `contract_id` 分发依赖与三选一 `CHECK`；5. `contract_recording_sessions` 新增 `endpoint_snapshots`、`contract_traffic_records` 新增 `dst_contract_id` 及存量平滑迁移规范 |
 | v1.6.1 | 2026-11-13 | 同步 [`ADR-17`](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md) (`M21`) 零 DDL 布局持久化兼容约定：保持 `contract_topology_layouts` 既有表结构与约束不变，明确单层平铺模式下内部子节点直接复用原节点 ID 存储各聚焦域平铺坐标，外部传送门卡跨聚焦域差量坐标采用 `${focusScope}::${extNodeId}` 复合键名（满足 `len <= 128` 校验），`expand_state` 保持向后兼容反序列化 |
@@ -765,6 +766,10 @@ type ReplayTask struct {
 	ViolationCount      int               `gorm:"not null;default:0" json:"violation_count"`                                        // 重放期实测未声明 DEPEND 违规调用边数量 (F-27)
 	TotalRequests       int               `gorm:"not null;default:0" json:"total_requests"`
 	PassedRequests      int               `gorm:"not null;default:0" json:"passed_requests"`
+	FailedRequests      int               `gorm:"-" json:"failed_requests"`     // API 只读派生聚合计数 (contract_replay_items)
+	MockMissRequests    int               `gorm:"-" json:"mock_miss_requests"`  // API 只读派生聚合计数
+	TimeoutRequests     int               `gorm:"-" json:"timeout_requests"`    // API 只读派生聚合计数
+	ErrorRequests       int               `gorm:"-" json:"error_requests"`      // API 只读派生聚合计数
 	MockHitCount        int               `gorm:"not null;default:0" json:"mock_hit_count"`
 	MockMissCount       int               `gorm:"not null;default:0" json:"mock_miss_count"`
 	ObservedEgressCalls datatypes.JSON    `gorm:"type:jsonb;not null;default:'[]'" json:"observed_egress_calls"` // []ObservedEgressCall 重放期 Agent 实测捕获的全部出站调用摘要，供门禁 Violation 核验 (ADR-14)
@@ -796,6 +801,11 @@ type ReplayItem struct {
 	LatencyUs       int64            `gorm:"not null;default:0" json:"latency_us"`
 	ActualStatus    uint64           `gorm:"type:numeric(20,0);not null;default:0" json:"actual_status,string"`
 	BaselineStatus  uint64           `gorm:"type:numeric(20,0);not null;default:0" json:"baseline_status,string"`
+	HeaderDiffPassed bool            `gorm:"-" json:"header_diff_passed"`                         // 派生只读字段：failed_layer != 1 且非超时/错误
+	FailedLayer     int              `gorm:"not null;default:0" json:"failed_layer"`              // 0=PASS, 1=Layer1Header, 2=Layer2Payload (ADR-31)
+	SNO             uint64           `gorm:"-" json:"sno,omitempty"`                              // 派生只读字段：关联基线/实测帧 ullSNO
+	ActualStatusCode uint64          `gorm:"-" json:"actual_status_code,omitempty"`               // 派生只读字段：前端 DTO 对齐别名 (= ActualStatus)
+	BaselineStatusCode uint64        `gorm:"-" json:"baseline_status_code,omitempty"`             // 派生只读字段：前端 DTO 对齐别名 (= BaselineStatus)
 	FieldDiffs      datatypes.JSON   `gorm:"type:jsonb;not null;default:'[]'" json:"field_diffs"` // []FieldDiff 双层对比差异
 	ActualPayload   datatypes.JSON   `gorm:"type:jsonb" json:"actual_payload,omitempty"`
 	RawActualPacket []byte           `gorm:"type:bytea" json:"-"`                                 // 实际捕获响应切片

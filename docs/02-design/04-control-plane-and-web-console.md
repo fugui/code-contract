@@ -1,16 +1,17 @@
 # 架构与活体契约治理 (`code-contract`) 管理面服务、微前端控制台与回归断言设计
 
 - **文档编号**：`04-control-plane-and-web-console.md`
-- **文档版本**：v1.16.0
+- **文档版本**：v1.17.0
 - **更新日期**：2026-11-28
 - **归属阶段**：阶段二：系统架构与数据模型设计 (`02-design`)
-- **状态**：M1~M45 全量交付 (`✅ 已交付`)；含 `ADR-25`~`ADR-30` 与非阻断破坏性变更审计台演进
-- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.30.0)、[`01-system-architecture.md`](./01-system-architecture.md) (v1.13.0)、[`02-data-plane-and-cros-rpc-engine.md`](./02-data-plane-and-cros-rpc-engine.md) (v1.10.0)、[`03-architecture-elements-and-topology.md`](./03-architecture-elements-and-topology.md) (v1.12.0)、[`ADR-24`](../05-adr/24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md) ~ [`ADR-30`](../05-adr/30-contract-library-and-three-lines-ia-adr.md)
+- **状态**：M1~M45 全量交付 (`✅ 已交付`)；**M46 (`ADR-31`) 重放调度 Fail-Closed 与前端契约对齐设计已冻结**
+- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.31.0)、[`01-system-architecture.md`](./01-system-architecture.md) (v1.13.0)、[`02-data-plane-and-cros-rpc-engine.md`](./02-data-plane-and-cros-rpc-engine.md) (v1.11.0)、[`03-architecture-elements-and-topology.md`](./03-architecture-elements-and-topology.md) (v1.12.0)、[`ADR-24`](../05-adr/24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md) ~ [`ADR-31`](../05-adr/31-rpc-replay-end-to-end-audit-and-production-readiness-adr.md)
 
 ### 修订记录
 
 | 版本 | 日期 | 作者 | 变更说明 |
 | :--- | :--- | :--- | :--- |
+| **`v1.17.0`** | **`2026-11-28`** | **Architecture Team** | **依据 [`ADR-31`](../05-adr/31-rpc-replay-end-to-end-audit-and-production-readiness-adr.md)（`M46`）完善控制面重放编排与前端工作台契约 (`D2`/`D3`/`D4`)**：1. §1.3 新增 Fail-Closed 回收红线（严禁回退 `rec.RawRspPacket`/`item.ExpectedRspPacket` 自比较）、共享 `evaluateReplayItem` 管线（`ONEWAY` 跳过 Layer 1）、`ActualPayload` `.pb` 解码落库、`CANCELLED` 防并发覆盖守卫、`RediffTask` 合并 `ExtraIgnorePaths`/`MaskRulesJSON` 且保留 `TIMEOUT`/`MOCK_MISS`/`ERROR` 异常并更新 `MockTrace`、`SSEBroker` 推送 `replay.item_done`/`replay.completed` 与 `csg_exec` `409 Conflict` 结构化错误包；2. §4.1/§4.5/§4.6 升级 `SinglePacketReplayDrawer` 迁移至 `arch_process_id` + `csg_strategy` + `/api/replay-tasks/:id` 轮询闭环，解耦 `ReplayTaskCreatorModal` 源/目标过程选择并联动 `/discovery` 就绪检查与 `ReplayTaskTable`/`ReplayReportDrawer`/`HeaderAssertionCard` 精确计数展示 |
 | `v1.8.0` | `2026-11-11` | Architecture Team | 同步 ADR-16 (`v1.0.0`) 多实现服务契约及契约实现覆盖率 |
 | `v1.9.0` | `2026-11-13` | Architecture Team | 同步 [`ADR-17`](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md) (`v1.0.0` / `M21`) 单层平铺下钻、4 组工具栏与智能连线 |
 | `v1.9.1` | `2026-11-13` | Architecture Team | 依据 [`ADR-17` (`v1.1.0`)](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md) 加固 §4.2 与 §4.9 |
@@ -161,9 +162,10 @@ flowchart LR
    - **状态机流转**：`PENDING` -> `RUNNING`（Agent 根据 `CSGStrategy` 执行：`PASSTHROUGH` 直连 `ListenPort` + `REPLAY_MOCK`；`CLIENT_INJECT` 通过 `csgdlink.Sub` 解析最新 `tcp://ipv4` 注入；`PUB_STUB` 前置 `Sub==0` 后注册本地 TCP Mock 桩并禁止 `GET_BIND_ADDR`；`MOCK_SERVER` 在 `REPLAY_MOCK` 下分流 `"DLNK"` 至内置 `MockCSGServer`） -> `COMPLETED / CANCELLED / FAILED`；
    - **按 `RecordID` 因果子树组装 `ScopedEgressMocks` 与 `dst_tag` 多实现隔离（[`ADR-12`](../05-adr/12-packet-causality-call-tree-and-sequence-ux-adr.md) & [`ADR-16`](../05-adr/16-multi-implementation-service-contract-adr.md)）**：从 `contract_traffic_records` 按 `req_captured_at_ns ASC, seq_no ASC, id ASC` 提取选定 `INGRESS` 记录组装 `IngressItems: []ReplayIngressItem{RecordID, RawReq}`，并调用 `callgraph.BuildReplayClosure` 切分专属 `ScopedEgressMocks[recordID]` 与 `GlobalFallbackMocks`（填充 `DstTag`），纯二进制下发 Agent；
    - **双轨可靠回收与 `CSGSandboxReport` 审计持久化**：
-     - 重放执行进度与结果通过 WebSocket `EVENT_REPLAY_ITEM_DONE` 实时推送，同时支持通过 `GET /agent/v1/replays/:taskId/result` 幂等拉取；
+     - 重放执行进度与结果通过 WebSocket `EVENT_REPLAY_ITEM_DONE` / `hub.SSEBroker.BroadcastReplayItemDone` (`replay.item_done`) 与 `BroadcastReplayCompleted` (`replay.completed`) 实时推送至订阅 `/api/events` 的前端工作台（`hub.SSEBroker` 原生承载广播方法，严格遵守 `internal/server/diff` 不反向依赖 `handlers` 包的架构防腐边界），同时支持通过 `GET /agent/v1/replays/:taskId/result` 幂等拉取结构化 `Items` 与 `MockEvents`；
+     - **Fail-Closed 回收与共享评估管线 (`D2` / `ADR-31`)**：主控优先读取 `ReplayTaskResultResp.Items`（向后兼容旧 `Details` JSON 数组）。**严禁在缺失 `actual_rsp_hex` 或响应切片为空时回退 `rec.RawRspPacket` / `item.ExpectedRspPacket` 执行“自比较伪绿”**——当目标 Agent 判定非 `ONEWAY` 入口条目的 `ActualRspHex` 缺失或分帧/解析失败时，强制 Fail-Closed 判定为 `ERROR`（`failed_layer = 1`）。录制批次重放、黄金套件重放与 `RediffTask` 统一收口于共享函数 `evaluateReplayItem`（`ONEWAY` 跳过 Layer 1，`ActualPayload` 解码持久化，`FailedLayer` 持久化，`lifecycle_state != 'CANCELLED'` 防并发覆写守卫，`csg_exec` `409 Conflict` 结构化错误包透传，`RediffTask` 合并 `ExtraIgnorePaths`/`MaskRulesJSON` 并保留 `TIMEOUT`/`MOCK_MISS`/`ERROR` 且刷新 `MockTrace`）；
      - `ReplayTaskResultResp.CSGSandboxReport`（`MOCK_SERVER` 下由 `MockCSGServer.Snapshot()` 导出）完整持久化至 `contract_replay_tasks.csg_sandbox_report`，并作为 `POST /api/gates/evaluate`（`F-27`）校验被测进程沙箱期 `SUB` 合规性的权威依据；
-     - 每条请求重放回收的实际原始应答帧（`actual_rsp_packet` bytea）及双层比对结果独立持久化至 **`contract_replay_items`** 表，支持前端标准服务端分页查询与历史多次比对！
+     - 每条请求重放回收的实际原始应答帧（`actual_rsp_packet` bytea）、`actual_payload`、`failed_layer` 及双层比对结果独立持久化至 **`contract_replay_items`** 表，支持前端标准服务端分页查询（含 `?record_id=` 过滤与 Anti-IDOR 校验）及 `ReplayTask`/`ReplayItem` 派生汇总计数实时水合！
 3. **多请求状态聚合优先级定律**：
    单条请求及整包重放任务的最终 `result_status` 严格遵循以下全序优先级取最高异常级别：
 
@@ -457,7 +459,7 @@ type FieldDiff struct {
 | **架构与契约对齐** | **架构拓扑** | `/topology` | `TopologyWorkbenchPage` | 全体登录用户 | `view` (`LOGICAL` \| `PHYSICAL`), `env_agent_id`, `session_id`, `focus` / `topo_focus`, `topo_ego`, `topo_ego_hops`, `topo_subsystems`, `topo_my`, `topo_status`, `topo_hide_isolated`, `topo_hub_fold`, `topo_contract_mode` (`AGG` \| `EXPAND`), `topo_realization` (`1` \| `0`), `topo_layout_id`（支持高清 `PNG/SVG` 导出） |
 | **流量核验与回归** | **流量采集** | `/record` | `RecordingWorkbenchPage` | 全体登录用户 | `scope` (`SHARED` \| `PRIVATE`), `status`, `search`, `auto_start` (`1`), `agent_id`, `page`, `page_size` |
 | **流量核验与回归** | **事务分析** | `/debug` | `TrafficDebugWorkbenchPage` | 全体登录用户 | `session_id`, `view` (`tree` \| `flat`, 默认 `tree`), `live` (`1`), `hide_noise`, `direction`, `exchange_type`, `service_name`, `operation`, `sno`, `trace_id`, `entity_key`, `has_error` (`true`), `is_replayable`, `keyword`, `seq_root_id`, `page`, `page_size` |
-| **流量核验与回归** | **防劣化回归** | `/replay` | `ReplayWorkbenchPage` | 全体登录用户 | `session_id`, `auto_create` (`1`), `target_process_id`, `status`, `page`, `page_size` |
+| **流量核验与回归** | **防劣化回归** | `/replay` | `ReplayWorkbenchPage` | 全体登录用户 | `session_id`, `auto_create` (`1`), `agent_id`, `arch_process_id`, `strategy`, `target_process_id`, `status`, `page`, `page_size` |
 | **流量核验与回归** | **黄金用例库** | `/golden-suites` | `GoldenSuitesWorkbenchPage` | 全体登录用户 | `arch_process_id`, `suite_id`, `search`, `page`, `page_size` |
 | **开发合规** | **规范与 MR 门禁** | `/proto-governance` | `ProtoGovernanceWorkbenchPage` | 全体登录用户 | `gov_tab` (`mr-gates` \| `breaking-audit` \| `rules` \| `vocab` \| `report`), `runId`, `mr_page`, `mr_page_size`, `repo` |
 | **系统与环境** *(沉底低频)* | **Agent 与进程** | `/agents` | `AgentManagementPage` | 全体登录用户 | `scope` (`SHARED` \| `PRIVATE`), `agent_id`, `process_id`, `open_mount` (`1`), `lease_state`, `status`, `page`, `page_size` |
@@ -914,12 +916,15 @@ export interface AgentProcessMountDTO {
 - **在 `流量调试` (`/debug`) 执行事务因果检视、时序泳道联动与闭包重放调试 (`ADR-12`)**：
   - **默认可折叠事务调用树与内联迷你甘特瀑布 (`?view=tree`)**：默认按根事务分页呈现入口请求及其多级子孙 `EGRESS` / 跨进程缝合跳 `[P1 ➔ P2]`，内联渲染归一化甘特瀑布条、兄弟 `串行/并发/补偿` 徽章与协议+业务双态状态码；支持一键切换 `?view=flat` 查看严格按发起时刻升序排列的平铺表，或点击顶部 `EntityLifecycleFilterStrip` 实体胶囊筛选某业务单据（如 `order_id=ORD_9981`）的完整增删查改生命线；
   - **全链路时序泳道与四段解剖双栏联动 (`TransactionSequenceDrawer`)**：点击任意事务的 `[📊 时序泳道]` 滑出宽屏抽屉，左栏通过纯原生 React SVG 渲染 UML 参与者泳道、三段阶段耗时柱与可开关的参数传递血缘弧线（如 `rsp.lock_id ➔ req.lock_id`），点击任意一跳箭头即在右栏零延迟联动刷新四段报文解剖并高亮关联字段；
-  - **事务闭包重放与前置状态依赖链回放 (`SinglePacketReplayDrawer`)**：
+  - **事务闭包重放与前置状态依赖链回放 (`SinglePacketReplayDrawer`, `ADR-31`)**：
     - **触发条件**：当入口或已缝合入站记录 `direction === 'INGRESS'` 且 `is_replayable === true` 时，激活【事务重放】按钮；
     - **下游闭包预览与前置实体防呆**：自动请求 `GET /api/traffic-records/:id/replay-closure`，透明列出本事务绑定的专属 `ScopedEgressMocks` 清单；若检出当前请求消费了同批次前序事务产出的业务实体主键（如直接重放 `CancelOrder` 依赖前序 `CreateOrder`），醒目提示前置依赖链并支持勾选 **`[☑ 按序连带回放前置依赖事务链]`**；
-    - **同构投递与泳道故障叠加**：筛选承载同构模块且 `listen_port > 0` 的 `READY` 目标进程调用 `POST /api/replay-tasks`（下发 `RecordID` 级隔离 `ScopedEgressMocks`），完成后除原地渲染双层 Diff 外，支持一键在时序泳道图上叠加定位 `SCOPED_HIT`、`MOCK_MISS` 或 `RSP_DIFF` 故障跳点。
+    - **同构 `arch_process_id` 匹配、四档仿真与轮询诊断**：优先按录制记录的 `arch_process_id`（兼容回退 `process_id`）匹配在线同构且就绪的 `READY` 目标进程（允许选择 `csg_strategy`，当 `CLIENT_INJECT` 时允许 `listen_port == 0`），提交 `POST /api/replay-tasks` 后轮询 `GET /api/replay-tasks/:id` 直至终态再拉取 `GET /api/replay-tasks/:id/items?record_id=`，原地渲染双层 Diff、`FailedLayer` 与 `MockTrace` 并将故障跳点叠加回传至时序泳道图。
+  - **防劣化重放工作台与报告契约 (`ReplayWorkbenchPage` / `ReplayTaskCreatorModal` / `ReplayReportDrawer`, `ADR-31`)**：
+    - `ReplayTaskCreatorModal` 强制解耦**「1. 选定源录制进程 (`source_process_id`) -> 2. 自动按 `arch_process_id` 筛选并选择可用目标运行进程 (`target_process_id`)」**（排除未就绪/不兼容实例）；对 `WAITING_PROC` / `NEED_RECONNECT` / `DISARMED` 显示探针就绪告警并提供前往 `/agents` / `/discovery` 引导（`GoldenSuiteExecuteModal` 同步对齐告警与 `--color-*` 语义 Token）；
+    - `/replay` 解析并预填 `?session_id=&auto_create=&agent_id=&arch_process_id=&strategy=&target_process_id=` 参数，挂载 SSE (`replay.item_done`/`replay.completed`) 与有界自动刷新；`ReplayTaskTable`、`ReplayReportDrawer`、`HeaderAssertionCard` 与 `MockHitMissTimeline` 全面绑定后端派生的 5 态计数、`failed_layer`、`header_diff_passed`、`sno`、`actual_status_code`/`baseline_status_code` 及结构化 `mock_trace`。
 
-### 4.6 流量调试调用树、时序泳道、数据血缘与闭包重放 TypeScript DTO 契约（`ADR-12`，零 `any`）
+### 4.6 流量调试调用树、时序泳道、数据血缘与闭包重放 TypeScript DTO 契约（`ADR-12` / `ADR-31`，零 `any`）
 
 ```typescript
 // frontend/src/types/traffic.ts
@@ -933,6 +938,7 @@ export interface TrafficRecordSummary {
   session_id: string;
   seq_no: number;                 // 请求到达瞬间原子分配的发起序号 (#1, #2, ...)
   process_id: string;
+  arch_process_id?: string;       // 所属标准架构进程蓝图 ID（供单包重放跨环境同构目标匹配）
   process_name?: string;
   arch_process_name?: string;
   peer_proc_name?: string;        // 来自同连接 MNG.acProcName 的对端自报进程名
