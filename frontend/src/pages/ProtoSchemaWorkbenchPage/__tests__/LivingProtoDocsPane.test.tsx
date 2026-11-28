@@ -1,7 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import { renderToString } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
-import { LivingProtoDocsPane } from '../LivingProtoDocsPane';
+import {
+  LivingProtoDocsPane,
+  findFirstService,
+  shouldShowTreeLoadingPlaceholder,
+} from '../LivingProtoDocsPane';
 import { ProtoDocsWorkbenchPage } from '../ProtoDocsWorkbenchPage';
 import { ProtoCatalogWorkbenchPage } from '../ProtoCatalogWorkbenchPage';
 import { ProtoDocsRouteWrapper, SchemasRouteWrapper } from '../../../App';
@@ -451,5 +455,71 @@ describe('M23-P3 / M27 LivingProtoDocsPane & ProtoDocsWorkbenchPage (/proto-docs
     expect(redirectHtml).toContain(
       'data-target="/proto-catalog?service_name=demo.billing.v1.BillingService"'
     );
+  });
+
+  it('findFirstService prefers preferredSchemaId and falls back cleanly', () => {
+    const multiSchemaTree: ProtoDocTreeResponse = {
+      total_services: 2,
+      total_methods: 2,
+      deprecated_count: 0,
+      items: [
+        ...mockTree.items,
+        {
+          node_key: 'sub:20',
+          node_type: 'SUBSYSTEM',
+          label: '支付子系统',
+          subsystem_id: 20,
+          has_source_info: true,
+          method_count: 1,
+          children: [
+            {
+              node_key: 'schema:202',
+              node_type: 'SCHEMA',
+              label: 'payment-pb (v1)',
+              schema_id: 202,
+              schema_name: 'payment-pb',
+              has_source_info: true,
+              method_count: 1,
+              children: [
+                {
+                  node_key: 'svc:202:demo.pay.PayService',
+                  node_type: 'SERVICE',
+                  label: 'PayService',
+                  schema_id: 202,
+                  service_name: 'demo.pay.PayService',
+                  method_count: 1,
+                  has_source_info: true,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    expect(findFirstService([])).toBeNull();
+    expect(findFirstService(multiSchemaTree.items)).toEqual({
+      serviceName: 'demo.billing.v1.BillingService',
+      schemaId: 101,
+    });
+    expect(findFirstService(multiSchemaTree.items, 202)).toEqual({
+      serviceName: 'demo.pay.PayService',
+      schemaId: 202,
+    });
+    expect(findFirstService(multiSchemaTree.items, '202')).toEqual({
+      serviceName: 'demo.pay.PayService',
+      schemaId: 202,
+    });
+    expect(findFirstService(multiSchemaTree.items, 999)).toEqual({
+      serviceName: 'demo.billing.v1.BillingService',
+      schemaId: 101,
+    });
+  });
+
+  it('shouldShowTreeLoadingPlaceholder only shows placeholder when tree is not yet loaded', () => {
+    expect(shouldShowTreeLoadingPlaceholder(true, null)).toBe(true);
+    expect(shouldShowTreeLoadingPlaceholder(false, null)).toBe(false);
+    expect(shouldShowTreeLoadingPlaceholder(true, mockTree)).toBe(false);
+    expect(shouldShowTreeLoadingPlaceholder(false, mockTree)).toBe(false);
   });
 });

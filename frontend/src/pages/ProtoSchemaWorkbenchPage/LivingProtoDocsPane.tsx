@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   BookOpen,
   ChevronDown,
@@ -41,9 +41,35 @@ export interface LivingProtoDocsPaneProps {
   onJumpToSource: (schemaId: number, filePath: string, line: number) => void;
 }
 
-function findFirstService(
-  nodes: ProtoDocTreeNodeDTO[]
+function findFirstServiceBySchemaId(
+  nodes: ProtoDocTreeNodeDTO[],
+  targetSchemaId: number
 ): { serviceName: string; schemaId?: number } | null {
+  for (const n of nodes) {
+    if (n.node_type === 'SERVICE' && n.service_name && n.schema_id === targetSchemaId) {
+      return { serviceName: n.service_name, schemaId: n.schema_id };
+    }
+    if (n.children && n.children.length > 0) {
+      const hit = findFirstServiceBySchemaId(n.children, targetSchemaId);
+      if (hit) return hit;
+    }
+  }
+  return null;
+}
+
+export function findFirstService(
+  nodes: ProtoDocTreeNodeDTO[],
+  preferredSchemaId?: number | string
+): { serviceName: string; schemaId?: number } | null {
+  const parsedSchemaId =
+    preferredSchemaId !== undefined && preferredSchemaId !== ''
+      ? Number(preferredSchemaId)
+      : NaN;
+  if (Number.isInteger(parsedSchemaId) && parsedSchemaId > 0) {
+    const preferred = findFirstServiceBySchemaId(nodes, parsedSchemaId);
+    if (preferred) return preferred;
+  }
+
   for (const n of nodes) {
     if (n.node_type === 'SERVICE' && n.service_name) {
       return { serviceName: n.service_name, schemaId: n.schema_id };
@@ -54,6 +80,13 @@ function findFirstService(
     }
   }
   return null;
+}
+
+export function shouldShowTreeLoadingPlaceholder(
+  loadingTree: boolean,
+  tree: ProtoDocTreeResponse | null
+): boolean {
+  return loadingTree && !tree;
 }
 
 function normalizeInitialServiceQuery(rawSearch: string): string {
@@ -92,36 +125,73 @@ export const LivingProtoDocsPane: React.FC<LivingProtoDocsPaneProps> = ({
   const [detail, setDetail] = useState<ProtoServiceDocDetailDTO | null>(initialDetail ?? null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const detailRef = useRef<HTMLElement | null>(null);
-
-  const loadTree = useCallback(async () => {
-    if (typeof getProtoDocsTree !== 'function') return;
-    setLoadingTree(true);
-    try {
-      const data = await getProtoDocsTree({
-        category: categoryFilter || undefined,
-        schema_id: selectedSchemaId && !selectedService ? Number(selectedSchemaId) : undefined,
-        include_deprecated: includeDeprecated,
-        search: searchInput.trim() || undefined,
-      });
-      setTree(data);
-      if (!selectedService && data.items.length > 0) {
-        const first = findFirstService(data.items);
-        if (first) {
-          setSelectedService(first.serviceName);
-          if (first.schemaId) setSelectedSchemaId(first.schemaId);
-        }
-      }
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '加载接口参考文档树失败');
-    } finally {
-      setLoadingTree(false);
-    }
-  }, [categoryFilter, includeDeprecated, searchInput, selectedSchemaId, selectedService, toast]);
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
+  const selectedServiceRef = useRef<string>(selectedService);
+  selectedServiceRef.current = selectedService;
+  const selectedSchemaIdRef = useRef<number | string>(selectedSchemaId);
+  selectedSchemaIdRef.current = selectedSchemaId;
 
   useEffect(() => {
-    if (initialTree) return;
-    void loadTree();
-  }, [initialTree, loadTree]);
+    if (initialTree || typeof getProtoDocsTree !== 'function') return;
+    let cancelled = false;
+    setLoadingTree(true);
+
+    const fetchTree = async () => {
+      try {
+        const data = await getProtoDocsTree({
+          category: categoryFilter || undefined,
+          include_deprecated: includeDeprecated,
+          search: searchInput.trim() || undefined,
+        });
+        if (cancelled) return;
+        setTree(data);
+
+        if (!selectedServiceRef.current) {
+          const preferredSchemaId = selectedSchemaIdRef.current;
+          const parsedPreferredId =
+            preferredSchemaId !== undefined && preferredSchemaId !== ''
+              ? Number(preferredSchemaId)
+              : NaN;
+          let first = findFirstService(data.items, preferredSchemaId);
+
+          if (
+            Number.isInteger(parsedPreferredId) &&
+            parsedPreferredId > 0 &&
+            first?.schemaId !== parsedPreferredId
+          ) {
+            const scopedData = await getProtoDocsTree({
+              schema_id: parsedPreferredId,
+              include_deprecated: includeDeprecated,
+            });
+            if (cancelled) return;
+            const scopedFirst = findFirstService(scopedData.items, parsedPreferredId);
+            if (scopedFirst) {
+              first = scopedFirst;
+            }
+          }
+
+          if (!cancelled && first && !selectedServiceRef.current) {
+            setSelectedService(first.serviceName);
+            if (first.schemaId !== undefined) {
+              setSelectedSchemaId(first.schemaId);
+            }
+          }
+        }
+      } catch (err) {
+        if (!cancelled) {
+          toastRef.current.error(err instanceof Error ? err.message : '加载接口参考文档树失败');
+        }
+      } finally {
+        if (!cancelled) setLoadingTree(false);
+      }
+    };
+
+    void fetchTree();
+    return () => {
+      cancelled = true;
+    };
+  }, [initialTree, categoryFilter, includeDeprecated, searchInput]);
 
   useEffect(() => {
     if (initialDetail && initialDetail.service_name === selectedService) {
@@ -140,7 +210,7 @@ export const LivingProtoDocsPane: React.FC<LivingProtoDocsPaneProps> = ({
       })
       .catch((err) => {
         if (!cancelled) {
-          toast.error(err instanceof Error ? err.message : '加载服务接口详情失败');
+          toastRef.current.error(err instanceof Error ? err.message : '加载服务接口详情失败');
         }
       })
       .finally(() => {
@@ -149,7 +219,7 @@ export const LivingProtoDocsPane: React.FC<LivingProtoDocsPaneProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [initialDetail, selectedSchemaId, selectedService, toast]);
+  }, [initialDetail, selectedSchemaId, selectedService]);
 
   const subsystems = useMemo(
     () => buildDocSubsystemTree(tree?.items ?? []),
@@ -464,8 +534,11 @@ export const LivingProtoDocsPane: React.FC<LivingProtoDocsPaneProps> = ({
           </div>
         </div>
 
-        <div className="pgit-tree-scroll">
-          {loadingTree ? (
+        <div
+          className={`pgit-tree-scroll${loadingTree && tree ? ' pgit-tree-scroll--refreshing' : ''}`}
+          aria-busy={loadingTree || undefined}
+        >
+          {shouldShowTreeLoadingPlaceholder(loadingTree, tree) ? (
             <div className="pdoc-empty">正在聚合活体文档索引...</div>
           ) : viewMode === 'subsystem' ? (
             renderSubsystemTree()
