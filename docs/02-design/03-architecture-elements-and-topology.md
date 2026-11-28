@@ -1,11 +1,11 @@
 # 架构与活体契约治理 (`code-contract`) 架构元素建模与拓扑一致性验证设计
 
 - **文档编号**：`03-architecture-elements-and-topology.md`
-- **文档版本**：v1.11.0
-- **更新日期**：2026-11-25
+- **文档版本**：v1.12.0
+- **更新日期**：2026-11-28
 - **归属阶段**：阶段二：系统架构与数据模型设计 (`02-design`)
-- **状态**：M1~M29 已交付；ADR-24 v1.1.0 (`M30a ~ M32`) SDD 详细设计定稿
-- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.26.0)、[`01-system-architecture.md`](./01-system-architecture.md) (v1.12.0)、[`09-arch-process-ssot-and-ebpf-premount-standby-adr.md`](../05-adr/09-arch-process-ssot-and-ebpf-premount-standby-adr.md) (ADR-09 v1.1.0)、[`15-scalable-topology-focus-and-layout-persistence-adr.md`](../05-adr/15-scalable-topology-focus-and-layout-persistence-adr.md) (ADR-15 v1.3.0)、[`16-multi-implementation-service-contract-adr.md`](../05-adr/16-multi-implementation-service-contract-adr.md) (ADR-16 v2.0.0)、[`17-topology-single-layer-drilldown-and-layout-ux-adr.md`](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md) (ADR-17 v1.1.0)、[`18-proto-full-lifecycle-and-git-mr-governance-adr.md`](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (ADR-18 v1.3.0)、[`21-csg-aware-agent-service-discovery-and-replay-mock-adr.md`](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (ADR-21 v2.2.0)、[`24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md`](../05-adr/24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md) (ADR-24 v1.1.0)
+- **状态**：M1~M45 全量交付 (`✅ 已交付`)；含 `ADR-30` 「契约认领与雷达」独立工作台对齐
+- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.30.0)、[`01-system-architecture.md`](./01-system-architecture.md) (v1.13.0)、[`ADR-09`](../05-adr/09-arch-process-ssot-and-ebpf-premount-standby-adr.md) (v1.1.0)、[`ADR-15`](../05-adr/15-scalable-topology-focus-and-layout-persistence-adr.md) (v1.3.0)、[`ADR-16`](../05-adr/16-multi-implementation-service-contract-adr.md) (v2.0.0)、[`ADR-17`](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md) (v1.1.0)、[`ADR-18`](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (v1.3.0)、[`ADR-21`](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (v2.2.0)、[`ADR-24`](../05-adr/24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md) (v1.1.0)、[`ADR-30`](../05-adr/30-contract-library-and-three-lines-ia-adr.md)
 - **关联工程作战卡**：[`docs/04-tasks/21-m20-multi-implementation-service-contract.md`](../04-tasks/21-m20-multi-implementation-service-contract.md) (M20)、[`docs/04-tasks/22-m21-topology-single-layer-drilldown-and-layout-ux.md`](../04-tasks/22-m21-topology-single-layer-drilldown-and-layout-ux.md) (M21)、[`docs/04-tasks/23-m22-protocompile-layering-and-dependency-graph.md`](../04-tasks/23-m22-protocompile-layering-and-dependency-graph.md) (M22)、[`docs/04-tasks/29-m28-csg-service-discovery-and-multi-mode-simulation.md`](../04-tasks/29-m28-csg-service-discovery-and-multi-mode-simulation.md) (M28)、[`docs/04-tasks/31-m30a-discovery-workbench-and-snapshot-diff.md`](../04-tasks/31-m30a-discovery-workbench-and-snapshot-diff.md) (M30a)、[`docs/04-tasks/32-m30b-physical-logical-decoupling-and-migration.md`](../04-tasks/32-m30b-physical-logical-decoupling-and-migration.md) (M30b)、[`docs/04-tasks/33-m31-quick-record-two-stage-attribution-and-catalog-radar.md`](../04-tasks/33-m31-quick-record-two-stage-attribution-and-catalog-radar.md) (M31)、[`docs/04-tasks/34-m32-architecture-inbox-dependency-synthesis-and-mr-impact.md`](../04-tasks/34-m32-architecture-inbox-dependency-synthesis-and-mr-impact.md) (M32)
 
 ### 修订记录
@@ -19,7 +19,8 @@
 | v1.8.0 | 2026-11-13 | 依据 [`ADR-18` (v1.1.0)](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (`M22`) 增补：1. §2.3 可配置架构层级 (`layer_level`) 校验规则与模块间有向环路检测守卫；2. §4.4 `GraphNode.Meta` 补充有效层级元数据；3. §6.5 `/topology` 客户端 SVG / PNG 导出设计 (`F-32`) |
 | v1.9.0 | 2026-11-13 | 依据 [`ADR-18` (v1.2.0)](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) 检视意见修订 §2.3 与 §6.5：1. 明确更新入参使用 `*int` 区分「未传保持原值」与「传 `0` 显式豁免」、补充绑定多实现 `ContractID` 时对既有 `DISPATCH` 消费方的反向层级校核及 `CONTRACT_LIB` DIP 倒挂分层约定；2. §6.5 废弃易触发 Canvas 跨域污染或 CSS 变量丢失的 `<foreignObject>` 方案，改为基于画布模型数据的程序化纯矢量 `<svg>` + `getComputedStyle` 解析 `--color-*` Token + 离屏 2x `<canvas>` PNG 导出 |
 | v1.10.0 | 2026-11-18 | 依据 [`ADR-21` (v2.1.0)](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (`M28`) 同步 CSG 现网自动发现与蓝图对齐设计：1. §2.1 演进 `A-07` 与服务名映射契约（允许 `ModuleService.service_name` 存储最长 64B 的 CSG 物理发布名如 `OrderSvc-1024-8`，并新增 `proto_service_name` 注入 `CompiledRegistry.ServiceAliases` 与 `^(.+-\d+)-(\d+)$` 实例号剥离归一化）；2. 新增 §3.4 基于 CSG 双层自动发现（`dlink` + `RPCMonitorService`）的架构 SSOT 三态对账（`MATCHED`/`UNDECLARED`/`GHOST`）与 `POST /api/agents/:id/csg/import-blueprint` 一键架构导入闭环 |
-| **v1.11.0** | **2026-11-25** | **依据 [`ADR-24` (v1.1.0)](../05-adr/24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md) (`M30a ~ M32`) 新增 §7 以现网发现为中心的双态建模、生命周期对账与渐进式治理引擎设计**：1. §7.1 L0/L1-T/L1-I/L2 分层、服务双态状态机（I1~I8）与 `DeleteModule` 显式迁移流程；2. §7.2 分层身份指纹算法（P1~P3、`fingerprint_version`、多实例折叠）；3. §7.3 `Enroll` 观测纳管单事务契约（`DISARMED`、不覆盖人工字段、`PROVISIONAL/CONFIRMED`）；4. §7.4 `PhysicalReconciler` 周期对账、离线冻结与受限 GC；5. §7.5 无逻辑模块物理拓扑聚合与规模护栏；6. §7.6 两阶段渐进归因与可续跑任务；7. §7.7 统一契约目录、三级 `.pb` 撮合、五态雷达、架构收件箱（单宿主/多宿主/反向依赖合成）与 MR 权威环境影响面 |
+| **v1.11.0** | 2026-11-25 | **依据 [`ADR-24` (v1.1.0)](../05-adr/24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md) (`M30a ~ M32`) 新增 §7 以现网发现为中心的双态建模、生命周期对账与渐进式治理引擎设计** |
+| **v1.12.0** | **2026-11-28** | **同步 `M30a ~ M32` 交付落地与 [`ADR-30`](../05-adr/30-contract-library-and-three-lines-ia-adr.md) 主线 IA 对齐**：将统一契约服务目录与五态健康雷达独立归口「架构与契约对齐」主线入口 **`/proto-catalog`**（`五态健康雷达 / 服务方法认领目录` 双正交视图），与 `/discovery`、`/architecture`、`/topology` 形成四位一体架构对齐工作台 |
 
 ---
 
@@ -986,7 +987,7 @@ func ComputeIdentityFingerprint(cmdline, exeName string) (fp string, entryToken 
    - **`FINGERPRINT`**（方法指纹）：存在录制流量且尚未映射时，统计该服务最近录制 `Operation` 集合与已激活 `ProtoOperation` 的方法覆盖率，若覆盖度 `>= 80%` 且唯一命中某个 `.pb` Service ➔ **仅写入 `proto_suggested_name` 与 `proto_match_confidence = 'FINGERPRINT'`**；
    - 人工确认 `POST /api/catalog/services/:id/confirm-proto`：写入 `proto_service_name` 并置 `proto_match_confidence = 'MANUAL'`，重载 `decoder.Registry.ServiceAliases`；未认领服务允许任意可见用户确认（`P2` 审计），已认领服务仅限 `contract_admin` 或所属模块/子系统负责人确认（`P1` 审计）。
 
-2. **五态健康雷达（M31，仅统计 `SHARED` 权威环境观测，接入 `/dashboard` 与 `/proto-docs`）**：
+2. **五态健康雷达（M31，仅统计 `SHARED` 权威环境观测，接入 `/dashboard` 与 `/proto-catalog`；`/proto-docs` 旧目录参数自动无损重定向至 `/proto-catalog`）**：
    - 🔴 **现网裸奔 (`SHADOW_LIVE`)**：存在权威环境非 `RETIRED` 放置，但 `proto_service_name` 为空且 `service_name` 未命中任何生效 `ProtoOperation`；
    - 🟡 **无主孤儿 (`UNCLAIMED_ORPHAN`)**：已有确认 `.pb` 映射且存在权威环境非 `RETIRED` 放置，但 `module_id IS NULL`；
    - ⚪ **纸面僵尸 (`PHANTOM_PROTO`)**：已激活 `ProtoOperation` 定义的 Service，在权威环境既无非 `RETIRED` 放置，也无非 `RETIRED` 订阅边；

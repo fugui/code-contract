@@ -1,11 +1,11 @@
 # 架构与活体契约治理 (`code-contract`) 数据库物理模型与 GORM 建模字典
 
 - **文档编号**：`05-database-schema.md`
-- **文档版本**：v1.11.0
-- **更新日期**：2026-11-25
+- **文档版本**：v1.12.0
+- **更新日期**：2026-11-28
 - **归属阶段**：阶段二：系统架构与数据模型设计 (`02-design`)
-- **状态**：M1~M29 已交付；ADR-24 v1.1.0 (`M30a ~ M32`) Schema 演进与增量建模定稿（共 `36` 核心业务表 + `contract_settings` = `37` 表）
-- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.26.0)、[`01-system-architecture.md`](./01-system-architecture.md) (v1.12.0)、[`04-traffic-storage-partitioning-and-relational-normalization.md`](../05-adr/04-traffic-storage-partitioning-and-relational-normalization.md)、[`09-arch-process-ssot-and-ebpf-premount-standby-adr.md`](../05-adr/09-arch-process-ssot-and-ebpf-premount-standby-adr.md) (ADR-09 v1.1.0)、[`12-packet-causality-call-tree-and-sequence-ux-adr.md`](../05-adr/12-packet-causality-call-tree-and-sequence-ux-adr.md) (ADR-12 v1.0.0)、[`14-governance-dashboard-golden-suite-and-ci-gate-adr.md`](../05-adr/14-governance-dashboard-golden-suite-and-ci-gate-adr.md) (ADR-14 v1.1.0)、[`15-scalable-topology-focus-and-layout-persistence-adr.md`](../05-adr/15-scalable-topology-focus-and-layout-persistence-adr.md) (ADR-15 v1.3.0)、[`16-multi-implementation-service-contract-adr.md`](../05-adr/16-multi-implementation-service-contract-adr.md) (ADR-16 v2.0.0)、[`17-topology-single-layer-drilldown-and-layout-ux-adr.md`](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md) (ADR-17 v1.1.0)、[`18-proto-full-lifecycle-and-git-mr-governance-adr.md`](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (ADR-18 v1.3.0)、[`21-csg-aware-agent-service-discovery-and-replay-mock-adr.md`](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (ADR-21 v2.2.0)、[`22-pluggable-transport-driver-and-mesh-capture-adr.md`](../05-adr/22-pluggable-transport-driver-and-mesh-capture-adr.md) (ADR-22 v2.0.0)、[`23-dophi-mesh-uprobe-bypass-capture-adr.md`](../05-adr/23-dophi-mesh-uprobe-bypass-capture-adr.md) (ADR-23 v1.1.0)、[`24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md`](../05-adr/24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md) (ADR-24 v1.1.0)
+- **状态**：M1~M45 全量交付 (`✅ 已交付`)；累计 **`43` 张核心业务表 + `contract_settings` = `44` 张表**
+- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.30.0)、[`01-system-architecture.md`](./01-system-architecture.md) (v1.13.0)、[`ADR-24`](../05-adr/24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md) ~ [`ADR-30`](../05-adr/30-contract-library-and-three-lines-ia-adr.md)
 
 ### 修订记录
 
@@ -19,13 +19,14 @@
 | v1.9.0 | 2026-11-13 | 依据 [`ADR-18`](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (v1.3.0) 清除无用的外部旧库迁移设计：鉴于 `code-proto` 与 `protohub` 均未开发完成且从未运行，正式移除 `scripts/migrate_protohub_vocab` SQLite/JSON 迁移清单、`PROTOHUB_IMPORT` 枚举值与 SQLite 列对照表；`VocabularyTerm.Source` 收敛为 `MANUAL \| BUILTIN_SEED \| LLM_SUGGESTED`，并在 `SetupWithDB` 内直接完成通用基础词根与默认规则的幂等 Seed 初始化 |
 | v1.10.0 | 2026-11-18 | 依据 [`ADR-21` (v2.1.0)](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (`M28`) 扩充 CSG 现网自动发现与三模仿真审计字段（**零新增物理表**，维持 `30` 张核心业务表 + `contract_settings` = `31` 张表）：1. `contract_module_services` 增补 `proto_service_name` 映射实际 Protobuf `service` 名并建立前缀索引；2. `contract_recording_sessions` 与 `contract_golden_suite_items` 增补 `csg_snapshots` 固化 CSG `dlink` 与 LDC 订阅快照；3. `contract_replay_tasks` 增补 `csg_strategy`（`AUTO\|CLIENT_INJECT\|PUB_STUB\|MOCK_SERVER`）与 `csg_sandbox_report` 审计字段；4. 同步 §4 索引/约束与 §5 `409 CSG_SERVICE_ALREADY_PUBLISHED` / `422 CSG_DATAPLANE_MESH_UNSUPPORTED` 冲突矩阵 |
 | v1.10.1 | 2026-11-19 | 同步 [`ADR-22` (v2.0.0)](../05-adr/22-pluggable-transport-driver-and-mesh-capture-adr.md) & [`ADR-23` (v1.1.0)](../05-adr/23-dophi-mesh-uprobe-bypass-capture-adr.md) (`M29`) **零 DDL 迁移兼容约定**：复用既有分区表列 `contract_traffic_records.transport_proto SMALLINT NOT NULL DEFAULT 1` 直接落盘区分 `1 = TCP` 与 `4 = MESH (dophi_mesh)`；同步 §5 冲突矩阵中 `MOCK_SERVER` 放行 Mesh 改道 TCP 策略 |
-| **v1.11.0** | **2026-11-25** | **依据 [`ADR-24` (v1.1.0)](../05-adr/24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md) (`M30a ~ M32`) 演进至 `36` 张核心业务表 + `contract_settings`（共 `37` 张表）**：1. **M30a 新增表 #31** `contract_discovery_snapshots`（持久化发现快照、去重 `content_hash`、置顶基线与脱敏）；2. **M30b 新增 5 张表**：#32 `contract_service_placements`（L1-I 服务放置事实）、#33 `contract_process_dependencies`（L1-I 环境级订阅边）、#34 `contract_dependency_decisions`（L2 裁决记录）、#35 `contract_attribution_jobs`（可续跑归因/迁移作业）与 #36 `contract_mig_backups`（存量迁移备份）；3. 增量演进 `contract_arch_processes`（`declared_role`/版本化指纹/`lifecycle`/`origin`/`origin_agent_id`）、`contract_processes`（`enroll_source`/`observed_*`）、`contract_module_services`（`module_id` 可空、`ON DELETE RESTRICT`、`source`/撮合/认领列及 CHECK I1，**不新增 `arch_process_id`**）与 `contract_traffic_records`（`src_arch_process_id`/`dst_arch_process_id` + 母表 `ON ONLY` 逐分区并发索引）；4. 同步 §1 幂等迁移顺序、§2 ER 图、§4 索引字典与 §5 外键/冲突矩阵 |
+| **v1.11.0** | 2026-11-25 | **依据 [`ADR-24` (v1.1.0)](../05-adr/24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md) (`M30a ~ M32`) 演进至 `36` 张核心业务表 + `contract_settings`（共 `37` 张表）** |
+| **v1.12.0** | **2026-11-28** | **同步 `M33 ~ M45` 交付及 `ADR-25` / 后 M45 演进至 `43` 张核心业务表 + `contract_settings`（共 `44` 张表）**：新增 §11 记录 `ADR-25` 噪音降噪增量列（`contract_module_services.is_noise_service`、`contract_recording_sessions.noise_*`）与表 #43 `contract_breaking_change_events`（非阻断破坏性变更审计事件） |
 
 ---
 
 ## 1. 数据库共享隔离原则、分区规范与类型安全约定
 
-1. **共享库表名前缀强制隔离**：`code-contract-server` 与宿主门户 `code-bench` 共享同一 PostgreSQL 实例，直接复用 `code-common/backend/models` 中的 `users`、`departments`、`audit_logs` 公共表；本子系统全部 **36 张核心业务实体表**（当前 M1~M29 已落地 `30` 张；M30a 新增 `1` 张；M30b 新增 `5` 张；及平台治理参数表 `contract_settings`，共 `37` 张表）必须显式实现 `TableName() string` 并冠以 `config.TablePrefix`（**`contract_`**）前缀。
+1. **共享库表名前缀强制隔离**：`code-contract-server` 与宿主门户 `code-bench` 共享同一 PostgreSQL 实例，直接复用 `code-common/backend/models` 中的 `users`、`departments`、`audit_logs`、`repositories` 公共表；本子系统全部 **43 张核心业务实体表**（M1~M26 落地 `30` 张；M30a~M32 增至 `36` 张；M35 新增 #37 `contract_proto_import_owners`；M37~M38 新增 #38~#39；M42 新增 #40；M43 新增 #41~#42；后 M45 新增 #43 `contract_breaking_change_events`；以及平台治理参数表 `contract_settings`，共 `44` 张模块表）必须显式实现 `TableName() string` 并冠以 `config.TablePrefix`（**`contract_`**）前缀。
 2. **架构物理进程蓝图解耦与「单 Agent 单环境」关系规范化（[`ADR-09`](../05-adr/09-arch-process-ssot-and-ebpf-premount-standby-adr.md)）**：
    - 将全局架构物理进程蓝图独立建模为 **`contract_arch_process_groups`** 与 **`contract_arch_processes`**，通过 `contract_modules.arch_process_id` 唯一表达 `1 ArchProcess : N Module` 组装关系（守护 `A-03` 单模块单标准进程归属）；
    - **1 台 `Agent` 即代表 1 套独立运行环境**（支持多套 `SHARED` 公共测试环境与多套 `PRIVATE` 个人环境对等并存，不同 `SHARED` Agent 允许各自挂载同一 `ArchProcess`；`contract_agents.fallback_agent_id` 支持可选关联某套公共基准环境用于混合下游推导）；
@@ -1698,6 +1699,25 @@ func (MigrationBackup) TableName() string { return config.TablePrefix + "mig_bac
 5. **新增表 #42：`contract_proto_pipeline_runs`（一键四阶段流水线编排任务表）**：
    - 字段：`id` (`bigserial PK`)、`from_stage` (`varchar(24) NOT NULL DEFAULT 'COLLECT_NORMALIZE' CHECK IN ('COLLECT_NORMALIZE','RECONCILE','PUBLISH')`)、`current_stage` (`varchar(24) NOT NULL DEFAULT 'COLLECT_NORMALIZE'`)、`status` (`varchar(24) NOT NULL DEFAULT 'RUNNING' CHECK IN ('RUNNING','COMPLETED','PARTIAL_BLOCKED','FAILED')`)、`trigger_source` (`varchar(24) NOT NULL DEFAULT 'MANUAL' CHECK IN ('MANUAL','MR_MERGE','SCHEDULE')`)；
    - 关联子作业：`sync_job_id` (`bigint`)、`reconcile_run_id` (`bigint`)、`publish_run_id` (`bigint`)、`error_message` (`text NOT NULL DEFAULT ''`)、`triggered_by` (`varchar(128) NOT NULL DEFAULT ''`)、`started_at` (`timestamptz NOT NULL`)、`finished_at` (`timestamptz`)、`created_at`、`updated_at`。
+
+---
+
+## 11. ADR-25 噪音降噪列扩展与非阻断破坏性变更审计表 (#43)
+
+1. **`ADR-25` 噪音降噪增量列与参数键**：
+   - `contract_module_services`（表 #5）新增 `is_noise_service`（`boolean NOT NULL DEFAULT false`，索引 `idx_contract_mod_svc_noise`）。
+   - `contract_recording_sessions`（表 #12）新增 `noise_filter_enabled`（`boolean NOT NULL DEFAULT false`）、`noise_exclude_rules`（`jsonb NOT NULL DEFAULT '[]'`）、`filtered_noise_frames`（`bigint NOT NULL DEFAULT 0`）。
+   - `contract_settings` 使用 `noise_service_rules` 存储团队全局通配噪音规则（初始化为空串，防止 `*Log*` 类通配误伤业务服务）。
+
+2. **新增表 #43：`contract_breaking_change_events`（非阻断破坏性变更审计事件表，`models/breaking_audit.go`）**：
+   - 核心字段：
+     - `id` (`bigserial PK`)
+     - `source` (`varchar(32) NOT NULL DEFAULT 'PIPELINE_PUBLISH'`，索引 `idx_contract_bce_source`；取值 `'PIPELINE_PUBLISH' | 'MANUAL_ACTIVATE' | 'BATCH_ACTIVATE' | 'AUTO_ACTIVATE'`)
+     - `publish_run_id` (`bigint`, 索引 `idx_contract_bce_pub_run`)、`git_repo_id` (`bigint`, 索引 `idx_contract_bce_repo`)、`bundle_id` (`bigint`, 索引 `idx_contract_bce_bundle`)、`bundle_name` (`varchar(160) NOT NULL DEFAULT ''`)
+     - `schema_name` (`varchar(160) NOT NULL`, 索引 `idx_contract_bce_schema_name`)、`from_schema_id` (`bigint`)、`from_version` (`int NOT NULL DEFAULT 0`)、`to_schema_id` (`bigint NOT NULL`, 索引 `idx_contract_bce_to_schema`)、`to_version` (`int NOT NULL DEFAULT 0`)
+     - `breaking_count` (`int NOT NULL DEFAULT 0`)、`affected_count` (`int NOT NULL DEFAULT 0`)、`breaking_rules` (`jsonb NOT NULL DEFAULT '[]'`)、`affected_dependents` (`jsonb NOT NULL DEFAULT '[]'`)
+     - `status` (`varchar(24) NOT NULL DEFAULT 'OPEN'`, 索引 `idx_contract_bce_status` & 复合索引 `idx_contract_bce_status_created (status, created_at DESC)`, CHECK `chk_contract_bce_status` 约束 `status IN ('OPEN', 'ACKNOWLEDGED')`)
+     - `triggered_by` (`varchar(100) NOT NULL DEFAULT ''`)、`acknowledged_by` (`uint`)、`acknowledged_by_name` (`varchar(100) NOT NULL DEFAULT ''`)、`acknowledge_note` (`text NOT NULL DEFAULT ''`)、`acknowledged_at` (`timestamptz`)、`created_at`、`updated_at`。
 
 
 

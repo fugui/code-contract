@@ -1,35 +1,49 @@
 # 架构与活体契约治理平台 (`code-contract`)
 
 > **产品定位**：以真实运行态为活水，架设微服务架构防漂移与活体契约防劣化的自愈防线  
-> **当前版本**：`v0.4.0` | **服务标识**：`Code-Contract` (`contract`) | **专有协议**：DOPHI `CROS RPC`（纯 Go `tcp://` & `dophi_mesh://` 采集/发现 ➔ `tcp://` 仿真重放）
+> **当前版本**：`v0.5.0` | **服务标识**：`Code-Contract` (`contract`) | **专有协议**：DOPHI `CROS RPC`（纯 Go `tcp://` & `dophi_mesh://` 全双工采集/发现 ➔ `tcp://` 仿真重放）  
+> **系统理念**：[《活体契约治理：以运行态为活水，构建微服务的五线自愈防线》](./docs/01-features/02-living-contract-philosophy.md)
 
 本项目基于 CodeBench 微前端架构与 `code-common` 公共底座构建，严格遵循 **SDD (Spec-Driven Development，规范驱动开发) + TDD (Test-Driven Development，测试驱动开发)** 工程模式：  
 **「契约基线与特性边界 (`01-features`) ➔ 系统架构与数据模型 (`02-design`) ➔ 接口契约与任务拆解 (`03-api` & `04-tasks`) ➔ TDD 测试先行与分阶段交付」**
 
 ---
 
-## 1. 产品本质与核心价值 (Core Essence & Values)
+## 1. 产品本质与五大核心主线 (Core Essence & Five Pillars)
 
-传统的接口与契约管理（Swagger、Postman、Proto 仓库等）普遍局限于**“设计态的静态文档”**，存在“文档与实现两张皮”、“无法感知生产实际调用”、“架构偷偷腐化漂移”及“跨微服务联调严重依赖完整下游环境”等系统性痛点。
+传统的接口与契约管理（Swagger、Postman、静态 Proto 仓库等）普遍局限于**“设计态的静态文档”**，存在“文档与实现两张皮”、“无法感知生产实际调用”、“架构偷偷腐化漂移”及“跨微服务联调严重依赖完整下游环境”等系统性痛点。
 
 `code-contract` 的业务本质是**「以契约治理为核心、以运行态真实流量为活水、以零侵入仿真为闭环的活体契约与微服务架构治理平台」**：
-* **“流量录制与重放”是底座技术手段**：提供零代码侵入、零业务改造成本的高保真交互采集与本地回放。
-* **“契约治理、架构防漂移与防劣化闭环”是真正的业务目的**：
+* **“流量录制与重放”是底层数据面技术手段**：提供零代码侵入、零业务改造成本的高保真交互采集与本地脱机仿真。
+* **“契约炼金、架构对齐、事务洞察、防劣化回归与开发合规左移”五大主线构成完整的活体契约飞轮**：
 
 ```mermaid
-flowchart LR
-    A["<b>1. 静态立规 (明契约)</b><br/>架构蓝图 SSOT<br/>Proto 契约资产化台账<br/>破坏性变更阻断雷达"] --> B["<b>2. 动态核验 (审行为)</b><br/>eBPF 零侵入内核探针<br/>单进程开箱出入站双录<br/>架构漂移 (Violation) 告警"]
-    B --> C["<b>3. 闭环防衰 (防破坏)</b><br/>零下游 ScopedMock 接管<br/>ullSNO 头部协议自愈<br/>黄金用例库 & CI/CD 强门禁"]
-    C -. "契约资产与忽略规则向前继承" .-> A
+flowchart TB
+    L1["<b>主线 1 · Git 仓到契约库</b><br/>共享 Git 缓存 · uService 清洗 · clean 去 /pg<br/>R0~R8 全池收敛 · 活体文档/源码/依赖图"]
+    L2["<b>主线 2 · 现网发现与架构对齐</b><br/>CSG 自动发现 · L1 观测纳管 · 五态雷达<br/>架构收件箱认领/拆分 · 单层平铺拓扑"]
+    L3["<b>主线 3 · 现网 RPC 采集与事务分析</b><br/>TCP eBPF + Mesh 全双工 uprobe<br/>ADR-25 双源降噪 · DOTR 因果树/泳道"]
+    L4["<b>主线 4 · 黄金用例库与重放验证</b><br/>自包含黄金快照 · ScopedMock 零外泄<br/>Mesh➔TCP 自愈 · 双层 Diff · CI 门禁"]
+    L5["<b>主线 5 · 契约开发审计与 MR 门禁</b><br/>MR 四合一预检 · 权威影响面 · 规则/词库/AST 查重<br/>非阻断破坏性变更审计台 · 定向通知"]
+
+    L1 -- "输出 .pb 生效池与方法字典" --> L2
+    L1 -- "赋能报文反序列化与字段解析" --> L3
+    L2 -- "确定物理进程、多实现与架构边界" --> L3
+    L3 -- "回馈实测依赖与违规边 (Violation)" --> L2
+    L3 -- "一键固化高价值事务资产" --> L4
+    L4 -- "提供黄金 JSON 样本与回归覆盖率" --> L1
+    L2 -- "输出权威 SHARED 环境影响面" --> L5
+    L5 -- "阻断违规 MR 并驱动合并重发布" --> L1
 ```
 
-### 三大治理支柱 (Three Governance Pillars)
+### 五大核心能力主线 (Five Capability Lines)
 
-| 治理维度 | 核心解决的痛点 | 平台提供的能力与技术机制 |
-| :--- | :--- | :--- |
-| **① 接口资产与规范治理**<br/>*(Contract Assets & Specs)* | 接口口口相传、Proto 散落各处、微服务职责边界模糊、存在大量无人认领的僵尸接口，代码重构容易无意破坏下游兼容性 | 1. 建立**三级架构元素**（子系统 ➔ 功能组 ➔ 功能模块）与物理进程蓝图（SSOT），支持**独占 (`EXCLUSIVE`)** 与**多实现 (`MULTI_IMPL` / `CONTRACT_LIB`)** 服务契约模型；<br/>2. **Git-Only 全生命周期与纯 Go `protocompile` 底座**：支持 Monorepo `1:N` Compilation Bundles 无状态同步、活体全注释接口参考文档 (`/proto-docs`) 与轻量只读源码/Commit Diff (`/proto-sources`)；<br/>3. **静态规范引擎与破坏性变更阻断雷达**：内置多段包名/词库合规检查、三护栏 AST 重复结构探测 (`Jaccard >= 0.85`)、分层逆向依赖守卫、含 `BASE_LIB` 传递影响的破坏性变更阻断，以及 Git MR 四合一自动化门禁 (`/proto-governance`)。 |
-| **② 架构一致性与漂移治理**<br/>*(Architecture Drift Radar)* | 架构设计图与代码实际调用漂移，开发私自跨层调用、旁路直连，架构腐化无从察觉；缺乏端到端全景健康度量 | 1. **内核态 `cilium/ebpf` 动态探针**：零修改、零 SDK、不重启进程，亚秒级完成出入站双向无感采集；支持 `setcap` 免 sudo 特权运行；<br/>2. **实测拓扑与单层平铺数字孪生**：依据 CROS RPC 报文与 `ContractResolver` 动态还原调用边与多实现归属（Confirmed / External / Violation / ImplUnresolved），支持大规模拓扑单层平铺下钻、ELK 正交布局、作用域位置记忆及纯矢量 SVG/PNG 导出；<br/>3. **契约治理全景大盘**：落地三维封顶健康指数算法（规范性 40 分 + 一致性 30 分 + 回归保障率 30 分 = 100 分）与静态合标卡片，提供漂移 Top 榜与僵尸接口暴露。 |
-| **③ 契约级防劣化与自愈重放**<br/>*(Contract Regression & Healing)* | 跨模块回归测试依赖一整套下游环境；接口变更容易破坏兼容性导致线上故障；缺乏沉淀高价值测试资产与自动化阻断手段 | 1. **零下游依赖因果闭包重放 (`ScopedMock`)**：单进程脱机运行，出口请求由局部因果池接管，**真实下游 0 字节外泄**；<br/>2. **二进制头部自愈**：自动改写应答 `ullSNO`、Trace 缓冲与发送时间戳，免除跨机器同步 Schema 负担；<br/>3. **双层语义 Diff 引擎**：自动比对协议状态码与 Protobuf 业务字段，精准定位破坏性改动；<br/>4. **黄金用例套件工坊**：一键将高价值事务固化为完全自包含快照，脱敏并永久免疫物理分区清理；<br/>5. **CI/CD 自动化门禁**：提供专有判定 API、有界排他锁排队与 PR 强阻断报告。 |
+| 能力主线 | 核心解决的痛点 | 平台提供的能力与技术机制 | 对应控制台入口 |
+| :--- | :--- | :--- | :--- |
+| **① Git/代码仓 ➔ 契约库**<br/>*(契约清洗、文档与依赖分析)* | Polyrepo 多仓 `.proto` 分散、存在私有 `uService` 语法与非标路径无法直接编译、跨仓副本冲突、接口文档与代码脱节 | 1. **复用平台 `code-bench` 真值源与共享 `codes/` 缓存**：两层并发锁（`RWMutex + flock`）与无工作树直读，500+ 仓毫秒级 `pg/` 白名单对齐（`CACHE_ONLY` / `FETCH_MISSING`）；<br/>2. **`rule-normalizer/v2` 与 `clean/` 去 `/pg` 扁平化**：注释感知 `uService` 转换、精确 `line_map` 溯源与 R0 分层排除；<br/>3. **Stage C+ 全池收敛与自封闭发布**：R4 双通道基座收割、R2 投票定标、R3 7 级仲裁、纯 Go `protocompile` R7 自愈与 R8 根因隔离，驱动阶段 ④ 拓扑层序单仓发布；<br/>4. **纯只读契约库**：全注释参考文档（`@deprecated/@owner/@error_code`、Enum 字典、黄金 JSON 与 Markdown 导出）、Raw/Clean 源码对照与跨包依赖关系图。 | **契约库与构建**<br/>`契约入库流水线` (`/proto-pipeline`)<br/>`契约库` (`/proto-docs`) |
+| **② 现网发现 ➔ 进程与架构对齐**<br/>*(物理与逻辑双态治理)* | 先静态建模再抓包冷启动门槛极高；纸面架构与现网进程、多 PID 实例、多实现契约严重脱节，私自跨层调用与僵尸接口难以发现 | 1. **CSG 双层自动发现（100% 纯 Go）**：`pkg/rpcmon`（`CrosTCP` + `CrosMesh` 128B HELLO）+ `pkg/csgdlink`，隔离跨板 LDC、覆盖纯客户端与 `dophi_mesh://` 进程；<br/>2. **Discovery-First 与 L1 双粒度解耦**：`/discovery` 进程主轴视图、快照去重/脱敏/Diff、`Enroll` 观测纳管（`DISARMED`，不造假模块）与 `PhysicalReconciler` 周期衰减；<br/>3. **统一契约目录与架构收件箱**：三级 `.pb` 撮合（`EXACT`/`HEURISTIC`/`FINGERPRINT`）、五态健康雷达、`1 进程 : N 模块` 认领、`MULTI_IMPL` 拆分与依赖反向合成；<br/>4. **单层平铺架构数字孪生**：无外层包裹框、ELK 110px 正交对齐、四向智能锚点、作用域位置记忆与纯矢量 SVG/PNG 导出。 | **架构与契约对齐**<br/>`契约认领与雷达` (`/proto-catalog`)<br/>`架构元素` (`/architecture`)<br/>`现网发现` (`/discovery`)<br/>`架构拓扑` (`/topology`) |
+| **③ 现网 RPC 采集 ➔ 事务分析**<br/>*(全双工无感观测与脉搏透视)* | 抓包需要改业务代码或重启进程；`dophi_mesh` 走共享内存旁路无 Socket 流量；基础设施日志刷爆录制并淹没业务主干 | 1. **纯 Go 可插拔传输驱动 (`pkg/transport`)**：`builtin-tcp`（全出站透明代理与按需入站钩子，支持 `setcap` 免 sudo 与 `ARMED` 零重启开录）+ `builtin-drt-uprobe`（`debug/elf` `.dynsym` 锚定 `DRT_WriteBulk` + `DRT_ReadNoCheckLen` 全双工采集 `dophi_mesh`）；<br/>2. **ADR-25 全链路降噪**：全局规则 + 服务标记双源合并、`Agent` 源头成对丢弃，事务树先完成耗时算账再折叠（异常破格绝不掩盖根因）；<br/>3. **业务视角事务剖析**：DOTR 因果调用树、多进程 `EGRESS ⇔ INGRESS` 跨跳缝合、微秒级阶段耗时甘特条、交互式 SVG 时序泳道、参数血缘与双栏入参/出参对比。 | **流量核验与回归**<br/>`流量采集` (`/record`)<br/>`事务分析` (`/debug`) |
+| **④ 黄金用例库 ➔ RPC 重放验证**<br/>*(脱机回归与质量门禁)* | 跨微服务回归严重依赖全套下游环境；测试造数失真；流量分区清理后高价值用例流失 | 1. **自包含黄金契约套件**：将高价值调用事务一键固化为完全自包含快照（二进制报文 + 闭包），支持动态掩码脱敏并永久免疫 30 天分区清理；<br/>2. **零外泄因果闭包重放**：`ScopedMock` 局部因果池接管出口请求（**真实下游 0 字节外泄**），自动自愈 `ullSNO`/`aucTraceBuff`/`ullClientSendTime`，支持 `Mesh ➔ tcp://`（`ucProtocol: 4->1`）跨传输归一化与 CSG 三模沙箱（`CLIENT_INJECT`/`PUB_STUB`/`MOCK_SERVER`）；<br/>3. **双层语义 Diff 与 CI 门禁**：协议头状态码 + Protobuf 字段级精准比对，支持 `/api/gates/evaluate`（`X-Contract-CI-Token` + 有界排队锁）流水线强阻断。 | **流量核验与回归**<br/>`防劣化回归` (`/replay`)<br/>`黄金用例库` (`/golden-suites`) |
+| **⑤ 契约开发审计 ➔ MR 流水线**<br/>*(研发期规范守护与变更审计)* | 接口命名混乱、重复结构体泛滥、破坏性变更在合入前无预警；或因阻断策略导致主干契约库同步断链 | 1. **Git MR 四合一自动化门禁 (`/api/webhooks/git-mr`)**：基线+补丁虚拟树（支持增删改名与 Fast-Forward 去重）、静态规则/词库/3s 降级 LLM 检查、`Jaccard >= 0.85` 三护栏 AST 重复探测、含 `BASE_LIB` 传递扩散与权威 `SHARED` 现网影响面的破坏性检查，支持原位评论回写与管理员 `Override` 审计；<br/>2. **非阻断上线破坏性变更审计台 (`BreakingChangeEvent`)**：取消入库与激活阶段硬阻断，让契约库真实反映代码仓现状，同时自动生成 `OPEN -> ACKNOWLEDGED` 审计事件归口规范台集中处置；<br/>3. **全网健康与定向触达**：治理大盘（三维封顶健康分 + 合标卡 + 五态雷达）、`SSEBroker(userID)` 定向推送、站内收件箱与跨机 `code-notifier`/SMTP 通知。 | **开发合规**<br/>`规范与 MR 门禁` (`/proto-governance`)<br/><br/>**全局概览**<br/>`治理大盘` (`/dashboard`) |
 
 ---
 
@@ -39,51 +53,50 @@ flowchart LR
 
 ```mermaid
 flowchart TB
-    subgraph Portal["CodeBench 微前端门户 (:8000 / :5181 · 5 组 13 项工作台)"]
-        UI_Dash["① 全局概览: 治理大盘 (/dashboard 默认落地 · 三维健康指数 + 静态合标卡)"]
-        UI_Arch["② 架构数字孪生: 架构拓扑 (/topology 单层平铺下钻 · 矢量导出) · 架构元素 (/architecture 逻辑/物理双视图 · 多实现契约)"]
-        UI_Proto["③ Proto 契约治理: 接口参考文档 (/proto-docs) · 源码与 Git 仓 (/proto-sources) · MR 门禁与规范 (/proto-governance) · 描述集与依赖 (/schemas)"]
-        UI_Flow["④ 契约核验与回归: 契约采集 (/record) · 事务分析 (/debug) · 防劣化回归 (/replay) · 黄金用例库 (/golden-suites)"]
-        UI_Env["⑤ 环境与治理: Agent 与进程 (/agents · 含下载接入说明) · 模块参数配置 (/admin/settings)"]
+    subgraph Portal["CodeBench 微前端门户 (:8000 / :5181 · 6 组 14 项工作台)"]
+        UI_Dash["① 全局概览: 治理大盘 (/dashboard 默认落地 · 三维健康分 + 合标卡 + 五态雷达)"]
+        UI_Lib["② 契约库与构建: 契约入库流水线 (/proto-pipeline) · 契约库 (/proto-docs)"]
+        UI_Arch["③ 架构与契约对齐: 契约认领与雷达 (/proto-catalog) · 架构元素 (/architecture) · 现网发现 (/discovery) · 架构拓扑 (/topology)"]
+        UI_Flow["④ 流量核验与回归: 流量采集 (/record) · 事务分析 (/debug) · 防劣化回归 (/replay) · 黄金用例库 (/golden-suites)"]
+        UI_Gov["⑤ 开发合规: 规范与 MR 门禁 (/proto-governance · MR 门禁 / 破坏性审计 / 规则 / 词库 / 体检报告)"]
+        UI_Env["⑥ 系统与环境: Agent 与进程 (/agents) · 模块参数配置 (/admin/settings)"]
     end
 
     subgraph ControlPlane["code-contract-server 控制面 (:8091)"]
-        Arch_SSOT["架构基线、物理蓝图与多实现契约中心 (SSOT)"]
-        Agent_Hub["Agent 调度与排他租约管控 (Mutex Lease)"]
-        Decoder["CROS RPC 分帧 + 纯 Go protocompile / dynamicpb"]
-        Proto_Gov["活体参考文档 · Git/MR 四合一门禁 · 静态规范与 AST 查重"]
-        Verify_Eng["实测拓扑还原与架构一致性核验引擎 (ContractResolver)"]
-        Diff_Eng["协议状态码 + Protobuf 字段级双层回归 Diff"]
-        Notify_Hub["SSE 定向推流 · 站内持久通知 · 跨机 code-notifier / SMTP"]
-        CI_Gate["CI/CD 自动化门禁判定 (X-Contract-CI-Token)"]
-        DB[("PostgreSQL 共享库 (30+1 张 contract_* 表 / 按日分区)")]
+        Git_Pipe["共享 Git 缓存四阶段流水线 (Stage A~D + R0~R8 收敛 + 单仓拓扑发布)"]
+        Proto_Gov["活体参考文档 · Git/MR 四合一门禁 · 静态规范/AST 查重 · 破坏性变更审计台"]
+        Disc_Eng["现网发现快照/Diff · 物理观测纳管 · 统一目录五态雷达 · 架构收件箱"]
+        Verify_Eng["架构基线 SSOT · 实测拓扑还原 · ContractResolver · 两阶段归因"]
+        Agent_Hub["Agent 调度与排他租约管控 (Mutex Lease) + 解码/Diff 引擎"]
+        Notify_CI["SSE(userID) · 站内收件箱 · code-notifier/SMTP · CI 门禁 (/api/gates/evaluate)"]
+        DB[("PostgreSQL 共享库 (43 张核心 contract_* 表 + contract_settings / 按日分区)")]
     end
 
-    subgraph DataPlane["业务运行节点 (每机 1 个 code-contract-agent | 零 .pb 依赖)"]
-        Agent_Srv["受控信道服务 (HTTP 下发 + WS 二进制流回传)"]
-        BPF_Mgr["cilium/ebpf 探针生命周期 (预挂待命 ARMED · setcap 免 sudo)"]
-        Mock_Replay["透明出站代理 + ScopedMock 闭包自愈重放"]
-        Self_Heal["启动特权自检与全链路探针自愈引擎"]
+    subgraph DataPlane["业务运行节点 (每机 1 个 code-contract-agent | 零 .pb / 零 DB / 零 CGO)"]
+        Agent_Srv["受控信道服务 (HTTP 下发 + WS 二进制流回传 + 源头噪音丢弃)"]
+        CSG_Disc["纯 Go CSG 双层发现 (csgdlink + rpcmon CrosTCP/CrosMesh) + MockCSGServer"]
+        BPF_Mgr["pkg/transport 双驱动 (builtin-tcp Socket eBPF + builtin-drt-uprobe 全双工 uprobe)"]
+        Mock_Replay["透明出站代理 + ScopedMock 闭包自愈重放 (Mesh➔TCP 归一化)"]
     end
 
     subgraph TargetHost["被测业务进程与内核态"]
-        Hook_Ingress["eBPF 入站旁路复制 (零业务侵入)"]
-        Hook_Egress["eBPF connect4 出站透明代理重定向"]
+        Hook_Ingress["TCP 入站复制 & DRT_ReadNoCheckLen uprobe"]
+        Hook_Egress["TCP connect4 出站重定向 & DRT_WriteBulk uprobe"]
         Proc["目标业务进程 (1..N 个功能模块)"]
         RealDownstream["真实下游微服务 (重放时彻底切断隔离)"]
     end
 
     Portal == "REST API (JWT) / SSE 实时事件流" ==> ControlPlane
     ControlPlane --> DB
-    ControlPlane == "1. 调度元数据 / 重放包 / CI 验证" ==> Agent_Srv
-    Agent_Srv == "2. 原始二进制帧上报 / 实测边回传" ==> ControlPlane
+    ControlPlane == "1. 调度元数据 / 重放包 / 发现指令" ==> Agent_Srv
+    Agent_Srv == "2. 原始二进制帧 / CSG 观测快照回传" ==> ControlPlane
 
     Agent_Srv --> BPF_Mgr
-    Agent_Srv --> Self_Heal
+    Agent_Srv --> CSG_Disc
     BPF_Mgr ==> Hook_Ingress
     BPF_Mgr ==> Hook_Egress
-    Hook_Ingress -. "被动复制入站收发" .-> Proc
-    Proc -- "出站请求" --> Hook_Egress --> Mock_Replay
+    Hook_Ingress -. "被动复制入站/读侧" .-> Proc
+    Proc -- "出站请求 / 写侧" --> Hook_Egress --> Mock_Replay
     Mock_Replay -- "[录制期] 自身豁免透传" --> RealDownstream
     Mock_Replay -. "[重放期] ScopedMock 帧级接管 + 自愈回包 (零外泄)" .-> Proc
 ```
@@ -96,28 +109,28 @@ flowchart TB
 code-contract/
 ├── docs/                # SDD + TDD 规范文档库 (00-prompt ~ 07-references)
 ├── cmd/
-│   ├── server/          # 控制面入口 code-contract-server（微前端托管、契约中心、Diff 引擎）
-│   ├── agent/           # 数据面探针入口 code-contract-agent（零数据库、零.pb、嵌入式 eBPF）
-│   └── seed/            # Demo 拓扑与测试数据重置播种入口
-├── demo/                # 4 进程完整微服务仿真集群与田字格 Tmux 可视化联调演示
+│   ├── server/          # 控制面入口 code-contract-server（微前端托管、四阶段流水线、契约中心、Diff 引擎）
+│   ├── agent/           # 数据面探针入口 code-contract-agent（零数据库、零.pb、零 CGO、嵌入式 eBPF/uprobe）
+│   └── resetdb/         # 本地隔离清库与状态重置工具入口 (make reset-db)
+├── demo/                # 4 进程微服务仿真集群、CSG 服务与田字格 Tmux 可视化联调演示
 ├── internal/
-│   ├── server/          # 控制面内部业务：callgraph/dashboard/decoder/diff/gitclient/hub/linter/notify/protodoc/recorder/security/topology
-│   └── agent/           # 数据面内部服务：eBPF 探针生命周期、CSG 双层发现融合与三模仿真控制器、出站代理与 ScopedMock 接管
+│   ├── server/          # 控制面核心引擎：callgraph/dashboard/decoder/diff/discovery/gitclient/hub/linter/noise/notify/protodoc/recorder/security/topology
+│   └── agent/           # 数据面内部服务：eBPF/uprobe 信道服务、CSG 双层发现融合与三模仿真控制器、出站代理与 ScopedMock
 ├── pkg/
 │   ├── crosrpc/         # CROS RPC 协议解析与分帧库（主控、Agent 与 rpcmon 共享，支持 ucProtocol 0..7）
-│   ├── agentproto/      # 主从 HTTP DTO 与 56B 二进制信封帧契约（含 TransportProto、TransportDrivers 与 CSG 拓扑 DTO）
+│   ├── agentproto/      # 主从 HTTP DTO、56B 二进制信封帧契约及纯标准库 NoiseMatcher
 │   ├── csgdlink/        # CSG/dlink 控制面 32B 帧栈、只读发现与流式 Observer（100% 纯 Go 标准库）
 │   ├── rpcmon/          # RPCMonitorService 统一监控模型、纯 Go CrosTCP & CrosMesh（128B HELLO + 40B 数据头 + 手写 Wire）
 │   ├── csgmock/         # 内存态 MockCSGServer 控制面沙箱（实现 rpcmon.Provider，支持 Mesh->TCP 改写与五出口清理）
-│   ├── ebpf/            # cilium/ebpf 内核探针（含 Socket eBPF 与 uprobe/DRT_WriteBulk）、Socket 预热与三态出站代理
+│   ├── ebpf/            # cilium/ebpf 内核探针（Socket eBPF + DRT_WriteBulk / DRT_ReadNoCheckLen uprobe）、预热与三态出站代理
 │   ├── transport/       # Agent 纯 Go 可插拔传输驱动抽象 (Driver/Registry)、builtin-tcp 与 builtin-drt-uprobe (ADR-22/23)
 │   ├── replay/          # 零 .pb 二进制 ScopedMock 匹配、ucProtocol (4->1) 发送期归一化与 ullSNO 自愈引擎
 │   └── version/         # 规范化语义版本号与构建指纹
 ├── config/              # 配置加载与模块级元数据常量 (ModuleKey="contract", TablePrefix="contract_")
-├── models/              # GORM 数据模型（强制 contract_ 物理表前缀隔离）
-├── handlers/            # HTTP 控制器、RBAC 权限守卫、审计 Diff、CI 门禁与物理隔离单元测试
-├── frontend/            # React 18 + Vite 5 + Module Federation 微前端工程
-├── scripts/             # 自动化构建与辅助脚本
+├── models/              # GORM 数据模型（43 张核心 contract_* 表 + contract_settings 物理前缀隔离）
+├── handlers/            # HTTP 控制器、RBAC 权限守卫、审计 Diff、CI/MR 门禁与物理隔离单元测试
+├── frontend/            # React 18 + Vite 5 + Module Federation 微前端工程（6 组 14 项工作台）
+├── scripts/             # 自动化构建、多仓沙箱演练与辅助脚本
 ├── Makefile             # 标准构建、测试与代码检查入口
 ├── AGENTS.md            # AI Agent 协作准则与架构红线
 └── README.md            # 项目概览与 SDD+TDD 路线图
@@ -129,52 +142,29 @@ code-contract/
 
 ## 4. SDD + TDD 研发路线图 (Lifecycle Checklist)
 
-- [x] **阶段一：特性清单与边界明确** (`docs/01-features/`)
-  - [x] [`01-feature-matrix.md`](./docs/01-features/01-feature-matrix.md)（活体契约愿景、三层治理矩阵 `F-01~F-35`、验收场景 `SC-01~SC-18` 与 `Non-Goals`）
+- [x] **阶段一：理念、特性清单与边界明确** (`docs/01-features/`)
+  - [x] [`01-feature-matrix.md`](./docs/01-features/01-feature-matrix.md)（活体契约愿景、五大能力主线、特性矩阵 `F-01~F-54`、验收场景 `SC-01~SC-33` 与 `Non-Goals`）
+  - [x] [`02-living-contract-philosophy.md`](./docs/01-features/02-living-contract-philosophy.md)（系统理念专文：《活体契约治理：以运行态为活水，构建微服务的五线自愈防线》）
 - [x] **阶段二：系统架构与模型设计** (`docs/02-design/`)
-  - [x] [`01-system-architecture.md`](./docs/02-design/01-system-architecture.md)（主从协同、双模运行架构、微前端接入规范、CSG 发现与 `pkg/transport` 跨传输闭环）
-  - [x] [`02-data-plane-and-cros-rpc-engine.md`](./docs/02-design/02-data-plane-and-cros-rpc-engine.md)（CROS RPC 协议栈、纯 Go `pkg/transport` 双驱动 `builtin-tcp`/`builtin-drt-uprobe`、纯 Go `CrosTCP`/`CrosMesh` 监控与二进制 Mock 引擎）
-  - [x] [`03-architecture-elements-and-topology.md`](./docs/02-design/03-architecture-elements-and-topology.md)（三级架构模型 SSOT、多实现服务契约、CSG 三态对账蓝图导入与拓扑一致性核验）
-  - [x] [`04-control-plane-and-web-console.md`](./docs/02-design/04-control-plane-and-web-console.md)（控制面调度、Protobuf 编解码与参考文档中心、静态规范与 MR 门禁）
-  - [x] [`05-database-schema.md`](./docs/02-design/05-database-schema.md)（30 张核心 `contract_*` 业务表 + `contract_settings` 配置表、黄金套件与按日范围分区设计）
+  - [x] [`01-system-architecture.md`](./docs/02-design/01-system-architecture.md)（主从协同、双模运行架构、五线映射、Discovery-First 与共享 Git 四阶段流水线）
+  - [x] [`02-data-plane-and-cros-rpc-engine.md`](./docs/02-design/02-data-plane-and-cros-rpc-engine.md)（CROS RPC 协议栈、纯 Go `pkg/transport` 双驱动与 `dophi_mesh` 全双工 uprobe、Agent 源头降噪、纯 Go `CrosTCP`/`CrosMesh` 监控与二进制 Mock 引擎）
+  - [x] [`03-architecture-elements-and-topology.md`](./docs/02-design/03-architecture-elements-and-topology.md)（三级架构模型 SSOT、多实现服务契约、L0/L1/L2 双态对齐、统一目录五态雷达、架构收件箱与单层平铺拓扑核验）
+  - [x] [`04-control-plane-and-web-console.md`](./docs/02-design/04-control-plane-and-web-console.md)（控制面调度、6 组 14 项控制台 IA、四阶段可视化流水线、只读契约库、静态规范/MR 门禁与非阻断破坏性审计台）
+  - [x] [`05-database-schema.md`](./docs/02-design/05-database-schema.md)（43 张核心 `contract_*` 业务表 + `contract_settings` 配置表、黄金套件与按日范围分区设计）
   - [x] [`06-agent-observability-and-self-healing-design.md`](./docs/02-design/06-agent-observability-and-self-healing-design.md)（Agent 探针特权感知、体检诊断与全链路闭环自愈设计）
 - [x] **阶段三：接口契约与 TDD 任务分解** (`docs/03-api/`, `docs/04-tasks/`)
-  - [x] [`01-http-api-contract.md`](./docs/03-api/01-http-api-contract.md)（REST/SSE 契约、CI/MR 门禁鉴权、主从 HTTP/WS 信道协议与 RBAC 权限矩阵）
-  - [x] [`01-roadmap.md`](./docs/04-tasks/01-roadmap.md)（Milestone 1~29 DAG 拓扑、特性矩阵覆盖与全局质量门禁）
-  - [x] **M1~M29 作战卡全量交付 (100% Completed)**：
-    - [x] [`02-m1-crosrpc-and-domain-models.md`](./docs/04-tasks/02-m1-crosrpc-and-domain-models.md)（CROS RPC 分帧与数据模型）
-    - [x] [`03-m2-arch-proto-and-agent-control.md`](./docs/04-tasks/03-m2-arch-proto-and-agent-control.md)（架构契约与 Agent 调度信道）
-    - [x] [`04-m3-agent-dataplane-ebpf-and-replay.md`](./docs/04-tasks/04-m3-agent-dataplane-ebpf-and-replay.md)（eBPF 数据面与脱机重放注入）
-    - [x] [`05-m4-recording-topology-and-diff-engine.md`](./docs/04-tasks/05-m4-recording-topology-and-diff-engine.md)（实测拓扑还原与双层 Diff）
-    - [x] [`06-m5-microfrontend-and-e2e-delivery.md`](./docs/04-tasks/06-m5-microfrontend-and-e2e-delivery.md)（微前端嵌入与单二进制交付）
-    - [x] [`07-m6-hierarchical-topology-canvas.md`](./docs/04-tasks/07-m6-hierarchical-topology-canvas.md)（分层复合拓扑与一致性画布）
-    - [x] [`08-m7-proto-schema-deepening-and-nested-contract-workbench.md`](./docs/04-tasks/08-m7-proto-schema-deepening-and-nested-contract-workbench.md)（契约资产化与嵌套字典树）
-    - [x] [`09-m8-console-ia-restructuring-and-debug-workflow.md`](./docs/04-tasks/09-m8-console-ia-restructuring-and-debug-workflow.md)（控制台信息架构与调试流）
-    - [x] [`10-m9-recording-drawer-and-process-tree-selection.md`](./docs/04-tasks/10-m9-recording-drawer-and-process-tree-selection.md)（协同录制抽屉与进程树选择）
-    - [x] [`11-m10-arch-process-blueprint-and-premount-workflow.md`](./docs/04-tasks/11-m10-arch-process-blueprint-and-premount-workflow.md)（架构物理进程蓝图与 eBPF 自动预挂）
-    - [x] [`12-m11-enhanced-proto-schema-asset-management.md`](./docs/04-tasks/12-m11-enhanced-proto-schema-asset-management.md)（多描述集资产台账与跨集依赖）
-    - [x] [`13-m12-bidirectional-capture-and-agent-recording-ux.md`](./docs/04-tasks/13-m12-bidirectional-capture-and-agent-recording-ux.md)（单进程开箱双录与体验闭环）
-    - [x] [`14-m13-packet-causality-call-tree-and-sequence-workbench.md`](./docs/04-tasks/14-m13-packet-causality-call-tree-and-sequence-workbench.md)（报文因果树、时序泳道与事务闭包）
-    - [x] [`15-m14-governance-dashboard-and-ia-restructuring.md`](./docs/04-tasks/15-m14-governance-dashboard-and-ia-restructuring.md)（平台级治理大盘与 IA 升维）
-    - [x] [`16-m15-golden-contract-suites-and-curation-workbench.md`](./docs/04-tasks/16-m15-golden-contract-suites-and-curation-workbench.md)（黄金契约套件与事务固化工作台）
-    - [x] [`17-m16-design-time-breaking-change-radar.md`](./docs/04-tasks/17-m16-design-time-breaking-change-radar.md)（设计态破坏性变更阻断雷达）
-    - [x] [`18-m17-ci-cd-quality-gate-and-automated-enforcement.md`](./docs/04-tasks/18-m17-ci-cd-quality-gate-and-automated-enforcement.md)（CI/CD 自动化强阻断门禁与凭据报告）
-    - [x] [`19-m18-business-centric-packet-inspector-redesign.md`](./docs/04-tasks/19-m18-business-centric-packet-inspector-redesign.md)（面向业务视角的双模报文透视抽屉）
-    - [x] [`20-m19-scalable-topology-focus-and-layout-persistence.md`](./docs/04-tasks/20-m19-scalable-topology-focus-and-layout-persistence.md)（大规模拓扑下钻聚焦与双层混合布局持久化）
-    - [x] [`21-m20-multi-implementation-service-contract.md`](./docs/04-tasks/21-m20-multi-implementation-service-contract.md)（多实现服务契约建模、实测定位与重放隔离）
-    - [x] [`22-m21-topology-single-layer-drilldown-and-layout-ux.md`](./docs/04-tasks/22-m21-topology-single-layer-drilldown-and-layout-ux.md)（架构拓扑单层平铺逐级下钻与 ELK 布局校准）
-    - [x] [`23-m22-protocompile-layering-and-dependency-graph.md`](./docs/04-tasks/23-m22-protocompile-layering-and-dependency-graph.md)（纯 Go `protocompile` 底座、分层逆向守卫与矢量导出）
-    - [x] [`24-m23-living-proto-docs-and-readonly-sources.md`](./docs/04-tasks/24-m23-living-proto-docs-and-readonly-sources.md)（活体接口参考文档中心与轻量只读源码视图）
-    - [x] [`25-m24-static-lint-vocabulary-and-duplicate-ast.md`](./docs/04-tasks/25-m24-static-lint-vocabulary-and-duplicate-ast.md)（安全底座、静态规范引擎、原生词库与 AST 查重）
-    - [x] [`26-m25-git-sync-and-monorepo-bundles.md`](./docs/04-tasks/26-m25-git-sync-and-monorepo-bundles.md)（Git 无状态同步与 Monorepo `1:N` Compilation Bundles）
-    - [x] [`27-m26-mr-gates-notifications-and-compliance-dashboard.md`](./docs/04-tasks/27-m26-mr-gates-notifications-and-compliance-dashboard.md)（MR 四合一门禁、定向通知中心与静态合标大盘）
-    - [x] [`28-m27-proto-ia-unbundling-and-four-workbenches.md`](./docs/04-tasks/28-m27-proto-ia-unbundling-and-four-workbenches.md)（Proto 契约 5 组 13 项菜单与四工作台正交拆分）
-    - [x] [`29-m28-csg-service-discovery-and-multi-mode-simulation.md`](./docs/04-tasks/29-m28-csg-service-discovery-and-multi-mode-simulation.md)（CSG 双层自动发现、纯 Go `CrosTCP`/`CrosMesh` 监控、蓝图一键导入与三模仿真闭环）
-    - [x] [`30-m29-pluggable-transport-and-mesh-uprobe-capture.md`](./docs/04-tasks/30-m29-pluggable-transport-and-mesh-uprobe-capture.md)（纯 Go 可插拔传输驱动 `pkg/transport`、`builtin-drt-uprobe` 采集与 `dophi_mesh ➔ tcp://` 跨传输重放闭环）
-- [x] **阶段四：工程实施、架构决策与运维验证** (`docs/05-adr/`, `docs/06-ops/`)
-  - [x] [`docs/05-adr/`](./docs/05-adr/)（ADR-01 ~ ADR-23 架构决策全景记录，含大规模拓扑、多实现契约、单层下钻、Proto 全生命周期、IA 拆解、`code-contract` 更名、CSG 双层发现/三模仿真及纯 Go `dophi_mesh` uprobe 采集➔TCP 重放）
+  - [x] [`01-http-api-contract.md`](./docs/03-api/01-http-api-contract.md)（REST/SSE 契约、发现/纳管/四阶段流水线/降噪/破坏性审计、CI/MR 门禁鉴权、主从 HTTP/WS 信道协议与 RBAC 权限矩阵）
+  - [x] [`01-roadmap.md`](./docs/04-tasks/01-roadmap.md)（Milestone 1~45 DAG 拓扑、特性覆盖矩阵与全局质量门禁）
+  - [x] **M1~M45 作战卡全量交付 (100% Completed)**：
+    - **M1~M14 · 协议底座、架构孪生、双向双录、因果树与治理大盘**：[`M1`](./docs/04-tasks/02-m1-crosrpc-and-domain-models.md) · [`M2`](./docs/04-tasks/03-m2-arch-proto-and-agent-control.md) · [`M3`](./docs/04-tasks/04-m3-agent-dataplane-ebpf-and-replay.md) · [`M4`](./docs/04-tasks/05-m4-recording-topology-and-diff-engine.md) · [`M5`](./docs/04-tasks/06-m5-microfrontend-and-e2e-delivery.md) · [`M6`](./docs/04-tasks/07-m6-hierarchical-topology-canvas.md) · [`M7`](./docs/04-tasks/08-m7-proto-schema-deepening-and-nested-contract-workbench.md) · [`M8`](./docs/04-tasks/09-m8-console-ia-restructuring-and-debug-workflow.md) · [`M9`](./docs/04-tasks/10-m9-recording-drawer-and-process-tree-selection.md) · [`M10`](./docs/04-tasks/11-m10-arch-process-blueprint-and-premount-workflow.md) · [`M11`](./docs/04-tasks/12-m11-enhanced-proto-schema-asset-management.md) · [`M12`](./docs/04-tasks/13-m12-bidirectional-capture-and-agent-recording-ux.md) · [`M13`](./docs/04-tasks/14-m13-packet-causality-call-tree-and-sequence-workbench.md) · [`M14`](./docs/04-tasks/15-m14-governance-dashboard-and-ia-restructuring.md)
+    - **M15~M27 · 黄金套件、MR 门禁、单层拓扑、多实现契约与 Proto 活体文档**：[`M15`](./docs/04-tasks/16-m15-golden-contract-suites-and-curation-workbench.md) · [`M16`](./docs/04-tasks/17-m16-design-time-breaking-change-radar.md) · [`M17`](./docs/04-tasks/18-m17-ci-cd-quality-gate-and-automated-enforcement.md) · [`M18`](./docs/04-tasks/19-m18-business-centric-packet-inspector-redesign.md) · [`M19`](./docs/04-tasks/20-m19-scalable-topology-focus-and-layout-persistence.md) · [`M20`](./docs/04-tasks/21-m20-multi-implementation-service-contract.md) · [`M21`](./docs/04-tasks/22-m21-topology-single-layer-drilldown-and-layout-ux.md) · [`M22`](./docs/04-tasks/23-m22-protocompile-layering-and-dependency-graph.md) · [`M23`](./docs/04-tasks/24-m23-living-proto-docs-and-readonly-sources.md) · [`M24`](./docs/04-tasks/25-m24-static-lint-vocabulary-and-duplicate-ast.md) · [`M25`](./docs/04-tasks/26-m25-git-sync-and-monorepo-bundles.md) · [`M26`](./docs/04-tasks/27-m26-mr-gates-notifications-and-compliance-dashboard.md) · [`M27`](./docs/04-tasks/28-m27-proto-ia-unbundling-and-four-workbenches.md)
+    - **M28~M32 · CSG 自动发现、纯 Go Mesh 传输与 Discovery-First 架构对齐**：[`M28`](./docs/04-tasks/29-m28-csg-service-discovery-and-multi-mode-simulation.md) · [`M29`](./docs/04-tasks/30-m29-pluggable-transport-and-mesh-uprobe-capture.md) · [`M30a`](./docs/04-tasks/31-m30a-discovery-workbench-and-snapshot-diff.md) · [`M30b`](./docs/04-tasks/32-m30b-physical-logical-decoupling-and-migration.md) · [`M31`](./docs/04-tasks/33-m31-quick-record-two-stage-attribution-and-catalog-radar.md) · [`M32`](./docs/04-tasks/34-m32-architecture-inbox-dependency-synthesis-and-mr-impact.md)
+    - **M33~M45 · 500+ 平台仓共享缓存、`uService` 全池收敛与四阶段流水线闭环**：[`M33`](./docs/04-tasks/35-m33-shared-git-cache-foundation.md) · [`M34`](./docs/04-tasks/36-m34-platform-repos-pg-collect-and-normalizer.md) · [`M35`](./docs/04-tasks/37-m35-analyze-compile-clean-tree-and-dual-view.md) · [`M36`](./docs/04-tasks/38-m36-conflict-arbitration-blast-radius-and-memfs-retirement.md) · [`M37`](./docs/04-tasks/39-m37-ssot-and-bulk-sync-engine.md) · [`M38`](./docs/04-tasks/40-m38-export-dir-governance-and-stage-b-normalizer.md) · [`M39`](./docs/04-tasks/41-m39-dual-subtab-ia-and-governance-ledger.md) · [`M40`](./docs/04-tasks/42-m40-uservice-normalizer-v2-and-pg-flattening.md) · [`M41`](./docs/04-tasks/43-m41-shared-base-harvest-and-pool-stage-c-plus.md) · [`M42`](./docs/04-tasks/44-m42-protocompile-r7-r8-workspace-and-console-closure.md) · [`M43`](./docs/04-tasks/45-m43-workspace-topology-publish-and-pipeline-closure.md) · [`M44`](./docs/04-tasks/46-m44-proto-pipeline-four-stage-workbench.md) · [`M45`](./docs/04-tasks/47-m45-four-menu-ia-consumer-consolidation-and-e2e.md)
+- [x] **阶段四：工程实施、架构决策、参考基线与运维验证** (`docs/05-adr/`, `docs/06-ops/`, `docs/07-references/`)
+  - [x] [`docs/05-adr/`](./docs/05-adr/)（`ADR-01` ~ `ADR-30` 架构决策全景记录）
   - [x] [`01-verification-and-deployment-guide.md`](./docs/06-ops/01-verification-and-deployment-guide.md)（联调测试与生产部署手册）
   - [x] [`02-e2e-browser-test-and-ux-review.md`](./docs/06-ops/02-e2e-browser-test-and-ux-review.md)（E2E 黑盒走查与交互走查记录）
+  - [x] [`docs/07-references/`](./docs/07-references/)（[`01-cros-rpc-protocol-spec.md`](./docs/07-references/01-cros-rpc-protocol-spec.md) & [`02-drt-uprobe-abi-reference.md`](./docs/07-references/02-drt-uprobe-abi-reference.md)）
 
 ---
 
@@ -205,6 +195,21 @@ cd demo && make tmux-demo
 ---
 
 ## 6. 🏷️ 版本历史 (Release History)
+
+### v0.5.0 (2026-11-28)
+* **🧭 按五大核心主线重塑信息架构与工作台体验 (M43~M45 + ADR-30)**：
+  - 将控制台菜单重构为 **6 组 14 项**（`全局概览`、`契约库与构建`、`架构与契约对齐`、`流量核验与回归`、`开发合规`、`系统与环境`），全面对齐「Git 仓 ➔ 契约库」、「现网发现 ➔ 架构对齐」、「现网采集 ➔ 事务分析」、「黄金用例 ➔ 回归重放」与「开发规范与 MR 门禁」五大能力主线；
+  - 新增系统理念专文 [《活体契约治理：以运行态为活水，构建微服务的五线自愈防线》](./docs/01-features/02-living-contract-philosophy.md)。
+* **🏭 500+ 平台仓共享 Git 缓存、`uService` 清洗收敛与完全自封闭四阶段流水线 (M33~M45 · ADR-26~29)**：
+  - 收口 `code-bench` `repositories` 为平台唯一真值源，基于 `code-common/backend/gitsync` 两层锁（`RWMutex + flock`）与无工作树直读下线 `go-git memfs` 与外部独立建仓；
+  - 落地 `rule-normalizer/v2`（`uService` 注释感知转换、`clean/` 去 `/pg` 扁平化、精确 `line_map` 溯源）、Stage C+ 全池协调（R0~R4 基座收割、R2 投票定标、R3 7 级仲裁、纯 Go `protocompile` R7 自愈 & R8 根因隔离）与阶段 ④ 拓扑层序单仓编译发布引擎（`/proto-pipeline`）；
+  - 下线历史外部 `.pb` 上传与在线 `.proto` 文本直编入口，确立纯只读契约库 `/proto-docs`（全注释双视图目录树、clean/ 懒加载源码对比、跨包依赖图全屏自适应与 SVG/PNG 导出）。
+* **🔍 以「现网发现」为中心的物理/逻辑双态解耦与全链路降噪 (M30a~M32 · ADR-24 / ADR-25)**：
+  - 上线 `/discovery` 进程主轴发现工作台、持久化快照与双模 Diff、L1 观测纳管（`Enroll` `DISARMED`，不造假模块）、`PhysicalReconciler`、一键直录 Saga（`target_pids[]`）、两阶段归因、统一契约目录（`/proto-catalog` 五态雷达）与架构收件箱（`1:N` 认领、`MULTI_IMPL` 拆分、依赖反向合成与 MR 权威影响面）；
+  - 落地 `ADR-25` 双源噪音配置、Agent 源头零 `.pb` 成对丢弃（`DROP_AT_AGENT`）及事务树“先算账后折叠 + 异常破格”降噪。
+* **⚡ `dophi_mesh` 全双工 uprobe 采集与非阻断破坏性变更审计归口**：
+  - 在 `DRT_WriteBulk` 基础上新增 `DRT_ReadNoCheckLen` uprobe/uretprobe，实现 `dophi_mesh` 单进程全双工零侵入捕获（`docs/07-references/02-drt-uprobe-abi-reference.md`）；
+  - 取消契约入库与激活阶段的破坏性变更硬阻断，新增 `contract_breaking_change_events`（43+1 表）并在 `/proto-governance` 新增「上线破坏性变更审计」页签实现 `OPEN -> ACKNOWLEDGED` 合规闭环。
 
 ### v0.4.0 (2026-11-23)
 * **🧭 CSG 现网双层自动发现、纯 Go `CrosMesh` 监控与三模渐进仿真闭环 (M28 · ADR-21 v2.2.0)**：

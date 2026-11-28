@@ -1,6 +1,7 @@
 # 架构与活体契约治理 (`code-contract`) 文档知识库 (Docs Hub)
 
-> **定位升级**：本项目已从纯技术视角的“业务流量录制工具”战略升维为**「基于真实流量的活体契约、架构一致性与防劣化自愈平台」**。录制与重放作为底层零侵入数据面手段，服务于**接口资产治理、架构防漂移雷达、无依赖自愈防劣化**三大核心业务价值。
+> **定位升级**：本项目已从纯技术视角的“业务流量录制工具”战略升维为**「基于真实流量的活体契约、架构一致性与防劣化自愈平台」**，围绕**「Git 仓 ➔ 契约库」、「现网发现 ➔ 架构对齐」、「现网采集 ➔ 事务分析」、「黄金用例 ➔ 回归重放」与「开发审计 ➔ MR 门禁」**五大能力主线构建完整闭环。  
+> **系统理念专文**：[《活体契约治理：以运行态为活水，构建微服务的五线自愈防线》](./01-features/02-living-contract-philosophy.md)
 
 本项目严格采用 **SDD (Spec-Driven Development，规范驱动开发) + TDD (Test-Driven Development，测试驱动开发)** 模式，所有提示词资产、需求边界、系统架构、数据表模型、API 契约、TDD 任务拆解与运维验证手册均在此目录中进行统一版本化管理。
 
@@ -16,19 +17,20 @@ docs/
 │   ├── 03-api-and-tasks-prompt.md                 # 阶段三：API 契约冻结与 TDD Milestone 任务拆解提示词
 │   ├── 04-tdd-implementation-prompt.md            # 阶段四：TDD 红-绿-重构编码实施与全链路交付验证提示词
 │   └── 05-e2e-browser-test-and-ux-review-goal-prompt.md # 阶段四/验收：微前端全链路端到端黑盒测试与产品交互体验走查 Goal 提示词
-├── 01-features/     # 特性与需求边界：特性清单矩阵 (Feature Matrix)、P0~P2 优先级与 Non-Goals
-│   └── 01-feature-matrix.md                       # 阶段一：需求范围、核心特性矩阵 (F-01~F-39 含子特性) 与验收场景 (SC-01~SC-22)
+├── 01-features/     # 特性与需求边界：特性清单矩阵 (Feature Matrix)、系统理念文章、P0~P2 优先级与 Non-Goals
+│   ├── 01-feature-matrix.md                       # 阶段一：需求范围、五大能力主线、核心特性矩阵 (F-01~F-54) 与验收场景 (SC-01~SC-33) (v2.30.0)
+│   └── 02-living-contract-philosophy.md           # 系统理念：《活体契约治理：以运行态为活水，构建微服务的五线自愈防线》
 ├── 02-design/       # 系统技术架构 (SDD)：双子系统边界、数据面引擎、业务拓扑与数据模型
-│   ├── 01-system-architecture.md                  # 【总览篇】系统总体架构、双模拓扑、纳管/布防分离与可见性隔离、主从信道与全链路时序 (v1.12.0)
-│   ├── 02-data-plane-and-cros-rpc-engine.md       # 【数据面篇】CROS RPC 协议栈、Agent eBPF 采集、纯 Go 可插拔传输驱动 (`pkg/transport` / `builtin-drt-uprobe` / `target_pids[]`)、自愈重放与 CSG 底座 (v1.9.0)
-│   ├── 03-architecture-elements-and-topology.md   # 【业务篇】架构元素建模 (SSOT)、双态服务身份、L1 双粒度放置/依赖、分层身份指纹、PhysicalReconciler、两阶段归因、统一目录五态雷达与架构收件箱 (v1.11.0)
-│   ├── 04-control-plane-and-web-console.md        # 【管理面篇】Server 控制面、5 组 14 项菜单、`/discovery` 现网发现工作台、直录 Saga、假模块迁移、架构收件箱与 RBAC 审计 (v1.15.0)
-│   ├── 05-database-schema.md                      # 【数据模型篇】36 张核心 contract_* 业务表 + contract_settings 物理表 GORM 字典（含 ADR-24 新增 6 表）、分区并发索引与迁移顺序 (v1.11.0)
+│   ├── 01-system-architecture.md                  # 【总览篇】系统总体架构、6 组 14 项双模拓扑、五线映射、Discovery-First 与共享 Git 四阶段流水线 (v1.13.0)
+│   ├── 02-data-plane-and-cros-rpc-engine.md       # 【数据面篇】CROS RPC 协议栈、Agent eBPF 采集、纯 Go pkg/transport (DRT_WriteBulk + DRT_ReadNoCheckLen 全双工)、源头降噪与 CSG 底座 (v1.10.0)
+│   ├── 03-architecture-elements-and-topology.md   # 【业务篇】架构元素建模 (SSOT)、L0/L1/L2 双态对齐、统一目录 (/proto-catalog) 五态雷达、架构收件箱与单层平铺拓扑 (v1.12.0)
+│   ├── 04-control-plane-and-web-console.md        # 【管理面篇】Server 控制面、6 组 14 项主线菜单、四阶段流水线、只读契约库、ADR-25 降噪与非阻断破坏性审计台 (v1.16.0)
+│   ├── 05-database-schema.md                      # 【数据模型篇】43 张核心 contract_* 业务表 + contract_settings 物理表 GORM 字典、分区并发索引与迁移顺序 (v1.12.0)
 │   └── 06-agent-observability-and-self-healing-design.md # 【运维可观测与自愈篇】Agent 探针特权感知、体检诊断与全链路闭环自愈设计
 ├── 03-api/          # 接口与数据契约：RESTful / SSE API 签名、主从信道契约、RBAC 权限与审计规范
-│   └── 01-http-api-contract.md                    # 【API 契约】控制面 REST/SSE 字典（含 ADR-24 现网发现/快照/纳管/直录/目录/收件箱 21 项接口）、主从 HTTP/WS (`target_pids[]`, `0x01~0x08`) 与 RBAC 守卫 (v1.11.0)
-├── 04-tasks/        # TDD 实施规划与验收：Milestone 1~32 依赖拓扑、任务作战卡与自动化验收标准 (AC)
-│   ├── 01-roadmap.md                              # 【工程路线图】模板清理策略、M1~M32 DAG 拓扑、F-01~F-39 / SC-01~SC-22 覆盖矩阵与安全质量门禁 (v1.20.0)
+│   └── 01-http-api-contract.md                    # 【API 契约】控制面 REST/SSE 字典（含现网发现、四阶段流水线、降噪与破坏性审计）、主从 HTTP/WS 与已下线路由清单 (v1.12.0)
+├── 04-tasks/        # TDD 实施规划与验收：Milestone 1~45 依赖拓扑、任务作战卡与自动化验收标准 (AC)
+│   ├── 01-roadmap.md                              # 【工程路线图】M1~M45 全部已交付、DAG 拓扑、F-01~F-54 / SC-01~SC-33 覆盖矩阵与安全质量门禁 (v1.21.0)
 │   ├── 02-m1-crosrpc-and-domain-models.md         # 【M1 作战卡】协议栈 (pkg/crosrpc)、信封协议与 13 张表/分区管理器
 │   ├── 03-m2-arch-proto-and-agent-control.md      # 【M2 作战卡】三级架构元素、.pb 动态编解码与公私域 Agent 排他租约管控
 │   ├── 04-m3-agent-dataplane-ebpf-and-replay.md   # 【M3 作战卡】数据面 Agent 信道、cilium/ebpf 采集与零 .pb 二进制自愈重放
@@ -58,9 +60,9 @@ docs/
 │   ├── 28-m27-proto-ia-unbundling-and-four-workbenches.md            # 【M27 作战卡 | ✅ 已交付】Proto 契约控制台 IA 拆解：5 组 13 项菜单、四工作台正交拆分与无损深链兼容 (ADR-19)
 │   ├── 29-m28-csg-service-discovery-and-multi-mode-simulation.md     # 【M28 作战卡 | ✅ 已交付】CSG 双层自动发现 (纯 Go CrosTCP/CrosMesh)、蓝图一键导入、64B 服务名映射与三模仿真闭环 (ADR-21 v2.2.0)
 │   ├── 30-m29-pluggable-transport-and-mesh-uprobe-capture.md         # 【M29 作战卡 | ✅ 已交付】纯 Go 可插拔传输驱动 (pkg/transport)、builtin-drt-uprobe 零侵入 Mesh 采集与 Mesh➔TCP 仿真重放闭环 (ADR-22 v2.0.0 & ADR-23 v1.1.0)
-│   ├── 31-m30a-discovery-workbench-and-snapshot-diff.md              # 【M30a 作战卡 | 📋 待实施】只读破冰：/discovery 进程主轴工作台、实时缓存/离线回退与持久化快照双模 Diff (ADR-24)
-│   ├── 32-m30b-physical-logical-decoupling-and-migration.md          # 【M30b 作战卡 | 📋 待实施】物理/逻辑双态解耦：L1 双粒度 Schema、Enroll/Arm 分离、Reconciler、无模块物理拓扑与假模块迁移 (ADR-24)
-│   ├── 33-m31-quick-record-two-stage-attribution-and-catalog-radar.md # 【M31 作战卡 | 📋 待实施】倍增层：target_pids[]、一键直录 Saga、两阶段归因 Stage 1 与统一契约目录五态雷达 (ADR-24)
+│   ├── 31-m30a-discovery-workbench-and-snapshot-diff.md              # 【M30a 作战卡 | ✅ 已交付】只读破冰：/discovery 进程主轴工作台、实时缓存/离线回退与持久化快照双模 Diff (ADR-24)
+│   ├── 32-m30b-physical-logical-decoupling-and-migration.md          # 【M30b 作战卡 | ✅ 已交付】物理/逻辑双态解耦：L1 双粒度 Schema、Enroll/Arm 分离、Reconciler、无模块物理拓扑与假模块迁移 (ADR-24)
+│   ├── 33-m31-quick-record-two-stage-attribution-and-catalog-radar.md # 【M31 作战卡 | ✅ 已交付】倍增层：target_pids[]、一键直录 Saga、两阶段归因 Stage 1 与统一契约目录五态雷达 (ADR-24)
 │   ├── 34-m32-architecture-inbox-dependency-synthesis-and-mr-impact.md # 【M32 作战卡 | ✅ 已交付】护城河层：架构收件箱 (1:N 拆分/多宿主裁决)、依赖反向审批、归因回补与 MR 权威影响面 (ADR-24)
 │   ├── 35-m33-shared-git-cache-foundation.md                         # 【M33 作战卡 | ✅ 已交付】共享 Git 缓存底座、两层锁与防浅克隆降级 (ADR-26)
 │   ├── 36-m34-platform-repos-pg-collect-and-normalizer.md             # 【M34 作战卡 | ✅ 已交付】平台仓打通、pg 白名单采集与 Stage B 清理层 (ADR-26)
@@ -71,7 +73,7 @@ docs/
 │   ├── 41-m39-dual-subtab-ia-and-governance-ledger.md                 # 【M39 作战卡 | ✅ 已交付】双子标签 IA、树懒加载与 500+ 仓前端治理台账 (ADR-26 r4 / ADR-27)
 │   ├── 42-m40-uservice-normalizer-v2-and-pg-flattening.md             # 【M40 作战卡 | ✅ 已交付】Stage B rule-normalizer/v2、uService 转换与 clean 去 /pg 扁平化 (ADR-28)
 │   ├── 43-m41-shared-base-harvest-and-pool-stage-c-plus.md            # 【M41 作战卡 | ✅ 已交付】R4 共享基座入池与全池 Stage C+ 协调 R1/R2/R3 (ADR-28)
-│   └── 44-m42-protocompile-r7-r8-workspace-and-console-closure.md     # 【M42 作战卡 | ✅ 已交付】纯 Go protocompile R7 自愈、R8 隔离、workspace 导出与治理台闭环 (ADR-28)
+│   ├── 44-m42-protocompile-r7-r8-workspace-and-console-closure.md     # 【M42 作战卡 | ✅ 已交付】纯 Go protocompile R7 自愈、R8 隔离、workspace 导出与治理台闭环 (ADR-28)
 │   ├── 45-m43-workspace-topology-publish-and-pipeline-closure.md      # 【M43 作战卡 | ✅ 已交付】阶段 ④ 单仓拓扑发布引擎、同源解析与一键流水线闭环 (ADR-29 r4)
 │   ├── 46-m44-proto-pipeline-four-stage-workbench.md                  # 【M44 作战卡 | ✅ 已交付】/proto-pipeline 四阶段可视化流水线工作台与完全自封闭改造 (ADR-29 r4)
 │   └── 47-m45-four-menu-ia-consumer-consolidation-and-e2e.md          # 【M45 作战卡 | ✅ 已交付】四菜单 IA 切换、消费端聚合与全量旧深链无损重定向 (ADR-29 r4)
@@ -99,16 +101,19 @@ docs/
 │   ├── 21-csg-aware-agent-service-discovery-and-replay-mock-adr.md     # ADR-21：[已采纳] 基于 @csg-ver 现网实证与纯 Go CrosMeshBackend 的 CSG 服务/依赖自动发现及多模式仿真测试架构 (v2.2.0)
 │   ├── 22-pluggable-transport-driver-and-mesh-capture-adr.md           # ADR-22：[已采纳] Agent 纯 Go 可插拔传输层架构 (pkg/transport) 与 dophi_mesh 采集➔TCP 重放跨传输闭环设计 (v2.0.0)
 │   ├── 23-dophi-mesh-uprobe-bypass-capture-adr.md                      # ADR-23：[已采纳] 基于内核 uprobe 的 dophi_mesh 数据面旁路观测工程实证与纯 Go 采集通道裁决 (v1.1.0)
-│   ├── 24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md # ADR-24：[已定稿待实施] 以「现网发现」为中心的活体契约工作流水线与物理/逻辑双态架构决策 (v1.1.0)
+│   ├── 24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md # ADR-24：[已实施] 以「现网发现」为中心的活体契约工作流水线与物理/逻辑双态架构决策 (v1.1.0)
 │   ├── 25-noise-service-filtering-and-traffic-denoising-adr.md               # ADR-25：[已实施] 低关注/噪音服务全链路降噪治理（双源 SSOT + Agent 源头丢弃 + 事务分析折叠）
 │   ├── 26-shared-git-cache-and-subsystem-proto-tree-adr.md                 # ADR-26：[Implemented / r4] 复用平台代码仓与共享宿主机 Git 缓存，构建「采集 → 清理整顿 → 解析 → 分仓编译」四段式跨仓 Proto 流水线与按子系统组织的只读聚合目录树
 │   ├── 27-proto-export-directory-and-normalization-governance-adr.md       # ADR-27：[Implemented] 500+ 平台仓全量零勾选同步、方案 A 导出后目录治理与 Stage B 清理整顿架构决策
 │   ├── 28-uservice-normalization-pg-flattening-and-compile-closure-adr.md  # ADR-28：[Implemented] 现网 uService 清洗转换、clean 目录去 /pg 扁平化与全池编译收敛架构决策 (R0~R8)
-│   └── 29-proto-contract-pipeline-closure-and-ia-redesign-adr.md           # ADR-29：[Accepted / r4]「Proto 契约治理」四阶段可视化流水线闭环与四菜单信息架构重构决策
+│   ├── 29-proto-contract-pipeline-closure-and-ia-redesign-adr.md           # ADR-29：[Implemented / r4]「Proto 契约治理」四阶段可视化流水线闭环与四菜单信息架构重构决策
+│   └── 30-contract-library-and-three-lines-ia-adr.md                       # ADR-30：[Implemented] 按「两条主线 + 独立开发 MR 合规线」重构契约菜单（6 组 14 项）及四阶段流水线工作台
 ├── 06-ops/          # 交付与验证：双模联调、物理隔离数据库测试与生产环境单二进制部署手册
-│   └── 01-verification-and-deployment-guide.md    # 联调验证、自动化回归测试与生产部署操作指南
+│   ├── 01-verification-and-deployment-guide.md    # 联调验证、自动化回归测试与生产部署操作指南
+│   └── 02-e2e-browser-test-and-ux-review.md       # E2E 浏览器实测走查与产品体验优化报告
 └── 07-references/   # 外部参考与上位契约基准：协议包规范、字节字典与领域标准文档
-    └── 01-cros-rpc-protocol-spec.md               # DOPHI CROS RPC 协议二进制报文格式与字段级规范说明
+    ├── 01-cros-rpc-protocol-spec.md               # DOPHI CROS RPC 协议二进制报文格式与字段级规范说明
+    └── 02-drt-uprobe-abi-reference.md             # DOPRA DRT_ReadLen / DRT_ReadNoCheckLen 读侧 uprobe ABI 实证参考
 ```
 
 ---

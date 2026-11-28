@@ -1,11 +1,11 @@
 # 架构与活体契约治理 (`code-contract`) HTTP / SSE 与主从通信接口契约规范
 
 - **文档编号**：`01-http-api-contract.md`
-- **文档版本**：v1.11.0
-- **更新日期**：2026-11-25
+- **文档版本**：v1.12.0
+- **更新日期**：2026-11-28
 - **归属阶段**：阶段三：接口与数据契约冻结 (`03-api`)
-- **状态**：M1~M29 接口已交付；ADR-24 v1.1.0 (`M30a ~ M32`) 接口契约冻结定稿
-- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.26.0, `F-01`~`F-39`、`SC-01`~`SC-22`)、[`01-system-architecture.md`](../02-design/01-system-architecture.md) (v1.12.0)、[`02-data-plane-and-cros-rpc-engine.md`](../02-design/02-data-plane-and-cros-rpc-engine.md) (v1.9.0)、[`03-architecture-elements-and-topology.md`](../02-design/03-architecture-elements-and-topology.md) (v1.11.0)、[`04-control-plane-and-web-console.md`](../02-design/04-control-plane-and-web-console.md) (v1.15.0)、[`05-database-schema.md`](../02-design/05-database-schema.md) (v1.11.0)、[`09-arch-process-ssot-and-ebpf-premount-standby-adr.md`](../05-adr/09-arch-process-ssot-and-ebpf-premount-standby-adr.md) (ADR-09 v1.1.0)、[`10-enhanced-proto-schema-file-management-adr.md`](../05-adr/10-enhanced-proto-schema-file-management-adr.md) (ADR-10 v1.1.0)、[`11-single-process-bidirectional-capture-and-recording-ux-adr.md`](../05-adr/11-single-process-bidirectional-capture-and-recording-ux-adr.md) (ADR-11 v1.0.0)、[`12-packet-causality-call-tree-and-sequence-ux-adr.md`](../05-adr/12-packet-causality-call-tree-and-sequence-ux-adr.md) (ADR-12 v1.0.0)、[`14-governance-dashboard-golden-suite-and-ci-gate-adr.md`](../05-adr/14-governance-dashboard-golden-suite-and-ci-gate-adr.md) (ADR-14 v1.1.0)、[`15-scalable-topology-focus-and-layout-persistence-adr.md`](../05-adr/15-scalable-topology-focus-and-layout-persistence-adr.md) (ADR-15 v1.3.0)、[`16-multi-implementation-service-contract-adr.md`](../05-adr/16-multi-implementation-service-contract-adr.md) (ADR-16 v2.0.0)、[`17-topology-single-layer-drilldown-and-layout-ux-adr.md`](../05-adr/17-topology-single-layer-drilldown-and-layout-ux-adr.md) (ADR-17 v1.1.0)、[`18-proto-full-lifecycle-and-git-mr-governance-adr.md`](../05-adr/18-proto-full-lifecycle-and-git-mr-governance-adr.md) (ADR-18 v1.3.0)、[`21-csg-aware-agent-service-discovery-and-replay-mock-adr.md`](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (ADR-21 v2.2.0)、[`22-pluggable-transport-driver-and-mesh-capture-adr.md`](../05-adr/22-pluggable-transport-driver-and-mesh-capture-adr.md) (ADR-22 v2.0.0)、[`23-dophi-mesh-uprobe-bypass-capture-adr.md`](../05-adr/23-dophi-mesh-uprobe-bypass-capture-adr.md) (ADR-23 v1.1.0)、[`24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md`](../05-adr/24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md) (ADR-24 v1.1.0)
+- **状态**：M1~M45 接口全量交付 (`✅ 已交付`)；含 `ADR-25` 降噪、非阻断破坏性变更审计与已下线路由汇总
+- **上位基线**：[`01-feature-matrix.md`](../01-features/01-feature-matrix.md) (v2.30.0, `F-01`~`F-54`、`SC-01`~`SC-33`)、[`01-system-architecture.md`](../02-design/01-system-architecture.md) (v1.13.0)、[`02-data-plane-and-cros-rpc-engine.md`](../02-design/02-data-plane-and-cros-rpc-engine.md) (v1.10.0)、[`03-architecture-elements-and-topology.md`](../02-design/03-architecture-elements-and-topology.md) (v1.12.0)、[`04-control-plane-and-web-console.md`](../02-design/04-control-plane-and-web-console.md) (v1.16.0)、[`05-database-schema.md`](../02-design/05-database-schema.md) (v1.12.0)、[`ADR-24`](../05-adr/24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md) ~ [`ADR-30`](../05-adr/30-contract-library-and-three-lines-ia-adr.md)
 
 ### 修订记录
 
@@ -18,7 +18,8 @@
 | v1.8.0 | 2026-11-13 | 依据 `ADR-18 v1.2.0` 与跨机 `code-notifier` / Monorepo 架构检视修订 |
 | v1.9.0 | 2026-11-18 | **依据 [`ADR-21` (`v2.1.0`)](../05-adr/21-csg-aware-agent-service-discovery-and-replay-mock-adr.md) (`M28`) 冻结 CSG 双层自动发现与三模仿真测试接口契约**：1. §1.3 新增 `409 CSG_SERVICE_ALREADY_PUBLISHED` 与 `422 CSG_DATAPLANE_MESH_UNSUPPORTED` 标准错误信封；2. §2.2 `ModuleService` 读写接口新增可选 `proto_service_name` 映射 64B 运行期名至 `.pb`；3. §2.4 升级 `GET /api/agents/:id/discover-processes`、新增 `GET /api/agents/:id/csg/topology`（三态对账）与 `POST /api/agents/:id/csg/import-blueprint`（管理员一键导入蓝图）；4. §2.5/§2.6/§2.8 新增 `csg_snapshots`、`csg_strategy`（`PASSTHROUGH \| CLIENT_INJECT \| PUB_STUB \| MOCK_SERVER`）、`csg_addr` 与 `csg_sandbox_report`；5. §3 冻结 Agent 侧 `GET /agent/v1/csg/topology`、增强 `/processes/discover` / `/handshake` / `/replays/execute` 及 WS `0x08 (EVENT_CSG_OBSERVATION)` |
 | v1.10.0 | 2026-11-19 | **依据 [`ADR-22` (`v2.0.0`)](../05-adr/22-pluggable-transport-driver-and-mesh-capture-adr.md) 与 [`ADR-23` (`v1.1.0`)](../05-adr/23-dophi-mesh-uprobe-bypass-capture-adr.md) (`M29`) 冻结纯 Go 可插拔传输驱动与跨传输重放接口契约**：1. 收窄 §1.3 `422 CSG_DATAPLANE_MESH_UNSUPPORTED` 边界——`MOCK_SERVER` / `PUB_STUB` 正式放行 `dophi_mesh://` 改道 `tcp://` 与发送期 `ucProtocol (4 -> 1)` 归一化（仅 `CLIENT_INJECT` 目标在线纯 Mesh 无 TCP 监听时返 `422`）；2. §2.4/§3 `HandshakeResp` 增补 `transport_drivers: []TransportDriverCapability`（`builtin-tcp`、`builtin-drt-uprobe`）；3. §3 同步 `PUT /agent/v1/monitors/sync`、`POST /agent/v1/monitors/:sessionId/stop`、`/agent/v1/purge` 与 WS 56B `EnvelopeHeader`（偏移 `26` `TransportProto = 1 \| 4`）契约 |
-| **v1.11.0** | **2026-11-25** | **依据 [`ADR-24` (`v1.1.0`)](../05-adr/24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md) (`M30a ~ M32`) 冻结以「现网发现」为中心的活体契约流水线全量 API 契约**：1. §1.2 新增 `ScopeEnrollGuard` 与 `ModuleOwnerOrAdminGuard` 守卫；§1.3 冻结 `422 IDENTITY_AMBIGUOUS`、`422 LOW_CONFIDENCE_CONFIRM_REQUIRED`、`422 ENROLL_BATCH_LIMIT`、`422 CLAIM_PLACEMENT_MISMATCH`、`409 DEPENDENCY_REFERENCED`、`409 LEASE_CONFLICT` 六项错误码；2. §2.4 收紧 `probes/arm-all` (`include_discovered=false`) 并标注 `import-blueprint` 委托弃用（M30b 委托 `Enroll`，M31 删除）；3. 新增 **§2.10** 覆盖 M30a~M32 全部 21 项接口（`discovery/{live,snapshots,enroll,physical,quick-record,simulation-plan}`、`catalog/{services,correlate,confirm-proto}`、`arch/{inbox,services/claim,services/split-multi-impl,services/unclaim,dependency-suggestions/decide}`、`attribution-jobs`、`admin/arch-processes/:id/promote` 与 `admin/migrations/csg-placeholder-modules`）；4. §2.7 新增 `attribution_job.updated` SSE 事件；§3 同步 M31 `ProcessMonitorSpec.target_pids[]` 向后兼容扩展 |
+| **v1.11.0** | 2026-11-25 | **依据 [`ADR-24` (`v1.1.0`)](../05-adr/24-csg-discovery-process-centric-and-physical-logical-boundary-adr.md) (`M30a ~ M32`) 冻结以「现网发现」为中心的活体契约流水线全量 API 契约** |
+| **v1.12.0** | **2026-11-28** | **同步 `M30a ~ M45` 全量交付与后 M45 接口契约**：新增 **§16** 冻结 `ADR-25` 双源噪音配置接口（`GET /api/noise-rules`、`POST /api/admin/noise-rules/append`）、非阻断上线破坏性变更审计接口（`/api/breaking-change-events*`）及全站已下线历史路由汇总清单 |
 
 ---
 
@@ -505,4 +506,34 @@
 | `GET` | `/api/proto-pipeline/publish-runs/:id` | `Auth` | Path: `id` | `200`: 返回指定发布批次完整报告；不存在返 `404` |
 | `POST` | `/api/proto-pipeline/publish-runs/:id/approve-breaking` | `Admin` | Body: `{ schema_ids: number[], breaking_reason: string }`（`breaking_reason` 去空白后不少于 `8` 字符） | `200`: `P1` 审计并强制激活指定 `BLOCKED_BREAKING` 草稿、重建 `protodoc`、触发被覆盖归档资产停用，并自动为其 `PENDING_UPSTREAM` 下游补发增量发布（返回 `approved_schemas` 与 `downstream_publish_run`）；参数不合法返 `400` |
 | `POST` | `/api/proto-pipeline/publish-runs/:id/confirm-preview` | `Admin` | Path: `id` | `200`: 在 `PREVIEW` 模式下对 `PREVIEW_READY` 发布批次按同一拓扑分层与挂起传播规则批量确认激活并重建 `protodoc` + `P2` 审计；非 `PREVIEW_READY` 返 `409` |
-| `GET` | `/api/proto-pipeline/archived-schemas` | `Auth` | 无 | `200`: 返回历史归档外部来源（`UPLOAD_PB` / `ONLINE_COMPILE`）对账清单，含 `is_active`、总服务数、已被生效 Git 来源覆盖的服务数、覆盖率与未覆盖服务名列表 |
+| `GET` | `/api/proto-pipeline/archived-schemas` | `Auth` | 无 | `200`: 返回历史归档外部来源（`UPLOAD_PB` / `ONLINE_COMPILE`）对账清单，含 `is_active`、总服务数、已被生效 Git 来源覆盖的服务数、覆盖率与未覆盖服务名列表（路由 `/api/proto-pipeline/archived-external-schemas` 同义提供） |
+
+---
+
+## 16. 噪音降噪、非阻断破坏性变更审计与已下线路由清单 (`ADR-25` / 后 M45 演进)
+
+### 16.1 全链路降噪配置接口 (`ADR-25`)
+
+| 方法 | 路径 | 权限 | 请求参数 / 载荷 | 响应与错误码 |
+| :--- | :--- | :---: | :--- | :--- |
+| `GET` | `/api/noise-rules` | `JWT` | 无 | `200`: 返回 `EffectiveNoiseConfigDTO`（`global_rules`、`marked_services[]`、`effective_rules` 合并去重结果及管理设置推荐模板 `preset_templates[]`） |
+| `POST` | `/api/admin/noise-rules/append` | `AdminOnly` | Body: `{ rule: string }`（必填，受 `MaxNoiseRules = 200` 与 `MaxNoiseRuleLen = 160` 约束） | `200`: 去重保序追加至 `contract_settings[noise_service_rules]` + `P1` 审计（`module_settings:append_noise_rule`），返回更新后的 `EffectiveNoiseConfigDTO` |
+
+> **录制与事务查询扩展**：`POST /api/recording-sessions` 接收 `noise_filter_enabled` 与 `noise_exclude_rules`（Agent `SyncMonitorReq.exclude_rules` 下发）；`GET /api/recording-sessions/:id/transactions` 与 `/api/traffic-records` 支持 `hide_noise`（默认 `true`）与 `exclude_services` 视图过滤。
+
+### 16.2 非阻断上线破坏性变更审计接口 (`handlers/breaking_audit_handler.go`)
+
+契约入库发布（`PIPELINE_PUBLISH`）与激活（`MANUAL_ACTIVATE` / `BATCH_ACTIVATE` / `AUTO_ACTIVATE`）阶段取消破坏性变更硬阻断，检出的不兼容变更转为异步/即时审计事件统一归口规范台处置：
+
+| 方法 | 路径 | 权限 | 请求参数 / 载荷 | 响应与错误码 |
+| :--- | :--- | :---: | :--- | :--- |
+| `GET` | `/api/breaking-change-events` | `JWT` | Query: `status` (`OPEN` \| `ACKNOWLEDGED`), `source`, `publish_run_id`, `q`, `page`, `page_size` | `200`: 标准分页返回 `{ items: BreakingChangeEventDTO[], total, open_count, page, page_size }`（默认未确认 `OPEN` 置顶按 `id DESC` 排序） |
+| `GET` | `/api/breaking-change-events/:id` | `JWT` | Path: `id` | `200`: 返回单条 `BreakingChangeEventDTO`（含 `breaking_rules[]` 与 `affected_dependents[]`）；不存在返 `404` |
+| `POST` | `/api/breaking-change-events/:id/acknowledge` | `AdminOnly` | Path: `id`; Body: `{ note?: string }` | `200`: 置为 `ACKNOWLEDGED` 并记录 `acknowledged_by/name/at/note` + `P1` 审计（`breaking_change_event:acknowledge`） |
+| `POST` | `/api/breaking-change-events/batch-acknowledge` | `AdminOnly` | Body: `{ ids: uint64[], note?: string }`（`1..200` 条） | `200`: 批量将指定 `OPEN` 事件置为 `ACKNOWLEDGED` + `P1` 审计，返回 `{ acknowledged_count }` |
+
+### 16.3 全站已正式下线历史路由汇总（统一返 `404`）
+
+- **外部入池下线（`ADR-29` 完全自封闭）**：~~`POST /api/proto-schemas`~~、~~`POST /api/proto-schemas/compile`~~（历史 `UPLOAD_PB`/`ONLINE_COMPILE` 激活返 `422 SCHEMA_SOURCE_ARCHIVED`）。
+- **独立 Git 仓下线（`ADR-26 r4 / ADR-27`）**：~~`POST /api/git-repos`~~、~~`DELETE /api/git-repos/:id`~~、~~`POST /api/git-repos/:id/link-platform`~~、~~`GET /api/git-repos/platform-discover`~~、~~`POST /api/git-repos/platform-import`~~。
+- **假模块导入下线（`ADR-24 / M31`）**：~~`POST /api/agents/:id/csg/import-blueprint`~~（已由 `POST /api/discovery/enroll` 与 `/architecture` 收件箱认领替代）。
