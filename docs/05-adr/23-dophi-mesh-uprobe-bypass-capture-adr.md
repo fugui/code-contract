@@ -5,7 +5,7 @@
 - **日期**：2026-11-28
 - **状态**：✅ 已采纳 (Accepted — v1.2.0，补齐读侧 `DRT_ReadNoCheckLen` 全双工 `uprobe + uretprobe`)
 - **关联特性**：`F-09`（数据面按需旁路采集）、`F-11`（出站代理与多底座采集）、`F-35`（Agent 纯 Go 可插拔传输驱动架构与 `dophi_mesh` 采集 ➔ TCP 重放跨传输闭环，见 [`ADR-22`](./22-pluggable-transport-driver-and-mesh-capture-adr.md)）
-- **关联设计**：[`02-data-plane-and-cros-rpc-engine.md`](../02-design/02-data-plane-and-cros-rpc-engine.md)、[`01-cros-rpc-protocol-spec.md`](../07-references/01-cros-rpc-protocol-spec.md)、[`01-system-architecture.md`](../02-design/01-system-architecture.md)
+- **关联设计**：[`02-data-plane-and-cros-rpc-engine.md`](../02-design/02-data-plane-and-cros-rpc-engine.md)、[`01-cros-rpc-protocol-spec.md`](../07-references/01-cros-rpc-protocol-spec.md)、[`02-drt-uprobe-abi-reference.md`](../07-references/02-drt-uprobe-abi-reference.md)、[`01-system-architecture.md`](../02-design/01-system-architecture.md)
 - **关联 ADR**：[`ADR-21`](./21-csg-aware-agent-service-discovery-and-replay-mock-adr.md)、[`ADR-22`](./22-pluggable-transport-driver-and-mesh-capture-adr.md)
 - **演进关系**：
   - **正式确立 `builtin-drt-uprobe` 为 `dophi_mesh` 数据面采集的唯一正式实现**：经现网代码分析与验证，`libdophimesh.so` 的钩子仅在本进程内生效，面对点对点网状（P2P）的 Mesh 共享内存拓扑，Agent 进程引入 `libdophimesh.so` 无法监听其他进程之间的交互，无使用价值；因此正式废弃 `plugin_transport.so` 备选通道，以本 ADR 实证通过的纯 Go 内核 uprobe（锚定 `libdopra.so:DRT_WriteBulk`）作为 `ADR-22` `pkg/transport.Driver` 的唯一 Mesh 采集实现；
