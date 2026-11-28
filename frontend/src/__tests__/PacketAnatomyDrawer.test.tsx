@@ -301,4 +301,84 @@ describe('PacketAnatomyDrawer (M18 业务级视图与向后兼容性)', () => {
     expect(html).toContain('code-drawer-panel--workspace');
     expect(html).toContain('RPC 调用透视 · CreateOrder');
   });
+
+  it('renders networkAndFramingUs breakdown without double-counting and anchors totalUs to roundTripLatencyUs', () => {
+    const dtoWithNetworkBreakdown: PacketAnatomyDrawerDTO = {
+      ...mockAnatomyDTO,
+      roundTripLatencyUs: 1200,
+      reqSide: {
+        ...mockAnatomyDTO.reqSide!,
+        extendHead: {
+          ...mockAnatomyDTO.reqSide!.extendHead,
+          queueWaitUs: undefined,
+        },
+      },
+      rspSide: {
+        ...mockAnatomyDTO.rspSide!,
+        sessionHead: {
+          ...mockAnatomyDTO.rspSide!.sessionHead,
+          timingBreakdownUs: {
+            networkAndFramingUs: 350,
+            queueWaitUs: 100,
+            serverExecUs: 750,
+            serverProcessUs: 850,
+          },
+        },
+      },
+    };
+    const html = renderToString(<RpcLatencyWaterfallBar data={dtoWithNetworkBreakdown} />);
+    expect(html).toContain('1200 μs (1.20 ms)');
+    expect(html).toContain('网络与分帧:');
+    expect(html).toContain('350 μs');
+    expect(html).toContain('入队排队:');
+    expect(html).toContain('100 μs');
+    expect(html).toContain('服务端业务执行:');
+    expect(html).toContain('750 μs');
+  });
+
+  it('renders graceful RTT-only waterfall when timingBreakdownUs is absent', () => {
+    const dtoRttOnly: PacketAnatomyDrawerDTO = {
+      ...mockAnatomyDTO,
+      roundTripLatencyUs: 2_500_000,
+      reqSide: {
+        ...mockAnatomyDTO.reqSide!,
+        extendHead: {
+          ...mockAnatomyDTO.reqSide!.extendHead,
+          queueWaitUs: undefined,
+        },
+      },
+      rspSide: {
+        ...mockAnatomyDTO.rspSide!,
+        sessionHead: {
+          ...mockAnatomyDTO.rspSide!.sessionHead,
+          timingBreakdownUs: undefined,
+        },
+      },
+    };
+    const html = renderToString(<RpcLatencyWaterfallBar data={dtoRttOnly} />);
+    expect(html).toContain('2500000 μs (2.50 s)');
+    expect(html).toContain('未采集到服务端内部阶段时间戳，当前展示端到端往返总耗时');
+    expect(html).toContain('端到端往返耗时:');
+    expect(html).not.toContain('客户端传输:');
+  });
+
+  it('anchors waterfall header totalUs to roundTripLatencyUs even if stage values are larger', () => {
+    const dtoOversizedStage: PacketAnatomyDrawerDTO = {
+      ...mockAnatomyDTO,
+      roundTripLatencyUs: 1200,
+      rspSide: {
+        ...mockAnatomyDTO.rspSide!,
+        sessionHead: {
+          ...mockAnatomyDTO.rspSide!.sessionHead,
+          timingBreakdownUs: {
+            clientToServerUs: 36_000_000_000,
+            queueWaitUs: 15,
+            serverExecUs: 800,
+          },
+        },
+      },
+    };
+    const html = renderToString(<RpcLatencyWaterfallBar data={dtoOversizedStage} />);
+    expect(html).toContain('1200 μs (1.20 ms)');
+  });
 });

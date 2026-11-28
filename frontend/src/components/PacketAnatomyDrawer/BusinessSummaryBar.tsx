@@ -64,9 +64,11 @@ export const BusinessSummaryBar: React.FC<BusinessSummaryProps> = ({
   const latencyUs = data.roundTripLatencyUs;
   const formattedLatency =
     latencyUs !== undefined
-      ? latencyUs >= 1000
-        ? `${latencyUs} μs (${(latencyUs / 1000).toFixed(2)} ms)`
-        : `${latencyUs} μs`
+      ? latencyUs >= 1_000_000
+        ? `${latencyUs} μs (${(latencyUs / 1_000_000).toFixed(2)} s)`
+        : latencyUs >= 1000
+          ? `${latencyUs} μs (${(latencyUs / 1000).toFixed(2)} ms)`
+          : `${latencyUs} μs`
       : undefined;
 
   return (

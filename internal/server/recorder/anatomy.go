@@ -163,7 +163,7 @@ func BuildPacketAnatomy(record *models.TrafficRecord, dec *decoder.Registry) (*P
 
 	// 1. 请求侧解剖 (非 RSP_ORPHAN 时存在)
 	if len(record.RawReqPacket) > 0 {
-		reqSide, err := BuildSingleFrameSide(record.RawReqPacket, record.IsTruncated, record.IsReplayable, false, 1, dec)
+		reqSide, err := buildSingleFrameSide(record.RawReqPacket, record.IsTruncated, record.IsReplayable, false, 1, dec, nil)
 		if err == nil {
 			dto.ReqSide = reqSide
 		}
@@ -175,7 +175,7 @@ func BuildPacketAnatomy(record *models.TrafficRecord, dec *decoder.Registry) (*P
 		if segCount <= 0 {
 			segCount = 1
 		}
-		rspSide, err := BuildSingleFrameSide(record.RawRspPacket, record.IsTruncated, record.IsReplayable, true, segCount, dec)
+		rspSide, err := buildSingleFrameSide(record.RawRspPacket, record.IsTruncated, record.IsReplayable, true, segCount, dec, record.LatencyUs)
 		if err == nil {
 			dto.RspSide = rspSide
 		}
@@ -192,6 +192,18 @@ func BuildSingleFrameSide(
 	isRsp bool,
 	segCount int,
 	dec *decoder.Registry,
+) (*FrameSideAnatomyDTO, error) {
+	return buildSingleFrameSide(raw, isTruncated, isReplayable, isRsp, segCount, dec, nil)
+}
+
+func buildSingleFrameSide(
+	raw []byte,
+	isTruncated bool,
+	isReplayable bool,
+	isRsp bool,
+	segCount int,
+	dec *decoder.Registry,
+	roundTripLatencyUs *int64,
 ) (*FrameSideAnatomyDTO, error) {
 	parsed, err := crosrpc.ParsePacket(raw)
 	if err != nil && len(raw) < 24 {
@@ -273,31 +285,7 @@ func BuildSingleFrameSide(
 			sessDTO.RspMsgNo = &msgNo
 			sessDTO.TraceBuffHex = hex.EncodeToString(parsed.Rsp.TraceBuff[:])
 
-			var timing TimingBreakdownUsDTO
-			if parsed.Rsp.ClientSendTime != nil && *parsed.Rsp.ClientSendTime > 0 {
-				cTime := int64(*parsed.Rsp.ClientSendTime) / 1000
-				timing.ClientToServerUs = &cTime
-			}
-			if parsed.Rsp.ServerRecvTime > 0 && parsed.Rsp.ClientSendTime != nil && *parsed.Rsp.ClientSendTime > 0 && parsed.Rsp.ServerRecvTime >= *parsed.Rsp.ClientSendTime {
-				netUs := int64(parsed.Rsp.ServerRecvTime-*parsed.Rsp.ClientSendTime) / 1000
-				timing.NetworkAndFramingUs = &netUs
-			}
-			if parsed.ServerEnqueue != nil && parsed.Rsp.ServerRecvTime > 0 && *parsed.ServerEnqueue >= parsed.Rsp.ServerRecvTime {
-				qUs := int64(*parsed.ServerEnqueue-parsed.Rsp.ServerRecvTime) / 1000
-				timing.QueueWaitUs = &qUs
-			}
-			if parsed.ServerEnqueue != nil && parsed.Rsp.ServerSendTime > 0 && parsed.Rsp.ServerSendTime >= *parsed.ServerEnqueue {
-				execUs := int64(parsed.Rsp.ServerSendTime-*parsed.ServerEnqueue) / 1000
-				timing.ServerExecUs = &execUs
-			}
-			if parsed.Rsp.ServerSendTime > 0 && parsed.Rsp.ServerRecvTime > 0 && parsed.Rsp.ServerSendTime >= parsed.Rsp.ServerRecvTime {
-				procUs := int64(parsed.Rsp.ServerSendTime-parsed.Rsp.ServerRecvTime) / 1000
-				timing.ServerProcessUs = &procUs
-				if timing.ServerExecUs == nil {
-					timing.ServerExecUs = &procUs
-				}
-			}
-			sessDTO.TimingBreakdownUs = &timing
+			sessDTO.TimingBreakdownUs = computeTimingBreakdown(parsed.Rsp, parsed.ServerEnqueue, roundTripLatencyUs)
 
 			sessDTO.Fields = []SessionHeadFieldDTO{
 				{Name: "usVersion", OffsetRange: "24..25", Value: fmt.Sprintf("%d", parsed.Rsp.MsgStructVer)},
@@ -306,6 +294,11 @@ func BuildSingleFrameSide(
 				{Name: "ascServiceName", OffsetRange: "48..111", Value: parsed.Rsp.ServiceName},
 				{Name: "ascOperation", OffsetRange: "112..175", Value: parsed.Rsp.Operation},
 				{Name: "usRspMsgNo", OffsetRange: "176..177", Value: fmt.Sprintf("%d", parsed.Rsp.RspMsgNo)},
+			}
+			if parsed.Rsp.ClientSendTime != nil && *parsed.Rsp.ClientSendTime > 0 {
+				sessDTO.Fields = append(sessDTO.Fields, SessionHeadFieldDTO{
+					Name: "ullClientSendTime", OffsetRange: "32..39", Value: fmt.Sprintf("%d", *parsed.Rsp.ClientSendTime),
+				})
 			}
 			if parsed.Rsp.ServerRecvTime > 0 {
 				sessDTO.Fields = append(sessDTO.Fields, SessionHeadFieldDTO{
@@ -392,6 +385,81 @@ func BuildSingleFrameSide(
 		Payload:      payloadDTO,
 		SegmentCount: segCount,
 	}, nil
+}
+
+const maxStandaloneStageUs int64 = 3_600_000_000 // 无往返耗时参考时单阶段合理上限 (1 小时)
+
+// computeTimingBreakdown 仅基于服务端同机单调时间戳与权威往返耗时计算各阶段耗时，
+// 绝不将 ClientSendTime 绝对时间戳或跨主机时间戳相减结果当作耗时。
+func computeTimingBreakdown(
+	rsp *crosrpc.RspHead,
+	serverEnqueue *uint64,
+	roundTripLatencyUs *int64,
+) *TimingBreakdownUsDTO {
+	if rsp == nil || rsp.ServerRecvTime == 0 || rsp.ServerSendTime == 0 || rsp.ServerSendTime < rsp.ServerRecvTime {
+		return nil
+	}
+
+	var rttUs *int64
+	maxReasonable := uint64(maxStandaloneStageUs)
+	if roundTripLatencyUs != nil && *roundTripLatencyUs > 0 {
+		v := *roundTripLatencyUs
+		rttUs = &v
+		extra := uint64(v) / 5
+		if extra < 1000 {
+			extra = 1000
+		}
+		maxReasonable = uint64(v) + extra
+	} else if roundTripLatencyUs != nil && *roundTripLatencyUs == 0 {
+		v := int64(0)
+		rttUs = &v
+		maxReasonable = 1000
+	}
+
+	rawProc := rsp.ServerSendTime - rsp.ServerRecvTime
+	div := uint64(1000)
+	if rsp.ServerRecvTime >= 1_000_000_000_000_000_000 {
+		div = 1000
+	} else if rsp.ServerRecvTime >= 1_500_000_000_000_000 && rsp.ServerRecvTime <= 2_500_000_000_000_000 && rawProc <= maxReasonable {
+		div = 1
+	}
+
+	procUsU64 := rawProc / div
+	if procUsU64 > maxReasonable {
+		return nil
+	}
+
+	procUs := int64(procUsU64)
+	if rttUs != nil && procUs > *rttUs {
+		procUs = *rttUs
+	}
+
+	timing := &TimingBreakdownUsDTO{
+		ServerProcessUs: &procUs,
+	}
+
+	if serverEnqueue != nil && *serverEnqueue >= rsp.ServerRecvTime && *serverEnqueue <= rsp.ServerSendTime {
+		qUs := int64((*serverEnqueue - rsp.ServerRecvTime) / div)
+		if qUs > procUs {
+			qUs = procUs
+		}
+		execUs := procUs - qUs
+		timing.QueueWaitUs = &qUs
+		timing.ServerExecUs = &execUs
+	} else {
+		execUs := procUs
+		timing.ServerExecUs = &execUs
+	}
+
+	if rttUs != nil {
+		netUs := *rttUs - procUs
+		if netUs < 0 {
+			netUs = 0
+		}
+		timing.NetworkAndFramingUs = &netUs
+	}
+
+	return timing
 }
 
 func build16BAlignedHexLines(raw []byte, sessionHeadLen int, extendHeadLen int) []HexLineDTO {
