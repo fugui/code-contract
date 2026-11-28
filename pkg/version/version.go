@@ -9,8 +9,8 @@ import (
 )
 
 var (
-	// Version 语义化主版本号（默认 v0.3.0，构建期可通过 -ldflags 动态重写）
-	Version = "v0.3.0"
+	// Version 语义化主版本号（默认 v0.5.0，构建期可通过 -ldflags 动态重写）
+	Version = "v0.5.0"
 	// CommitID Git 短提交散列
 	CommitID = "unknown"
 	// BuildTime 确定性构建时间戳 (UTC 或本地时间)
