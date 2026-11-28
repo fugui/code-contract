@@ -174,9 +174,20 @@ export const PoolReconcileReportDrawer: React.FC<PoolReconcileReportDrawerProps>
                 </strong>
                 <span className="pdoc-card__subtitle">
                   剩余编译错 {stats?.compile_error_count ?? 0}
+                  {(stats?.revived_count ?? 0) > 0 ? ` · 本轮复活 ${stats?.revived_count}` : ''}
                 </span>
               </div>
             </div>
+
+            {stats?.r8_budget_exhausted && (
+              <div className="pdoc-banner pdoc-banner--warning" data-testid="r8-budget-exhausted-banner">
+                <AlertTriangle size={15} />
+                <span>
+                  R8 编译隔离已达到最大轮次上限（{stats.r8_rounds} 轮），仍有{' '}
+                  {stats.compile_error_count} 个编译错误未收敛，请排查缺失依赖采集范围或提高 max_r8_rounds。
+                </span>
+              </div>
+            )}
 
             <div className="pgit-toolbar-row">
               <div className="code-tab-pills" role="tablist" aria-label="全池协调报告分类">

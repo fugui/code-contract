@@ -69,6 +69,11 @@ const (
 	ProtoPipelineNormalized  = "NORMALIZED"
 	ProtoPipelineQuarantined = "QUARANTINED"
 
+	ProtoQuarantineStageNone        = ""
+	ProtoQuarantineStageCollect     = "COLLECT"
+	ProtoQuarantineStageNormalize   = "NORMALIZE"
+	ProtoQuarantineStageReconcileR8 = "RECONCILE_R8"
+
 	ImportOwnerSourceManual  = "MANUAL"
 	ImportOwnerSourceBaseLib = "BASE_LIB"
 	ImportOwnerSourceAuto    = "AUTO"
@@ -449,6 +454,7 @@ type ProtoFile struct {
 	RawBlobSHA        string         `gorm:"column:raw_blob_sha;size:64;not null;default:''" json:"raw_blob_sha"`
 	NormalizerVersion string         `gorm:"column:normalizer_version;size:64;not null;default:''" json:"normalizer_version"`
 	PipelineStatus    string         `gorm:"column:pipeline_status;size:24;not null;default:'NORMALIZED';index:idx_contract_pfile_pipeline_status" json:"pipeline_status"` // COLLECTED | NORMALIZED | QUARANTINED
+	QuarantineStage   string         `gorm:"column:quarantine_stage;size:24;not null;default:''" json:"quarantine_stage"`                                                  // '' | COLLECT | NORMALIZE | RECONCILE_R8
 	StatusReason      string         `gorm:"column:status_reason;type:text;not null;default:''" json:"status_reason"`
 	LineMapJSON       datatypes.JSON `gorm:"column:line_map_json;type:jsonb" json:"line_map_json,omitempty"`
 	IsExternalCopy    bool           `gorm:"column:is_external_copy;not null;default:false" json:"is_external_copy"`
@@ -824,6 +830,9 @@ BEGIN
 	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_pfile_pipeline_status') THEN
 		ALTER TABLE contract_proto_files ADD CONSTRAINT chk_contract_pfile_pipeline_status CHECK (pipeline_status IN ('COLLECTED', 'NORMALIZED', 'QUARANTINED'));
 	END IF;
+	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_pfile_quarantine_stage') THEN
+		ALTER TABLE contract_proto_files ADD CONSTRAINT chk_contract_pfile_quarantine_stage CHECK (quarantine_stage IN ('', 'COLLECT', 'NORMALIZE', 'RECONCILE_R8'));
+	END IF;
 	IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_contract_import_owner_source') THEN
 		ALTER TABLE contract_proto_import_owners ADD CONSTRAINT chk_contract_import_owner_source CHECK (source IN ('MANUAL', 'BASE_LIB', 'AUTO', 'R3_AUTO'));
 	END IF;
@@ -867,6 +876,11 @@ END $$;`,
 		`UPDATE contract_git_repos SET proto_status = 'HAS_PROTO' WHERE (proto_status = '' OR proto_status IS NULL OR proto_status = 'PENDING') AND EXISTS (SELECT 1 FROM contract_proto_files f WHERE f.git_repo_id = contract_git_repos.id AND f.is_deleted = false);`,
 		`UPDATE contract_git_repos SET proto_status = 'PENDING' WHERE proto_status = '' OR proto_status IS NULL;`,
 		`UPDATE contract_proto_files SET pipeline_status = 'NORMALIZED' WHERE pipeline_status = '' OR pipeline_status IS NULL;`,
+		`UPDATE contract_proto_files SET quarantine_stage = '' WHERE quarantine_stage IS NULL;`,
+		`UPDATE contract_proto_files SET quarantine_stage = '' WHERE pipeline_status <> 'QUARANTINED' AND quarantine_stage <> '';`,
+		`UPDATE contract_proto_files SET quarantine_stage = 'COLLECT' WHERE pipeline_status = 'QUARANTINED' AND quarantine_stage = '' AND (status_reason LIKE 'LFS_POINTER%' OR status_reason LIKE '%超过上限%');`,
+		`UPDATE contract_proto_files SET quarantine_stage = 'NORMALIZE' WHERE pipeline_status = 'QUARANTINED' AND quarantine_stage = '' AND (status_reason LIKE 'PARSE_FAILED:%' OR status_reason LIKE 'FILE_QUARANTINED:%' OR status_reason LIKE 'INTRA_REPO_PATH_CONFLICT:%');`,
+		`UPDATE contract_proto_files SET quarantine_stage = 'RECONCILE_R8' WHERE pipeline_status = 'QUARANTINED' AND quarantine_stage = '';`,
 		`UPDATE contract_proto_files SET normalizer_version = 'passthrough-0' WHERE normalizer_version = '' OR normalizer_version IS NULL;`,
 		`UPDATE contract_proto_files SET raw_blob_sha = content_sha256 WHERE (raw_blob_sha = '' OR raw_blob_sha IS NULL) AND content_sha256 <> '';`,
 		`UPDATE contract_git_proto_bundles SET last_publish_status = 'PENDING' WHERE last_publish_status = '' OR last_publish_status IS NULL;`,

@@ -451,3 +451,211 @@ service TrackService {
 		t.Fatalf("expected system shared base repo SyncEnabled=true even after AlignPlatformRepositories")
 	}
 }
+
+func TestRunPoolReconcile_R8QuarantineAndRevivalDBPersistence(t *testing.T) {
+	db, _ := setupGitClientTestDB(t)
+	ctx := context.Background()
+	tmpRoot := t.TempDir()
+
+	govDoc := DefaultGovernanceConfig()
+
+	repo1 := models.GitRepo{
+		Name:           "LTComm-ltdd",
+		PlatformRepoID: 201,
+		SourceMode:     models.GitSourceModePlatformShared,
+		SyncStrategy:   models.GitSyncStrategyLocalCacheOnly,
+		Provider:       models.GitProviderGitLab,
+		RepoURL:        "http://mock/ltdd.git",
+		DefaultBranch:  "main",
+		SubsystemSlug:  "ltcomm",
+		SyncEnabled:    true,
+	}
+	if err := db.Create(&repo1).Error; err != nil {
+		t.Fatal(err)
+	}
+	bundle1 := models.GitProtoBundle{
+		GitRepoID:        repo1.ID,
+		BundleName:       "ltdd",
+		Category:         models.ProtoCategoryBusiness,
+		TargetSchemaName: "ltdd",
+		SubdirPath:       "ltdd/pg",
+		AutoCompile:      true,
+	}
+	if err := db.Create(&bundle1).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	alignSrc := `syntax = "proto2";
+package ltcomm.ltdd;
+import "sw/CommonType.proto";
+service WaferAlignSvc {
+  rpc Align(sw.common.CommonHeader) returns (sw.common.CommonHeader);
+}
+`
+	pfAlign := models.ProtoFile{
+		GitRepoID:         repo1.ID,
+		BundleID:          bundle1.ID,
+		TargetSchemaName:  bundle1.TargetSchemaName,
+		Category:          models.ProtoCategoryBusiness,
+		FilePath:          "ltcomm/ltdd/GtWaferAlignmentMsg.proto",
+		RepoFilePath:      "ltdd/pg/GtWaferAlignmentMsg.proto",
+		CleanRelPath:      "ltcomm/ltdd/GtWaferAlignmentMsg.proto",
+		PackageName:       "ltcomm.ltdd",
+		NormalizerVersion: ruleNormalizerBaseVersion,
+		PipelineStatus:    models.ProtoPipelineNormalized,
+		IsUServiceSource:  true,
+		ImportsJSON:       []byte(`["sw/CommonType.proto"]`),
+		SymbolsJSON:       []byte(`[{"kind":"SERVICE","full_name":"ltcomm.ltdd.WaferAlignSvc"}]`),
+		ContentSHA256:     testSHA256Hex(alignSrc),
+		LineCount:         6,
+		LatestVersionNum:  1,
+		LatestCommitSHA:   "c1",
+	}
+	if err := db.Create(&pfAlign).Error; err != nil {
+		t.Fatal(err)
+	}
+	verAlign := models.ProtoFileVersion{
+		ProtoFileID:    pfAlign.ID,
+		Version:        1,
+		VersionTag:     "v1",
+		SourceType:     models.ProtoSourceGitSync,
+		CommitSHA:      "c1",
+		ContentText:    alignSrc,
+		RawContentText: alignSrc,
+		ContentSHA256:  pfAlign.ContentSHA256,
+		LineCount:      6,
+		CommittedAt:    time.Now().UTC(),
+	}
+	if err := db.Create(&verAlign).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&pfAlign).Update("latest_version_id", verAlign.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	// Run 1: sw/CommonType.proto missing -> GtWaferAlignmentMsg quarantined with RECONCILE_R8
+	_, rep1, err := RunPoolReconcile(ctx, db, PoolReconcileOptions{
+		TriggeredBy:        "test-admin",
+		ClosureOnly:        true,
+		StripPGSegment:     true,
+		EnableR7AutoFix:    true,
+		MaxR7Rounds:        5,
+		EnableR8Quarantine: true,
+		MaxR8Rounds:        10,
+		CodesDir:           tmpRoot,
+		ProtosDir:          filepath.Join(tmpRoot, "protos"),
+		GovernanceConfig:   &govDoc,
+	})
+	if err != nil {
+		t.Fatalf("run1 RunPoolReconcile failed: %v", err)
+	}
+	if rep1.Stats.QuarantinedCount != 1 {
+		t.Fatalf("expected 1 quarantined in run1, got %+v", rep1.Stats)
+	}
+	var afterRun1 models.ProtoFile
+	if err := db.First(&afterRun1, pfAlign.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if afterRun1.PipelineStatus != models.ProtoPipelineQuarantined || afterRun1.QuarantineStage != models.ProtoQuarantineStageReconcileR8 {
+		t.Fatalf("expected DB status=QUARANTINED stage=RECONCILE_R8, got status=%s stage=%q", afterRun1.PipelineStatus, afterRun1.QuarantineStage)
+	}
+
+	// Run 2: sw/CommonType.proto arrives -> GtWaferAlignmentMsg revives & clears DB reason/stage
+	repo2 := models.GitRepo{
+		Name:           "SW-swp",
+		PlatformRepoID: 202,
+		SourceMode:     models.GitSourceModePlatformShared,
+		SyncStrategy:   models.GitSyncStrategyLocalCacheOnly,
+		Provider:       models.GitProviderGitLab,
+		RepoURL:        "http://mock/swp.git",
+		DefaultBranch:  "main",
+		SubsystemSlug:  "sw",
+		SyncEnabled:    true,
+	}
+	if err := db.Create(&repo2).Error; err != nil {
+		t.Fatal(err)
+	}
+	bundle2 := models.GitProtoBundle{
+		GitRepoID:        repo2.ID,
+		BundleName:       "swp",
+		Category:         models.ProtoCategoryBaseLib,
+		TargetSchemaName: "swp",
+		SubdirPath:       "platform/ltcommon/pg",
+		AutoCompile:      true,
+	}
+	if err := db.Create(&bundle2).Error; err != nil {
+		t.Fatal(err)
+	}
+	commonSrc := `syntax = "proto2";
+package sw.common;
+message CommonHeader { optional string trace_id = 1; }
+`
+	pfCommon := models.ProtoFile{
+		GitRepoID:         repo2.ID,
+		BundleID:          bundle2.ID,
+		TargetSchemaName:  bundle2.TargetSchemaName,
+		Category:          models.ProtoCategoryBaseLib,
+		FilePath:          "sw/CommonType.proto",
+		RepoFilePath:      "platform/ltcommon/pg/CommonType.proto",
+		CleanRelPath:      "sw/CommonType.proto",
+		PackageName:       "sw.common",
+		NormalizerVersion: ruleNormalizerBaseVersion,
+		PipelineStatus:    models.ProtoPipelineNormalized,
+		ImportsJSON:       []byte(`[]`),
+		SymbolsJSON:       []byte(`[{"kind":"MESSAGE","full_name":"sw.common.CommonHeader"}]`),
+		ContentSHA256:     testSHA256Hex(commonSrc),
+		LineCount:         3,
+		LatestVersionNum:  1,
+		LatestCommitSHA:   "c2",
+	}
+	if err := db.Create(&pfCommon).Error; err != nil {
+		t.Fatal(err)
+	}
+	verCommon := models.ProtoFileVersion{
+		ProtoFileID:    pfCommon.ID,
+		Version:        1,
+		VersionTag:     "v1",
+		SourceType:     models.ProtoSourceGitSync,
+		CommitSHA:      "c2",
+		ContentText:    commonSrc,
+		RawContentText: commonSrc,
+		ContentSHA256:  pfCommon.ContentSHA256,
+		LineCount:      3,
+		CommittedAt:    time.Now().UTC(),
+	}
+	if err := db.Create(&verCommon).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&pfCommon).Update("latest_version_id", verCommon.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	_, rep2, err := RunPoolReconcile(ctx, db, PoolReconcileOptions{
+		TriggeredBy:        "test-admin",
+		ClosureOnly:        true,
+		StripPGSegment:     true,
+		EnableR7AutoFix:    true,
+		MaxR7Rounds:        5,
+		EnableR8Quarantine: true,
+		MaxR8Rounds:        10,
+		CodesDir:           tmpRoot,
+		ProtosDir:          filepath.Join(tmpRoot, "protos"),
+		GovernanceConfig:   &govDoc,
+	})
+	if err != nil {
+		t.Fatalf("run2 RunPoolReconcile failed: %v", err)
+	}
+	if rep2.Stats.QuarantinedCount != 0 || rep2.Stats.RevivedCount != 1 || rep2.Stats.CompileErrorCount != 0 {
+		t.Fatalf("expected 1 revived and 0 quarantined/errors in run2, got %+v", rep2.Stats)
+	}
+	var afterRun2 models.ProtoFile
+	if err := db.First(&afterRun2, pfAlign.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if afterRun2.PipelineStatus != models.ProtoPipelineNormalized ||
+		afterRun2.QuarantineStage != models.ProtoQuarantineStageNone ||
+		afterRun2.StatusReason != "" ||
+		!afterRun2.InServiceClosure {
+		t.Fatalf("expected DB row revived cleanly, got %+v", afterRun2)
+	}
+}

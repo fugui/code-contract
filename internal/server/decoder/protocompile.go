@@ -337,11 +337,8 @@ func (p *DBProtoSourceProvider) SuggestMissingImportCandidates(ctx context.Conte
 	out := make([]MissingImportSuggestionDTO, 0, len(rows))
 	for _, r := range rows {
 		pgDir := "."
-		segs := strings.Split(strings.Trim(r.RepoFilePath, "/"), "/")
-		if len(segs) >= 2 && segs[0] == "pg" {
-			pgDir = "pg"
-		} else if len(segs) >= 3 && segs[1] == "pg" {
-			pgDir = segs[0] + "/pg"
+		if d, ok := ExtractStrictPGDir(r.RepoFilePath); ok {
+			pgDir = d
 		}
 		candPath := r.FilePath
 		if candPath == "" {
@@ -357,6 +354,17 @@ func (p *DBProtoSourceProvider) SuggestMissingImportCandidates(ctx context.Conte
 		})
 	}
 	return out, nil
+}
+
+// ExtractStrictPGDir 识别路径所属的严格全小写 pg 目录（支持根目录 "pg"、一级 "<dir>/pg" 及任意深层 "<prefix>/pg"）。
+func ExtractStrictPGDir(repoRelPath string) (string, bool) {
+	segs := strings.Split(strings.Trim(repoRelPath, "/"), "/")
+	for i := 0; i < len(segs)-1; i++ {
+		if segs[i] == "pg" {
+			return strings.Join(segs[:i+1], "/"), true
+		}
+	}
+	return "", false
 }
 
 // CompileProtoBundleInput 纯 Go protocompile 在线编译入参

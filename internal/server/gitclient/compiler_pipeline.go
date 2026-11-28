@@ -593,19 +593,22 @@ func ReNormalizeRepo(
 		rawBlobSHAMap[rp] = ef.RawBlobSHA
 		pgDir, _ := ExtractStrictPGDir(rp)
 		status := models.ProtoPipelineCollected
+		quarantineStage := models.ProtoQuarantineStageNone
 		reason := ""
 		if isGitLFSPointer(rawBytes) {
 			status = models.ProtoPipelineQuarantined
+			quarantineStage = models.ProtoQuarantineStageCollect
 			reason = "LFS_POINTER"
 		}
 		collectedFiles = append(collectedFiles, CollectedFile{
-			RepoFilePath: rp,
-			PGDir:        pgDir,
-			RawBlobSHA:   ef.RawBlobSHA,
-			Content:      rawBytes,
-			SizeBytes:    int64(len(rawBytes)),
-			Status:       status,
-			StatusReason: reason,
+			RepoFilePath:    rp,
+			PGDir:           pgDir,
+			RawBlobSHA:      ef.RawBlobSHA,
+			Content:         rawBytes,
+			SizeBytes:       int64(len(rawBytes)),
+			Status:          status,
+			QuarantineStage: quarantineStage,
+			StatusReason:    reason,
 		})
 	}
 
@@ -756,6 +759,7 @@ func executeStagesBToD(
 		LineCount        int
 		LineMapJSON      datatypes.JSON
 		PipelineStatus   string
+		QuarantineStage  string
 		StatusReason     string
 		PackageName      string
 		Imports          []string
@@ -787,13 +791,17 @@ func executeStagesBToD(
 			mp = cf.RepoFilePath
 		}
 		pf := &processedFile{
-			CollectedFile:  cf,
-			MappedRelPath:  mp,
-			PipelineStatus: cf.Status,
-			StatusReason:   cf.StatusReason,
-			LinePreserving: true,
+			CollectedFile:   cf,
+			MappedRelPath:   mp,
+			PipelineStatus:  cf.Status,
+			QuarantineStage: cf.QuarantineStage,
+			StatusReason:    cf.StatusReason,
+			LinePreserving:  true,
 		}
 		if cf.Status == models.ProtoPipelineQuarantined {
+			if pf.QuarantineStage == "" {
+				pf.QuarantineStage = models.ProtoQuarantineStageCollect
+			}
 			sum := sha256.Sum256(cf.Content)
 			pf.CleanContent = cf.Content
 			pf.CleanSHA256 = hex.EncodeToString(sum[:])
@@ -813,6 +821,7 @@ func executeStagesBToD(
 			pf.LineCount = reused.LineCount
 			pf.LineMapJSON = reused.LineMapJSON
 			pf.PipelineStatus = reused.PipelineStatus
+			pf.QuarantineStage = reused.QuarantineStage
 			pf.StatusReason = reused.StatusReason
 			pf.PackageName = reused.PackageName
 			if len(reused.ImportsJSON) > 0 {
@@ -855,6 +864,7 @@ func executeStagesBToD(
 
 		if colTarget, isCol := collidingSourcePaths[cf.RepoFilePath]; isCol {
 			pf.PipelineStatus = models.ProtoPipelineQuarantined
+			pf.QuarantineStage = models.ProtoQuarantineStageNormalize
 			pf.StatusReason = fmt.Sprintf("INTRA_REPO_PATH_CONFLICT: 裁剪重写后路径 %s 存在多源文件碰撞", colTarget)
 			processed[cf.RepoFilePath] = pf
 			continue
@@ -869,16 +879,19 @@ func executeStagesBToD(
 		}
 		if normErrMsg != "" {
 			pf.PipelineStatus = models.ProtoPipelineQuarantined
+			pf.QuarantineStage = models.ProtoQuarantineStageNormalize
 			pf.StatusReason = normErrMsg
 		} else {
 			// Stage B 后置语法门禁（仅解析不链接）
 			gate := ParseProtoSyntaxOnly(cf.RepoFilePath, nf.CleanContent)
 			if !gate.Passed {
 				pf.PipelineStatus = models.ProtoPipelineQuarantined
+				pf.QuarantineStage = models.ProtoQuarantineStageNormalize
 				pf.StatusReason = "PARSE_FAILED: " + gate.ErrorSummary
 				pf.Diagnostics = append(pf.Diagnostics, gate.Diagnostics...)
 			} else {
 				pf.PipelineStatus = models.ProtoPipelineNormalized
+				pf.QuarantineStage = models.ProtoQuarantineStageNone
 				pf.StatusReason = ""
 				pf.PackageName = gate.PackageName
 				pf.Imports = gate.Imports
@@ -1150,6 +1163,7 @@ func executeStagesBToD(
 					RawBlobSHA:        pf.RawBlobSHA,
 					NormalizerVersion: normVer,
 					PipelineStatus:    pf.PipelineStatus,
+					QuarantineStage:   pf.QuarantineStage,
 					StatusReason:      pf.StatusReason,
 					LineMapJSON:       pf.LineMapJSON,
 					IsExternalCopy:    false,
@@ -1202,6 +1216,7 @@ func executeStagesBToD(
 					"is_uservice_source": pf.IsUServiceSource,
 					"package_name":       pf.PackageName,
 					"pipeline_status":    pf.PipelineStatus,
+					"quarantine_stage":   pf.QuarantineStage,
 					"status_reason":      pf.StatusReason,
 					"line_map_json":      pf.LineMapJSON,
 					"imports_json":       datatypes.JSON(importsJSONBytes),
@@ -1254,6 +1269,7 @@ func executeStagesBToD(
 				"raw_blob_sha":       pf.RawBlobSHA,
 				"normalizer_version": normVer,
 				"pipeline_status":    pf.PipelineStatus,
+				"quarantine_stage":   pf.QuarantineStage,
 				"status_reason":      pf.StatusReason,
 				"line_map_json":      pf.LineMapJSON,
 				"imports_json":       datatypes.JSON(importsJSONBytes),

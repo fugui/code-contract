@@ -3,6 +3,7 @@ package gitclient
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -580,6 +581,451 @@ uService BenchTradeService {
 		}
 		if _, err := os.Stat(corpusDir); err != nil {
 			t.Skipf("ADR28_CORPUS_DIR %q 不可访问，跳过: %v", corpusDir, err)
+		}
+	})
+}
+
+func TestPoolR7R8_QuarantineRevival_TransitiveAndGuards(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("delayed_dependency_revival", func(t *testing.T) {
+		run1Inputs := []PoolFileInput{
+			{
+				ProtoFileID:        1,
+				GitRepoID:          10,
+				RepoName:           "LTComm-ltdd",
+				SubsystemSlug:      "ltcomm",
+				Category:           models.ProtoCategoryBusiness,
+				RepoFilePath:       "ltdd/pg/GtWaferAlignmentMsg.proto",
+				CleanRelPath:       "ltcomm/ltdd/GtWaferAlignmentMsg.proto",
+				LogicalPath:        "ltcomm/ltdd/GtWaferAlignmentMsg.proto",
+				HasExplicitMapping: true,
+				IsUServiceSource:   true,
+				PipelineStatus:     models.ProtoPipelineNormalized,
+				Content: `syntax = "proto2";
+package ltcomm.ltdd;
+import "sw/CommonType.proto";
+service WaferAlignSvc {
+  rpc Align(sw.common.CommonHeader) returns (sw.common.CommonHeader);
+}
+`,
+				PackageName: "ltcomm.ltdd",
+				Imports:     []string{"sw/CommonType.proto"},
+				Symbols:     []ParsedProtoSymbol{{Kind: "SERVICE", FullName: "ltcomm.ltdd.WaferAlignSvc"}},
+			},
+		}
+
+		out1, err := ReconcilePoolInMemory(ctx, run1Inputs, PoolReconcileOptions{
+			ClosureOnly:        true,
+			StripPGSegment:     true,
+			EnableR7AutoFix:    true,
+			MaxR7Rounds:        5,
+			EnableR8Quarantine: true,
+			MaxR8Rounds:        10,
+		})
+		if err != nil {
+			t.Fatalf("run1 ReconcilePoolInMemory failed: %v", err)
+		}
+		if len(out1.Files) != 1 || out1.Files[0].PipelineStatus != models.ProtoPipelineQuarantined {
+			t.Fatalf("expected GtWaferAlignmentMsg quarantined in run1, got %+v", out1.Files)
+		}
+		if out1.Files[0].QuarantineStage != models.ProtoQuarantineStageReconcileR8 {
+			t.Fatalf("expected QuarantineStage=%s, got %q", models.ProtoQuarantineStageReconcileR8, out1.Files[0].QuarantineStage)
+		}
+
+		// Run 2: feed Run 1's quarantined state back in, plus newly arrived sw/CommonType.proto
+		st1 := out1.Files[0]
+		run2Inputs := []PoolFileInput{
+			{
+				ProtoFileID:        st1.ProtoFileID,
+				GitRepoID:          st1.GitRepoID,
+				RepoName:           st1.RepoName,
+				SubsystemSlug:      st1.SubsystemSlug,
+				Category:           st1.Category,
+				RepoFilePath:       st1.RepoFilePath,
+				CleanRelPath:       st1.CleanRelPath,
+				LogicalPath:        st1.LogicalPath,
+				HasExplicitMapping: st1.HasExplicitMapping,
+				IsUServiceSource:   st1.IsUServiceSource,
+				Content:            st1.Content,
+				PackageName:        st1.PackageName,
+				Imports:            st1.Imports,
+				Symbols:            st1.Symbols,
+				PipelineStatus:     st1.PipelineStatus,
+				QuarantineStage:    st1.QuarantineStage,
+				StatusReason:       st1.StatusReason,
+			},
+			{
+				ProtoFileID:        2,
+				GitRepoID:          20,
+				RepoName:           "SW-swp",
+				SubsystemSlug:      "sw",
+				Category:           models.ProtoCategoryBaseLib,
+				RepoFilePath:       "platform/ltcommon/pg/CommonType.proto",
+				CleanRelPath:       "sw/CommonType.proto",
+				LogicalPath:        "sw/CommonType.proto",
+				HasExplicitMapping: true,
+				PipelineStatus:     models.ProtoPipelineNormalized,
+				Content: `syntax = "proto2";
+package sw.common;
+message CommonHeader { optional string trace_id = 1; }
+`,
+				PackageName: "sw.common",
+				Symbols:     []ParsedProtoSymbol{{Kind: "MESSAGE", FullName: "sw.common.CommonHeader"}},
+			},
+		}
+
+		out2, err := ReconcilePoolInMemory(ctx, run2Inputs, PoolReconcileOptions{
+			ClosureOnly:        true,
+			StripPGSegment:     true,
+			EnableR7AutoFix:    true,
+			MaxR7Rounds:        5,
+			EnableR8Quarantine: true,
+			MaxR8Rounds:        10,
+		})
+		if err != nil {
+			t.Fatalf("run2 ReconcilePoolInMemory failed: %v", err)
+		}
+		if out2.Report.Stats.CompileErrorCount != 0 || out2.Report.Stats.RevivedCount != 1 {
+			t.Fatalf("expected 0 errors & 1 revived in run2, got stats=%+v revived=%+v", out2.Report.Stats, out2.Report.Revived)
+		}
+		for _, f := range out2.Files {
+			if f.LogicalPath == "ltcomm/ltdd/GtWaferAlignmentMsg.proto" {
+				if f.PipelineStatus != models.ProtoPipelineNormalized || f.StatusReason != "" || f.QuarantineStage != models.ProtoQuarantineStageNone {
+					t.Fatalf("expected clean revival, got status=%s stage=%q reason=%q", f.PipelineStatus, f.QuarantineStage, f.StatusReason)
+				}
+			}
+		}
+	})
+
+	t.Run("multi_hop_transitive_revival", func(t *testing.T) {
+		inputs := []PoolFileInput{
+			{
+				ProtoFileID:        11,
+				GitRepoID:          1,
+				RepoName:           "svc-repo",
+				SubsystemSlug:      "svc",
+				Category:           models.ProtoCategoryBusiness,
+				RepoFilePath:       "pg/Svc.proto",
+				CleanRelPath:       "svc/Svc.proto",
+				LogicalPath:        "svc/Svc.proto",
+				HasExplicitMapping: true,
+				IsUServiceSource:   true,
+				PipelineStatus:     models.ProtoPipelineNormalized,
+				Content: `syntax = "proto2";
+package svc.v1;
+import "mid/A.proto";
+service MultiHopSvc {
+  rpc Ping(mid.MsgA) returns (mid.MsgA);
+}
+`,
+				PackageName: "svc.v1",
+				Imports:     []string{"mid/A.proto"},
+				Symbols:     []ParsedProtoSymbol{{Kind: "SERVICE", FullName: "svc.v1.MultiHopSvc"}},
+			},
+			{
+				ProtoFileID:        12,
+				GitRepoID:          2,
+				RepoName:           "mid-repo",
+				SubsystemSlug:      "mid",
+				Category:           models.ProtoCategoryBusiness,
+				RepoFilePath:       "pg/A.proto",
+				CleanRelPath:       "mid/A.proto",
+				LogicalPath:        "mid/A.proto",
+				HasExplicitMapping: true,
+				PipelineStatus:     models.ProtoPipelineQuarantined,
+				QuarantineStage:    models.ProtoQuarantineStageReconcileR8,
+				StatusReason:       "file does not exist: mid/B.proto",
+				Content: `syntax = "proto2";
+package mid;
+import "mid/B.proto";
+message MsgA { optional MsgB b = 1; }
+`,
+				PackageName: "mid",
+				Imports:     []string{"mid/B.proto"},
+				Symbols:     []ParsedProtoSymbol{{Kind: "MESSAGE", FullName: "mid.MsgA"}},
+			},
+			{
+				ProtoFileID:        13,
+				GitRepoID:          2,
+				RepoName:           "mid-repo",
+				SubsystemSlug:      "mid",
+				Category:           models.ProtoCategoryBusiness,
+				RepoFilePath:       "pg/B.proto",
+				CleanRelPath:       "mid/B.proto",
+				LogicalPath:        "mid/B.proto",
+				HasExplicitMapping: true,
+				PipelineStatus:     models.ProtoPipelineQuarantined,
+				QuarantineStage:    models.ProtoQuarantineStageReconcileR8,
+				StatusReason:       "file does not exist: sw/Common.proto",
+				Content: `syntax = "proto2";
+package mid;
+import "sw/Common.proto";
+message MsgB { optional sw.Leaf l = 1; }
+`,
+				PackageName: "mid",
+				Imports:     []string{"sw/Common.proto"},
+				Symbols:     []ParsedProtoSymbol{{Kind: "MESSAGE", FullName: "mid.MsgB"}},
+			},
+			{
+				ProtoFileID:        14,
+				GitRepoID:          3,
+				RepoName:           "sw-repo",
+				SubsystemSlug:      "sw",
+				Category:           models.ProtoCategoryBaseLib,
+				RepoFilePath:       "pg/Common.proto",
+				CleanRelPath:       "sw/Common.proto",
+				LogicalPath:        "sw/Common.proto",
+				HasExplicitMapping: true,
+				PipelineStatus:     models.ProtoPipelineNormalized,
+				Content: `syntax = "proto2";
+package sw;
+message Leaf { optional string id = 1; }
+`,
+				PackageName: "sw",
+				Symbols:     []ParsedProtoSymbol{{Kind: "MESSAGE", FullName: "sw.Leaf"}},
+			},
+		}
+
+		out, err := ReconcilePoolInMemory(ctx, inputs, PoolReconcileOptions{
+			ClosureOnly:        true,
+			StripPGSegment:     true,
+			EnableR7AutoFix:    true,
+			MaxR7Rounds:        5,
+			EnableR8Quarantine: true,
+			MaxR8Rounds:        10,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out.Report.Stats.CompileErrorCount != 0 || out.Report.Stats.RevivedCount != 2 || out.Report.Stats.QuarantinedCount != 0 {
+			t.Fatalf("expected 2 transitive revivals and 0 errors/quarantines, got stats=%+v", out.Report.Stats)
+		}
+	})
+
+	t.Run("stage_ab_quarantine_never_revived", func(t *testing.T) {
+		inputs := []PoolFileInput{
+			{
+				ProtoFileID:        21,
+				GitRepoID:          1,
+				RepoName:           "app",
+				SubsystemSlug:      "app",
+				Category:           models.ProtoCategoryBusiness,
+				RepoFilePath:       "pg/OkSvc.proto",
+				CleanRelPath:       "app/OkSvc.proto",
+				LogicalPath:        "app/OkSvc.proto",
+				HasExplicitMapping: true,
+				IsUServiceSource:   true,
+				PipelineStatus:     models.ProtoPipelineNormalized,
+				Content: `syntax = "proto2";
+package app;
+message Ok { optional string id = 1; }
+service OkSvc { rpc Ping(Ok) returns (Ok); }
+`,
+				PackageName: "app",
+				Symbols:     []ParsedProtoSymbol{{Kind: "SERVICE", FullName: "app.OkSvc"}},
+			},
+			{
+				ProtoFileID:        22,
+				GitRepoID:          2,
+				RepoName:           "bad-lfs",
+				SubsystemSlug:      "bad",
+				Category:           models.ProtoCategoryBusiness,
+				RepoFilePath:       "pg/Lfs.proto",
+				CleanRelPath:       "bad/Lfs.proto",
+				LogicalPath:        "bad/Lfs.proto",
+				HasExplicitMapping: true,
+				PipelineStatus:     models.ProtoPipelineQuarantined,
+				QuarantineStage:    models.ProtoQuarantineStageCollect,
+				StatusReason:       "LFS_POINTER",
+				Content:            "",
+			},
+			{
+				ProtoFileID:        23,
+				GitRepoID:          2,
+				RepoName:           "bad-parse",
+				SubsystemSlug:      "bad",
+				Category:           models.ProtoCategoryBusiness,
+				RepoFilePath:       "pg/Parse.proto",
+				CleanRelPath:       "bad/Parse.proto",
+				LogicalPath:        "bad/Parse.proto",
+				HasExplicitMapping: true,
+				PipelineStatus:     models.ProtoPipelineQuarantined,
+				QuarantineStage:    models.ProtoQuarantineStageNormalize,
+				StatusReason:       "PARSE_FAILED: syntax error",
+				Content:            "syntax = \"proto2\"; message Broken { = ; }",
+			},
+			{
+				ProtoFileID:        24,
+				GitRepoID:          2,
+				RepoName:           "bad-manual",
+				SubsystemSlug:      "bad",
+				Category:           models.ProtoCategoryBusiness,
+				RepoFilePath:       "pg/Manual.proto",
+				CleanRelPath:       "bad/Manual.proto",
+				LogicalPath:        "bad/Manual.proto",
+				HasExplicitMapping: true,
+				PipelineStatus:     models.ProtoPipelineQuarantined,
+				QuarantineStage:    "",
+				StatusReason:       "FILE_QUARANTINED: quarantined_files",
+				Content:            "syntax = \"proto2\"; package bad; message M { optional string x = 1; }",
+			},
+			{
+				ProtoFileID:        25,
+				GitRepoID:          2,
+				RepoName:           "bad-out-of-closure",
+				SubsystemSlug:      "bad",
+				Category:           models.ProtoCategoryBusiness,
+				RepoFilePath:       "pg/OutBroken.proto",
+				CleanRelPath:       "bad/OutBroken.proto",
+				LogicalPath:        "bad/OutBroken.proto",
+				HasExplicitMapping: true,
+				PipelineStatus:     models.ProtoPipelineQuarantined,
+				QuarantineStage:    models.ProtoQuarantineStageReconcileR8,
+				StatusReason:       "L3:1 unknown type MissingX",
+				Content: `syntax = "proto2";
+package bad;
+message OutBroken { optional MissingX x = 1; }
+`,
+				PackageName: "bad",
+			},
+		}
+
+		out, err := ReconcilePoolInMemory(ctx, inputs, PoolReconcileOptions{
+			ClosureOnly:        true,
+			StripPGSegment:     true,
+			EnableR7AutoFix:    true,
+			MaxR7Rounds:        5,
+			EnableR8Quarantine: true,
+			MaxR8Rounds:        10,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out.Report.Stats.RevivedCount != 0 {
+			t.Fatalf("expected 0 revivals (Stage A/B and broken out-of-closure must stay quarantined), got %+v", out.Report.Revived)
+		}
+		for _, f := range out.Files {
+			if f.RepoFilePath != "pg/OkSvc.proto" && f.PipelineStatus != models.ProtoPipelineQuarantined {
+				t.Fatalf("expected %s to stay QUARANTINED, got %s", f.RepoFilePath, f.PipelineStatus)
+			}
+		}
+	})
+
+	t.Run("r8_budget_exhausted_no_revival_leak", func(t *testing.T) {
+		inputs := make([]PoolFileInput, 0, 3)
+		for i := 1; i <= 3; i++ {
+			inputs = append(inputs, PoolFileInput{
+				ProtoFileID:        uint64(30 + i),
+				GitRepoID:          uint64(30 + i),
+				RepoName:           fmt.Sprintf("leak-guard-%d", i),
+				SubsystemSlug:      "lg",
+				Category:           models.ProtoCategoryBusiness,
+				RepoFilePath:       fmt.Sprintf("pg/BrokenType%d.proto", i),
+				CleanRelPath:       fmt.Sprintf("lg/BrokenType%d.proto", i),
+				LogicalPath:        fmt.Sprintf("lg/BrokenType%d.proto", i),
+				HasExplicitMapping: true,
+				IsUServiceSource:   true,
+				PipelineStatus:     models.ProtoPipelineQuarantined,
+				QuarantineStage:    models.ProtoQuarantineStageReconcileR8,
+				StatusReason:       "unknown type MissingType",
+				Content: fmt.Sprintf(`syntax = "proto2";
+package lg.v%d;
+service BrokenSvc%d {
+  rpc Call(MissingType%d) returns (MissingType%d);
+}
+`, i, i, i, i),
+				PackageName: fmt.Sprintf("lg.v%d", i),
+				Symbols:     []ParsedProtoSymbol{{Kind: "SERVICE", FullName: fmt.Sprintf("lg.v%d.BrokenSvc%d", i, i)}},
+			})
+		}
+
+		out, err := ReconcilePoolInMemory(ctx, inputs, PoolReconcileOptions{
+			ClosureOnly:        true,
+			StripPGSegment:     true,
+			EnableR7AutoFix:    false,
+			EnableR8Quarantine: true,
+			MaxR8Rounds:        1,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !out.Report.Stats.R8BudgetExhausted {
+			t.Fatalf("expected R8BudgetExhausted=true when MaxR8Rounds=1 for 3 independent errors, got %+v", out.Report.Stats)
+		}
+		if out.Report.Stats.RevivedCount != 0 {
+			t.Fatalf("expected 0 revivals on budget exhaustion leak guard, got %+v", out.Report.Revived)
+		}
+		for _, f := range out.Files {
+			if f.PipelineStatus != models.ProtoPipelineQuarantined {
+				t.Fatalf("expected %s rolled back to QUARANTINED when budget exhausted, got %s", f.LogicalPath, f.PipelineStatus)
+			}
+		}
+	})
+
+	t.Run("file_does_not_exist_scoring_and_batch_wave", func(t *testing.T) {
+		// 1. Verify selectR8QuarantineTarget assigns score 20 (> 15 default) for "file does not exist"
+		stMissing := &PoolFileState{PoolFileInput: PoolFileInput{LogicalPath: "a/MissingImp.proto"}}
+		stDefault := &PoolFileState{PoolFileInput: PoolFileInput{LogicalPath: "b/OtherErr.proto"}}
+		active := map[string]*PoolFileState{
+			stMissing.LogicalPath: stMissing,
+			stDefault.LogicalPath: stDefault,
+		}
+		errsByFile := map[string][]poolCompileError{
+			stMissing.LogicalPath: {{File: stMissing.LogicalPath, Line: 2, Col: 8, Msg: "file does not exist: sw/Missing.proto"}},
+			stDefault.LogicalPath: {{File: stDefault.LogicalPath, Line: 3, Col: 1, Msg: "some generic failure"}},
+		}
+		allErrs := []poolCompileError{errsByFile[stMissing.LogicalPath][0], errsByFile[stDefault.LogicalPath][0]}
+		victim, _, _, _ := selectR8QuarantineTarget(active, allErrs, errsByFile)
+		if victim != stMissing {
+			t.Fatalf("expected MissingImp.proto (score 20) chosen over OtherErr.proto (score 15), got %+v", victim)
+		}
+
+		// 2. Verify 20 files all importing missing file converge in <= 2 R8 rounds via batch wave
+		inputs := make([]PoolFileInput, 0, 20)
+		for i := 1; i <= 20; i++ {
+			lp := fmt.Sprintf("wave/Svc%02d.proto", i)
+			inputs = append(inputs, PoolFileInput{
+				ProtoFileID:        uint64(100 + i),
+				GitRepoID:          uint64(100 + i),
+				RepoName:           fmt.Sprintf("wave-%02d", i),
+				SubsystemSlug:      "wave",
+				Category:           models.ProtoCategoryBusiness,
+				RepoFilePath:       fmt.Sprintf("pg/Svc%02d.proto", i),
+				CleanRelPath:       lp,
+				LogicalPath:        lp,
+				HasExplicitMapping: true,
+				IsUServiceSource:   true,
+				PipelineStatus:     models.ProtoPipelineNormalized,
+				Content: fmt.Sprintf(`syntax = "proto2";
+package wave.v%d;
+import "uc/service/ChamberCommonMsg.proto";
+service Svc%02d {
+  rpc Call(uc.ChamberReq) returns (uc.ChamberReq);
+}
+`, i, i),
+				PackageName: fmt.Sprintf("wave.v%d", i),
+				Imports:     []string{"uc/service/ChamberCommonMsg.proto"},
+				Symbols:     []ParsedProtoSymbol{{Kind: "SERVICE", FullName: fmt.Sprintf("wave.v%d.Svc%02d", i, i)}},
+			})
+		}
+
+		out, err := ReconcilePoolInMemory(ctx, inputs, PoolReconcileOptions{
+			ClosureOnly:        true,
+			StripPGSegment:     true,
+			EnableR7AutoFix:    true,
+			MaxR7Rounds:        3,
+			EnableR8Quarantine: true,
+			MaxR8Rounds:        10,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out.Report.Stats.CompileErrorCount != 0 || out.Report.Stats.QuarantinedCount != 20 {
+			t.Fatalf("expected all 20 missing-import files quarantined with 0 remaining errors, got stats=%+v", out.Report.Stats)
+		}
+		if out.Report.Stats.R8Rounds > 2 {
+			t.Fatalf("expected batch missing-import wave to converge in <= 2 R8 rounds, got %d", out.Report.Stats.R8Rounds)
 		}
 	})
 }

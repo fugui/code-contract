@@ -1430,6 +1430,13 @@ export interface PoolQuarantinedEntryDTO {
   is_root_cause: boolean;
 }
 
+export interface PoolRevivedEntryDTO {
+  logical_path: string;
+  repo_name: string;
+  repo_file_path: string;
+  previous_reason?: string;
+}
+
 export interface PoolReconcileStatsDTO {
   total_files: number;
   service_count: number;
@@ -1439,11 +1446,13 @@ export interface PoolReconcileStatsDTO {
   conflict_count: number;
   auto_fix_count: number;
   quarantined_count: number;
+  revived_count?: number;
   bare_import_expanded_count: number;
   post_strip_collision_count: number;
   r7_rounds: number;
   r8_rounds: number;
   compile_error_count: number;
+  r8_budget_exhausted?: boolean;
 }
 
 export interface PoolReconcileReportDTO {
@@ -1451,6 +1460,7 @@ export interface PoolReconcileReportDTO {
   conflicts: PoolConflictEntryDTO[];
   auto_fixes: PoolAutoFixEntryDTO[];
   quarantined: PoolQuarantinedEntryDTO[];
+  revived?: PoolRevivedEntryDTO[];
   harvested: PoolHarvestedEntryDTO[];
   post_strip_collisions?: PoolStripCollisionDTO[];
   stats: PoolReconcileStatsDTO;

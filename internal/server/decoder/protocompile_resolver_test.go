@@ -622,3 +622,59 @@ message BadReq { common.v1.DeletedOnly d = 1; }
 		t.Fatalf("引入已软删除文件应返回 MISSING_IMPORTS，实测: %v", err)
 	}
 }
+
+func TestExtractStrictPGDir_DeepPG(t *testing.T) {
+	if got, ok := ExtractStrictPGDir("LTComm/ltdd/pg/GtWaferAlignmentMsg.proto"); !ok || got != "LTComm/ltdd/pg" {
+		t.Fatalf("ExtractStrictPGDir deep path = (%q, %v), want (\"LTComm/ltdd/pg\", true)", got, ok)
+	}
+	if got, ok := ExtractStrictPGDir("pg/Root.proto"); !ok || got != "pg" {
+		t.Fatalf("ExtractStrictPGDir root path = (%q, %v), want (\"pg\", true)", got, ok)
+	}
+	if _, ok := ExtractStrictPGDir("PG/Upper.proto"); ok {
+		t.Fatalf("ExtractStrictPGDir should reject uppercase PG")
+	}
+}
+
+func TestSuggestMissingImportCandidates_DeepPG(t *testing.T) {
+	db := setupIsolatedDecoderDB(t)
+	repo := models.GitRepo{
+		PlatformRepoID: 901,
+		Name:           "LT-XY/SW/LTComm/ltdd",
+		RepoURL:        "http://mock/ltdd.git",
+		DefaultBranch:  "main",
+	}
+	if err := db.Create(&repo).Error; err != nil {
+		t.Fatal(err)
+	}
+	bundle := models.GitProtoBundle{
+		GitRepoID:        repo.ID,
+		BundleName:       "ltdd",
+		Category:         models.ProtoCategoryBusiness,
+		TargetSchemaName: "ltdd",
+	}
+	if err := db.Create(&bundle).Error; err != nil {
+		t.Fatal(err)
+	}
+	pf := models.ProtoFile{
+		GitRepoID:        repo.ID,
+		BundleID:         bundle.ID,
+		TargetSchemaName: bundle.TargetSchemaName,
+		Category:         models.ProtoCategoryBusiness,
+		FilePath:         "ltcomm/ltdd/GtWaferAlignmentMsg.proto",
+		RepoFilePath:     "LTComm/ltdd/pg/GtWaferAlignmentMsg.proto",
+		PipelineStatus:   models.ProtoPipelineQuarantined,
+		StatusReason:     "file does not exist: sw/CommonType.proto",
+	}
+	if err := db.Create(&pf).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	provider := NewDBProtoSourceProvider(db)
+	suggestions, err := provider.SuggestMissingImportCandidates(context.Background(), "ltcomm/ltdd/GtWaferAlignmentMsg.proto")
+	if err != nil {
+		t.Fatalf("SuggestMissingImportCandidates failed: %v", err)
+	}
+	if len(suggestions) != 1 || suggestions[0].PGDir != "LTComm/ltdd/pg" {
+		t.Fatalf("expected PGDir=\"LTComm/ltdd/pg\", got %+v", suggestions)
+	}
+}

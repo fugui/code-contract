@@ -101,8 +101,8 @@ func TriggerPoolReconcileHandler(c *gin.Context) {
 			return
 		}
 		recordAudit(c, "contract_git:pool_reconcile", commonModels.AuditLevelP2,
-			fmt.Sprintf("同步执行全池 Stage C+ 协调 #%d（闭包=%d，自愈=%d，隔离=%d，余错=%d）",
-				run.ID, run.ClosureFileCount, run.AutoFixCount, run.QuarantinedCount, report.Stats.CompileErrorCount),
+			fmt.Sprintf("同步执行全池 Stage C+ 协调 #%d（闭包=%d，自愈=%d，复活=%d，隔离=%d，余错=%d）",
+				run.ID, run.ClosureFileCount, run.AutoFixCount, report.Stats.RevivedCount, run.QuarantinedCount, report.Stats.CompileErrorCount),
 			"proto_pool_reconcile", run.ID, run.WorkspaceVersion, nil, report.Stats)
 		c.JSON(http.StatusOK, gin.H{
 			"run":    run,

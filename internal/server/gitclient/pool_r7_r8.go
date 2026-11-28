@@ -35,6 +35,7 @@ var (
 		regexp.MustCompile(`import\s+"([^"]+)"\s+not found`),
 		regexp.MustCompile(`could not resolve import\s+"([^"]+)"`),
 		regexp.MustCompile(`open\s+([^\s:]+):\s+(?:file does not exist|no such file)`),
+		regexp.MustCompile(`file does not exist:\s+([^\s;"]+)`),
 	}
 	reUnknownTypePatterns = []*regexp.Regexp{
 		regexp.MustCompile(`unknown\s+(?:request\s+|response\s+|extendee\s+)?type\s+"?([A-Za-z_][A-Za-z0-9_.]*)"?`),
@@ -623,39 +624,149 @@ func runR7R8Stage(ctx context.Context, statesPtr *[]*PoolFileState, report *Pool
 	activeByLP, _, _, _ := buildActiveAndIndexes()
 	lastErrors, errsByFile = compileCurrentActive(activeByLP)
 
-	// R8 根因优先固损隔离
+	// R8 根因优先固损隔离（确定性缺失直接依赖按波次批量隔离，消除冗余首轮编译）
 	if opts.EnableR8Quarantine && len(lastErrors) > 0 {
 		for round := 1; round <= maxR8; round++ {
-			activeByLP, _, _, _ = buildActiveAndIndexes()
-			lastErrors, errsByFile = compileCurrentActive(activeByLP)
 			if len(lastErrors) == 0 {
 				break
 			}
 			report.Stats.R8Rounds = round
 
-			victim, isRootCause, errCnt, reason := selectR8QuarantineTarget(activeByLP, lastErrors, errsByFile)
-			if victim == nil {
-				break
+			directMissingLPs := findDirectMissingImportLPs(activeByLP, errsByFile)
+			if len(directMissingLPs) > 0 {
+				for _, lp := range directMissingLPs {
+					victim := activeByLP[lp]
+					if victim == nil {
+						continue
+					}
+					errCnt, reason, isRootCause := summarizeQuarantineReasonForState(victim, errsByFile[lp], activeByLP)
+					quarantineStateR8(victim, reason, errCnt, isRootCause, report)
+				}
+			} else {
+				victim, isRootCause, errCnt, reason := selectR8QuarantineTarget(activeByLP, lastErrors, errsByFile)
+				if victim == nil {
+					break
+				}
+				quarantineStateR8(victim, reason, errCnt, isRootCause, report)
 			}
-			victim.PipelineStatus = models.ProtoPipelineQuarantined
-			victim.InServiceClosure = false
-			if victim.ManualOwnerBundleID > 0 && victim.BundleID == victim.ManualOwnerBundleID {
-				reason = "人工仲裁文件编译失败，请复核仲裁: " + reason
+
+			activeByLP, _, _, _ = buildActiveAndIndexes()
+			lastErrors, errsByFile = compileCurrentActive(activeByLP)
+		}
+		if len(lastErrors) > 0 && report.Stats.R8Rounds >= maxR8 {
+			report.Stats.R8BudgetExhausted = true
+		}
+	}
+
+	// 事务性复活护栏 A：若仍有未收敛错误（如 R8 轮次打满），绝不让失败或受影响的历史复活文件泄漏回 NORMALIZED
+	rolledBackAny := false
+	if len(lastErrors) > 0 {
+		for _, st := range states {
+			if !st.WasR8Quarantined || st.PipelineStatus != models.ProtoPipelineNormalized {
+				continue
 			}
-			victim.StatusReason = reason
-			report.Quarantined = append(report.Quarantined, PoolQuarantinedEntry{
-				LogicalPath:  victim.LogicalPath,
-				RepoName:     victim.RepoName,
-				RepoFilePath: victim.RepoFilePath,
-				Reason:       reason,
-				ErrorCount:   errCnt,
-				IsRootCause:  isRootCause,
+			if fErrs := errsByFile[st.LogicalPath]; len(fErrs) > 0 {
+				errCnt, reason, isRootCause := summarizeQuarantineReasonForState(st, fErrs, activeByLP)
+				quarantineStateR8(st, reason, errCnt, isRootCause, report)
+				rolledBackAny = true
+			} else if report.Stats.R8BudgetExhausted && st.InServiceClosure && !st.IsExternalCopy {
+				quarantineStateR8(st, "R8 达到轮次上限，保守回退历史隔离态待复核", 1, false, report)
+				rolledBackAny = true
+			}
+		}
+	}
+	if rolledBackAny {
+		activeByLP, _, _, _ = buildActiveAndIndexes()
+		lastErrors, errsByFile = compileCurrentActive(activeByLP)
+	}
+
+	// 事务性复活护栏 B：校验闭包外试探复活文件的独立传递闭包编译健康度，防止带病复活污染全池
+	var outOfClosureRevivals []*PoolFileState
+	for _, st := range states {
+		if st.WasR8Quarantined && st.PipelineStatus == models.ProtoPipelineNormalized && !st.InServiceClosure && !st.IsExternalCopy {
+			outOfClosureRevivals = append(outOfClosureRevivals, st)
+		}
+	}
+	if len(outOfClosureRevivals) > 0 {
+		normByLP := make(map[string]*PoolFileState, len(states))
+		for _, st := range states {
+			if st.PipelineStatus == models.ProtoPipelineNormalized && !st.IsExternalCopy && st.LogicalPath != "" {
+				normByLP[st.LogicalPath] = st
+			}
+		}
+		verifyFiles := make(map[string][]byte)
+		closures := make(map[*PoolFileState]map[string]struct{}, len(outOfClosureRevivals))
+		for _, root := range outOfClosureRevivals {
+			cls := make(map[string]struct{})
+			q := []*PoolFileState{root}
+			seen := map[*PoolFileState]bool{root: true}
+			for len(q) > 0 {
+				cur := q[0]
+				q = q[1:]
+				if cur.LogicalPath == "" {
+					continue
+				}
+				cls[cur.LogicalPath] = struct{}{}
+				verifyFiles[cur.LogicalPath] = []byte(cur.Content)
+				for _, imp := range cur.Imports {
+					if imp == "" || IsWellKnownProtoImport(imp) {
+						continue
+					}
+					if dep := normByLP[imp]; dep != nil && !seen[dep] {
+						seen[dep] = true
+						q = append(q, dep)
+					}
+				}
+			}
+			closures[root] = cls
+		}
+		vErrs, _ := CompileClosureWithProtocompile(ctx, verifyFiles)
+		vErrsByFile := make(map[string][]poolCompileError)
+		for _, e := range vErrs {
+			if e.File != "" {
+				vErrsByFile[e.File] = append(vErrsByFile[e.File], e)
+			}
+		}
+		for _, root := range outOfClosureRevivals {
+			var rootErrs []poolCompileError
+			if fe := vErrsByFile[root.LogicalPath]; len(fe) > 0 {
+				rootErrs = fe
+			} else {
+				for lp := range closures[root] {
+					if fe := vErrsByFile[lp]; len(fe) > 0 {
+						rootErrs = fe
+						break
+					}
+				}
+			}
+			if len(rootErrs) > 0 {
+				quarantineStateR8(root, formatCompileErrorReason(rootErrs[0]), len(rootErrs), true, report)
+			}
+		}
+	}
+
+	// 记录最终正式复活的条目，并彻底清理历史隔离原因
+	for _, st := range states {
+		if st.WasR8Quarantined && st.PipelineStatus == models.ProtoPipelineNormalized {
+			st.StatusReason = ""
+			st.QuarantineStage = models.ProtoQuarantineStageNone
+			report.Revived = append(report.Revived, PoolRevivedEntry{
+				LogicalPath:    st.LogicalPath,
+				RepoName:       st.RepoName,
+				RepoFilePath:   st.RepoFilePath,
+				PreviousReason: st.PrevStatusReason,
 			})
 		}
-		// 最终验证计数
-		activeByLP, _, _, _ = buildActiveAndIndexes()
-		lastErrors, _ = compileCurrentActive(activeByLP)
 	}
+	sort.Slice(report.Revived, func(i, j int) bool {
+		if report.Revived[i].LogicalPath != report.Revived[j].LogicalPath {
+			return report.Revived[i].LogicalPath < report.Revived[j].LogicalPath
+		}
+		if report.Revived[i].RepoName != report.Revived[j].RepoName {
+			return report.Revived[i].RepoName < report.Revived[j].RepoName
+		}
+		return report.Revived[i].RepoFilePath < report.Revived[j].RepoFilePath
+	})
 
 	report.Stats.CompileErrorCount = len(lastErrors)
 	sort.Slice(report.Quarantined, func(i, j int) bool {
@@ -665,6 +776,74 @@ func runR7R8Stage(ctx context.Context, statesPtr *[]*PoolFileState, report *Pool
 		return report.Quarantined[i].RepoName < report.Quarantined[j].RepoName
 	})
 	return nil
+}
+
+func formatCompileErrorReason(e poolCompileError) string {
+	if e.Line > 0 {
+		return fmt.Sprintf("L%d:%d %s", e.Line, e.Col, e.Msg)
+	}
+	return e.Msg
+}
+
+func quarantineStateR8(victim *PoolFileState, reason string, errCnt int, isRootCause bool, report *PoolReconcileReport) {
+	if victim == nil || victim.PipelineStatus == models.ProtoPipelineQuarantined {
+		return
+	}
+	victim.PipelineStatus = models.ProtoPipelineQuarantined
+	victim.QuarantineStage = models.ProtoQuarantineStageReconcileR8
+	victim.InServiceClosure = false
+	if victim.ManualOwnerBundleID > 0 && victim.BundleID == victim.ManualOwnerBundleID {
+		reason = "人工仲裁文件编译失败，请复核仲裁: " + reason
+	}
+	victim.StatusReason = reason
+	if errCnt <= 0 {
+		errCnt = 1
+	}
+	if report != nil {
+		report.Quarantined = append(report.Quarantined, PoolQuarantinedEntry{
+			LogicalPath:  victim.LogicalPath,
+			RepoName:     victim.RepoName,
+			RepoFilePath: victim.RepoFilePath,
+			Reason:       reason,
+			ErrorCount:   errCnt,
+			IsRootCause:  isRootCause,
+		})
+	}
+}
+
+func findDirectMissingImportLPs(activeByLP map[string]*PoolFileState, errsByFile map[string][]poolCompileError) []string {
+	var out []string
+	for _, lp := range sortedActiveLogicalPaths(activeByLP) {
+		st := activeByLP[lp]
+		if len(collectMissingImportsForState(st, errsByFile[lp], activeByLP)) > 0 {
+			out = append(out, lp)
+		}
+	}
+	return out
+}
+
+func summarizeQuarantineReasonForState(st *PoolFileState, fileErrs []poolCompileError, activeByLP map[string]*PoolFileState) (errCnt int, reason string, isRootCause bool) {
+	errCnt = len(fileErrs)
+	if len(fileErrs) > 0 {
+		reason = formatCompileErrorReason(fileErrs[0])
+		for _, e := range fileErrs {
+			lower := strings.ToLower(e.Msg)
+			if strings.Contains(lower, "already defined") ||
+				strings.Contains(lower, "duplicate") ||
+				strings.Contains(lower, "syntax error") ||
+				strings.Contains(lower, "file does not exist") ||
+				(strings.Contains(lower, "import") && (strings.Contains(lower, "not found") || strings.Contains(lower, "could not resolve"))) {
+				isRootCause = true
+				break
+			}
+		}
+		return errCnt, reason, isRootCause
+	}
+	missing := collectMissingImportsForState(st, nil, activeByLP)
+	if len(missing) > 0 {
+		return len(missing), fmt.Sprintf("file does not exist: %s", missing[0]), true
+	}
+	return 1, "编译失败", false
 }
 
 func sortedActiveLogicalPaths(m map[string]*PoolFileState) []string {
@@ -1114,7 +1293,8 @@ func selectR8QuarantineTarget(
 				strings.Contains(lower, "option") && strings.Contains(lower, "unknown"):
 				sc.score += 100
 				sc.isRootCause = true
-			case strings.Contains(lower, "import") && (strings.Contains(lower, "not found") || strings.Contains(lower, "could not resolve")):
+			case (strings.Contains(lower, "import") && (strings.Contains(lower, "not found") || strings.Contains(lower, "could not resolve"))) ||
+				strings.Contains(lower, "file does not exist"):
 				sc.score += 20
 			case strings.Contains(lower, "unknown ") || strings.Contains(lower, "not defined"):
 				// 受害者报错权重明显低于根因

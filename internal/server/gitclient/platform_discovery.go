@@ -188,14 +188,20 @@ func GenerateBaselineReport(ctx context.Context, db *gorm.DB) (*BaselineReportDT
 func classifyPipelineError(reason string) string {
 	upper := strings.ToUpper(strings.TrimSpace(reason))
 	switch {
-	case strings.Contains(upper, "LFS_POINTER"):
-		return "LFS_POINTER"
-	case strings.Contains(upper, "PARSE_FAILED") || strings.Contains(upper, "SYNTAX") || strings.Contains(upper, "L"):
-		return "PARSE_FAILED"
-	case strings.Contains(upper, "SIZE") || strings.Contains(upper, "上限"):
-		return "FILE_TOO_LARGE"
 	case upper == "":
 		return "UNKNOWN"
+	case strings.Contains(upper, "LFS_POINTER"):
+		return "LFS_POINTER"
+	case strings.Contains(upper, "FILE_QUARANTINED"):
+		return "FILE_QUARANTINED"
+	case strings.Contains(upper, "INTRA_REPO_PATH_CONFLICT"):
+		return "INTRA_REPO_PATH_CONFLICT"
+	case strings.Contains(upper, "SIZE") || strings.Contains(upper, "上限"):
+		return "FILE_TOO_LARGE"
+	case strings.Contains(upper, "FILE DOES NOT EXIST") || strings.Contains(upper, "NOT FOUND") || strings.Contains(upper, "COULD NOT RESOLVE"):
+		return "MISSING_IMPORT"
+	case strings.Contains(upper, "PARSE_FAILED") || strings.Contains(upper, "SYNTAX"):
+		return "PARSE_FAILED"
 	default:
 		return "OTHER"
 	}

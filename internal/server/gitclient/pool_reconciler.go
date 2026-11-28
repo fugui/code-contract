@@ -42,6 +42,7 @@ type PoolFileInput struct {
 	IsUServiceSource    bool
 	IsHarvestedBase     bool
 	PipelineStatus      string
+	QuarantineStage     string
 	StatusReason        string
 	ManualOwnerBundleID uint64
 }
@@ -53,6 +54,8 @@ type PoolFileState struct {
 	IsExternalCopy      bool
 	InServiceClosure    bool
 	ForcedVariantWinner bool
+	WasR8Quarantined    bool
+	PrevStatusReason    string
 	AutoFixCount        int
 	Diagnostics         []NormalizeDiagnostic
 }
@@ -146,21 +149,31 @@ type PoolQuarantinedEntry struct {
 	IsRootCause  bool   `json:"is_root_cause"`
 }
 
+// PoolRevivedEntry 描述从历史 R8 隔离状态恢复为 NORMALIZED 的文件条目。
+type PoolRevivedEntry struct {
+	LogicalPath    string `json:"logical_path"`
+	RepoName       string `json:"repo_name"`
+	RepoFilePath   string `json:"repo_file_path"`
+	PreviousReason string `json:"previous_reason,omitempty"`
+}
+
 // PoolReconcileStats 汇总 Stage C+ 全池协调的核心指标。
 type PoolReconcileStats struct {
-	TotalFiles              int `json:"total_files"`
-	ServiceCount            int `json:"service_count"`
-	ClosureFileCount        int `json:"closure_file_count"`
-	HarvestedBaseCount      int `json:"harvested_base_count"`
-	LogicalPathCount        int `json:"logical_path_count"`
-	ConflictCount           int `json:"conflict_count"`
-	AutoFixCount            int `json:"auto_fix_count"`
-	QuarantinedCount        int `json:"quarantined_count"`
-	BareImportExpandedCount int `json:"bare_import_expanded_count"`
-	PostStripCollisionCount int `json:"post_strip_collision_count"`
-	R7Rounds                int `json:"r7_rounds"`
-	R8Rounds                int `json:"r8_rounds"`
-	CompileErrorCount       int `json:"compile_error_count"`
+	TotalFiles              int  `json:"total_files"`
+	ServiceCount            int  `json:"service_count"`
+	ClosureFileCount        int  `json:"closure_file_count"`
+	HarvestedBaseCount      int  `json:"harvested_base_count"`
+	LogicalPathCount        int  `json:"logical_path_count"`
+	ConflictCount           int  `json:"conflict_count"`
+	AutoFixCount            int  `json:"auto_fix_count"`
+	QuarantinedCount        int  `json:"quarantined_count"`
+	RevivedCount            int  `json:"revived_count"`
+	BareImportExpandedCount int  `json:"bare_import_expanded_count"`
+	PostStripCollisionCount int  `json:"post_strip_collision_count"`
+	R7Rounds                int  `json:"r7_rounds"`
+	R8Rounds                int  `json:"r8_rounds"`
+	CompileErrorCount       int  `json:"compile_error_count"`
+	R8BudgetExhausted       bool `json:"r8_budget_exhausted,omitempty"`
 }
 
 // PoolReconcileReport 为持久化至 DB 及写入 workspace/.clean-report.json 的全池结构化报告。
@@ -169,6 +182,7 @@ type PoolReconcileReport struct {
 	Conflicts           []PoolConflictEntry    `json:"conflicts"`
 	AutoFixes           []PoolAutoFixEntry     `json:"auto_fixes"`
 	Quarantined         []PoolQuarantinedEntry `json:"quarantined"`
+	Revived             []PoolRevivedEntry     `json:"revived,omitempty"`
 	Harvested           []PoolHarvestedEntry   `json:"harvested"`
 	PostStripCollisions []PoolStripCollision   `json:"post_strip_collisions,omitempty"`
 	Stats               PoolReconcileStats     `json:"stats"`
@@ -341,6 +355,94 @@ func ReconcilePoolInMemory(ctx context.Context, inputs []PoolFileInput, opts Poo
 			st.LogicalPath = NormalizeLogicalPath(base, stripPG)
 		} else {
 			st.LogicalPath = NormalizeLogicalPath(path.Join(pfx, base), stripPG)
+		}
+	}
+
+	// 2.5 R8 历史隔离文件不动点依赖预筛复活（严禁复活 Stage A/B 静态隔离文件）
+	canReevaluateR8 := poolR7R8Hook != nil && (opts.EnableR7AutoFix || opts.EnableR8Quarantine)
+	if canReevaluateR8 {
+		var revivableR8 []*PoolFileState
+		eligible := make(map[*PoolFileState]bool, len(states))
+		for _, st := range states {
+			if st.PipelineStatus != models.ProtoPipelineQuarantined {
+				eligible[st] = true
+			} else if isRevivableR8Quarantine(st) {
+				revivableR8 = append(revivableR8, st)
+				eligible[st] = true
+			}
+		}
+		if len(revivableR8) > 0 {
+			effectiveImpsByState := make(map[*PoolFileState][]string, len(revivableR8))
+			for _, st := range revivableR8 {
+				logicalDir := path.Dir(st.LogicalPath)
+				if logicalDir == "." {
+					logicalDir = ""
+				}
+				eff := make([]string, 0, len(st.Imports))
+				for _, imp := range st.Imports {
+					trimmed := strings.TrimSpace(imp)
+					if trimmed == "" || IsWellKnownProtoImport(trimmed) {
+						continue
+					}
+					if !strings.Contains(trimmed, "/") && logicalDir != "" {
+						eff = append(eff, path.Join(logicalDir, trimmed))
+					} else {
+						eff = append(eff, NormalizeLogicalPath(trimmed, stripPG))
+					}
+				}
+				effectiveImpsByState[st] = eff
+			}
+
+			for {
+				availByLP := make(map[string][]*PoolFileState, len(eligible))
+				availByBase := make(map[string][]*PoolFileState, len(eligible))
+				for _, st := range states {
+					if !eligible[st] || st.LogicalPath == "" {
+						continue
+					}
+					availByLP[st.LogicalPath] = append(availByLP[st.LogicalPath], st)
+					availByBase[path.Base(st.LogicalPath)] = append(availByBase[path.Base(st.LogicalPath)], st)
+				}
+
+				changed := false
+				for _, st := range revivableR8 {
+					if !eligible[st] {
+						continue
+					}
+					missingImp := ""
+					for _, imp := range effectiveImpsByState[st] {
+						if hasOtherEligibleCand(availByLP[imp], st) || hasOtherEligibleCand(availByBase[path.Base(imp)], st) {
+							continue
+						}
+						if opts.BaseIndex != nil && baseIndexHasImport(opts.BaseIndex, imp) {
+							continue
+						}
+						missingImp = imp
+						break
+					}
+					if missingImp != "" {
+						eligible[st] = false
+						st.PipelineStatus = models.ProtoPipelineQuarantined
+						st.QuarantineStage = models.ProtoQuarantineStageReconcileR8
+						st.StatusReason = fmt.Sprintf("file does not exist: %s", missingImp)
+						changed = true
+					}
+				}
+				if !changed {
+					break
+				}
+			}
+
+			for _, st := range revivableR8 {
+				if !eligible[st] {
+					continue
+				}
+				st.WasR8Quarantined = true
+				st.PrevStatusReason = st.StatusReason
+				st.PipelineStatus = models.ProtoPipelineNormalized
+				st.QuarantineStage = models.ProtoQuarantineStageNone
+				st.StatusReason = ""
+			}
 		}
 	}
 
@@ -649,17 +751,59 @@ func ReconcilePoolInMemory(ctx context.Context, inputs []PoolFileInput, opts Poo
 		ConflictCount:           len(report.Conflicts),
 		AutoFixCount:            totalAutoFixes,
 		QuarantinedCount:        quarantinedCnt,
+		RevivedCount:            len(report.Revived),
 		BareImportExpandedCount: bareExpandedCount,
 		PostStripCollisionCount: len(report.PostStripCollisions),
 		R7Rounds:                report.Stats.R7Rounds,
 		R8Rounds:                report.Stats.R8Rounds,
 		CompileErrorCount:       report.Stats.CompileErrorCount,
+		R8BudgetExhausted:       report.Stats.R8BudgetExhausted,
 	}
 
 	return &PoolReconcileOutput{
 		Files:  states,
 		Report: report,
 	}, nil
+}
+
+func isRevivableR8Quarantine(st *PoolFileState) bool {
+	if st == nil || st.PipelineStatus != models.ProtoPipelineQuarantined {
+		return false
+	}
+	if st.QuarantineStage != "" {
+		return st.QuarantineStage == models.ProtoQuarantineStageReconcileR8
+	}
+	if strings.TrimSpace(st.Content) == "" {
+		return false
+	}
+	upperReason := strings.ToUpper(strings.TrimSpace(st.StatusReason))
+	if strings.HasPrefix(upperReason, "LFS_POINTER") ||
+		strings.HasPrefix(upperReason, "PARSE_FAILED:") ||
+		strings.HasPrefix(upperReason, "FILE_QUARANTINED:") ||
+		strings.HasPrefix(upperReason, "INTRA_REPO_PATH_CONFLICT:") ||
+		strings.Contains(st.StatusReason, "超过上限") {
+		return false
+	}
+	return ParseProtoSyntaxOnly(st.LogicalPath, []byte(st.Content)).Passed
+}
+
+func hasOtherEligibleCand(cands []*PoolFileState, self *PoolFileState) bool {
+	for _, c := range cands {
+		if c != nil && c != self {
+			return true
+		}
+	}
+	return false
+}
+
+func baseIndexHasImport(idx *SharedBaseMemoryIndex, imp string) bool {
+	if idx == nil || imp == "" {
+		return false
+	}
+	if len(idx.ByNormPath[imp]) > 0 {
+		return true
+	}
+	return len(idx.ByBasename[path.Base(imp)]) > 0
 }
 
 // selectR3Winner 严格按 ADR-28 §2.4.3 7 级确定性顺序裁决多候选权威文件。
@@ -1107,6 +1251,7 @@ func RunPoolReconcile(ctx context.Context, db *gorm.DB, opts PoolReconcileOption
 			IsUServiceSource:    f.IsUServiceSource,
 			IsHarvestedBase:     f.IsHarvestedBase,
 			PipelineStatus:      f.PipelineStatus,
+			QuarantineStage:     f.QuarantineStage,
 			StatusReason:        f.StatusReason,
 			ManualOwnerBundleID: manualOwnerByPath[NormalizeLogicalPath(f.FilePath, stripPG)],
 		})
@@ -1159,7 +1304,12 @@ func RunPoolReconcile(ctx context.Context, db *gorm.DB, opts PoolReconcileOption
 		return nil, nil, err
 	}
 
-	emit("COMPLETED", "全池 Stage C+ 编译收敛与工作区导出完成", &out.Report)
+	completeMsg := "全池 Stage C+ 编译收敛与工作区导出完成"
+	if out.Report.Stats.R8BudgetExhausted {
+		completeMsg = fmt.Sprintf("全池 Stage C+ 收敛完成（警告：R8 已达 %d 轮上限，仍有 %d 个编译错误未收敛）",
+			out.Report.Stats.R8Rounds, out.Report.Stats.CompileErrorCount)
+	}
+	emit("COMPLETED", completeMsg, &out.Report)
 	return &run, &out.Report, nil
 }
 
@@ -1230,6 +1380,7 @@ func persistPoolReconcileOutput(ctx context.Context, db *gorm.DB, out *PoolRecon
 						RawBlobSHA:        st.RawBlobSHA,
 						NormalizerVersion: ruleNormalizerBaseVersion,
 						PipelineStatus:    st.PipelineStatus,
+						QuarantineStage:   st.QuarantineStage,
 						StatusReason:      st.StatusReason,
 						LineMapJSON:       lmJSON,
 						IsExternalCopy:    st.IsExternalCopy,
@@ -1277,10 +1428,15 @@ func persistPoolReconcileOutput(ctx context.Context, db *gorm.DB, out *PoolRecon
 				continue
 			}
 
+			if st.PipelineStatus == models.ProtoPipelineNormalized {
+				st.QuarantineStage = models.ProtoQuarantineStageNone
+				st.StatusReason = ""
+			}
 			updates := map[string]any{
 				"file_path":          st.LogicalPath,
 				"clean_rel_path":     st.CleanRelPath,
 				"pipeline_status":    st.PipelineStatus,
+				"quarantine_stage":   st.QuarantineStage,
 				"status_reason":      st.StatusReason,
 				"is_external_copy":   st.IsExternalCopy,
 				"is_uservice_source": st.IsUServiceSource,

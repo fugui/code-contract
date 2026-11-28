@@ -50,6 +50,7 @@ type CollectedFile struct {
 	SizeBytes         int64  `json:"size_bytes"`
 	IncrementalReused bool   `json:"incremental_reused"`
 	Status            string `json:"status"` // COLLECTED | QUARANTINED
+	QuarantineStage   string `json:"quarantine_stage,omitempty"`
 	StatusReason      string `json:"status_reason,omitempty"`
 }
 
@@ -307,6 +308,7 @@ func CollectRepoStageA(ctx context.Context, repo *models.GitRepo, branch string,
 		for _, pb := range toFetch {
 			if errMsg, hasErr := blobErrs[pb.sha]; hasErr {
 				res.Files[pb.fileIdx].Status = models.ProtoPipelineQuarantined
+				res.Files[pb.fileIdx].QuarantineStage = models.ProtoQuarantineStageCollect
 				res.Files[pb.fileIdx].StatusReason = errMsg.Error()
 				continue
 			}
@@ -315,6 +317,7 @@ func CollectRepoStageA(ctx context.Context, repo *models.GitRepo, branch string,
 			res.Files[pb.fileIdx].SizeBytes = int64(len(rawBytes))
 			if isGitLFSPointer(rawBytes) {
 				res.Files[pb.fileIdx].Status = models.ProtoPipelineQuarantined
+				res.Files[pb.fileIdx].QuarantineStage = models.ProtoQuarantineStageCollect
 				res.Files[pb.fileIdx].StatusReason = "LFS_POINTER"
 			}
 		}
@@ -479,13 +482,7 @@ func areAllGlobsDefaultPGShape(globs []string) bool {
 
 // ExtractStrictPGDir 识别路径所属的严格全小写 pg 目录（支持根目录 "pg"、一级 "<dir>/pg" 及任意深层 "<prefix>/pg"）。
 func ExtractStrictPGDir(repoRelPath string) (string, bool) {
-	segs := strings.Split(strings.Trim(repoRelPath, "/"), "/")
-	for i := 0; i < len(segs)-1; i++ {
-		if segs[i] == "pg" {
-			return strings.Join(segs[:i+1], "/"), true
-		}
-	}
-	return "", false
+	return decoder.ExtractStrictPGDir(repoRelPath)
 }
 
 func matchCollectGlobsStrict(globs []string, relPath string) bool {
