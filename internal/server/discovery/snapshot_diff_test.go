@@ -1,8 +1,10 @@
 package discovery
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -276,5 +278,54 @@ func TestSnapshotDiff_AllDiffCategories_TimelineAndCrossEnv(t *testing.T) {
 	timelineDiff := DiffSnapshots(left, right, "TIMELINE", "T1", "T2")
 	if timelineDiff.Mode != "TIMELINE" || timelineDiff.Summary.Total != 8 {
 		t.Fatalf("expected TIMELINE diff to detect 8 changes, got %+v", timelineDiff)
+	}
+}
+
+func TestRedactLiveResp_PreservesEmptySlicesAsJSONArrays(t *testing.T) {
+	input := &DiscoveryLiveRespDTO{
+		AgentID:       1,
+		DiscoveryMode: "CROSTCP_RPCMON",
+		Processes: []DiscoveryProcessGroupDTO{
+			{
+				ProcessKey:         "fp:empty_proc",
+				ProcName:           "empty_proc",
+				PIDs:               []uint32{},
+				ListenPorts:        []uint16{},
+				ObservedTransports: []string{},
+				Services: []DiscoveryLiveServiceDTO{
+					{
+						ServiceName: "EmptySvc",
+						Transport:   "TCP",
+						Endpoints:   []string{},
+						ServerPIDs:  []uint32{},
+					},
+				},
+				Subscriptions: []DiscoveryLiveSubDTO{},
+			},
+		},
+		RemoteLDCProcesses: []DiscoveryProcessGroupDTO{},
+	}
+
+	redacted := RedactLiveResp(input)
+	raw, err := json.Marshal(redacted)
+	if err != nil {
+		t.Fatalf("json.Marshal(redacted) failed: %v", err)
+	}
+	body := string(raw)
+	for _, forbidden := range []string{
+		`"subscriptions":null`,
+		`"services":null`,
+		`"pids":null`,
+		`"listen_ports":null`,
+		`"observed_transports":null`,
+		`"endpoints":null`,
+		`"server_pids":null`,
+		`"csg_endpoints":null`,
+		`"ports":null`,
+		`"remote_ldc_processes":null`,
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("expected JSON array instead of %s in %s", forbidden, body)
+		}
 	}
 }

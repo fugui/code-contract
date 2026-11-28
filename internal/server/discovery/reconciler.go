@@ -703,8 +703,14 @@ func QueryPhysicalAssets(db *gorm.DB, query PhysicalAssetQuery, userID uint, isA
 		ag := agentByID[p.AgentID]
 		var trs []string
 		_ = json.Unmarshal(p.ObservedTransports, &trs)
+		if trs == nil {
+			trs = []string{}
+		}
 		var pids []uint32
 		_ = json.Unmarshal(p.ObservedPIDs, &pids)
+		if pids == nil {
+			pids = []uint32{}
+		}
 		lastObs := ""
 		if p.LastObservedAt != nil {
 			lastObs = p.LastObservedAt.Format(time.RFC3339)
@@ -776,6 +782,9 @@ func QueryPhysicalAssets(db *gorm.DB, query PhysicalAssetQuery, userID uint, isA
 		}
 		var eps []string
 		_ = json.Unmarshal(plc.Endpoints, &eps)
+		if eps == nil {
+			eps = []string{}
+		}
 		resp.Placements = append(resp.Placements, ServicePlacementDTO{
 			ID:                plc.ID,
 			ModuleServiceID:   plc.ModuleServiceID,

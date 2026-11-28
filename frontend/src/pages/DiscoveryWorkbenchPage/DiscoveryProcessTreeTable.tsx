@@ -61,19 +61,19 @@ function matchesProcessGroup(group: DiscoveryProcessGroupDTO, kw: string): {
     group.arch_process_code,
     group.arch_process_name,
     group.remote_node,
-    ...group.pids.map(String),
+    ...(group.pids ?? []).map(String),
   ];
   const parentHit = parentFields.some((f) => f && f.toLowerCase().includes(lower));
 
   const childHit =
-    group.services.some(
+    (group.services ?? []).some(
       (s) =>
         s.service_name.toLowerCase().includes(lower) ||
         s.raw_service_name.toLowerCase().includes(lower) ||
         (s.proto_service_name && s.proto_service_name.toLowerCase().includes(lower)) ||
         (s.ssot_module_name && s.ssot_module_name.toLowerCase().includes(lower))
     ) ||
-    group.subscriptions.some(
+    (group.subscriptions ?? []).some(
       (sub) =>
         sub.service_name.toLowerCase().includes(lower) ||
         (sub.provider_proc_name && sub.provider_proc_name.toLowerCase().includes(lower))
@@ -98,7 +98,9 @@ export const DiscoveryProcessTreeTable: React.FC<DiscoveryProcessTreeTableProps>
   const [transportFilter, setTransportFilter] = useState<'ALL' | 'TCP' | 'MESH'>('ALL');
   const [manualExpanded, setManualExpanded] = useState<Record<string, boolean>>({});
 
-  const activeList = scopeTab === 'ldc' ? remoteLdcProcesses : localProcesses;
+  const safeLocalProcesses = localProcesses ?? [];
+  const safeRemoteLdcProcesses = remoteLdcProcesses ?? [];
+  const activeList = scopeTab === 'ldc' ? safeRemoteLdcProcesses : safeLocalProcesses;
 
   const filtered = useMemo(() => {
     const kw = searchQuery.trim();
@@ -107,7 +109,7 @@ export const DiscoveryProcessTreeTable: React.FC<DiscoveryProcessTreeTableProps>
       if (roleFilter !== 'ALL' && g.observed_role !== roleFilter) continue;
       if (
         transportFilter !== 'ALL' &&
-        !g.observed_transports.includes(transportFilter)
+        !(g.observed_transports ?? []).includes(transportFilter)
       ) {
         continue;
       }
@@ -137,7 +139,7 @@ export const DiscoveryProcessTreeTable: React.FC<DiscoveryProcessTreeTableProps>
           >
             <Server size={13} />
             <span>本机进程</span>
-            <span className="discovery-tab-count">{localProcesses.length}</span>
+            <span className="discovery-tab-count">{safeLocalProcesses.length}</span>
           </button>
 
           <button
@@ -150,7 +152,7 @@ export const DiscoveryProcessTreeTable: React.FC<DiscoveryProcessTreeTableProps>
           >
             <Globe size={13} />
             <span>跨板 LDC 远端节点（只读）</span>
-            <span className="discovery-tab-count">{remoteLdcProcesses.length}</span>
+            <span className="discovery-tab-count">{safeRemoteLdcProcesses.length}</span>
           </button>
         </div>
 
@@ -235,6 +237,10 @@ export const DiscoveryProcessTreeTable: React.FC<DiscoveryProcessTreeTableProps>
             </thead>
             <tbody>
               {filtered.map(({ group, childMatched }) => {
+                const pids = group.pids ?? [];
+                const transports = group.observed_transports ?? [];
+                const services = group.services ?? [];
+                const subscriptions = group.subscriptions ?? [];
                 const isExpanded =
                   manualExpanded[group.process_key] ??
                   (Boolean(searchQuery.trim()) && childMatched);
@@ -242,10 +248,10 @@ export const DiscoveryProcessTreeTable: React.FC<DiscoveryProcessTreeTableProps>
                 const enrollInfo = ENROLL_META[group.enroll_status] ?? ENROLL_META.UNENROLLED;
                 const idInfo = IDENTITY_META[group.identity_match] ?? IDENTITY_META.NEW;
                 const pidBadgeText =
-                  group.pids.length > 1
-                    ? `${group.pids.length} PIDs · ${group.pids.join(', ')}`
-                    : group.pids.length === 1
-                    ? `PID ${group.pids[0]}`
+                  pids.length > 1
+                    ? `${pids.length} PIDs · ${pids.join(', ')}`
+                    : pids.length === 1
+                    ? `PID ${pids[0]}`
                     : 'PID -';
 
                 return (
@@ -321,10 +327,10 @@ export const DiscoveryProcessTreeTable: React.FC<DiscoveryProcessTreeTableProps>
                       </td>
                       <td>
                         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                          {group.observed_transports.length === 0 ? (
+                          {transports.length === 0 ? (
                             <span className="discovery-pill discovery-pill--neutral">-</span>
                           ) : (
-                            group.observed_transports.map((tr) => (
+                            transports.map((tr) => (
                               <span
                                 key={tr}
                                 className={`discovery-pill ${
@@ -341,13 +347,13 @@ export const DiscoveryProcessTreeTable: React.FC<DiscoveryProcessTreeTableProps>
                       </td>
                       <td>
                         <span className="discovery-mono">
-                          {group.services.length}
+                          {services.length}
                           {group.unclaimed_service_count > 0 &&
                             ` · ${group.unclaimed_service_count} 待认领`}
                         </span>
                       </td>
                       <td>
-                        <span className="discovery-mono">{group.subscriptions.length}</span>
+                        <span className="discovery-mono">{subscriptions.length}</span>
                       </td>
                       {scopeTab !== 'ldc' && onOpenSimulationPlan && (
                         <td>
@@ -372,10 +378,10 @@ export const DiscoveryProcessTreeTable: React.FC<DiscoveryProcessTreeTableProps>
                       >
                         <td colSpan={scopeTab !== 'ldc' ? (onOpenSimulationPlan ? 9 : 8) : 7}>
                           <div className="discovery-child-section">
-                            {group.services.length > 0 && (
+                            {services.length > 0 && (
                               <div className="discovery-child-block">
                                 <div className="discovery-child-heading">
-                                  发布服务 ({group.services.length})
+                                  发布服务 ({services.length})
                                 </div>
                                 <table className="discovery-subtable">
                                   <thead>
@@ -389,15 +395,17 @@ export const DiscoveryProcessTreeTable: React.FC<DiscoveryProcessTreeTableProps>
                                     </tr>
                                   </thead>
                                   <tbody>
-                                    {group.services.map((svc) => (
-                                      <tr key={svc.service_name}>
-                                        <td className="discovery-mono">{svc.service_name}</td>
-                                        <td className="discovery-mono">
-                                          {svc.transport}{' '}
-                                          {svc.endpoints.length > 0
-                                            ? `· ${svc.endpoints.join(', ')}`
-                                            : ''}
-                                        </td>
+                                    {services.map((svc) => {
+                                      const endpoints = svc.endpoints ?? [];
+                                      return (
+                                        <tr key={svc.service_name}>
+                                          <td className="discovery-mono">{svc.service_name}</td>
+                                          <td className="discovery-mono">
+                                            {svc.transport}{' '}
+                                            {endpoints.length > 0
+                                              ? `· ${endpoints.join(', ')}`
+                                              : ''}
+                                          </td>
                                         <td>
                                           <span
                                             className={`discovery-pill ${
@@ -433,18 +441,19 @@ export const DiscoveryProcessTreeTable: React.FC<DiscoveryProcessTreeTableProps>
                                             '单宿主'
                                           )}
                                         </td>
-                                        <td className="discovery-mono">{svc.subscriber_count}</td>
-                                      </tr>
-                                    ))}
+                                          <td className="discovery-mono">{svc.subscriber_count}</td>
+                                        </tr>
+                                      );
+                                    })}
                                   </tbody>
                                 </table>
                               </div>
                             )}
 
-                            {group.subscriptions.length > 0 && (
+                            {subscriptions.length > 0 && (
                               <div className="discovery-child-block">
                                 <div className="discovery-child-heading">
-                                  下游订阅 ({group.subscriptions.length})
+                                  下游订阅 ({subscriptions.length})
                                 </div>
                                 <table className="discovery-subtable">
                                   <thead>
@@ -456,7 +465,7 @@ export const DiscoveryProcessTreeTable: React.FC<DiscoveryProcessTreeTableProps>
                                     </tr>
                                   </thead>
                                   <tbody>
-                                    {group.subscriptions.map((sub) => (
+                                    {subscriptions.map((sub) => (
                                       <tr key={sub.service_name}>
                                         <td className="discovery-mono">{sub.service_name}</td>
                                         <td>
@@ -488,7 +497,7 @@ export const DiscoveryProcessTreeTable: React.FC<DiscoveryProcessTreeTableProps>
                               </div>
                             )}
 
-                            {group.services.length === 0 && group.subscriptions.length === 0 && (
+                            {services.length === 0 && subscriptions.length === 0 && (
                               <div className="discovery-empty" style={{ padding: 12 }}>
                                 该进程暂未发布或订阅任何 CSG 服务
                               </div>

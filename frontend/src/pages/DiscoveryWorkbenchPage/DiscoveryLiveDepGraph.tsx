@@ -34,29 +34,33 @@ export const DiscoveryLiveDepGraph: React.FC<DiscoveryLiveDepGraphProps> = ({
     const edgeList: GraphEdge[] = [];
     const seenEdge = new Set<string>();
 
-    const allProcs = [...localProcesses, ...remoteLdcProcesses];
+    const safeLocal = localProcesses ?? [];
+    const safeRemote = remoteLdcProcesses ?? [];
+    const allProcs = [...safeLocal, ...safeRemote];
     const providerByService = new Map<string, { id: string; label: string; sub: string }>();
 
     for (const p of allProcs) {
-      for (const svc of p.services) {
+      const pids = p.pids ?? [];
+      for (const svc of p.services ?? []) {
         const pid = `prov:${p.process_key}`;
         const label = p.is_remote_ldc
           ? `${p.proc_name} (${p.remote_node || 'LDC'})`
           : p.proc_name;
-        const sub = `${p.pids.length} PIDs · ${svc.transport}`;
+        const sub = `${pids.length} PIDs · ${svc.transport}`;
         providerByService.set(svc.service_name, { id: pid, label, sub });
       }
     }
 
-    for (const p of localProcesses) {
-      if (p.subscriptions.length === 0) continue;
+    for (const p of safeLocal) {
+      const subs = p.subscriptions ?? [];
+      if (subs.length === 0) continue;
       const cid = `cons:${p.process_key}`;
       consumerMap.set(cid, {
         label: p.proc_name,
-        sub: `${p.observed_role} · ${p.subscriptions.length} 订阅`,
+        sub: `${p.observed_role} · ${subs.length} 订阅`,
       });
 
-      for (const sub of p.subscriptions) {
+      for (const sub of subs) {
         const sid = `svc:${sub.service_name}`;
         serviceMap.set(sid, {
           label: sub.service_name,
@@ -90,12 +94,13 @@ export const DiscoveryLiveDepGraph: React.FC<DiscoveryLiveDepGraphProps> = ({
 
     // Also show pure standalone server processes if no edges exist yet
     if (edgeList.length === 0) {
-      for (const p of localProcesses) {
-        for (const svc of p.services) {
+      for (const p of safeLocal) {
+        const svcs = p.services ?? [];
+        for (const svc of svcs) {
           const sid = `svc:${svc.service_name}`;
           const pid = `prov:${p.process_key}`;
           serviceMap.set(sid, { label: svc.service_name, sub: svc.transport });
-          providerMap.set(pid, { label: p.proc_name, sub: `${p.services.length} 服务` });
+          providerMap.set(pid, { label: p.proc_name, sub: `${svcs.length} 服务` });
           const e2 = `${sid}->${pid}`;
           if (!seenEdge.has(e2)) {
             seenEdge.add(e2);

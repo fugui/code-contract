@@ -100,19 +100,24 @@ export const EnrollProcessModal: React.FC<EnrollProcessModalProps> = ({
         </div>
 
         <div className="discovery-enroll-preview-list">
-          {selectedProcesses.map((proc) => (
-            <div key={proc.process_key} className="discovery-enroll-preview-item">
-              <div className="discovery-enroll-preview-item__main">
-                <span className="discovery-proc-name">{proc.proc_name}</span>
-                <span className="discovery-pill discovery-pill--neutral discovery-mono">
-                  {proc.pids.length > 0 ? `PID ${proc.pids.join(', ')}` : 'PID -'}
-                </span>
+          {(selectedProcesses ?? []).map((proc) => {
+            const pids = proc.pids ?? [];
+            const services = proc.services ?? [];
+            const subscriptions = proc.subscriptions ?? [];
+            return (
+              <div key={proc.process_key} className="discovery-enroll-preview-item">
+                <div className="discovery-enroll-preview-item__main">
+                  <span className="discovery-proc-name">{proc.proc_name}</span>
+                  <span className="discovery-pill discovery-pill--neutral discovery-mono">
+                    {pids.length > 0 ? `PID ${pids.join(', ')}` : 'PID -'}
+                  </span>
+                </div>
+                <div className="discovery-enroll-preview-item__meta discovery-mono">
+                  提供 {services.length} 个服务 · 订阅 {subscriptions.length} 条下游
+                </div>
               </div>
-              <div className="discovery-enroll-preview-item__meta discovery-mono">
-                提供 {proc.services.length} 个服务 · 订阅 {proc.subscriptions.length} 条下游
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </Modal>

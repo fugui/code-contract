@@ -321,6 +321,74 @@ export function testDiscoveryWorkbench_ProcessTree_PureClient_LDC_LiveGraph_AndS
       expect(code).not.toMatch(/:\s*any\b|\bas\s+any\b/);
     }
   }
+  // 7. Defensive null-array resilience (legacy snapshots containing null slices)
+  const nullSliceResp = {
+    ...liveResp,
+    csg_endpoints: null,
+    ports: null,
+    processes: [
+      {
+        ...liveResp.processes[0],
+        pids: null,
+        listen_ports: null,
+        observed_transports: null,
+        services: [
+          {
+            ...liveResp.processes[0].services[0],
+            endpoints: null,
+            server_pids: null,
+          },
+        ],
+        subscriptions: null,
+      },
+      {
+        ...liveResp.processes[1],
+        pids: null,
+        observed_transports: null,
+        services: null,
+        subscriptions: null,
+      },
+    ],
+    remote_ldc_processes: [
+      {
+        ...liveResp.remote_ldc_processes[0],
+        pids: null,
+        observed_transports: null,
+        services: null,
+        subscriptions: null,
+      },
+    ],
+  } as unknown as DiscoveryLiveRespDTO;
+
+  const nullLocalHtml = wrap(
+    <DiscoveryWorkbenchPage
+      initialAgents={[privateAgent]}
+      initialLiveData={nullSliceResp}
+      initialViewMode="tree"
+      initialScopeTab="local"
+      initialSearch="OrderService-0"
+    />
+  );
+  expect(nullLocalHtml).toContain('order_svr');
+
+  const nullLdcHtml = wrap(
+    <DiscoveryWorkbenchPage
+      initialAgents={[privateAgent]}
+      initialLiveData={nullSliceResp}
+      initialViewMode="tree"
+      initialScopeTab="ldc"
+    />
+  );
+  expect(nullLdcHtml).toContain('remote_auth_svr');
+
+  const nullGraphHtml = wrap(
+    <DiscoveryWorkbenchPage
+      initialAgents={[privateAgent]}
+      initialLiveData={nullSliceResp}
+      initialViewMode="graph"
+    />
+  );
+  expect(nullGraphHtml).toContain('discovery-live-dep-graph');
 }
 
 describe('DiscoveryWorkbench Test Suite', () => {

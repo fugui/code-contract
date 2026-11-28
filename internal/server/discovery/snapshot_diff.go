@@ -163,36 +163,99 @@ func ComputeSnapshotContentHash(resp *DiscoveryLiveRespDTO) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func cloneSlice[T any](src []T) []T {
+	dst := make([]T, len(src))
+	copy(dst, src)
+	return dst
+}
+
+func normalizeProcessGroupSlices(groups []DiscoveryProcessGroupDTO) {
+	for i := range groups {
+		g := &groups[i]
+		if g.PIDs == nil {
+			g.PIDs = []uint32{}
+		}
+		if g.ListenPorts == nil {
+			g.ListenPorts = []uint16{}
+		}
+		if g.ObservedTransports == nil {
+			g.ObservedTransports = []string{}
+		}
+		if g.Services == nil {
+			g.Services = []DiscoveryLiveServiceDTO{}
+		}
+		for j := range g.Services {
+			svc := &g.Services[j]
+			if svc.Endpoints == nil {
+				svc.Endpoints = []string{}
+			}
+			if svc.ServerPIDs == nil {
+				svc.ServerPIDs = []uint32{}
+			}
+		}
+		if g.Subscriptions == nil {
+			g.Subscriptions = []DiscoveryLiveSubDTO{}
+		}
+	}
+}
+
+// normalizeLiveRespSlices ensures all slices inside DiscoveryLiveRespDTO are non-nil so JSON encoding emits [] instead of null.
+func normalizeLiveRespSlices(dto *DiscoveryLiveRespDTO) {
+	if dto == nil {
+		return
+	}
+	if dto.CSGEndpoints == nil {
+		dto.CSGEndpoints = []agentproto.CSGEndpointInfo{}
+	}
+	if dto.Ports == nil {
+		dto.Ports = []agentproto.CSGPortUsage{}
+	}
+	if dto.Processes == nil {
+		dto.Processes = []DiscoveryProcessGroupDTO{}
+	}
+	if dto.RemoteLDCProcesses == nil {
+		dto.RemoteLDCProcesses = []DiscoveryProcessGroupDTO{}
+	}
+	normalizeProcessGroupSlices(dto.Processes)
+	normalizeProcessGroupSlices(dto.RemoteLDCProcesses)
+}
+
+func cloneProcessGroupList(src []DiscoveryProcessGroupDTO) []DiscoveryProcessGroupDTO {
+	out := make([]DiscoveryProcessGroupDTO, len(src))
+	for i, p := range src {
+		p.Cmdline = RedactCmdline(p.Cmdline)
+		p.PIDs = cloneSlice(p.PIDs)
+		p.ListenPorts = cloneSlice(p.ListenPorts)
+		p.ObservedTransports = cloneSlice(p.ObservedTransports)
+		p.Candidates = cloneSlice(p.Candidates)
+		svcs := make([]DiscoveryLiveServiceDTO, len(p.Services))
+		for j, s := range p.Services {
+			s.Endpoints = cloneSlice(s.Endpoints)
+			s.ServerPIDs = cloneSlice(s.ServerPIDs)
+			svcs[j] = s
+		}
+		p.Services = svcs
+		p.Subscriptions = cloneSlice(p.Subscriptions)
+		out[i] = p
+	}
+	return out
+}
+
 // RedactLiveResp returns a deep copy of resp with sensitive cmdline parameters masked.
 func RedactLiveResp(resp *DiscoveryLiveRespDTO) *DiscoveryLiveRespDTO {
 	if resp == nil {
 		return nil
 	}
 	cp := *resp
-	cp.CSGEndpoints = append([]agentproto.CSGEndpointInfo(nil), resp.CSGEndpoints...)
+	cp.CSGEndpoints = cloneSlice(resp.CSGEndpoints)
 	for i := range cp.CSGEndpoints {
 		cp.CSGEndpoints[i].Cmdline = RedactCmdline(cp.CSGEndpoints[i].Cmdline)
 	}
-	cp.Processes = make([]DiscoveryProcessGroupDTO, len(resp.Processes))
-	for i, p := range resp.Processes {
-		p.Cmdline = RedactCmdline(p.Cmdline)
-		p.PIDs = append([]uint32(nil), p.PIDs...)
-		p.ListenPorts = append([]uint16(nil), p.ListenPorts...)
-		p.ObservedTransports = append([]string(nil), p.ObservedTransports...)
-		p.Services = append([]DiscoveryLiveServiceDTO(nil), p.Services...)
-		p.Subscriptions = append([]DiscoveryLiveSubDTO(nil), p.Subscriptions...)
-		cp.Processes[i] = p
-	}
-	cp.RemoteLDCProcesses = make([]DiscoveryProcessGroupDTO, len(resp.RemoteLDCProcesses))
-	for i, p := range resp.RemoteLDCProcesses {
-		p.Cmdline = RedactCmdline(p.Cmdline)
-		p.PIDs = append([]uint32(nil), p.PIDs...)
-		p.ListenPorts = append([]uint16(nil), p.ListenPorts...)
-		p.ObservedTransports = append([]string(nil), p.ObservedTransports...)
-		p.Services = append([]DiscoveryLiveServiceDTO(nil), p.Services...)
-		p.Subscriptions = append([]DiscoveryLiveSubDTO(nil), p.Subscriptions...)
-		cp.RemoteLDCProcesses[i] = p
-	}
+	cp.Ports = cloneSlice(resp.Ports)
+	cp.Errors = cloneSlice(resp.Errors)
+	cp.Processes = cloneProcessGroupList(resp.Processes)
+	cp.RemoteLDCProcesses = cloneProcessGroupList(resp.RemoteLDCProcesses)
+	normalizeLiveRespSlices(&cp)
 	return &cp
 }
 
@@ -399,6 +462,7 @@ func GetSnapshotPayload(db *gorm.DB, id uint64, userID uint, isAdmin bool) (*mod
 	if err := json.Unmarshal(snap.PayloadJSON, &payload); err != nil {
 		return nil, nil, err
 	}
+	normalizeLiveRespSlices(&payload)
 	return &snap, &payload, nil
 }
 

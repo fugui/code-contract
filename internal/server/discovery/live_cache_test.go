@@ -2,8 +2,10 @@ package discovery
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -460,6 +462,78 @@ func TestAggregateProcessCentric_RetainsEnrolledProcessWithoutCSGActivity(t *tes
 	}
 	if resp.Summary.ProcessCount != 1 || resp.Summary.ClientOnlyCount != 1 {
 		t.Fatalf("expected summary process_count=1 client_only_count=1, got %+v", resp.Summary)
+	}
+}
+
+func TestFallbackFromSnapshot_NormalizesLegacyNullSlices(t *testing.T) {
+	db := testdb.SetupIsolatedDB(t, config.ServiceName)
+	if err := models.SetupWithDB(db); err != nil {
+		t.Fatalf("SetupWithDB failed: %v", err)
+	}
+
+	agent := models.Agent{
+		Name:     "offline-legacy-snap-agent",
+		Endpoint: "http://127.0.0.1:19099",
+		Scope:    models.ScopeShared,
+		Status:   models.AgentStatusOffline,
+	}
+	if err := db.Create(&agent).Error; err != nil {
+		t.Fatalf("create agent failed: %v", err)
+	}
+
+	legacyPayload := `{"agent_id":1,"csg_addr":"127.0.0.1:31806","csg_endpoints":null,"ports":null,"processes":[{"process_key":"fp:order_svr","proc_name":"order_svr","exe_name":"order_svr","cmdline":"","identity_fingerprint":"abc","pids":null,"listen_ports":null,"observed_role":"SERVER","observed_transports":null,"enroll_status":"UNENROLLED","identity_match":"NEW","is_remote_ldc":false,"claimed_service_count":0,"unclaimed_service_count":1,"services":[{"service_name":"OrderSvc","raw_service_name":"OrderSvc","endpoints":null,"transport":"TCP","server_pids":null,"instance_count":1,"is_multi_host":false,"subscriber_count":0,"proto_match_status":"UNMATCHED","claim_status":"UNCLAIMED"}],"subscriptions":null}],"remote_ldc_processes":null}`
+	snap := models.DiscoverySnapshot{
+		AgentID:          agent.ID,
+		AgentName:        agent.Name,
+		TriggerMode:      models.DiscoveryTriggerManual,
+		CSGAddr:          "127.0.0.1:31806",
+		DiscoveryMode:    "CROSTCP_RPCMON",
+		RedactionVersion: 1,
+		SummaryJSON:      datatypes.JSON(`{"process_count":1}`),
+		PayloadJSON:      datatypes.JSON(legacyPayload),
+		ContentHash:      "legacy-null-slices-hash",
+		CapturedAt:       time.Now().UTC(),
+	}
+	if err := db.Create(&snap).Error; err != nil {
+		t.Fatalf("create legacy snapshot failed: %v", err)
+	}
+
+	svc := NewLiveDiscoveryService(db, nil)
+	resp, err := svc.GetLiveDiscovery(context.Background(), agent.ID, "", false, 1, true)
+	if err != nil {
+		t.Fatalf("GetLiveDiscovery failed: %v", err)
+	}
+	if len(resp.Processes) != 1 {
+		t.Fatalf("expected 1 process, got %d", len(resp.Processes))
+	}
+	proc := resp.Processes[0]
+	if proc.Subscriptions == nil || proc.PIDs == nil || proc.ListenPorts == nil || proc.ObservedTransports == nil {
+		t.Fatalf("expected non-nil process slices, got %+v", proc)
+	}
+	if len(proc.Services) != 1 || proc.Services[0].Endpoints == nil || proc.Services[0].ServerPIDs == nil {
+		t.Fatalf("expected non-nil service slices, got %+v", proc.Services)
+	}
+
+	raw, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatalf("json.Marshal(resp) failed: %v", err)
+	}
+	body := string(raw)
+	for _, forbidden := range []string{
+		`"subscriptions":null`,
+		`"services":null`,
+		`"pids":null`,
+		`"listen_ports":null`,
+		`"observed_transports":null`,
+		`"endpoints":null`,
+		`"server_pids":null`,
+		`"csg_endpoints":null`,
+		`"ports":null`,
+		`"remote_ldc_processes":null`,
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("expected normalized JSON array instead of %s in %s", forbidden, body)
+		}
 	}
 }
 

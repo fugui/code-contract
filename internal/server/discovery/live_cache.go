@@ -355,12 +355,7 @@ func (s *LiveDiscoveryService) fallbackFromSnapshot(agent *models.Agent, csgAddr
 	dto.StaleReason = reason
 	dto.CapturedAt = snap.CapturedAt.UTC().Format(time.RFC3339)
 	dto.SnapshotID = &snapID
-	if dto.Processes == nil {
-		dto.Processes = []DiscoveryProcessGroupDTO{}
-	}
-	if dto.RemoteLDCProcesses == nil {
-		dto.RemoteLDCProcesses = []DiscoveryProcessGroupDTO{}
-	}
+	normalizeLiveRespSlices(&dto)
 	return &dto, nil
 }
 
@@ -882,7 +877,7 @@ func AggregateProcessCentricForUser(db *gorm.DB, agentID uint64, report *agentpr
 		capturedAt = time.Now().UTC().Format(time.RFC3339)
 	}
 
-	return &DiscoveryLiveRespDTO{
+	resp := &DiscoveryLiveRespDTO{
 		AgentID:            agentID,
 		CSGAddr:            csgAddr,
 		CSGEndpoints:       endpoints,
@@ -894,7 +889,9 @@ func AggregateProcessCentricForUser(db *gorm.DB, agentID uint64, report *agentpr
 		RemoteLDCProcesses: remoteDTOs,
 		Summary:            summary,
 		Errors:             cleanReport.Errors,
-	}, nil
+	}
+	normalizeLiveRespSlices(resp)
+	return resp, nil
 }
 
 type ssotReadOnlyMeta struct {

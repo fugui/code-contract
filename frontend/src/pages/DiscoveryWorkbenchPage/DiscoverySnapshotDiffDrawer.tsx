@@ -75,6 +75,9 @@ export const DiscoverySnapshotDiffDrawer: React.FC<DiscoverySnapshotDiffDrawerPr
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editingLabel, setEditingLabel] = useState('');
 
+  const safeSnapshots = snapshots ?? [];
+  const diffItems = diffResult?.items ?? [];
+
   const handleDelete = async (snap: DiscoverySnapshotSummaryDTO) => {
     const ok = await confirmDialog({
       title: '删除现网发现快照',
@@ -127,11 +130,11 @@ export const DiscoverySnapshotDiffDrawer: React.FC<DiscoverySnapshotDiffDrawerPr
           <>
             {loadingSnapshots ? (
               <div className="discovery-empty">正在加载快照时间线...</div>
-            ) : snapshots.length === 0 ? (
+            ) : safeSnapshots.length === 0 ? (
               <div className="discovery-empty">当前环境暂无持久化快照</div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {snapshots.map((snap) => (
+                {safeSnapshots.map((snap) => (
                   <div
                     key={snap.id}
                     data-testid={`discovery-snapshot-card-${snap.id}`}
@@ -263,7 +266,7 @@ export const DiscoverySnapshotDiffDrawer: React.FC<DiscoverySnapshotDiffDrawerPr
                   onChange={(e) => onChangeDiffTargets({ leftId: e.target.value })}
                 >
                   <option value="">请选择快照...</option>
-                  {snapshots.map((s) => (
+                  {safeSnapshots.map((s) => (
                     <option key={s.id} value={String(s.id)}>
                       #{s.id} · {s.label || s.trigger_mode} ({s.captured_at})
                     </option>
@@ -282,7 +285,7 @@ export const DiscoverySnapshotDiffDrawer: React.FC<DiscoverySnapshotDiffDrawerPr
                   }
                 >
                   <option value="">不使用快照（改用右侧实时环境）</option>
-                  {snapshots.map((s) => (
+                  {safeSnapshots.map((s) => (
                     <option key={s.id} value={String(s.id)}>
                       #{s.id} · {s.label || s.trigger_mode} ({s.captured_at})
                     </option>
@@ -332,10 +335,10 @@ export const DiscoverySnapshotDiffDrawer: React.FC<DiscoverySnapshotDiffDrawerPr
                   <span>共 {diffResult.summary.total} 项结构变更</span>
                 </div>
 
-                {diffResult.items.length === 0 ? (
+                {diffItems.length === 0 ? (
                   <div className="discovery-empty">两侧现网拓扑结构完全一致（已忽略 PID 与动态端口）</div>
                 ) : (
-                  diffResult.items.map((item, idx) => {
+                  diffItems.map((item, idx) => {
                     const meta = DIFF_KIND_META[item.kind] ?? {
                       label: item.kind,
                       cls: 'discovery-pill--neutral',
