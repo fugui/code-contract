@@ -893,6 +893,7 @@ func TestSingleProcessZeroTopology_BidirectionalCapture_StopRelease_AndZeroLeakR
 		agentStopSessionID atomic.Uint64
 		mockDownstreams    []agentproto.DownstreamEndpoint
 		replayExecuted     atomic.Bool
+		replayRecordID     atomic.Uint64
 	)
 
 	// Mock Agent 服务端
@@ -917,17 +918,30 @@ func TestSingleProcessZeroTopology_BidirectionalCapture_StopRelease_AndZeroLeakR
 			var execReq agentproto.ExecuteReplayReq
 			_ = json.NewDecoder(req.Body).Decode(&execReq)
 			mockDownstreams = execReq.ProcessSpec.Downstreams
+			if len(execReq.IngressItems) > 0 {
+				replayRecordID.Store(execReq.IngressItems[0].RecordID)
+			}
 			replayExecuted.Store(true)
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{"status": "ARMED"})
 		case strings.HasPrefix(path, "/agent/v1/replays/") && strings.HasSuffix(path, "/result"):
+			recID := replayRecordID.Load()
+			ingRsp := buildTestCrosRspFrame(2001, crosrpc.MsgTypeRsp, 1, 0, "OrderService", "PlaceOrder", []byte("ing_rsp_data"))
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(agentproto.ReplayTaskResultResp{
 				Status:         "PASS",
 				TotalRequests:  1,
 				PassedRequests: 1,
 				MockHitCount:   1,
-				Details:        "单进程零拓扑历史 EGRESS 重放成功",
+				Items: []agentproto.ReplayItemDetail{
+					{
+						RecordID:     recID,
+						SeqNo:        1,
+						Status:       "PASS",
+						ActualRspHex: hex.EncodeToString(ingRsp),
+						LatencyUs:    120,
+					},
+				},
 			})
 		default:
 			w.WriteHeader(http.StatusOK)

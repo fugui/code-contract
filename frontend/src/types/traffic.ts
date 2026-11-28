@@ -105,6 +105,7 @@ export interface TrafficRecordSummary {
   session_id: string;
   seq_no?: number;
   process_id: string;
+  arch_process_id?: string;
   process_name?: string;
   arch_process_name?: string;
   peer_proc_name?: string;
@@ -302,6 +303,7 @@ export interface ReplayClosurePreviewDTO {
 
 export interface ProcessDiagnostic {
   process_id: string;
+  arch_process_id?: string;
   process_name?: string;
   pid: number;
   listen_port: number;

@@ -30,6 +30,7 @@ type TrafficRecordSummary struct {
 	SessionID        string  `json:"session_id"`
 	SeqNo            int64   `json:"seq_no"`
 	ProcessID        string  `json:"process_id"`
+	ArchProcessID    string  `json:"arch_process_id,omitempty"`
 	ProcessName      string  `json:"process_name,omitempty"`
 	ArchProcessName  string  `json:"arch_process_name,omitempty"`
 	PeerProcName     string  `json:"peer_proc_name,omitempty"`

@@ -43,7 +43,7 @@ func ListProcesses(c *gin.Context) {
 	moduleIDStr := c.Query("module_id")
 	search := strings.TrimSpace(c.Query("search"))
 
-	query := models.DB.Model(&models.Process{}).Preload("Agent.Owner").Preload("ArchProcess.Group")
+	query := models.DB.Model(&models.Process{}).Preload("Agent.Owner").Preload("ArchProcess.Group").Preload("ArchProcess.Modules")
 
 	// ScopeReadGuard: 普通用户仅能看到挂载在 SHARED Agent 或本人 PRIVATE Agent 下的进程
 	if !isAdmin {
@@ -110,7 +110,7 @@ func GetProcess(c *gin.Context) {
 	}
 
 	var proc models.Process
-	if err := models.DB.Preload("Agent.Owner").Preload("ArchProcess.Group").First(&proc, id).Error; err != nil {
+	if err := models.DB.Preload("Agent.Owner").Preload("ArchProcess.Group").Preload("ArchProcess.Modules").First(&proc, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "进程映射不存在"})
 		return
 	}

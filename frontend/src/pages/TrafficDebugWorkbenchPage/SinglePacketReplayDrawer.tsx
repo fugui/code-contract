@@ -10,6 +10,7 @@ import type {
   ReplayTask,
   ReplayItem,
   ReplayClosurePreviewDTO,
+  CSGReplayStrategy,
 } from '../../types';
 import {
   HeaderAssertionCard,
@@ -22,7 +23,7 @@ export interface SinglePacketReplayContentProps {
   allProcesses: Process[];
   allAgents: Agent[];
   currentUserId?: number;
-  onExecute?: (targetProcessId: string, recordIds: string[]) => Promise<void>;
+  onExecute?: (targetProcessId: string, recordIds: string[], csgStrategy: CSGReplayStrategy) => Promise<void>;
   task?: ReplayTask | null;
   replayItem?: ReplayItem | null;
   loadingItem?: boolean;
@@ -43,6 +44,7 @@ export const SinglePacketReplayContent: React.FC<SinglePacketReplayContentProps>
   onOpenSequenceWithTask,
 }) => {
   const [selectedProcessId, setSelectedProcessId] = useState<string>('');
+  const [csgStrategy, setCsgStrategy] = useState<CSGReplayStrategy>('PASSTHROUGH');
   const [closure, setClosure] = useState<ReplayClosurePreviewDTO | null>(null);
   const [loadingClosure, setLoadingClosure] = useState(false);
   const [includePrerequisites, setIncludePrerequisites] = useState(true);
@@ -73,21 +75,40 @@ export const SinglePacketReplayContent: React.FC<SinglePacketReplayContentProps>
     };
   }, [record]);
 
-  // 同构服务端业务进程过滤与智能推荐排序
+  // 同构服务端业务进程过滤与智能推荐排序（优先 ArchProcessID 精确匹配，兼容历史 module_ids / process_modules）
   const candidateProcesses = useMemo(() => {
     if (!record) return [];
 
+    const recordArchProcId = record.arch_process_id ? String(record.arch_process_id).trim() : '';
     const targetModuleName = (record.dst_module_name || record.src_module_name || '').toLowerCase();
 
     const isomorphicProcs = allProcesses.filter((p) => {
-      if (!p.listen_port || p.listen_port <= 0) {
+      const agent = allAgents.find((ag) => String(ag.id) === String(p.agent_id));
+      if (agent && agent.status === 'OFFLINE') {
         return false;
       }
+
+      const listenPort = Number(p.effective_listen_port ?? p.listen_port ?? 0);
+      if (csgStrategy !== 'CLIENT_INJECT' && listenPort <= 0) {
+        return false;
+      }
+
+      if (recordArchProcId) {
+        if (p.arch_process_id !== undefined && p.arch_process_id !== null && String(p.arch_process_id) !== '') {
+          return String(p.arch_process_id) === recordArchProcId;
+        }
+        return false;
+      }
+
       const pModules = p.process_modules ?? [];
-      if (pModules.length === 0) {
+      const pModIds = p.module_ids ?? [];
+      if (pModules.length === 0 && pModIds.length === 0) {
         return false;
       }
       if (!targetModuleName) return true;
+      if (pModIds.some((mid) => String(mid).toLowerCase() === targetModuleName)) {
+        return true;
+      }
       return pModules.some((pm) => {
         const mod = pm.module;
         if (!mod) {
@@ -102,22 +123,24 @@ export const SinglePacketReplayContent: React.FC<SinglePacketReplayContentProps>
     });
 
     return isomorphicProcs.sort((a, b) => {
-      const agentA = allAgents.find((ag) => ag.id === a.agent_id);
-      const agentB = allAgents.find((ag) => ag.id === b.agent_id);
+      const agentA = allAgents.find((ag) => String(ag.id) === String(a.agent_id));
+      const agentB = allAgents.find((ag) => String(ag.id) === String(b.agent_id));
 
       const scoreA =
         (agentA?.scope === 'PRIVATE' && String(agentA.owner_id) === String(currentUserId) ? 100 : 0) +
         (agentA?.status === 'ONLINE' ? 20 : 0) +
+        (a.probe_status === 'READY' ? 15 : 0) +
         (!agentA?.lease_type ? 10 : 0);
 
       const scoreB =
         (agentB?.scope === 'PRIVATE' && String(agentB.owner_id) === String(currentUserId) ? 100 : 0) +
         (agentB?.status === 'ONLINE' ? 20 : 0) +
+        (b.probe_status === 'READY' ? 15 : 0) +
         (!agentB?.lease_type ? 10 : 0);
 
       return scoreB - scoreA;
     });
-  }, [record, allProcesses, allAgents, currentUserId]);
+  }, [record, allProcesses, allAgents, currentUserId, csgStrategy]);
 
   useEffect(() => {
     if (candidateProcesses.length > 0) {
@@ -173,7 +196,7 @@ export const SinglePacketReplayContent: React.FC<SinglePacketReplayContentProps>
         </div>
         <div className="code-anatomy-card__body">
           {loadingClosure ? (
-            <div style={{ padding: '12px', textAlign: 'center', color: '#64748b' }}>
+            <div style={{ padding: '12px', textAlign: 'center', color: 'var(--color-text-secondary)' }}>
               正在检索当前入口事务因果闭包...
             </div>
           ) : closure && (closure.scoped_egress_mocks || []).length > 0 ? (
@@ -270,9 +293,23 @@ export const SinglePacketReplayContent: React.FC<SinglePacketReplayContentProps>
           <span className="code-anatomy-card__title">同构目标进程智能路由</span>
         </div>
         <div className="code-anatomy-card__body">
+          <div style={{ marginBottom: '12px' }}>
+            <label className="code-field-label">CSG 仿真与端口路由策略:</label>
+            <select
+              className="code-select"
+              value={csgStrategy}
+              onChange={(e) => setCsgStrategy(e.target.value as CSGReplayStrategy)}
+              data-testid="select-csg-strategy"
+            >
+              <option value="PASSTHROUGH">PASSTHROUGH (直连目标静态端口)</option>
+              <option value="CLIENT_INJECT">CLIENT_INJECT (经 CSG 订阅动态注入 · 支持端口为 0)</option>
+              <option value="PUB_STUB">PUB_STUB (本地模拟下游桩发布到 CSG)</option>
+              <option value="MOCK_SERVER">MOCK_SERVER (本地沙箱接管 CSG 控制面)</option>
+            </select>
+          </div>
           {candidateProcesses.length === 0 ? (
             <div className="code-alert-banner code-alert-banner--warning">
-              未检测到挂载了同构模块且 <code>listen_port &gt; 0</code> 的可用服务端业务进程。
+              未检测到在线且满足架构蓝图匹配条件（{csgStrategy === 'CLIENT_INJECT' ? '支持动态寻址' : <><code>listen_port &gt; 0</code></>}）的同构目标业务进程。
             </div>
           ) : (
             <div className="code-flex code-flex-gap-md code-items-center">
@@ -285,13 +322,15 @@ export const SinglePacketReplayContent: React.FC<SinglePacketReplayContentProps>
                   data-testid="select-target-process"
                 >
                   {candidateProcesses.map((p) => {
-                    const agent = allAgents.find((a) => a.id === p.agent_id);
+                    const agent = allAgents.find((a) => String(a.id) === String(p.agent_id));
                     const isPrivateUser =
                       agent?.scope === 'PRIVATE' && String(agent.owner_id) === String(currentUserId);
+                    const portVal = Number(p.effective_listen_port ?? p.listen_port ?? 0);
                     return (
                       <option key={p.id} value={p.id}>
-                        {p.name} (端口: {p.listen_port})
+                        {p.name} (端口: {portVal})
                         {p.group_name ? ` [组: ${p.group_name}]` : ''}
+                        {p.probe_status ? ` [${p.probe_status}]` : ''}
                         {isPrivateUser ? ' ★ 推荐个人调试' : ''}
                         {agent ? ` [Agent: ${agent.name}]` : ''}
                       </option>
@@ -306,7 +345,7 @@ export const SinglePacketReplayContent: React.FC<SinglePacketReplayContentProps>
                   disabled={executing || !selectedProcessId}
                   onClick={() => {
                     if (onExecute && selectedProcessId) {
-                      void onExecute(selectedProcessId, effectiveRecordIds);
+                      void onExecute(selectedProcessId, effectiveRecordIds, csgStrategy);
                     }
                   }}
                   data-testid="btn-execute-single-replay"
@@ -403,7 +442,11 @@ export const SinglePacketReplayDrawer: React.FC<SinglePacketReplayDrawerProps> =
   const [replayItem, setReplayItem] = useState<ReplayItem | null>(null);
   const [loadingItem, setLoadingItem] = useState(false);
 
-  const handleExecuteReplay = async (targetProcessId: string, recordIds: string[]) => {
+  const handleExecuteReplay = async (
+    targetProcessId: string,
+    recordIds: string[],
+    selectedStrategy: CSGReplayStrategy,
+  ) => {
     if (!record) return;
 
     setExecuting(true);
@@ -415,16 +458,52 @@ export const SinglePacketReplayDrawer: React.FC<SinglePacketReplayDrawerProps> =
         session_id: record.session_id,
         source_process_id: record.process_id,
         target_process_id: targetProcessId,
-        selected_record_ids: recordIds.map((id) => parseInt(id, 10)),
+        selected_record_ids: recordIds.map((id) => Number(id)),
+        trigger_source: 'SINGLE_DEBUG',
+        csg_strategy: selectedStrategy,
       });
       setTask(created);
-      toast.success('事务闭包重放任务已投递并执行完毕');
+
+      // 轮询等待任务到达终态 (COMPLETED | FAILED | CANCELLED)
+      let settledTask = created;
+      for (let attempt = 0; attempt < 60; attempt++) {
+        if (
+          settledTask.lifecycle_state === 'COMPLETED' ||
+          settledTask.lifecycle_state === 'FAILED' ||
+          settledTask.lifecycle_state === 'CANCELLED'
+        ) {
+          break;
+        }
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 300);
+        });
+        settledTask = await replayApi.getReplayTask(created.id);
+        setTask(settledTask);
+      }
+
+      if (settledTask.lifecycle_state === 'FAILED') {
+        toast.error(settledTask.error_message || '事务闭包重放执行失败');
+      } else if (settledTask.lifecycle_state === 'CANCELLED') {
+        toast.info('事务闭包重放任务已取消');
+      } else if (settledTask.lifecycle_state === 'COMPLETED') {
+        toast.success('事务闭包重放完成，已回收双层断言结果');
+      } else {
+        toast.info('重放仍在后台执行中，可前往「防劣化回归」查看全量明细');
+      }
 
       setLoadingItem(true);
       try {
-        const itemsRes = await replayApi.listReplayItems(created.id, { page_size: 1 });
+        const itemsRes = await replayApi.listReplayItems(created.id, {
+          record_id: record.id,
+          page_size: 10,
+        });
         if (itemsRes.items && itemsRes.items.length > 0) {
           setReplayItem(itemsRes.items[0]);
+        } else {
+          const fallbackRes = await replayApi.listReplayItems(created.id, { page_size: 1 });
+          if (fallbackRes.items && fallbackRes.items.length > 0) {
+            setReplayItem(fallbackRes.items[0]);
+          }
         }
       } catch (err) {
         toast.error(err instanceof Error ? err.message : '获取重放比对明细失败');

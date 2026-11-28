@@ -150,3 +150,41 @@ func (b *SSEBroker) BroadcastToUsers(userIDs []uint, eventType string, data any)
 		RecipientUserIDs: userIDs,
 	})
 }
+
+// BroadcastReplayItemDone 推送单条重放请求执行与断言完成 SSE 事件
+func (b *SSEBroker) BroadcastReplayItemDone(taskID, itemID, recordID uint64, resultStatus string, latencyUs int64) {
+	if b == nil || taskID == 0 {
+		return
+	}
+	b.Dispatch(UserSSEEvent{
+		Event:  "replay.item_done",
+		TaskID: taskID,
+		Data: map[string]any{
+			"task_id":       taskID,
+			"item_id":       itemID,
+			"record_id":     recordID,
+			"result_status": resultStatus,
+			"latency_us":    latencyUs,
+		},
+	})
+}
+
+// BroadcastReplayCompleted 推送重放任务整包完成汇总 SSE 事件
+func (b *SSEBroker) BroadcastReplayCompleted(taskID uint64, lifecycleState, resultStatus string, total, passed, mockHit, mockMiss int) {
+	if b == nil || taskID == 0 {
+		return
+	}
+	b.Dispatch(UserSSEEvent{
+		Event:  "replay.completed",
+		TaskID: taskID,
+		Data: map[string]any{
+			"task_id":         taskID,
+			"lifecycle_state": lifecycleState,
+			"result_status":   resultStatus,
+			"total_requests":  total,
+			"passed_requests": passed,
+			"mock_hit_count":  mockHit,
+			"mock_miss_count": mockMiss,
+		},
+	})
+}

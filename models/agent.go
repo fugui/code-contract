@@ -101,12 +101,13 @@ type Process struct {
 	LastDiagAt        *time.Time `json:"last_diag_at,omitempty"`
 
 	// DTO 序列化便捷透出字段（由预加载的 ArchProcess 自动计算填充，不落冗余列）
-	GroupID     uint64 `gorm:"-" json:"group_id"`
-	GroupName   string `gorm:"-" json:"group_name"`
-	Code        string `gorm:"-" json:"code"`
-	Name        string `gorm:"-" json:"name"`
-	CmdPattern  string `gorm:"-" json:"cmd_pattern"`
-	HasOverride bool   `gorm:"-" json:"has_override"`
+	GroupID     uint64   `gorm:"-" json:"group_id"`
+	GroupName   string   `gorm:"-" json:"group_name"`
+	Code        string   `gorm:"-" json:"code"`
+	Name        string   `gorm:"-" json:"name"`
+	CmdPattern  string   `gorm:"-" json:"cmd_pattern"`
+	HasOverride bool     `gorm:"-" json:"has_override"`
+	ModuleIDs   []uint64 `gorm:"-" json:"module_ids,omitempty"`
 
 	CreatedBy uint      `gorm:"not null;default:0" json:"created_by"`
 	UpdatedBy uint      `gorm:"not null;default:0" json:"updated_by"`
@@ -116,7 +117,6 @@ type Process struct {
 
 func (Process) TableName() string { return config.TablePrefix + "processes" }
 
-// FillFromArchProcess 填充 Process 的 DTO 便捷展示字段
 // FillFromArchProcess 填充 Process 的 DTO 便捷展示字段
 func (p *Process) FillFromArchProcess() {
 	if p.ArchProcess != nil {
@@ -130,6 +130,14 @@ func (p *Process) FillFromArchProcess() {
 			p.CmdPattern = p.OverrideCmdPattern
 		} else {
 			p.CmdPattern = p.ArchProcess.DefaultCmdPattern
+		}
+		if len(p.ArchProcess.Modules) > 0 {
+			p.ModuleIDs = make([]uint64, 0, len(p.ArchProcess.Modules))
+			for _, m := range p.ArchProcess.Modules {
+				if m.ID > 0 {
+					p.ModuleIDs = append(p.ModuleIDs, m.ID)
+				}
+			}
 		}
 	}
 	p.HasOverride = p.OverrideListenPort != nil || p.OverrideCmdPattern != "" || p.AdvertiseIP != "" || len(p.ExtraDownstreams) > 2

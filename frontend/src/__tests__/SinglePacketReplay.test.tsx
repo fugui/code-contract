@@ -14,6 +14,7 @@ export function testSinglePacketReplay_IsomorphicFilterAndInlineDiff(): void {
     id: 'rec-ingress-01',
     session_id: 'sess-01',
     process_id: 'p-source-01',
+    arch_process_id: 'arch-order-01',
     direction: 'INGRESS',
     exchange_type: 'UNARY',
     sno: '10001',
@@ -74,9 +75,11 @@ export function testSinglePacketReplay_IsomorphicFilterAndInlineDiff(): void {
     {
       id: 'p-order-priv',
       agent_id: 'a-priv',
+      arch_process_id: 'arch-order-01',
       name: 'P-Order-Private',
       listen_port: 9100,
       group_name: '订单服务组',
+      module_ids: ['m-order'],
       process_modules: [
         {
           process_id: 'p-order-priv',
@@ -92,8 +95,9 @@ export function testSinglePacketReplay_IsomorphicFilterAndInlineDiff(): void {
     {
       id: 'p-client',
       agent_id: 'a-priv',
+      arch_process_id: 'arch-order-01',
       name: 'P-Client',
-      listen_port: 0, // 纯客户端进程，端口为 0
+      listen_port: 0, // 纯客户端或动态端口进程
       group_name: '客户端组',
       process_modules: [
         {
@@ -110,6 +114,7 @@ export function testSinglePacketReplay_IsomorphicFilterAndInlineDiff(): void {
     {
       id: 'p-pay',
       agent_id: 'a-shared',
+      arch_process_id: 'arch-pay-01',
       name: 'P-Pay',
       listen_port: 9200,
       group_name: '支付服务组',
@@ -187,8 +192,91 @@ export function testSinglePacketReplay_IsomorphicFilterAndInlineDiff(): void {
   expect(inlineDiffHtml).toContain('EXACT_HASH');
 }
 
+export function testSinglePacketReplay_ArchProcessMatchingAndStrategy(): void {
+  const ingressRecord: TrafficRecordSummary = {
+    id: 'rec-arch-01',
+    session_id: 'sess-02',
+    process_id: 'p-old-src',
+    arch_process_id: 'arch-order-99',
+    direction: 'INGRESS',
+    exchange_type: 'UNARY',
+    sno: '10099',
+    service_name: 'order.OrderService',
+    operation: 'CreateOrder',
+    latency_us: 900,
+    status_code: 0,
+    decode_status: 'SUCCESS',
+    is_replayable: true,
+    captured_at: '2026-11-28T08:00:00Z',
+  };
+
+  const agents: Agent[] = [
+    {
+      id: 'agt-online',
+      name: 'Agent-Online',
+      endpoint: 'http://127.0.0.1:9099',
+      scope: 'SHARED',
+      status: 'ONLINE',
+      lease_type: '',
+    },
+    {
+      id: 'agt-offline',
+      name: 'Agent-Offline',
+      endpoint: 'http://127.0.0.1:9098',
+      scope: 'SHARED',
+      status: 'OFFLINE',
+      lease_type: '',
+    },
+  ];
+
+  // 无 process_modules 仅依赖真实 Backend 字段 arch_process_id 与 module_ids
+  const processes: Process[] = [
+    {
+      id: 'proc-target-ok',
+      agent_id: 'agt-online',
+      arch_process_id: 'arch-order-99',
+      name: 'P-Order-Target',
+      listen_port: 19100,
+      module_ids: ['m-99'],
+    },
+    {
+      id: 'proc-target-offline',
+      agent_id: 'agt-offline',
+      arch_process_id: 'arch-order-99',
+      name: 'P-Order-Offline',
+      listen_port: 19101,
+    },
+    {
+      id: 'proc-target-dynamic',
+      agent_id: 'agt-online',
+      arch_process_id: 'arch-order-99',
+      name: 'P-Order-DynPort',
+      listen_port: 0,
+    },
+  ];
+
+  const html = renderToString(
+    <SinglePacketReplayContent
+      record={ingressRecord}
+      allProcesses={processes}
+      allAgents={agents}
+      currentUserId={1}
+    />
+  );
+
+  expect(html).toContain('P-Order-Target');
+  expect(html).not.toContain('P-Order-Offline');
+  expect(html).not.toContain('P-Order-DynPort');
+  expect(html).toContain('select-csg-strategy');
+  expect(html).toContain('CLIENT_INJECT');
+}
+
 describe('SinglePacketReplay Test Suite', () => {
   it('TC-REPLAY-SINGLE-01: 同构进程智能过滤、入站重放动作与原地 Diff 渲染断言', () => {
     testSinglePacketReplay_IsomorphicFilterAndInlineDiff();
+  });
+
+  it('TC-REPLAY-SINGLE-02: ArchProcessID 同构匹配、离线过滤与 CSG 策略选择器渲染', () => {
+    testSinglePacketReplay_ArchProcessMatchingAndStrategy();
   });
 });

@@ -34,6 +34,7 @@ export async function createReplayTask(data: {
   selected_record_ids: (string | number)[];
   extra_ignore_paths?: string[];
   timeout_ms?: number;
+  trigger_source?: string;
   csg_strategy?: CSGReplayStrategy;
   csg_addr?: string;
 }) {
@@ -43,6 +44,7 @@ export async function createReplayTask(data: {
     source_process_id: Number(data.source_process_id || data.target_process_id),
     target_process_id: Number(data.target_process_id),
     selected_record_ids: (data.selected_record_ids ?? []).map((id) => Number(id)),
+    ...(data.trigger_source ? { trigger_source: data.trigger_source } : {}),
     ...(data.csg_strategy ? { csg_strategy: data.csg_strategy } : {}),
     ...(data.csg_addr ? { csg_addr: data.csg_addr } : {}),
   };
@@ -59,6 +61,7 @@ export async function cancelReplayTask(id: string) {
 }
 
 export async function listReplayItems(taskId: string, params?: {
+  record_id?: string | number;
   result_status?: string;
   service_name?: string;
   operation?: string;
@@ -66,6 +69,7 @@ export async function listReplayItems(taskId: string, params?: {
   page_size?: number;
 }) {
   const query = new URLSearchParams();
+  if (params?.record_id) query.set('record_id', String(params.record_id));
   if (params?.result_status) query.set('result_status', params.result_status);
   if (params?.service_name) query.set('service_name', params.service_name);
   if (params?.operation) query.set('operation', params.operation);

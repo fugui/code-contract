@@ -3,9 +3,12 @@ package replay
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"strconv"
 	"sync"
+	"time"
 
 	"code-contract/pkg/agentproto"
 	"code-contract/pkg/crosrpc"
@@ -110,37 +113,37 @@ func matchInPool(
 	dstTag, taggedExactKey, baseExactKey, taggedMethodKey, baseMethodKey string,
 	allowStubFallback bool,
 	exactHit, seqHit MatchResultType,
-) ([][]byte, MatchResultType) {
+) ([][]byte, MatchResultType, string) {
 	if pool == nil {
-		return nil, ""
+		return nil, "", ""
 	}
 	if dstTag != "" {
 		if rsps, found := popFromMap(pool.exactMap, taggedExactKey); found {
-			return rsps, exactHit
+			return rsps, exactHit, "EXACT_HASH"
 		}
 	}
 	if rsps, found := popFromMap(pool.exactMap, baseExactKey); found {
-		return rsps, exactHit
+		return rsps, exactHit, "EXACT_HASH"
 	}
 	if allowStubFallback {
 		if rsps, found := popFromMap(pool.anyExactMap, baseExactKey); found {
-			return rsps, exactHit
+			return rsps, exactHit, "EXACT_HASH"
 		}
 	}
 	if dstTag != "" {
 		if rsps, found := popFromMap(pool.seqQueue, taggedMethodKey); found {
-			return rsps, seqHit
+			return rsps, seqHit, "ORDER_FALLBACK"
 		}
 	}
 	if rsps, found := popFromMap(pool.seqQueue, baseMethodKey); found {
-		return rsps, seqHit
+		return rsps, seqHit, "ORDER_FALLBACK"
 	}
 	if allowStubFallback {
 		if rsps, found := popFromMap(pool.anySeqQueue, baseMethodKey); found {
-			return rsps, seqHit
+			return rsps, seqHit, "ORDER_FALLBACK"
 		}
 	}
-	return nil, ""
+	return nil, "", ""
 }
 
 type observedCallKey struct {
@@ -162,6 +165,7 @@ type ScopedMockMatcher struct {
 	mockHitCount   int
 	mockMissCount  int
 	missRecords    []MockMissRecord
+	mockEvents     []agentproto.MockTraceEvent
 	observedCalls  map[observedCallKey]int
 	observedOrder  []observedCallKey
 }
@@ -422,8 +426,10 @@ func (m *ScopedMockMatcher) MatchAndHealWithDstTag(liveReq []byte, dstAddr, dstT
 
 	allowStubFallback := dstTag == "" && dstAddr != "" && m.stubEndpoints[dstAddr]
 
+	snoStr := strconv.FormatUint(binary.BigEndian.Uint64(liveReq[8:16]), 10)
+
 	// 3. 检查专属局部池
-	matchedRsps, hitType := matchInPool(
+	matchedRsps, hitType, hitKind := matchInPool(
 		m.scopedMocks[m.activeRecordID],
 		dstTag, taggedExactKey, baseExactKey, taggedMethodKey, baseMethodKey,
 		allowStubFallback,
@@ -432,7 +438,7 @@ func (m *ScopedMockMatcher) MatchAndHealWithDstTag(liveReq []byte, dstAddr, dstT
 
 	// 4. 专属池未命中，检查全局兜底池
 	if matchedRsps == nil {
-		matchedRsps, hitType = matchInPool(
+		matchedRsps, hitType, hitKind = matchInPool(
 			m.globalFallback,
 			dstTag, taggedExactKey, baseExactKey, taggedMethodKey, baseMethodKey,
 			allowStubFallback,
@@ -450,6 +456,20 @@ func (m *ScopedMockMatcher) MatchAndHealWithDstTag(liveReq []byte, dstAddr, dstT
 		if serviceName != "" {
 			m.recordObservedCallLocked(serviceName, operation, dstAddr, string(hitType))
 		}
+		healedFields := []string{"ullSNO", "aucTraceBuff", "ullClientSendTime"}
+		m.mockEvents = append(m.mockEvents, agentproto.MockTraceEvent{
+			RecordID:     m.activeRecordID,
+			SeqNo:        int64(len(m.mockEvents) + 1),
+			SNO:          snoStr,
+			ServiceName:  serviceName,
+			Operation:    operation,
+			Tier:         string(hitType),
+			HitKind:      hitKind,
+			HealedFields: healedFields,
+			IsMiss:       false,
+			PeerAddr:     dstAddr,
+			TimestampNs:  time.Now().UnixNano(),
+		})
 		return &MatchResult{
 			Result:         hitType,
 			ServiceName:    serviceName,
@@ -463,11 +483,25 @@ func (m *ScopedMockMatcher) MatchAndHealWithDstTag(liveReq []byte, dstAddr, dstT
 	m.missRecords = append(m.missRecords, MockMissRecord{
 		ServiceName: serviceName,
 		Operation:   operation,
+		SNO:         binary.BigEndian.Uint64(liveReq[8:16]),
 		PayloadHash: hashHex,
 	})
 	if serviceName != "" {
 		m.recordObservedCallLocked(serviceName, operation, dstAddr, string(MatchMiss))
 	}
+	m.mockEvents = append(m.mockEvents, agentproto.MockTraceEvent{
+		RecordID:     m.activeRecordID,
+		SeqNo:        int64(len(m.mockEvents) + 1),
+		SNO:          snoStr,
+		ServiceName:  serviceName,
+		Operation:    operation,
+		Tier:         string(MatchMiss),
+		HitKind:      "MISS",
+		IsMiss:       true,
+		PeerAddr:     dstAddr,
+		ErrorMessage: "未命中局部/全局 Mock 规则，已拦截以防外泄",
+		TimestampNs:  time.Now().UnixNano(),
+	})
 
 	return &MatchResult{
 		Result:      MatchMiss,
@@ -487,6 +521,32 @@ func (m *ScopedMockMatcher) recordObservedCallLocked(serviceName, operation, dst
 		m.observedOrder = append(m.observedOrder, key)
 	}
 	m.observedCalls[key]++
+}
+
+// MockEvents 导出全量下游 Mock 命中/未命中轨迹事件
+func (m *ScopedMockMatcher) MockEvents() []agentproto.MockTraceEvent {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]agentproto.MockTraceEvent, len(m.mockEvents))
+	copy(out, m.mockEvents)
+	return out
+}
+
+// MockEventsForRecord 导出指定入口 RecordID 关联的 Mock 轨迹与是否存在未命中
+func (m *ScopedMockMatcher) MockEventsForRecord(recordID uint64) ([]agentproto.MockTraceEvent, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []agentproto.MockTraceEvent
+	hasMiss := false
+	for _, ev := range m.mockEvents {
+		if ev.RecordID == recordID {
+			out = append(out, ev)
+			if ev.IsMiss {
+				hasMiss = true
+			}
+		}
+	}
+	return out, hasMiss
 }
 
 // ObservedEgressCalls 导出重放期间观测到的所有出站调用汇总 (ADR-14, M17)

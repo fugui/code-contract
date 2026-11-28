@@ -2,7 +2,6 @@ package diff
 
 import (
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,7 +19,6 @@ import (
 	"code-contract/internal/server/topology"
 	"code-contract/models"
 	"code-contract/pkg/agentproto"
-	"code-contract/pkg/crosrpc"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
@@ -61,6 +59,7 @@ type ReplayTaskListQuery struct {
 
 // ReplayItemListQuery 单任务请求明细筛选
 type ReplayItemListQuery struct {
+	RecordID     uint64 `form:"record_id"`
 	ResultStatus string `form:"result_status"`
 	ServiceName  string `form:"service_name"`
 	Operation    string `form:"operation"`
@@ -263,19 +262,15 @@ func (s *ReplayScheduler) CreateAndExecuteTask(
 		return nil, err
 	}
 
-	// 8. 组装 ScopedMocks 与下发执行
+	// 8. 组装 ScopedMocks 与下发执行 (全策略同步下发 /execute 预检以即时暴露 409/422 冲突，随后异步轮询)
 	procCopy := targetProc
-	if strategy != agentproto.CSGStrategyPassthrough {
-		execReq := s.buildSessionExecReq(task, &procCopy, records, req.CSGAddr)
-		if pErr := postExecuteReplayToAgent(ctx, s.httpClient, procCopy.Agent, execReq); pErr != nil {
-			_ = hub.ReleaseAgentLeases(context.Background(), s.db, []uint64{task.AgentID}, models.AgentLeaseReplay, task.ID)
-			s.markTaskFailed(task.ID, pErr.Error())
-			return nil, pErr
-		}
-		go s.pollAndEvaluateSessionReplay(task, &procCopy, records, req.ExtraIgnorePaths, true)
-	} else {
-		go s.executeReplayAsync(task, &procCopy, records, req.ExtraIgnorePaths, req.CSGAddr)
+	execReq := s.buildSessionExecReq(task, &procCopy, records, req.CSGAddr)
+	if pErr := postExecuteReplayToAgent(ctx, s.httpClient, procCopy.Agent, execReq); pErr != nil {
+		_ = hub.ReleaseAgentLeases(context.Background(), s.db, []uint64{task.AgentID}, models.AgentLeaseReplay, task.ID)
+		s.markTaskFailed(task.ID, pErr.Error())
+		return nil, pErr
 	}
+	go s.pollAndEvaluateSessionReplay(task, &procCopy, records, req.ExtraIgnorePaths, true)
 
 	commonAudit.Push(&models.SysAuditLog{
 		CreatedAt:  time.Now(),
@@ -292,25 +287,6 @@ func (s *ReplayScheduler) CreateAndExecuteTask(
 	})
 
 	return task, nil
-}
-
-func (s *ReplayScheduler) executeReplayAsync(
-	task *models.ReplayTask,
-	targetProc *models.Process,
-	records []models.TrafficRecord,
-	extraIgnorePaths []string,
-	csgAddr string,
-) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(task.TimeoutMs+10000)*time.Millisecond)
-	defer cancel()
-
-	execReq := s.buildSessionExecReq(task, targetProc, records, csgAddr)
-	if err := postExecuteReplayToAgent(ctx, s.httpClient, targetProc.Agent, execReq); err != nil {
-		_ = hub.ReleaseAgentLeases(context.Background(), s.db, []uint64{task.AgentID}, models.AgentLeaseReplay, task.ID)
-		s.markTaskFailed(task.ID, err.Error())
-		return
-	}
-	s.pollAndEvaluateSessionReplayWithCtx(ctx, task, targetProc, records, extraIgnorePaths)
 }
 
 func (s *ReplayScheduler) pollAndEvaluateSessionReplay(
@@ -504,7 +480,7 @@ func (s *ReplayScheduler) pollAndEvaluateSessionReplayWithCtx(
 	}
 
 EVALUATE:
-	// 3. 执行每条请求的双层 Diff 断言并落盘 contract_replay_items
+	// 3. 执行每条请求的双层 Diff 断言并落盘 contract_replay_items (ADR-31 D2 Fail-Closed)
 	var itemStatuses []string
 	var mockHitCount, mockMissCount int
 	if result != nil {
@@ -512,76 +488,35 @@ EVALUATE:
 		mockMissCount = result.MockMissCount
 	}
 
-	detailMap := make(map[uint64]agentproto.ReplayItemDetail)
-	if result != nil && result.Details != "" {
-		var details []agentproto.ReplayItemDetail
-		if err := json.Unmarshal([]byte(result.Details), &details); err == nil {
-			for _, d := range details {
-				detailMap[d.RecordID] = d
-			}
-		}
-	}
+	detailMap := extractReplayItemDetails(result)
 
 	for i, rec := range records {
-		itemStatus := models.ReplayResultPass
-		var fieldDiffs []FieldDiff
-		var diffResult *DiffResult
-		var diffErr error
-
-		// 默认以录制基线应答作为预期应答
-		expectedRsp := rec.RawRspPacket
-		actualRsp := rec.RawRspPacket // 模拟或实际回收帧
-
-		if d, ok := detailMap[rec.ID]; ok {
-			if len(d.ActualRspHex) > 0 {
-				if hBytes, hErr := hex.DecodeString(d.ActualRspHex); hErr == nil && len(hBytes) > 0 {
-					actualRsp = hBytes
-				}
-			}
-			if d.Status != "" {
-				itemStatus = d.Status
-			}
+		d, hasDetail := detailMap[rec.ID]
+		var detailPtr *agentproto.ReplayItemDetail
+		if hasDetail {
+			detailPtr = &d
+		}
+		resultFallback := ""
+		if result != nil {
+			resultFallback = result.Status
 		}
 
-		if itemStatus != models.ReplayResultMockMiss && itemStatus != models.ReplayResultTimeout && itemStatus != models.ReplayResultError {
-			// 第一层协议头断言
-			diffResult, payloadIdentical, dErr := DiffLayer1Header(expectedRsp, actualRsp)
-			if dErr != nil || (diffResult != nil && diffResult.Status == models.ReplayResultFailed) {
-				itemStatus = models.ReplayResultFailed
-				if diffResult != nil {
-					fieldDiffs = diffResult.FieldDiffs
-				}
-			} else if !payloadIdentical && s.dec != nil {
-				// 第二层语义树比对
-				op := s.dec.LookupOperation(rec.ServiceName, rec.Operation)
-				parsedExp, _ := crosrpc.ParsePacket(expectedRsp)
-				parsedAct, _ := crosrpc.ParsePacket(actualRsp)
-				if parsedExp != nil && parsedAct != nil {
-					expPl := expectedRsp[parsedExp.PayloadOffset:]
-					actPl := actualRsp[parsedAct.PayloadOffset:]
-					fd, fErr := DiffLayer2ProtoSemantic(expPl, actPl, op, extraIgnorePaths)
-					diffErr = fErr
-					if len(fd) > 0 || diffErr != nil {
-						itemStatus = models.ReplayResultFailed
-						fieldDiffs = append(fieldDiffs, fd...)
-					}
-				}
-			}
-		}
+		eval := evaluateReplayItem(
+			s.dec,
+			rec.ServiceName,
+			rec.Operation,
+			rec.ExchangeType,
+			rec.RawReqPacket,
+			rec.RawRspPacket,
+			detailPtr,
+			hasDetail,
+			resultFallback,
+			extraIgnorePaths,
+		)
 
-		if _, ok := detailMap[rec.ID]; !ok && result != nil && result.Status == models.ReplayResultMockMiss {
-			itemStatus = models.ReplayResultMockMiss
-		}
-
-		itemStatuses = append(itemStatuses, itemStatus)
-		diffBytes, _ := json.Marshal(fieldDiffs)
-
-		actualStatusVal := models.U64Numeric(0)
-		baselineStatusVal := rec.StatusCode
-		if diffResult != nil {
-			actualStatusVal = models.U64Numeric(diffResult.ActualStatus)
-		}
-
+		itemStatuses = append(itemStatuses, eval.ResultStatus)
+		diffBytes, _ := json.Marshal(eval.FieldDiffs)
+		mockTraceBytes, _ := json.Marshal(eval.MockTrace)
 		recID := rec.ID
 		replayItem := models.ReplayItem{
 			TaskID:          task.ID,
@@ -589,18 +524,24 @@ EVALUATE:
 			SeqNo:           int64(i + 1),
 			ServiceName:     rec.ServiceName,
 			Operation:       rec.Operation,
-			ResultStatus:    itemStatus,
-			LatencyUs:       100,
-			ActualStatus:    actualStatusVal,
-			BaselineStatus:  baselineStatusVal,
+			ResultStatus:    eval.ResultStatus,
+			LatencyUs:       eval.LatencyUs,
+			ActualStatus:    models.U64Numeric(eval.ActualStatus),
+			BaselineStatus:  rec.StatusCode,
+			FailedLayer:     eval.FailedLayer,
 			FieldDiffs:      datatypes.JSON(diffBytes),
-			RawActualPacket: actualRsp,
+			ActualPayload:   eval.ActualPayload,
+			RawActualPacket: eval.RawActualPacket,
+			MockTrace:       datatypes.JSON(mockTraceBytes),
+			ErrorMessage:    eval.ErrorMessage,
 			CreatedAt:       time.Now(),
 		}
-		_ = s.db.Create(&replayItem).Error
+		if createErr := s.db.Create(&replayItem).Error; createErr == nil {
+			hub.GetGlobalSSEBroker().BroadcastReplayItemDone(task.ID, replayItem.ID, recID, replayItem.ResultStatus, replayItem.LatencyUs)
+		}
 	}
 
-	// 4. 聚合最终状态
+	// 4. 聚合最终状态并持久化 (带 CANCELLED 条件守卫)
 	finalStatus := AggregateReplayStatus(itemStatuses)
 	finishedAt := time.Now()
 	passedCount := 0
@@ -615,6 +556,11 @@ EVALUATE:
 		observedCalls = result.ObservedEgressCalls
 	}
 	observedBytes, _ := json.Marshal(observedCalls)
+	var mockEvents []agentproto.MockTraceEvent
+	if result != nil && len(result.MockEvents) > 0 {
+		mockEvents = result.MockEvents
+	}
+	mockEventsBytes, _ := json.Marshal(mockEvents)
 	sandboxJSON, violations, _ := verifyObservedWithSandbox(ctx, s.db, task.ArchProcessID, observedCalls, result)
 	violationCount := len(violations)
 
@@ -624,6 +570,7 @@ EVALUATE:
 		"passed_requests":       passedCount,
 		"mock_hit_count":        mockHitCount,
 		"mock_miss_count":       mockMissCount,
+		"mock_events":           datatypes.JSON(mockEventsBytes),
 		"violation_count":       violationCount,
 		"observed_egress_calls": datatypes.JSON(observedBytes),
 		"finished_at":           &finishedAt,
@@ -631,12 +578,15 @@ EVALUATE:
 	if len(sandboxJSON) > 0 {
 		updates["csg_sandbox_report"] = datatypes.JSON(sandboxJSON)
 	}
-	s.db.Model(&models.ReplayTask{}).Where("id = ?", task.ID).Updates(updates)
+	txRes := s.db.Model(&models.ReplayTask{}).Where("id = ? AND lifecycle_state != ?", task.ID, "CANCELLED").Updates(updates)
+	if txRes.RowsAffected > 0 {
+		hub.GetGlobalSSEBroker().BroadcastReplayCompleted(task.ID, "COMPLETED", finalStatus, len(records), passedCount, mockHitCount, mockMissCount)
+	}
 }
 
 func (s *ReplayScheduler) markTaskFailed(taskID uint64, msg string) {
 	finishedAt := time.Now()
-	s.db.Model(&models.ReplayTask{}).Where("id = ?", taskID).Updates(map[string]interface{}{
+	s.db.Model(&models.ReplayTask{}).Where("id = ? AND lifecycle_state != ?", taskID, "CANCELLED").Updates(map[string]interface{}{
 		"lifecycle_state": "FAILED",
 		"result_status":   models.ReplayResultError,
 		"error_message":   msg,
@@ -686,7 +636,7 @@ func (s *ReplayScheduler) CancelTask(
 	return &task, nil
 }
 
-// RediffTask 离线重算双层 Diff (F-14.4)
+// RediffTask 离线重算双层 Diff (F-14.4, ADR-31 P1-4)
 func (s *ReplayScheduler) RediffTask(
 	ctx context.Context,
 	taskID uint64,
@@ -695,7 +645,7 @@ func (s *ReplayScheduler) RediffTask(
 	isAdmin bool,
 ) (*models.ReplayTask, error) {
 	var task models.ReplayTask
-	if err := s.db.WithContext(ctx).Where("id = ?", taskID).First(&task).Error; err != nil {
+	if err := s.db.WithContext(ctx).Preload("GoldenSuite").Where("id = ?", taskID).First(&task).Error; err != nil {
 		return nil, ErrTaskNotFound
 	}
 	if task.OwnerID != userID && !isAdmin {
@@ -703,70 +653,116 @@ func (s *ReplayScheduler) RediffTask(
 	}
 
 	var items []models.ReplayItem
-	if err := s.db.WithContext(ctx).Where("task_id = ?", task.ID).Find(&items).Error; err != nil {
+	if err := s.db.WithContext(ctx).Where("task_id = ?", task.ID).Order("seq_no ASC").Find(&items).Error; err != nil {
 		return nil, err
 	}
+
+	// 合并基础忽略路径：若未传入则沿用任务既有规则，同时叠加套件规则
+	effectiveTaskIgnore := extraIgnorePaths
+	if len(effectiveTaskIgnore) == 0 && len(task.ExtraIgnorePaths) > 0 {
+		_ = json.Unmarshal(task.ExtraIgnorePaths, &effectiveTaskIgnore)
+	}
+	var suiteIgnorePaths []string
+	if task.GoldenSuite != nil && len(task.GoldenSuite.ExtraIgnorePaths) > 0 {
+		_ = json.Unmarshal(task.GoldenSuite.ExtraIgnorePaths, &suiteIgnorePaths)
+	}
+	baseIgnorePaths := appendUniqueIgnorePaths(suiteIgnorePaths, effectiveTaskIgnore)
 
 	var itemStatuses []string
 	passedCount := 0
 
 	for _, item := range items {
+		// 严格保留既有执行期异常状态（TIMEOUT / MOCK_MISS / ERROR），绝不洗白
+		if item.ResultStatus == models.ReplayResultTimeout ||
+			item.ResultStatus == models.ReplayResultMockMiss ||
+			item.ResultStatus == models.ReplayResultError {
+			itemStatuses = append(itemStatuses, item.ResultStatus)
+			continue
+		}
+
 		// 查询关联 Baseline 记录或黄金用例自包含快照
-		var baseRsp []byte
+		var baseReq, baseRsp []byte
+		var exchangeType string
+		var itemIgnorePaths []string
+		itemIgnorePaths = append(itemIgnorePaths, baseIgnorePaths...)
+
 		if item.RecordID != nil {
 			var baseRec models.TrafficRecord
 			if err := s.db.WithContext(ctx).Where("id = ?", *item.RecordID).First(&baseRec).Error; err == nil {
+				baseReq = baseRec.RawReqPacket
 				baseRsp = baseRec.RawRspPacket
+				exchangeType = baseRec.ExchangeType
 			}
 		} else if item.SuiteItemID != nil {
 			var suiteItem models.GoldenSuiteItem
 			if err := s.db.WithContext(ctx).Where("id = ?", *item.SuiteItemID).First(&suiteItem).Error; err == nil {
+				baseReq = suiteItem.RawReqPacket
 				baseRsp = suiteItem.RawRspPacket
-			}
-		}
-
-		itemStatus := models.ReplayResultPass
-		var fieldDiffs []FieldDiff
-
-		diffResult, payloadIdentical, err := DiffLayer1Header(baseRsp, item.RawActualPacket)
-		if err != nil || (diffResult != nil && diffResult.Status == models.ReplayResultFailed) {
-			itemStatus = models.ReplayResultFailed
-			if diffResult != nil {
-				fieldDiffs = diffResult.FieldDiffs
-			}
-		} else if !payloadIdentical && s.dec != nil {
-			op := s.dec.LookupOperation(item.ServiceName, item.Operation)
-			parsedExp, _ := crosrpc.ParsePacket(baseRsp)
-			parsedAct, _ := crosrpc.ParsePacket(item.RawActualPacket)
-			if parsedExp != nil && parsedAct != nil {
-				expPl := baseRsp[parsedExp.PayloadOffset:]
-				actPl := item.RawActualPacket[parsedAct.PayloadOffset:]
-				fd, _ := DiffLayer2ProtoSemantic(expPl, actPl, op, extraIgnorePaths)
-				if len(fd) > 0 {
-					itemStatus = models.ReplayResultFailed
-					fieldDiffs = append(fieldDiffs, fd...)
+				if len(suiteItem.MaskRulesJSON) > 0 {
+					var masks []models.MaskRule
+					if json.Unmarshal(suiteItem.MaskRulesJSON, &masks) == nil {
+						var maskPaths []string
+						for _, mr := range masks {
+							p := strings.TrimSpace(mr.Path)
+							if p != "" {
+								maskPaths = append(maskPaths, p)
+								if strings.HasPrefix(p, "rsp.") {
+									maskPaths = append(maskPaths, strings.TrimPrefix(p, "rsp."))
+								}
+							}
+						}
+						itemIgnorePaths = appendUniqueIgnorePaths(itemIgnorePaths, maskPaths)
+					}
 				}
 			}
 		}
 
-		if item.ResultStatus == models.ReplayResultMockMiss {
-			itemStatus = models.ReplayResultMockMiss
+		if exchangeType == models.ExchangeOneway || isOnewayRequestFrame(baseReq) {
+			itemStatuses = append(itemStatuses, models.ReplayResultPass)
+			passedCount++
+			continue
 		}
 
-		if itemStatus == models.ReplayResultPass {
+		if len(item.RawActualPacket) == 0 {
+			itemStatuses = append(itemStatuses, models.ReplayResultError)
+			s.db.WithContext(ctx).Model(&models.ReplayItem{}).Where("id = ?", item.ID).Updates(map[string]interface{}{
+				"result_status": models.ReplayResultError,
+				"failed_layer":  1,
+				"error_message": "缺少实际应答切片，无法重算 Diff (Fail-Closed)",
+			})
+			continue
+		}
+
+		itemStatus := models.ReplayResultPass
+		diffRes, fieldDiffs, failedLayer, errMsg := diffHeadersAndPayloads(
+			s.dec, item.ServiceName, item.Operation, baseRsp, item.RawActualPacket, itemIgnorePaths,
+		)
+		if failedLayer > 0 {
+			itemStatus = models.ReplayResultFailed
+		} else {
 			passedCount++
 		}
 		itemStatuses = append(itemStatuses, itemStatus)
 
+		actualPayload := decodeActualPayloadJSON(s.dec, item.ServiceName, item.Operation, item.RawActualPacket)
 		diffBytes, _ := json.Marshal(fieldDiffs)
-		s.db.WithContext(ctx).Model(&models.ReplayItem{}).Where("id = ?", item.ID).Updates(map[string]interface{}{
+		upd := map[string]interface{}{
 			"result_status": itemStatus,
+			"failed_layer":  failedLayer,
 			"field_diffs":   datatypes.JSON(diffBytes),
-		})
+			"error_message": errMsg,
+		}
+		if len(actualPayload) > 0 {
+			upd["actual_payload"] = actualPayload
+		}
+		if diffRes != nil {
+			upd["actual_status"] = models.U64Numeric(diffRes.ActualStatus)
+		}
+		s.db.WithContext(ctx).Model(&models.ReplayItem{}).Where("id = ?", item.ID).Updates(upd)
 	}
 
 	finalStatus := AggregateReplayStatus(itemStatuses)
-	ignBytes, _ := json.Marshal(extraIgnorePaths)
+	ignBytes, _ := json.Marshal(effectiveTaskIgnore)
 	task.ResultStatus = finalStatus
 	task.PassedRequests = passedCount
 	task.ExtraIgnorePaths = datatypes.JSON(ignBytes)
@@ -807,6 +803,9 @@ func (s *ReplayScheduler) ListTasks(ctx context.Context, query ReplayTaskListQue
 	if query.TargetProcessID > 0 {
 		db = db.Where("target_process_id = ?", query.TargetProcessID)
 	}
+	if query.AgentID > 0 {
+		db = db.Where("agent_id = ?", query.AgentID)
+	}
 	if query.LifecycleState != "" {
 		db = db.Where("lifecycle_state = ?", query.LifecycleState)
 	}
@@ -835,9 +834,20 @@ func (s *ReplayScheduler) ListTasks(ctx context.Context, query ReplayTaskListQue
 	return items, total, nil
 }
 
-// ListItems 分页获取重放条目
+// ListItems 分页获取重放条目 (含任务归属 Anti-IDOR 校验与 record_id 筛选)
 func (s *ReplayScheduler) ListItems(ctx context.Context, taskID uint64, query ReplayItemListQuery, userID uint, isAdmin bool) ([]models.ReplayItem, int64, error) {
+	var task models.ReplayTask
+	if err := s.db.WithContext(ctx).Select("id", "owner_id").Where("id = ?", taskID).First(&task).Error; err != nil {
+		return nil, 0, ErrTaskNotFound
+	}
+	if task.OwnerID != userID && !isAdmin {
+		return nil, 0, errors.New("403 Forbidden: 无权查看他人重放任务明细")
+	}
+
 	db := s.db.WithContext(ctx).Model(&models.ReplayItem{}).Where("task_id = ?", taskID)
+	if query.RecordID > 0 {
+		db = db.Where("record_id = ?", query.RecordID)
+	}
 	if query.ResultStatus != "" {
 		db = db.Where("result_status = ?", query.ResultStatus)
 	}
@@ -1005,20 +1015,16 @@ func (s *ReplayScheduler) ExecuteGoldenSuiteWithCSG(
 		return nil, err
 	}
 
-	// 7. 执行重放与回归断言 (非 PASSTHROUGH 策略同步发送预检请求以即时暴露 409/422)
+	// 7. 执行重放与回归断言 (全策略同步发送预检请求以即时暴露 409/422 冲突)
 	procCopy := targetProc
 	suiteCopy := suite
-	if strategy != agentproto.CSGStrategyPassthrough {
-		execReq := s.buildSuiteExecReq(task, &procCopy, suite.Items, csgAddr)
-		if pErr := postExecuteReplayToAgent(ctx, s.httpClient, procCopy.Agent, execReq); pErr != nil {
-			_ = hub.ReleaseAgentLeases(context.Background(), s.db, []uint64{task.AgentID}, models.AgentLeaseReplay, task.ID)
-			s.markTaskFailed(task.ID, pErr.Error())
-			return nil, pErr
-		}
-		go s.pollGoldenSuiteAsync(task, &procCopy, &suiteCopy, suite.Items)
-	} else {
-		go s.executeGoldenSuiteAsync(task, &procCopy, &suiteCopy, suite.Items, csgAddr)
+	execReq := s.buildSuiteExecReq(task, &procCopy, suite.Items, csgAddr)
+	if pErr := postExecuteReplayToAgent(ctx, s.httpClient, procCopy.Agent, execReq); pErr != nil {
+		_ = hub.ReleaseAgentLeases(context.Background(), s.db, []uint64{task.AgentID}, models.AgentLeaseReplay, task.ID)
+		s.markTaskFailed(task.ID, pErr.Error())
+		return nil, pErr
 	}
+	go s.pollGoldenSuiteAsync(task, &procCopy, &suiteCopy, suite.Items)
 
 	commonAudit.Push(&models.SysAuditLog{
 		CreatedAt:  time.Now(),
@@ -1385,15 +1391,7 @@ EVALUATE_SUITE:
 		mockMissCount = result.MockMissCount
 	}
 
-	detailMap := make(map[uint64]agentproto.ReplayItemDetail)
-	if result != nil && result.Details != "" {
-		var details []agentproto.ReplayItemDetail
-		if err := json.Unmarshal([]byte(result.Details), &details); err == nil {
-			for _, d := range details {
-				detailMap[d.RecordID] = d
-			}
-		}
-	}
+	detailMap := extractReplayItemDetails(result)
 
 	var suiteIgnorePaths []string
 	if len(suite.ExtraIgnorePaths) > 0 {
@@ -1401,78 +1399,50 @@ EVALUATE_SUITE:
 	}
 
 	for i, item := range items {
-		itemStatus := models.ReplayResultPass
-		var fieldDiffs []FieldDiff
-		var diffResult *DiffResult
-
-		expectedRsp := item.RawRspPacket
-		actualRsp := item.RawRspPacket
-
-		if d, ok := detailMap[item.ID]; ok {
-			if len(d.ActualRspHex) > 0 {
-				if hBytes, hErr := hex.DecodeString(d.ActualRspHex); hErr == nil && len(hBytes) > 0 {
-					actualRsp = hBytes
-				}
-			}
-			if d.Status != "" {
-				itemStatus = d.Status
-			}
+		d, hasDetail := detailMap[item.ID]
+		var detailPtr *agentproto.ReplayItemDetail
+		if hasDetail {
+			detailPtr = &d
+		}
+		resultFallback := ""
+		if result != nil {
+			resultFallback = result.Status
 		}
 
-		if itemStatus != models.ReplayResultMockMiss && itemStatus != models.ReplayResultTimeout && itemStatus != models.ReplayResultError {
-			// 第一层协议头断言
-			diffRes, payloadIdentical, dErr := DiffLayer1Header(expectedRsp, actualRsp)
-			diffResult = diffRes
-			if dErr != nil || (diffResult != nil && diffResult.Status == models.ReplayResultFailed) {
-				itemStatus = models.ReplayResultFailed
-				if diffResult != nil {
-					fieldDiffs = diffResult.FieldDiffs
-				}
-			} else if !payloadIdentical && s.dec != nil {
-				// 第二层语义树比对
-				var itemMaskRules []models.MaskRule
-				if len(item.MaskRulesJSON) > 0 {
-					_ = json.Unmarshal(item.MaskRulesJSON, &itemMaskRules)
-				}
-				combinedIgnore := append([]string{}, suiteIgnorePaths...)
+		combinedIgnore := append([]string{}, suiteIgnorePaths...)
+		if len(item.MaskRulesJSON) > 0 {
+			var itemMaskRules []models.MaskRule
+			if json.Unmarshal(item.MaskRulesJSON, &itemMaskRules) == nil {
+				var maskPaths []string
 				for _, mr := range itemMaskRules {
 					p := strings.TrimSpace(mr.Path)
 					if p != "" {
-						combinedIgnore = append(combinedIgnore, p)
+						maskPaths = append(maskPaths, p)
 						if strings.HasPrefix(p, "rsp.") {
-							combinedIgnore = append(combinedIgnore, strings.TrimPrefix(p, "rsp."))
+							maskPaths = append(maskPaths, strings.TrimPrefix(p, "rsp."))
 						}
 					}
 				}
-
-				op := s.dec.LookupOperation(item.ServiceName, item.Operation)
-				parsedExp, _ := crosrpc.ParsePacket(expectedRsp)
-				parsedAct, _ := crosrpc.ParsePacket(actualRsp)
-				if parsedExp != nil && parsedAct != nil {
-					expPl := expectedRsp[parsedExp.PayloadOffset:]
-					actPl := actualRsp[parsedAct.PayloadOffset:]
-					fd, fErr := DiffLayer2ProtoSemantic(expPl, actPl, op, combinedIgnore)
-					if len(fd) > 0 || fErr != nil {
-						itemStatus = models.ReplayResultFailed
-						fieldDiffs = append(fieldDiffs, fd...)
-					}
-				}
+				combinedIgnore = appendUniqueIgnorePaths(combinedIgnore, maskPaths)
 			}
 		}
 
-		if _, ok := detailMap[item.ID]; !ok && result != nil && result.Status == models.ReplayResultMockMiss {
-			itemStatus = models.ReplayResultMockMiss
-		}
+		eval := evaluateReplayItem(
+			s.dec,
+			item.ServiceName,
+			item.Operation,
+			"",
+			item.RawReqPacket,
+			item.RawRspPacket,
+			detailPtr,
+			hasDetail,
+			resultFallback,
+			combinedIgnore,
+		)
 
-		itemStatuses = append(itemStatuses, itemStatus)
-		diffBytes, _ := json.Marshal(fieldDiffs)
-
-		actualStatusVal := models.U64Numeric(0)
-		baselineStatusVal := item.BaselineStatus
-		if diffResult != nil {
-			actualStatusVal = models.U64Numeric(diffResult.ActualStatus)
-		}
-
+		itemStatuses = append(itemStatuses, eval.ResultStatus)
+		diffBytes, _ := json.Marshal(eval.FieldDiffs)
+		mockTraceBytes, _ := json.Marshal(eval.MockTrace)
 		curItemID := item.ID
 		replayItem := models.ReplayItem{
 			TaskID:          task.ID,
@@ -1481,15 +1451,21 @@ EVALUATE_SUITE:
 			SeqNo:           int64(i + 1),
 			ServiceName:     item.ServiceName,
 			Operation:       item.Operation,
-			ResultStatus:    itemStatus,
-			LatencyUs:       100,
-			ActualStatus:    actualStatusVal,
-			BaselineStatus:  baselineStatusVal,
+			ResultStatus:    eval.ResultStatus,
+			LatencyUs:       eval.LatencyUs,
+			ActualStatus:    models.U64Numeric(eval.ActualStatus),
+			BaselineStatus:  item.BaselineStatus,
+			FailedLayer:     eval.FailedLayer,
 			FieldDiffs:      datatypes.JSON(diffBytes),
-			RawActualPacket: actualRsp,
+			ActualPayload:   eval.ActualPayload,
+			RawActualPacket: eval.RawActualPacket,
+			MockTrace:       datatypes.JSON(mockTraceBytes),
+			ErrorMessage:    eval.ErrorMessage,
 			CreatedAt:       time.Now(),
 		}
-		_ = s.db.Create(&replayItem).Error
+		if createErr := s.db.Create(&replayItem).Error; createErr == nil {
+			hub.GetGlobalSSEBroker().BroadcastReplayItemDone(task.ID, replayItem.ID, curItemID, replayItem.ResultStatus, replayItem.LatencyUs)
+		}
 	}
 
 	finalStatus := AggregateReplayStatus(itemStatuses)
@@ -1506,6 +1482,11 @@ EVALUATE_SUITE:
 		observedCalls = result.ObservedEgressCalls
 	}
 	observedBytes, _ := json.Marshal(observedCalls)
+	var mockEvents []agentproto.MockTraceEvent
+	if result != nil && len(result.MockEvents) > 0 {
+		mockEvents = result.MockEvents
+	}
+	mockEventsBytes, _ := json.Marshal(mockEvents)
 	sandboxJSON, violations, _ := verifyObservedWithSandbox(ctx, s.db, task.ArchProcessID, observedCalls, result)
 	violationCount := len(violations)
 
@@ -1516,6 +1497,7 @@ EVALUATE_SUITE:
 	task.PassedRequests = passedCount
 	task.MockHitCount = mockHitCount
 	task.MockMissCount = mockMissCount
+	task.MockEvents = datatypes.JSON(mockEventsBytes)
 	task.ViolationCount = violationCount
 	task.ObservedEgressCalls = datatypes.JSON(observedBytes)
 	if len(sandboxJSON) > 0 {
@@ -1530,13 +1512,17 @@ EVALUATE_SUITE:
 		"passed_requests":       passedCount,
 		"mock_hit_count":        mockHitCount,
 		"mock_miss_count":       mockMissCount,
+		"mock_events":           datatypes.JSON(mockEventsBytes),
 		"violation_count":       violationCount,
 		"observed_egress_calls": datatypes.JSON(observedBytes),
 	}
 	if len(sandboxJSON) > 0 {
 		updates["csg_sandbox_report"] = datatypes.JSON(sandboxJSON)
 	}
-	s.db.Model(&models.ReplayTask{}).Where("id = ?", task.ID).Updates(updates)
+	txRes := s.db.Model(&models.ReplayTask{}).Where("id = ? AND lifecycle_state != ?", task.ID, "CANCELLED").Updates(updates)
+	if txRes.RowsAffected > 0 {
+		hub.GetGlobalSSEBroker().BroadcastReplayCompleted(task.ID, "COMPLETED", finalStatus, len(items), passedCount, mockHitCount, mockMissCount)
+	}
 
 	return nil
 }

@@ -68,6 +68,7 @@ export interface ReplayTask {
   mock_events?: MockTraceEvent[];
   csg_strategy?: CSGReplayStrategy;
   csg_sandbox_report?: CSGSandboxReport;
+  error_message?: string;
   created_at?: string;
   updated_at?: string;
 }

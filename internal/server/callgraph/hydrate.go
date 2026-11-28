@@ -128,13 +128,22 @@ func (c *HydrationCache) HydrateRecord(r *models.TrafficRecord) TrafficRecordSum
 
 	connIdx := c.GetConnIndex(r.ConnKey)
 	procName := c.ProcessNames[r.ProcessID]
+	archProcIDStr := ""
 	archProcName := ""
 	if r.ProcessID > 0 {
-		if archID, ok := c.ProcToArchID[r.ProcessID]; ok {
+		if archID, ok := c.ProcToArchID[r.ProcessID]; ok && archID > 0 {
+			archProcIDStr = strconv.FormatUint(archID, 10)
 			archProcName = c.ArchProcessNames[archID]
 		}
 		if archProcName == "" {
 			archProcName = c.ArchProcessNames[r.ProcessID]
+		}
+	}
+	if archProcIDStr == "" {
+		if r.Direction == models.TrafficDirIngress && r.DstArchProcessID != nil && *r.DstArchProcessID > 0 {
+			archProcIDStr = strconv.FormatUint(*r.DstArchProcessID, 10)
+		} else if r.Direction == models.TrafficDirEgress && r.SrcArchProcessID != nil && *r.SrcArchProcessID > 0 {
+			archProcIDStr = strconv.FormatUint(*r.SrcArchProcessID, 10)
 		}
 	}
 
@@ -164,6 +173,7 @@ func (c *HydrationCache) HydrateRecord(r *models.TrafficRecord) TrafficRecordSum
 		SessionID:        strconv.FormatUint(r.SessionID, 10),
 		SeqNo:            r.SeqNo,
 		ProcessID:        strconv.FormatUint(r.ProcessID, 10),
+		ArchProcessID:    archProcIDStr,
 		ProcessName:      procName,
 		ArchProcessName:  archProcName,
 		PeerProcName:     meta.PeerProcName,
@@ -211,7 +221,7 @@ func HydrateRecords(db *gorm.DB, session *models.RecordingSession, records []mod
 	for _, r := range records {
 		if r.ProcessID > 0 && !seenProc[r.ProcessID] {
 			seenProc[r.ProcessID] = true
-			if cache.ProcessNames[r.ProcessID] == "" {
+			if cache.ProcessNames[r.ProcessID] == "" || cache.ProcToArchID[r.ProcessID] == 0 {
 				missingProcIDs = append(missingProcIDs, r.ProcessID)
 			}
 		}

@@ -662,3 +662,126 @@ func TestReplayExecutor_MeshRecordedAssetReplayedOverTCP_Pass(t *testing.T) {
 		t.Fatalf("original meshReq asset was mutated, expected 4, got %d", meshReq[7])
 	}
 }
+
+func TestReplayExecutor_StructuredItemsAndMockEvents_ADR31(t *testing.T) {
+	dsLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen downstream failed: %v", err)
+	}
+	defer dsLn.Close()
+	dsPort := uint16(dsLn.Addr().(*net.TCPAddr).Port)
+
+	go func() {
+		for {
+			conn, cErr := dsLn.Accept()
+			if cErr != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+
+	matcher := NewScopedMockMatcher()
+	mockExec := NewReplayExecutor()
+
+	// 构建一个支持 2 笔请求的业务服务端（第1笔命中下游 Mock 并正常回包；第2笔为 Oneway 请求）
+	sutLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen sut failed: %v", err)
+	}
+	defer sutLn.Close()
+	sutPort := uint16(sutLn.Addr().(*net.TCPAddr).Port)
+
+	req1 := buildTestReqPacket(5001, "com.demo.OrderService", "Create", crosrpc.ReqTypeSync, [16]byte{1, 2, 3}, 1000, []byte("create_req_1"))
+	req2 := buildTestReqPacket(5002, "com.demo.OrderService", "AuditLog", crosrpc.ReqTypeOneway, [16]byte{}, 2000, []byte("oneway_req"))
+
+	egReq1 := buildTestReqPacket(6001, "com.demo.PayService", "Charge", crosrpc.ReqTypeSync, [16]byte{4, 5}, 1500, []byte("pay_req_1"))
+	egRsp1 := buildTestRspPacket(6001, crosrpc.MsgTypeRsp, 200, "com.demo.PayService", "Charge", 1, []byte("pay_rsp_1"))
+	if err := matcher.RegisterScopedDownstreamRule(101, agentproto.MockRuleDownstream{
+		ReqPacket:  egReq1,
+		RspPackets: [][]byte{egRsp1},
+	}); err != nil {
+		t.Fatalf("register scoped rule failed: %v", err)
+	}
+
+	// 启动测试服务端（先走 MockListener 验证一次 Hit，再回主应答）
+	go func() {
+		conn, aErr := sutLn.Accept()
+		if aErr != nil {
+			return
+		}
+		defer conn.Close()
+		framer := crosrpc.NewStreamFramer(crosrpc.MaxPayloadLen)
+		buf := make([]byte, 8192)
+		for {
+			n, rErr := conn.Read(buf)
+			if rErr != nil {
+				return
+			}
+			frames, fErr := framer.Feed(buf[:n])
+			if fErr != nil {
+				continue
+			}
+			for _, f := range frames {
+				sno := binary.BigEndian.Uint64(f.Data[8:16])
+				var reqType uint8
+				if len(f.Data) > 24+136 {
+					reqType = f.Data[24+136]
+				}
+				if reqType == crosrpc.ReqTypeOneway {
+					continue
+				}
+				// Dial local MockPort and send egReq1 once
+				mPort := mockExec.MockPort()
+				if mPort > 0 {
+					mConn, dErr := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", mPort), time.Second)
+					if dErr == nil {
+						_, _ = mConn.Write(egReq1)
+						mBuf := make([]byte, 4096)
+						_ = mConn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+						_, _ = mConn.Read(mBuf)
+						_ = mConn.Close()
+					}
+				} else {
+					_ = dsPort
+				}
+				rsp := buildTestRspPacket(sno, crosrpc.MsgTypeRsp, 200, "com.demo.OrderService", "Create", 1, []byte("order_created_ok"))
+				_, _ = conn.Write(rsp)
+			}
+		}
+	}()
+
+	res, err := mockExec.ExecuteWithMatcher(context.Background(), agentproto.ExecuteReplayReq{
+		TaskID: 9001,
+		ProcessSpec: agentproto.ProcessMonitorSpec{
+			ProcessID:  1,
+			ListenPort: sutPort,
+		},
+		TimeoutMs: 2000,
+		IngressItems: []agentproto.ReplayIngressItem{
+			{RecordID: 101, RawReq: req1},
+			{RecordID: 102, RawReq: req2},
+		},
+	}, matcher)
+	if err != nil {
+		t.Fatalf("ExecuteWithMatcher failed: %v", err)
+	}
+	if len(res.Items) != 2 {
+		t.Fatalf("expected 2 structured items, got %d", len(res.Items))
+	}
+	if res.Items[0].RecordID != 101 || res.Items[0].SeqNo != 1 || res.Items[0].ServiceName != "com.demo.OrderService" || res.Items[0].Operation != "Create" {
+		t.Fatalf("unexpected item[0] metadata: %+v", res.Items[0])
+	}
+	if res.Items[0].SNO != "5001" || res.Items[0].ActualRspHex == "" || res.Items[0].Status != "PASS" {
+		t.Fatalf("unexpected item[0] execution output: %+v", res.Items[0])
+	}
+	if len(res.Items[0].MockTrace) != 1 || res.Items[0].MockTrace[0].HitKind != "EXACT_HASH" || res.Items[0].MockTrace[0].IsMiss {
+		t.Fatalf("expected item[0] MockTrace with 1 EXACT_HASH hit, got %+v", res.Items[0].MockTrace)
+	}
+	if len(res.MockEvents) != 1 || res.MockEvents[0].RecordID != 101 {
+		t.Fatalf("expected top-level MockEvents length 1 for record 101, got %+v", res.MockEvents)
+	}
+	if res.Items[1].RecordID != 102 || res.Items[1].SeqNo != 2 || res.Items[1].Status != "PASS" || res.Items[1].ActualRspHex != "" {
+		t.Fatalf("expected oneway item[1] PASS without rsp hex, got %+v", res.Items[1])
+	}
+}

@@ -251,17 +251,10 @@ func (b *SSEBroker) BroadcastProtoPublishProgress(data interface{}) {
 
 // BroadcastReplayItemDone 广播单条重放请求执行断言完成
 func (b *SSEBroker) BroadcastReplayItemDone(taskID, itemID, recordID uint64, resultStatus string, latencyUs int64) {
-	b.BroadcastEvent(SSEEvent{
-		Event:  "replay.item_done",
-		TaskID: taskID,
-		Data: gin.H{
-			"task_id":       taskID,
-			"item_id":       itemID,
-			"record_id":     recordID,
-			"result_status": resultStatus,
-			"latency_us":    latencyUs,
-		},
-	})
+	if b == nil {
+		return
+	}
+	b.ensureCore().BroadcastReplayItemDone(taskID, itemID, recordID, resultStatus, latencyUs)
 }
 
 // BroadcastReplayCompleted 广播重放任务整包完成汇总
@@ -270,19 +263,10 @@ func (b *SSEBroker) BroadcastReplayCompleted(
 	lifecycleState, resultStatus string,
 	totalRequests, passedRequests, mockHitCount, mockMissCount int,
 ) {
-	b.BroadcastEvent(SSEEvent{
-		Event:  "replay.completed",
-		TaskID: taskID,
-		Data: gin.H{
-			"task_id":         taskID,
-			"lifecycle_state": lifecycleState,
-			"result_status":   resultStatus,
-			"total_requests":  totalRequests,
-			"passed_requests": passedRequests,
-			"mock_hit_count":  mockHitCount,
-			"mock_miss_count": mockMissCount,
-		},
-	})
+	if b == nil {
+		return
+	}
+	b.ensureCore().BroadcastReplayCompleted(taskID, lifecycleState, resultStatus, totalRequests, passedRequests, mockHitCount, mockMissCount)
 }
 
 // HandleEventsSSE SSE 实时事件流入口 (GET /api/events)

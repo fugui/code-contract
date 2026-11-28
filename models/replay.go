@@ -75,6 +75,7 @@ type ReplayItem struct {
 	LatencyUs       int64            `gorm:"not null;default:0" json:"latency_us"`
 	ActualStatus    U64Numeric       `gorm:"type:numeric(20,0);not null;default:0" json:"actual_status,string"`
 	BaselineStatus  U64Numeric       `gorm:"type:numeric(20,0);not null;default:0" json:"baseline_status,string"`
+	FailedLayer     int              `gorm:"not null;default:0" json:"failed_layer"`
 	FieldDiffs      datatypes.JSON   `gorm:"type:jsonb;not null;default:'[]'" json:"field_diffs"`
 	ActualPayload   datatypes.JSON   `gorm:"type:jsonb" json:"actual_payload,omitempty"`
 	RawActualPacket []byte           `gorm:"type:bytea" json:"-"`

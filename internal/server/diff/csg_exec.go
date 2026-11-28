@@ -205,8 +205,15 @@ func postExecuteReplayToAgent(
 		msg = fmt.Sprintf("Agent 返回状态码 %d", resp.StatusCode)
 	}
 
-	if resp.StatusCode == http.StatusConflict && errResp.Code == "CSG_SERVICE_ALREADY_PUBLISHED" {
-		return &CSGConflictError{Code: errResp.Code, Message: msg}
+	if resp.StatusCode == http.StatusConflict {
+		code := errResp.Code
+		if code == "" {
+			code = errResp.Status
+		}
+		if code == "" {
+			code = "REPLAY_CONFLICT"
+		}
+		return &CSGConflictError{Code: code, Message: "409 Conflict: " + msg}
 	}
 	if resp.StatusCode == http.StatusUnprocessableEntity || errResp.Code == "CSG_DATAPLANE_MESH_UNSUPPORTED" {
 		code := errResp.Code

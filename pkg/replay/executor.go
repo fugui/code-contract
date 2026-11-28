@@ -3,6 +3,8 @@ package replay
 import (
 	"context"
 	"encoding/binary"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -266,36 +268,55 @@ func (e *ReplayExecutor) ExecuteWithMatcher(ctx context.Context, req agentproto.
 
 	total := len(items)
 	passed := 0
+	itemDetails := make([]agentproto.ReplayItemDetail, 0, total)
 	framer := crosrpc.NewStreamFramer(crosrpc.MaxPayloadLen)
+
+	buildResult := func(status string) *agentproto.ReplayTaskResultResp {
+		detailsJSON, _ := json.Marshal(itemDetails)
+		return &agentproto.ReplayTaskResultResp{
+			TaskID:              req.TaskID,
+			Status:              status,
+			TotalRequests:       total,
+			PassedRequests:      passed,
+			MockHitCount:        matcher.MockHitCount(),
+			MockMissCount:       matcher.MockMissCount(),
+			Items:               itemDetails,
+			MockEvents:          matcher.MockEvents(),
+			ObservedEgressCalls: matcher.ObservedEgressCalls(),
+			Details:             string(detailsJSON),
+		}
+	}
 
 	// 4. 逐条注入入站请求并等待应答
 	for i, item := range items {
 		select {
 		case <-taskCtx.Done():
-			res := &agentproto.ReplayTaskResultResp{
-				TaskID:        req.TaskID,
-				Status:        "CANCELLED",
-				TotalRequests: total,
-				Details:       "任务已被手动取消",
-			}
+			res := buildResult("CANCELLED")
 			e.saveResult(req.TaskID, res)
 			return res, nil
 		default:
 		}
 
 		matcher.SetActiveRecordID(item.recordID)
+		svcName, opName, snoStr := extractReqFrameMeta(item.rawReq)
+		itemDetail := agentproto.ReplayItemDetail{
+			RecordID:    item.recordID,
+			SeqNo:       int64(i + 1),
+			ServiceName: svcName,
+			Operation:   opName,
+			SNO:         snoStr,
+			Status:      "ERROR",
+		}
+		itemStart := time.Now()
 
 		reqToSend := NormalizeFrameTransportForTCP(item.rawReq)
 		if _, err := targetConn.Write(reqToSend); err != nil {
-			res := &agentproto.ReplayTaskResultResp{
-				TaskID:         req.TaskID,
-				Status:         "ERROR",
-				TotalRequests:  total,
-				PassedRequests: passed,
-				MockHitCount:   matcher.MockHitCount(),
-				MockMissCount:  matcher.MockMissCount(),
-				Details:        fmt.Sprintf("请求 #%d (RecordID=%d) 写入失败: %v", i+1, item.recordID, err),
-			}
+			itemDetail.LatencyUs = time.Since(itemStart).Microseconds()
+			itemDetail.ErrorMessage = fmt.Sprintf("请求 #%d (RecordID=%d) 写入失败: %v", i+1, item.recordID, err)
+			traces, _ := matcher.MockEventsForRecord(item.recordID)
+			itemDetail.MockTrace = traces
+			itemDetails = append(itemDetails, itemDetail)
+			res := buildResult("ERROR")
 			e.saveResult(req.TaskID, res)
 			return res, nil
 		}
@@ -306,7 +327,16 @@ func (e *ReplayExecutor) ExecuteWithMatcher(ctx context.Context, req agentproto.
 			reqType = item.rawReq[24+136]
 		}
 		if reqType == crosrpc.ReqTypeOneway {
-			passed++
+			itemDetail.LatencyUs = time.Since(itemStart).Microseconds()
+			itemDetail.Status = "PASS"
+			traces, hasMiss := matcher.MockEventsForRecord(item.recordID)
+			itemDetail.MockTrace = traces
+			if hasMiss {
+				itemDetail.Status = "MOCK_MISS"
+			} else {
+				passed++
+			}
+			itemDetails = append(itemDetails, itemDetail)
 			continue
 		}
 
@@ -314,26 +344,23 @@ func (e *ReplayExecutor) ExecuteWithMatcher(ctx context.Context, req agentproto.
 		_ = targetConn.SetReadDeadline(time.Now().Add(timeout))
 
 		var gotRsp bool
+		var actualRspBytes []byte
+		var timedOut bool
+		var readErrMsg string
 		buf := make([]byte, 65536)
 		for !gotRsp {
 			n, err := targetConn.Read(buf)
 			if err != nil {
-				if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
+				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					timedOut = true
+					readErrMsg = fmt.Sprintf("请求 #%d 等待响应超时 (%v)", i+1, timeout)
 					break
 				}
-				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-					res := &agentproto.ReplayTaskResultResp{
-						TaskID:         req.TaskID,
-						Status:         "TIMEOUT",
-						TotalRequests:  total,
-						PassedRequests: passed,
-						MockHitCount:   matcher.MockHitCount(),
-						MockMissCount:  matcher.MockMissCount(),
-						Details:        fmt.Sprintf("请求 #%d 等待响应超时 (%v)", i+1, timeout),
-					}
-					e.saveResult(req.TaskID, res)
-					return res, nil
+				if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
+					readErrMsg = fmt.Sprintf("请求 #%d 对端连接关闭: %v", i+1, err)
+					break
 				}
+				readErrMsg = fmt.Sprintf("请求 #%d 读取响应异常: %v", i+1, err)
 				break
 			}
 
@@ -343,40 +370,107 @@ func (e *ReplayExecutor) ExecuteWithMatcher(ctx context.Context, req agentproto.
 			}
 			for _, frame := range frames {
 				frameData := frame.Data
-				if len(frameData) >= 16 {
+				if len(frameData) >= 24 {
 					sno := binary.BigEndian.Uint64(frameData[8:16])
 					if sno == expectedSNO {
 						msgType := frameData[22]
+						if msgType == crosrpc.MsgTypeRspSeg {
+							actualRspBytes = append(actualRspBytes, frameData...)
+							continue
+						}
 						if msgType == crosrpc.MsgTypeRsp {
+							actualRspBytes = append(actualRspBytes, frameData...)
 							gotRsp = true
-							passed++
 							break
 						}
 					}
 				}
 			}
 		}
+
+		itemDetail.LatencyUs = time.Since(itemStart).Microseconds()
+		traces, hasMiss := matcher.MockEventsForRecord(item.recordID)
+		itemDetail.MockTrace = traces
+
+		if timedOut {
+			if hasMiss {
+				itemDetail.Status = "MOCK_MISS"
+				itemDetail.ErrorMessage = "下游 Mock 未命中导致上游超时: " + readErrMsg
+			} else {
+				itemDetail.Status = "TIMEOUT"
+				itemDetail.ErrorMessage = readErrMsg
+			}
+			itemDetails = append(itemDetails, itemDetail)
+			res := buildResult(itemDetail.Status)
+			e.saveResult(req.TaskID, res)
+			return res, nil
+		}
+
+		if gotRsp && len(actualRspBytes) > 0 {
+			itemDetail.ActualRspHex = hex.EncodeToString(actualRspBytes)
+			if hasMiss {
+				itemDetail.Status = "MOCK_MISS"
+			} else {
+				itemDetail.Status = "PASS"
+				passed++
+			}
+		} else {
+			itemDetail.Status = "ERROR"
+			if hasMiss {
+				itemDetail.Status = "MOCK_MISS"
+			}
+			if readErrMsg != "" {
+				itemDetail.ErrorMessage = readErrMsg
+			} else {
+				itemDetail.ErrorMessage = "未捕获到有效 CROS RPC 应答帧"
+			}
+		}
+		itemDetails = append(itemDetails, itemDetail)
 	}
 
 	status := "PASS"
-	if matcher.MockMissCount() > 0 {
+	hasError := false
+	hasTimeout := false
+	hasMissItem := matcher.MockMissCount() > 0
+	for _, d := range itemDetails {
+		switch d.Status {
+		case "ERROR":
+			hasError = true
+		case "TIMEOUT":
+			hasTimeout = true
+		case "MOCK_MISS":
+			hasMissItem = true
+		}
+	}
+	if hasError {
+		status = "ERROR"
+	} else if hasTimeout {
+		status = "TIMEOUT"
+	} else if hasMissItem {
 		status = "MOCK_MISS"
 	} else if passed < total {
 		status = "FAILED"
 	}
 
-	result := &agentproto.ReplayTaskResultResp{
-		TaskID:              req.TaskID,
-		Status:              status,
-		TotalRequests:       total,
-		PassedRequests:      passed,
-		MockHitCount:        matcher.MockHitCount(),
-		MockMissCount:       matcher.MockMissCount(),
-		ObservedEgressCalls: matcher.ObservedEgressCalls(),
-		Details:             fmt.Sprintf("重放完成: 总计 %d, 成功 %d, Mock命中 %d, Mock未命中 %d", total, passed, matcher.MockHitCount(), matcher.MockMissCount()),
-	}
+	result := buildResult(status)
 	e.saveResult(req.TaskID, result)
 	return result, nil
+}
+
+func extractReqFrameMeta(rawReq []byte) (serviceName, operation, sno string) {
+	if len(rawReq) >= 16 {
+		sno = strconv.FormatUint(binary.BigEndian.Uint64(rawReq[8:16]), 10)
+	}
+	parsed, err := crosrpc.ParsePacket(rawReq)
+	if err == nil && parsed != nil {
+		if parsed.Req != nil {
+			return parsed.Req.ServiceName, parsed.Req.Operation, sno
+		}
+		if parsed.Rsp != nil {
+			return parsed.Rsp.ServiceName, parsed.Rsp.Operation, sno
+		}
+	}
+	return "", "", sno
 }
 
 func (e *ReplayExecutor) handleMockConn(ctx context.Context, conn net.Conn, matcher *ScopedMockMatcher) {

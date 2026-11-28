@@ -260,12 +260,34 @@ type ExecuteReplayReq struct {
 	MngMocks            [][]byte                        `json:"mng_mocks,omitempty"`
 }
 
-// ReplayItemDetail 单请求执行结果明细（序列化放入 Details JSON 串中）
+// MockTraceEvent 结构化下游 Mock 命中/未命中轨迹事件 (D1 / ADR-31)
+type MockTraceEvent struct {
+	RecordID     uint64   `json:"record_id"`
+	SeqNo        int64    `json:"seq_no"`
+	SNO          string   `json:"sno"`
+	ServiceName  string   `json:"service_name"`
+	Operation    string   `json:"operation"`
+	Tier         string   `json:"tier,omitempty"` // SCOPED_HIT | SCOPED_SEQ_HIT | GLOBAL_FALLBACK_HIT | MNG_HIT | ONEWAY_HIT | MOCK_MISS
+	HitKind      string   `json:"hit_kind"`       // EXACT_HASH | ORDER_FALLBACK | MISS
+	HealedFields []string `json:"healed_fields,omitempty"`
+	IsMiss       bool     `json:"is_miss"`
+	PeerAddr     string   `json:"peer_addr,omitempty"`
+	ErrorMessage string   `json:"error_message,omitempty"`
+	TimestampNs  int64    `json:"timestamp_ns,omitempty"`
+}
+
+// ReplayItemDetail 单请求结构化执行结果明细 (D1 / ADR-31)
 type ReplayItemDetail struct {
-	RecordID     uint64 `json:"record_id"`
-	Status       string `json:"status,omitempty"` // PASS | FAILED | MOCK_MISS | TIMEOUT | ERROR
-	ActualRspHex string `json:"actual_rsp_hex,omitempty"`
-	ErrorMessage string `json:"error_message,omitempty"`
+	RecordID     uint64           `json:"record_id"`
+	SeqNo        int64            `json:"seq_no"`
+	ServiceName  string           `json:"service_name,omitempty"`
+	Operation    string           `json:"operation,omitempty"`
+	SNO          string           `json:"sno,omitempty"`
+	Status       string           `json:"status,omitempty"` // PASS | FAILED | MOCK_MISS | TIMEOUT | ERROR
+	LatencyUs    int64            `json:"latency_us"`
+	ActualRspHex string           `json:"actual_rsp_hex,omitempty"`
+	MockTrace    []MockTraceEvent `json:"mock_trace,omitempty"`
+	ErrorMessage string           `json:"error_message,omitempty"`
 }
 
 // ObservedEgressCall 重放期实测出站调用汇总 (ADR-14, M17)
@@ -280,11 +302,13 @@ type ObservedEgressCall struct {
 // ReplayTaskResultResp 重放任务汇总结果
 type ReplayTaskResultResp struct {
 	TaskID              uint64               `json:"task_id"`
-	Status              string               `json:"status"` // PASS | FAILED | MOCK_MISS | TIMEOUT | ERROR
+	Status              string               `json:"status"` // PASS | FAILED | MOCK_MISS | TIMEOUT | ERROR | CANCELLED
 	TotalRequests       int                  `json:"total_requests"`
 	PassedRequests      int                  `json:"passed_requests"`
 	MockHitCount        int                  `json:"mock_hit_count"`
 	MockMissCount       int                  `json:"mock_miss_count"`
+	Items               []ReplayItemDetail   `json:"items,omitempty"`
+	MockEvents          []MockTraceEvent     `json:"mock_events,omitempty"`
 	ObservedEgressCalls []ObservedEgressCall `json:"observed_egress_calls"`
 	Details             string               `json:"details"`
 	CSGSandboxReport    *CSGSandboxReport    `json:"csg_sandbox_report,omitempty"`
